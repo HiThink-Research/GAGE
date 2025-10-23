@@ -64,17 +64,23 @@ save_dir: /mnt/workspace/inference
 # judge_max_new_tokens: 4096
 
 tasks:
-    金融股票涨跌评估数据集_0-0-1:
+    Stock_Price_Prediction:
         compare_func:
             path: benchmark_code/BizFinBench/eval_stock_prediction.py
-        data_path: /mnt/data/llm_benchmark/folder_1475/test_version_0.0.1/TESTSET__金融股票预测评估数据集__0-0-12.jsonl
+        data_path: Stock_Price_Prediction.jsonl
         type: text
     MATH (LLM as judge):
         type: text
-        data_path: /sft/data/TESTSET/TESTSET__开源测试集-math__1-0-2.jsonl
+        data_path: math__1-0-2.jsonl
+        # judge: api judge model
+            # preprocess: utils.judge.data_preprocess
+            # method: gpt-4o #support gpt-4o，deepseek，gemini，claude
         judge:
-            preprocess: utils.judge.data_preprocess
-            method: gpt-4o #support gpt-4o，deepseek，gemini，claude
+            # data preprocess
+            preprocess: benchmark_code.BizFinBench.eval_financial_description.data_preprocess
+            # local judge model
+            judge_model_path: /mnt/judge-model/Qwen-72B-Instruct/V5
+            judge_tensor_parallel: 4
         compare_func:
             path: utils/eval_math500.py
 ```
