@@ -1,0 +1,327 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="zh-CN" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>run &mdash; llm-eval 2.0.0 文档</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=b15d7ad8"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="next" title="inference" href="../inference.html" />
+    <link rel="prev" title="main" href="../main.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            llm-eval
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="搜索文档" aria-label="搜索文档" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="导航菜单">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="../main.html">main</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">run</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#run.check_inference_engine_running"><code class="docutils literal notranslate"><span class="pre">check_inference_engine_running()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_command"><code class="docutils literal notranslate"><span class="pre">run_command()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.send_request"><code class="docutils literal notranslate"><span class="pre">send_request()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_judge_inference"><code class="docutils literal notranslate"><span class="pre">run_judge_inference()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_task_inference"><code class="docutils literal notranslate"><span class="pre">run_task_inference()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.wait_for_external_api"><code class="docutils literal notranslate"><span class="pre">wait_for_external_api()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.wait_for_inference"><code class="docutils literal notranslate"><span class="pre">wait_for_inference()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.maybe_start_judge_model"><code class="docutils literal notranslate"><span class="pre">maybe_start_judge_model()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_loss_eval"><code class="docutils literal notranslate"><span class="pre">run_loss_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_next_word_prob_eval"><code class="docutils literal notranslate"><span class="pre">run_next_word_prob_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_mt_bench_eval"><code class="docutils literal notranslate"><span class="pre">run_mt_bench_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_text_eval"><code class="docutils literal notranslate"><span class="pre">run_text_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.run_post_eval"><code class="docutils literal notranslate"><span class="pre">run_post_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.llm_eval"><code class="docutils literal notranslate"><span class="pre">llm_eval()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.terminate_inference_engine"><code class="docutils literal notranslate"><span class="pre">terminate_inference_engine()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#run.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../inference.html">inference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tools.html">tools</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../utils.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="移动版导航菜单" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">llm-eval</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="页面导航">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../main.html">main</a></li>
+      <li class="breadcrumb-item active">run</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/main/run.rst.txt" rel="nofollow"> 查看页面源码</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-run">
+<span id="run"></span><h1>run<a class="headerlink" href="#module-run" title="Link to this heading"></a></h1>
+<p class="rubric">Functions</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="run.check_inference_engine_running">
+<span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">check_inference_engine_running</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#check_inference_engine_running"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.check_inference_engine_running" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_command">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_command</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cmd</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_command"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_command" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.send_request">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">send_request</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">method</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'file'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_interval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_retries</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#send_request"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.send_request" title="Link to this definition"></a></dt>
+<dd><p>用于请求推理引擎，包括：提交文件、请求推理进度、发送终止信号</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_judge_inference">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_judge_inference</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_judge_inference"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_judge_inference" title="Link to this definition"></a></dt>
+<dd><p>运行裁判员模型的推理流程，用于评估特定任务的结果。</p>
+<p>该函数负责准备裁判员模型的输入文件，提交推理请求，并等待推理完成。
+根据配置可以使用本地大模型或外部API作为裁判。</p>
+<dl>
+<dt>参数:</dt><dd><dl class="simple">
+<dt>config (dict): 包含任务配置信息的字典，必须包含以下键:</dt><dd><ul class="simple">
+<li><p>save_dir: 保存输出结果的目录</p></li>
+<li><p>tasks: 包含特定任务配置的字典</p></li>
+</ul>
+</dd>
+</dl>
+<p>task (str): 要评估的任务名称，此名称用于定位配置中的相关设置</p>
+</dd>
+<dt>返回:</dt><dd><p>list: 包含所有输出文件路径的列表</p>
+</dd>
+<dt>流程:</dt><dd><ol class="arabic simple">
+<li><p>准备裁判员模型的输入文件:
+- 如果没有预处理步骤，直接使用任务输出文件
+- 如果有预处理步骤，调用指定的预处理函数生成输入文件</p></li>
+<li><p>提交裁判员推理:
+- 如果配置指定了外部API方法，调用相应的外部接口
+- 否则使用本地大模型作为裁判</p></li>
+<li><p>等待推理完成并更新任务状态</p></li>
+</ol>
+</dd>
+<dt>注意:</dt><dd><ul class="simple">
+<li><p>预处理函数需要在配置中正确指定，格式为&quot;module.submodule.function&quot;</p></li>
+<li><p>外部API方法需要在ExternalApi枚举中定义</p></li>
+<li><p>函数执行是异步的，调用时需要使用await</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_task_inference">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_task_inference</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_task_inference"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_task_inference" title="Link to this definition"></a></dt>
+<dd><p>为指定任务运行推理，使用外部API或本地模型。</p>
+<p>此函数通过以下步骤处理推理过程：
+1. 从配置中确定输入数据路径
+2. 检查是否应使用外部API
+3. 根据配置执行适当的推理方法</p>
+<dl class="simple">
+<dt>参数:</dt><dd><p>config (dict): 包含任务设置和路径的配置字典
+task (str): 要运行推理的任务名称</p>
+</dd>
+<dt>返回:</dt><dd><p>None: 此函数执行操作但不返回值</p>
+</dd>
+<dt>可能引发:</dt><dd><p>外部API调用或本地模型推理可能产生的异常</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.wait_for_external_api">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">wait_for_external_api</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">external_api</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#wait_for_external_api"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.wait_for_external_api" title="Link to this definition"></a></dt>
+<dd><p>调用外部API处理输入数据并保存结果。</p>
+<p>根据输入数据类型（图像或文本）自动选择相应的API调用方法，并将结果保存到指定目录下。</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>config</strong> (<em>dict</em>) -- 配置信息，必须包含'save_dir'键，指定结果保存目录</p></li>
+<li><p><strong>task</strong> (<em>str</em>) -- 任务名称，用于生成输出文件名</p></li>
+<li><p><strong>external_api</strong> (<em>object</em>) -- 外部API接口对象，需要实现images2texts和texts2texts方法</p></li>
+<li><p><strong>input_path</strong> (<em>str</em>) -- 输入数据文件路径，应为jsonl格式</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>API调用的结果列表</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list</p>
+</dd>
+</dl>
+<p class="rubric">备注</p>
+<ul class="simple">
+<li><p>输入文件必须是jsonl格式，每行为一个可解析为JSON的字符串</p></li>
+<li><p>当消息中包含&quot;image_url&quot;时会调用图像处理API，否则调用文本处理API</p></li>
+<li><p>输出文件将保存为{save_dir}/{task}.jsonl</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.wait_for_inference">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">wait_for_inference</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#wait_for_inference"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.wait_for_inference" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.maybe_start_judge_model">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">maybe_start_judge_model</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#maybe_start_judge_model"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.maybe_start_judge_model" title="Link to this definition"></a></dt>
+<dd><p>等待全部测试集推理完成后，根据需要启动裁判员模型。</p>
+<p>此协程监控推理过程并管理到裁判员模型的转换：
+1. 持续检查所有推理任务是否完成
+2. 如果任何任务需要裁判员模型，则终止推理引擎
+3. 在允许GPU资源释放的时间后启动裁判员模型进程</p>
+<dl class="simple">
+<dt>返回：</dt><dd><p>无</p>
+</dd>
+<dt>异常：</dt><dd><p>RuntimeError: 如果在监控过程中推理引擎意外退出</p>
+</dd>
+<dt>注意：</dt><dd><ul class="simple">
+<li><p>如果未设置judge_model_port，函数将立即退出</p></li>
+<li><p>当所有任务完成推理且裁判员模型（如需要）启动后，函数退出</p></li>
+<li><p>在终止推理后等待60秒再启动裁判员模型</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_loss_eval">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_loss_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_loss_eval"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_loss_eval" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_next_word_prob_eval">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_next_word_prob_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_next_word_prob_eval"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_next_word_prob_eval" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_mt_bench_eval">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_mt_bench_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_mt_bench_eval"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_mt_bench_eval" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_text_eval">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_text_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_text_eval"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_text_eval" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.run_post_eval">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">run_post_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#run_post_eval"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.run_post_eval" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.llm_eval">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">llm_eval</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#llm_eval"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.llm_eval" title="Link to this definition"></a></dt>
+<dd><p>模型评估</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>file_path</strong> (<em>str</em>) -- config地址</p></li>
+<li><p><strong>model_name</strong> (<em>int</em>) -- 可选参数，存储模型的sub path</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">示例</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">llm_eval</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">model_name</span><span class="p">)</span>
+<span class="go">None</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.terminate_inference_engine">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">terminate_inference_engine</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#terminate_inference_engine"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.terminate_inference_engine" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="run.main">
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">run.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">args</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/run.html#main"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#run.main" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="页脚">
+        <a href="../main.html" class="btn btn-neutral float-left" title="main" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> 上一页</a>
+        <a href="../inference.html" class="btn btn-neutral float-right" title="inference" accesskey="n" rel="next">下一页 <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; 版权所有 2025, Damien。</p>
+  </div>
+
+  利用 <a href="https://www.sphinx-doc.org/">Sphinx</a> 构建，使用的 
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">主题</a>
+    由 <a href="https://readthedocs.org">Read the Docs</a> 开发.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

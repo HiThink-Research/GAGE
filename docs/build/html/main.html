@@ -1,0 +1,146 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="zh-CN" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>main &mdash; llm-eval 2.0.0 文档</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=b15d7ad8"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="_static/translations.js?v=beaddf03"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="索引" href="genindex.html" />
+    <link rel="search" title="搜索" href="search.html" />
+    <link rel="next" title="run" href="main/run.html" />
+    <link rel="prev" title="llm-eval documentation" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            llm-eval
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="搜索文档" aria-label="搜索文档" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="导航菜单">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">main</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html">run</a></li>
+</ul>
+</li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="inference.html">inference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tools.html">tools</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="utils.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="移动版导航菜单" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">llm-eval</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="页面导航">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">main</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/main.rst.txt" rel="nofollow"> 查看页面源码</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="main">
+<h1>main<a class="headerlink" href="#main" title="Link to this heading"></a></h1>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="main/run.html">run</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.check_inference_engine_running"><code class="docutils literal notranslate"><span class="pre">check_inference_engine_running()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_command"><code class="docutils literal notranslate"><span class="pre">run_command()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.send_request"><code class="docutils literal notranslate"><span class="pre">send_request()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_judge_inference"><code class="docutils literal notranslate"><span class="pre">run_judge_inference()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_task_inference"><code class="docutils literal notranslate"><span class="pre">run_task_inference()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.wait_for_external_api"><code class="docutils literal notranslate"><span class="pre">wait_for_external_api()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.wait_for_inference"><code class="docutils literal notranslate"><span class="pre">wait_for_inference()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.maybe_start_judge_model"><code class="docutils literal notranslate"><span class="pre">maybe_start_judge_model()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_loss_eval"><code class="docutils literal notranslate"><span class="pre">run_loss_eval()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_next_word_prob_eval"><code class="docutils literal notranslate"><span class="pre">run_next_word_prob_eval()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_mt_bench_eval"><code class="docutils literal notranslate"><span class="pre">run_mt_bench_eval()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_text_eval"><code class="docutils literal notranslate"><span class="pre">run_text_eval()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.run_post_eval"><code class="docutils literal notranslate"><span class="pre">run_post_eval()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.llm_eval"><code class="docutils literal notranslate"><span class="pre">llm_eval()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.terminate_inference_engine"><code class="docutils literal notranslate"><span class="pre">terminate_inference_engine()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="main/run.html#run.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="页脚">
+        <a href="index.html" class="btn btn-neutral float-left" title="llm-eval documentation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> 上一页</a>
+        <a href="main/run.html" class="btn btn-neutral float-right" title="run" accesskey="n" rel="next">下一页 <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; 版权所有 2025, Damien。</p>
+  </div>
+
+  利用 <a href="https://www.sphinx-doc.org/">Sphinx</a> 构建，使用的 
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">主题</a>
+    由 <a href="https://readthedocs.org">Read the Docs</a> 开发.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

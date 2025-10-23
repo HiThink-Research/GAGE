@@ -1,0 +1,224 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="zh-CN" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>utils.eval_mmmu &mdash; llm-eval 2.0.0 文档</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=b15d7ad8"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../../_static/translations.js?v=beaddf03"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="搜索" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            llm-eval
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="搜索文档" aria-label="搜索文档" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="导航菜单">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../main.html">main</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../inference.html">inference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../tools.html">tools</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../utils.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="移动版导航菜单" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">llm-eval</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="页面导航">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">模块代码</a></li>
+      <li class="breadcrumb-item active">utils.eval_mmmu</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>utils.eval_mmmu 源代码</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">json</span><span class="o">,</span><span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">copy</span>
+<div class="viewcode-block" id="build_prompt">
+<a class="viewcode-back" href="../../utils/utils.eval_mmmu.html#utils.eval_mmmu.build_prompt">[文档]</a>
+<span class="k">def</span> <span class="nf">build_prompt</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">prediction</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;构建用于单选择题匹配的提示模板。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        query (str): 包含问题和选项的字符串。</span>
+<span class="sd">        prediction (str): 模型的预测答案。</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        str: 格式化后的提示模板，用于指导模型匹配答案与选项。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tmpl</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s1">&#39;You are an AI assistant who will help me to match &#39;</span>
+        <span class="s1">&#39;an answer with several options of a single-choice question. &#39;</span>
+        <span class="s1">&#39;You are provided with a question, several options, and an answer, &#39;</span>
+        <span class="s1">&#39;and you need to find which option is most similar to the answer. &#39;</span>
+        <span class="s1">&#39;If the meaning of all options are significantly different from the answer, output Z. &#39;</span>
+        <span class="s1">&#39;Your should output a single uppercase character in A, B, C, D (if they are valid options), and Z. </span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Example 1: </span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Question: What is the main object in image?</span><span class="se">\n</span><span class="s1">Options: A. teddy bear B. rabbit C. cat D. dog</span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Answer: a cute teddy bear</span><span class="se">\n</span><span class="s1">Your output: A</span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Example 2: </span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Question: What is the main object in image?</span><span class="se">\n</span><span class="s1">Options: A. teddy bear B. rabbit C. cat D. dog</span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Answer: Spider</span><span class="se">\n</span><span class="s1">Your output: Z</span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;Example 3: </span><span class="se">\n</span><span class="s1">&#39;</span>
+        <span class="s1">&#39;</span><span class="si">{}</span><span class="s1">Answer: </span><span class="si">{}</span><span class="se">\n</span><span class="s1">Your output: &#39;</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">tmpl</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">prediction</span><span class="p">)</span></div>
+
+<span class="n">upload_pass_template</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;messages&quot;</span><span class="p">:[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="s2">&quot;content&quot;</span><span class="p">:[{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="s2">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;text&quot;</span><span class="p">}]}],</span><span class="s2">&quot;choices&quot;</span><span class="p">:[{</span><span class="s2">&quot;index&quot;</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="s2">&quot;message&quot;</span><span class="p">:{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span><span class="s2">&quot;content&quot;</span><span class="p">:[{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="s2">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;text&quot;</span><span class="p">}]}}],</span><span class="s2">&quot;model_prompt_tmpl&quot;</span><span class="p">:</span><span class="s2">&quot;&quot;</span><span class="p">,</span><span class="s2">&quot;model_prompt_placeholder&quot;</span><span class="p">:[]}</span>
+
+<div class="viewcode-block" id="upload_pass_format">
+<a class="viewcode-back" href="../../utils/utils.eval_mmmu.html#utils.eval_mmmu.upload_pass_format">[文档]</a>
+<span class="k">def</span> <span class="nf">upload_pass_format</span><span class="p">(</span><span class="n">query</span><span class="p">:</span><span class="nb">str</span><span class="p">,</span><span class="n">answer</span><span class="p">:</span><span class="nb">str</span><span class="p">,</span><span class="n">model_prompt_tmpl</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">is_return_dict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="o">|</span><span class="nb">dict</span><span class="p">:</span>
+    <span class="n">template</span><span class="o">=</span><span class="n">upload_pass_template</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="n">template</span><span class="p">[</span><span class="s2">&quot;messages&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;text&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">query</span>
+    <span class="k">if</span> <span class="n">model_prompt_tmpl</span><span class="p">:</span>
+      <span class="n">template</span><span class="p">[</span><span class="s1">&#39;model_prompt_tmpl&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">model_prompt_tmpl</span> 
+    <span class="n">template</span><span class="p">[</span><span class="s2">&quot;choices&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;message&quot;</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;text&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">answer</span>
+    <span class="k">if</span> <span class="n">is_return_dict</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">template</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">template</span><span class="p">,</span><span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="data_preprocess">
+<a class="viewcode-back" href="../../utils/utils.eval_mmmu.html#utils.eval_mmmu.data_preprocess">[文档]</a>
+<span class="k">def</span> <span class="nf">data_preprocess</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span> <span class="n">input_file</span><span class="p">,</span> <span class="n">save_dir</span><span class="o">=</span><span class="s1">&#39;step1&#39;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;裁判模型的数据预处理函数，用于将原始数据转换为模型可用的格式。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        input_path (str): 输入文件所在的目录路径。</span>
+<span class="sd">        input_file (str): 输入文件的名称。</span>
+<span class="sd">        save_dir (str): 输出文件的保存目录，默认为 &#39;step1&#39;。</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        None</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">output_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span><span class="n">save_dir</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">output_path</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">currrent_file_name</span> <span class="o">=</span> <span class="n">input_file</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">out_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_path</span><span class="p">,</span> <span class="n">currrent_file_name</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span> <span class="n">input_file</span><span class="p">),</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf8&#39;</span><span class="p">)]</span>
+    <span class="k">for</span> <span class="nb">id</span><span class="p">,</span> <span class="n">line_info</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
+        <span class="n">predict_result</span> <span class="o">=</span> <span class="n">line_info</span><span class="p">[</span><span class="s2">&quot;predict_result&quot;</span><span class="p">]</span>
+        <span class="n">query</span> <span class="o">=</span> <span class="n">line_info</span><span class="p">[</span><span class="s1">&#39;messages&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;content&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;text&#39;</span><span class="p">]</span>
+        <span class="n">query</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;Please select the correct answer from the options above. </span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">judge_instruction</span> <span class="o">=</span> <span class="n">build_prompt</span><span class="p">(</span><span class="n">query</span><span class="p">,</span><span class="n">predict_result</span><span class="p">)</span>
+        <span class="n">answer</span> <span class="o">=</span> <span class="n">line_info</span><span class="p">[</span><span class="s2">&quot;choices&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;message&quot;</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;text&quot;</span><span class="p">]</span>
+        <span class="n">item</span> <span class="o">=</span> <span class="n">upload_pass_format</span><span class="p">(</span><span class="n">judge_instruction</span><span class="p">,</span><span class="n">answer</span><span class="p">)</span>
+        <span class="n">item</span><span class="p">[</span><span class="s1">&#39;model_predict&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">predict_result</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">out_file</span><span class="p">,</span> <span class="s1">&#39;a&#39;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf8&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fw</span><span class="p">:</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">fw</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">fw</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span></div>
+
+<div class="viewcode-block" id="evaluation">
+<a class="viewcode-back" href="../../utils/utils.eval_mmmu.html#utils.eval_mmmu.evaluation">[文档]</a>
+<span class="k">def</span> <span class="nf">evaluation</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span><span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;模型评估函数，用于计算模型预测的准确率。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        input_path (str): 包含模型预测结果、裁判模型的预测结果和标准答案的文件路径。</span>
+<span class="sd">        **kwargs: 可选参数，用于扩展功能。</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        float: 模型的准确率（正确预测的数量除以总样本数）。</span>
+<span class="sd">    Examples:</span>
+<span class="sd">    &gt;&gt;&gt; score = evaluation(&quot;data/input.json&quot;)</span>
+<span class="sd">    &gt;&gt;&gt; print(score)</span>
+<span class="sd">    0.85</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span><span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">l</span><span class="p">)</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">f</span><span class="o">.</span><span class="n">readlines</span><span class="p">()]</span>
+    <span class="n">correct_num</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">out</span><span class="o">=</span><span class="p">[]</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">predict_result</span> <span class="o">=</span> <span class="n">line</span><span class="p">[</span><span class="s1">&#39;predict_result&#39;</span><span class="p">]</span>
+        <span class="n">answer</span> <span class="o">=</span> <span class="n">line</span><span class="p">[</span><span class="s2">&quot;choices&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;message&quot;</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;text&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">predict_result</span> <span class="o">==</span> <span class="n">answer</span> <span class="ow">or</span> <span class="n">answer</span> <span class="ow">in</span> <span class="n">predict_result</span><span class="p">:</span>
+            <span class="n">correct_num</span><span class="o">+=</span><span class="mi">1</span>
+            <span class="n">line</span><span class="p">[</span><span class="s1">&#39;eval_result&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">line</span><span class="p">[</span><span class="s1">&#39;eval_result&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">line</span><span class="p">))</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf8&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">out</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">o</span><span class="p">,</span><span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">+</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">correct_num</span> <span class="o">=</span> <span class="n">correct_num</span><span class="o">/</span><span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="o">!=</span><span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s1">&#39;acc&#39;</span><span class="p">:</span><span class="n">correct_num</span><span class="p">}</span></div>
+
+    
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; 版权所有 2025, Damien。</p>
+  </div>
+
+  利用 <a href="https://www.sphinx-doc.org/">Sphinx</a> 构建，使用的 
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">主题</a>
+    由 <a href="https://readthedocs.org">Read the Docs</a> 开发.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,387 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="zh-CN" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>inference.preprocess &mdash; llm-eval 2.0.0 文档</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=b15d7ad8"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../../_static/translations.js?v=beaddf03"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="搜索" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            llm-eval
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="搜索文档" aria-label="搜索文档" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="导航菜单">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../main.html">main</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../inference.html">inference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../tools.html">tools</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../utils.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="移动版导航菜单" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">llm-eval</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="页面导航">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">模块代码</a></li>
+      <li class="breadcrumb-item active">inference.preprocess</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>inference.preprocess 源代码</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">transformers</span> <span class="kn">import</span> <span class="n">AutoTokenizer</span><span class="p">,</span> <span class="n">PreTrainedTokenizer</span>
+
+
+<span class="n">PROMPT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="s1">&#39;</span><span class="si">{}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Hithink&#39;</span><span class="p">:</span> <span class="s1">&#39;Human: </span><span class="si">{}</span><span class="s1"> </span><span class="se">\n\n</span><span class="s1">Assistant:&#39;</span><span class="p">,</span>
+    <span class="s2">&quot;qwen&quot;</span><span class="p">:</span><span class="s2">&quot;&lt;|im_start|&gt;user</span><span class="se">\n</span><span class="si">{}</span><span class="s2">&lt;|im_end|&gt;</span><span class="se">\n</span><span class="s2">&lt;|im_start|&gt;assistant</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="s1">&#39;llama3&#39;</span><span class="p">:</span><span class="s1">&#39;&lt;|begin_of_text|&gt;&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="s1">You are a helpful assistant.&lt;|eot_id|&gt;</span><span class="se">\n</span><span class="s1">&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="si">{}</span><span class="s1">&lt;|eot_id|&gt;</span><span class="se">\n</span><span class="s1">&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama2&#39;</span><span class="p">:</span><span class="s1">&#39;User:</span><span class="se">\n\n</span><span class="si">{}</span><span class="s1">Assistant:</span><span class="se">\n\n</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;chat_template&#39;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="s1">&#39;deepseek&#39;</span><span class="p">:</span><span class="s1">&#39;&lt;｜begin▁of▁sentence｜&gt;User: </span><span class="si">{s_in}</span><span class="se">\n</span><span class="s1">Assistant: &#39;</span>
+<span class="p">}</span>
+
+
+<span class="n">MESSAGESPROMPT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="s1">&#39;</span><span class="si">{system}{s_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Hithink&#39;</span><span class="p">:</span> <span class="s1">&#39;&lt;&lt;SYS&gt;&gt;</span><span class="se">\n</span><span class="si">{system}</span><span class="se">\n</span><span class="s1">&lt;&lt;/SYS&gt;&gt;</span><span class="se">\n\n</span><span class="si">{s_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;qwen&#39;</span><span class="p">:</span> <span class="s1">&#39;&lt;|im_start|&gt;system</span><span class="se">\n</span><span class="si">{system}</span><span class="s1">&lt;|im_end|&gt;</span><span class="se">\n\n</span><span class="si">{s_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama3&#39;</span><span class="p">:</span><span class="s1">&#39;&lt;|begin_of_text|&gt;&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="si">{system}</span><span class="s1">&lt;|eot_id|&gt;</span><span class="si">{s_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama2&#39;</span><span class="p">:</span><span class="s1">&#39;</span><span class="si">{system}</span><span class="se">\n\n</span><span class="si">{s_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;deepseek&#39;</span><span class="p">:</span><span class="s1">&#39;&lt;｜begin▁of▁sentence｜&gt;</span><span class="si">{system}</span><span class="se">\n\n</span><span class="si">{s_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">HumanPROMPT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="s1">&#39;</span><span class="si">{human_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Hithink&#39;</span><span class="p">:</span> <span class="s1">&#39;Human:</span><span class="si">{human_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;qwen&#39;</span><span class="p">:</span> <span class="s1">&#39;&lt;|im_start|&gt;user</span><span class="se">\n</span><span class="si">{human_in}</span><span class="se">\n</span><span class="s1">&lt;|im_end|&gt;&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama3&#39;</span><span class="p">:</span><span class="s1">&#39;&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="si">{human_in}</span><span class="s1">&lt;|eot_id|&gt;&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama2&#39;</span><span class="p">:</span><span class="s1">&#39;User:</span><span class="se">\n\n</span><span class="si">{human_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;deepseek&#39;</span><span class="p">:</span><span class="s1">&#39;User: </span><span class="si">{human_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">AssistantPROMPT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="s1">&#39;</span><span class="si">{ai_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Hithink&#39;</span><span class="p">:</span> <span class="s1">&#39;Assistant:</span><span class="si">{ai_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;qwen&#39;</span><span class="p">:</span> <span class="s1">&#39;&lt;|im_start|&gt;assistant</span><span class="se">\n</span><span class="si">{ai_in}</span><span class="se">\n</span><span class="s1">&lt;|im_end|&gt;&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama3&#39;</span><span class="p">:</span><span class="s1">&#39;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="si">{ai_in}</span><span class="s1">&lt;|eot_id|&gt;&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama2&#39;</span><span class="p">:</span><span class="s1">&#39;Assistant:</span><span class="se">\n\n</span><span class="si">{ai_in}</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;deepseek&#39;</span><span class="p">:</span><span class="s1">&#39;Assistant: </span><span class="si">{ai_in}</span><span class="s1">&lt;｜end▁of▁sentence｜&gt;&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">ContinuePROMPT</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;none&#39;</span><span class="p">:</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Hithink&#39;</span><span class="p">:</span> <span class="s1">&#39;Assistant:&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;qwen&#39;</span><span class="p">:</span> <span class="s1">&#39;&lt;|im_start|&gt;assistant</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama3&#39;</span><span class="p">:</span> <span class="s1">&#39;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;</span><span class="se">\n\n</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;llama2&#39;</span><span class="p">:</span><span class="s1">&#39;Assistant:</span><span class="se">\n\n</span><span class="s1">&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;deepseek&#39;</span><span class="p">:</span><span class="s1">&#39;Assistant: &#39;</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<div class="viewcode-block" id="get_prompt">
+<a class="viewcode-back" href="../../inference/inference.preprocess.html#inference.preprocess.get_prompt">[文档]</a>
+<span class="k">def</span> <span class="nf">get_prompt</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">q</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">prompt_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">PROMPT</span><span class="p">[</span><span class="n">prompt_type</span><span class="p">]</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^Human[:：]\s*&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\s*Assistant[:：]\s*$&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+        <span class="c1"># q = re.sub(r&#39;\n*[答A][:：] *$&#39;, &#39;&#39;, q)</span>
+        <span class="k">return</span> <span class="n">PROMPT</span><span class="p">[</span><span class="n">prompt_type</span><span class="p">]</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">s_in</span> <span class="o">=</span> <span class="p">[{</span><span class="s1">&#39;role&#39;</span><span class="p">:</span> <span class="s1">&#39;user&#39;</span><span class="p">,</span> <span class="s1">&#39;content&#39;</span><span class="p">:</span> <span class="n">q</span><span class="p">}]</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span><span class="n">s_in</span><span class="p">,</span> <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">prompt</span></div>
+
+
+
+<div class="viewcode-block" id="process_messages">
+<a class="viewcode-back" href="../../inference/inference.preprocess.html#inference.preprocess.process_messages">[文档]</a>
+<span class="k">def</span> <span class="nf">process_messages</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">sample</span><span class="p">,</span> <span class="n">prompt_type</span><span class="p">,</span> <span class="n">is_multi_modal</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    将messages格式的数据拼接成完整的输入</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">messages</span> <span class="o">=</span> <span class="n">sample</span><span class="p">[</span><span class="s1">&#39;messages&#39;</span><span class="p">]</span>
+    <span class="n">text_messages</span> <span class="o">=</span> <span class="nb">list</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">turn</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">turn</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">],</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">text</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">x</span><span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">turn</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span> <span class="k">if</span> <span class="n">x</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;text&#39;</span><span class="p">])</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">turn</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">],</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="n">text</span> <span class="o">=</span> <span class="n">turn</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&quot;content&quot; must be either list or str: </span><span class="si">{</span><span class="n">turn</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="n">text_messages</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s1">&#39;role&#39;</span><span class="p">:</span> <span class="n">turn</span><span class="p">[</span><span class="s1">&#39;role&#39;</span><span class="p">],</span> <span class="s1">&#39;content&#39;</span><span class="p">:</span> <span class="n">text</span><span class="p">})</span>
+        <span class="k">if</span> <span class="n">t</span> <span class="o">:=</span> <span class="n">turn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;tool_calls&#39;</span><span class="p">):</span>
+            <span class="n">text_messages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="s1">&#39;tool_calls&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">t</span>
+
+    <span class="k">if</span> <span class="n">text_messages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="s1">&#39;role&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;assistant&#39;</span><span class="p">:</span>
+        <span class="c1"># 若最后是答案则去掉</span>
+        <span class="n">text_messages</span> <span class="o">=</span> <span class="n">text_messages</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">messages</span> <span class="o">=</span> <span class="n">messages</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># 替换最后一轮（PaaS平台格式）</span>
+    <span class="k">if</span> <span class="s1">&#39;model_prompt_tmpl&#39;</span> <span class="ow">in</span> <span class="n">sample</span> <span class="ow">and</span> <span class="n">sample</span><span class="p">[</span><span class="s1">&#39;model_prompt_tmpl&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">text_messages</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="s1">&#39;role&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;user&#39;</span><span class="p">:</span>
+        <span class="n">model_prompt_tmpl</span> <span class="o">=</span> <span class="n">sample</span><span class="p">[</span><span class="s1">&#39;model_prompt_tmpl&#39;</span><span class="p">]</span>
+        <span class="n">model_prompt_placeholder</span> <span class="o">=</span> <span class="n">sample</span><span class="p">[</span><span class="s1">&#39;model_prompt_placeholder&#39;</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">placeholder_item</span> <span class="ow">in</span> <span class="n">model_prompt_placeholder</span><span class="p">:</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">placeholder_item</span><span class="p">[</span><span class="s1">&#39;key&#39;</span><span class="p">]</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">placeholder_item</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">]</span>
+            <span class="n">model_prompt_tmpl</span> <span class="o">=</span> <span class="n">model_prompt_tmpl</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;{{&#39;</span> <span class="o">+</span> <span class="s1">&#39;</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;}}&#39;</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+        <span class="n">text_messages</span> <span class="o">=</span> <span class="n">text_messages</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="p">[{</span><span class="s1">&#39;role&#39;</span><span class="p">:</span> <span class="s1">&#39;user&#39;</span><span class="p">,</span> <span class="s1">&#39;content&#39;</span><span class="p">:</span> <span class="n">model_prompt_tmpl</span><span class="p">}]</span>
+        <span class="c1"># TODO: messages的最后一轮是否需要替换？messages在输入多模态数据时会用到，暂不替换</span>
+
+    <span class="k">if</span> <span class="n">prompt_type</span> <span class="o">!=</span> <span class="s1">&#39;chat_template&#39;</span> <span class="ow">and</span> <span class="n">prompt_type</span> <span class="ow">in</span> <span class="n">PROMPT</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+        <span class="k">assert</span> <span class="ow">not</span> <span class="n">is_multi_modal</span><span class="p">,</span> <span class="s1">&#39;输入包含多模态数据，只支持prompt_type=&quot;chat_template&quot;！&#39;</span>
+        <span class="k">if</span> <span class="n">text_messages</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;role&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;system&#39;</span><span class="p">:</span>
+            <span class="n">system_str</span> <span class="o">=</span> <span class="n">text_messages</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;content&#39;</span><span class="p">]</span>
+            <span class="n">text_messages</span> <span class="o">=</span> <span class="n">text_messages</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">system_str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+        <span class="k">if</span> <span class="n">system_str</span><span class="p">:</span>
+            <span class="n">final_template</span> <span class="o">=</span> <span class="n">MESSAGESPROMPT</span><span class="p">[</span><span class="n">prompt_type</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{system}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">system_str</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">final_template</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="si">{s_in}</span><span class="s2">&quot;</span>
+
+        <span class="n">s_in_list</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">input_ele</span> <span class="ow">in</span> <span class="n">text_messages</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">input_ele</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;user&quot;</span><span class="p">:</span>
+                <span class="n">s_in_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">HumanPROMPT</span><span class="p">[</span><span class="n">prompt_type</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{human_in}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">input_ele</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]))</span>
+            <span class="k">elif</span> <span class="n">input_ele</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;assistant&quot;</span><span class="p">:</span>
+                <span class="n">s_in_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">AssistantPROMPT</span><span class="p">[</span><span class="n">prompt_type</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{ai_in}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">input_ele</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]))</span>
+        <span class="n">s_in</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">s_in_list</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">ContinuePROMPT</span><span class="p">[</span><span class="n">prompt_type</span><span class="p">]</span>
+
+        <span class="n">final_prompt</span> <span class="o">=</span> <span class="n">final_template</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{s_in}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">s_in</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">final_prompt</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span>
+            <span class="n">messages</span> <span class="k">if</span> <span class="n">is_multi_modal</span> <span class="k">else</span> <span class="n">text_messages</span><span class="p">,</span>
+            <span class="n">tools</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">sample</span><span class="p">[</span><span class="s1">&#39;tools&#39;</span><span class="p">])</span> <span class="k">if</span> <span class="s1">&#39;tools&#39;</span> <span class="ow">in</span> <span class="n">sample</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">final_prompt</span></div>
+
+
+
+<div class="viewcode-block" id="check_for_multi_modal">
+<a class="viewcode-back" href="../../inference/inference.preprocess.html#inference.preprocess.check_for_multi_modal">[文档]</a>
+<span class="k">def</span> <span class="nf">check_for_multi_modal</span><span class="p">(</span><span class="n">messages</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    判断在messages中是否有multi-modal数据</span>
+<span class="sd">    如果有的话进行处理并返回 True, List[Image path], List[Audio path]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># 处理所有 &#39;user&#39; 消息，去除其中的jpg和url </span>
+    <span class="n">user_message</span> <span class="o">=</span> <span class="p">[</span><span class="n">msg</span> <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">[</span><span class="s1">&#39;messages&#39;</span><span class="p">]</span> <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s1">&#39;role&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;user&#39;</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">user_message</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+
+    <span class="c1"># 检查是否有 type 不为 &#39;text&#39; 的内容</span>
+    <span class="n">images</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">audios</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">user_message</span><span class="p">:</span>
+        <span class="c1"># 检查 content 是否存在且为列表，否则的话，这是一条纯文本格式的消息</span>
+        <span class="k">if</span> <span class="s1">&#39;content&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">msg</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">],</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">msg</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;image_url&#39;</span><span class="p">:</span>
+                <span class="n">images</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;image_url&#39;</span><span class="p">][</span><span class="s1">&#39;url&#39;</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;type&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;audio_url&#39;</span><span class="p">:</span>
+                <span class="n">audios</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;audio_url&#39;</span><span class="p">][</span><span class="s1">&#39;url&#39;</span><span class="p">])</span>
+    <span class="n">is_multi_modal</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">images</span> <span class="ow">or</span> <span class="n">audios</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">is_multi_modal</span><span class="p">,</span> <span class="n">images</span><span class="p">,</span> <span class="n">audios</span></div>
+
+
+
+<div class="viewcode-block" id="convert_sample_to_input_ids">
+<a class="viewcode-back" href="../../inference/inference.preprocess.html#inference.preprocess.convert_sample_to_input_ids">[文档]</a>
+<span class="k">def</span> <span class="nf">convert_sample_to_input_ids</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">prompt_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">:</span> <span class="n">PreTrainedTokenizer</span><span class="p">):</span>
+    <span class="k">if</span> <span class="s1">&#39;token_ids&#39;</span> <span class="ow">in</span> <span class="n">s</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">s</span><span class="p">[</span><span class="s1">&#39;token_ids&#39;</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="s1">&#39;messages&#39;</span> <span class="ow">in</span> <span class="n">s</span><span class="p">:</span>  <span class="c1"># 多轮对话格式</span>
+        <span class="n">is_multi_modal</span><span class="p">,</span> <span class="n">images</span><span class="p">,</span> <span class="n">audios</span> <span class="o">=</span> <span class="n">check_for_multi_modal</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+        <span class="n">s_in</span> <span class="o">=</span> <span class="n">process_messages</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">s</span><span class="p">,</span> <span class="n">prompt_type</span><span class="p">,</span> <span class="n">is_multi_modal</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">is_multi_modal</span><span class="p">:</span>
+            <span class="n">inputs</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;prompt&quot;</span><span class="p">:</span> <span class="n">s_in</span><span class="p">,</span>
+                <span class="s2">&quot;multi_modal_data&quot;</span><span class="p">:</span> <span class="p">{}</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="n">images</span><span class="p">:</span>
+                <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;multi_modal_data&quot;</span><span class="p">][</span><span class="s2">&quot;image&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">images</span>
+            <span class="k">if</span> <span class="n">audios</span><span class="p">:</span>
+                <span class="n">inputs</span><span class="p">[</span><span class="s2">&quot;multi_modal_data&quot;</span><span class="p">][</span><span class="s2">&quot;audio&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">audios</span>
+            <span class="k">return</span> <span class="n">inputs</span>
+
+    <span class="k">elif</span> <span class="s1">&#39;target&#39;</span> <span class="ow">in</span> <span class="n">s</span><span class="p">:</span>  <span class="c1"># 输入格式：input/source + target</span>
+        <span class="n">s_in</span> <span class="o">=</span> <span class="n">s</span><span class="p">[</span><span class="s1">&#39;source&#39;</span><span class="p">]</span> <span class="k">if</span> <span class="s1">&#39;source&#39;</span> <span class="ow">in</span> <span class="n">s</span> <span class="k">else</span> <span class="n">s</span><span class="p">[</span><span class="s1">&#39;input&#39;</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>  <span class="c1"># 输入格式：instruction + input + output</span>
+        <span class="n">s_in</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;instruction&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">s_in</span><span class="p">:</span>
+            <span class="n">s_in</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;system&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;input&#39;</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">s_in</span><span class="p">:</span>
+                <span class="n">s_in</span> <span class="o">+=</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span>
+            <span class="n">s_in</span> <span class="o">+=</span> <span class="n">s</span><span class="p">[</span><span class="s1">&#39;input&#39;</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">prompt_type</span> <span class="ow">in</span> <span class="n">PROMPT</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+        <span class="k">if</span> <span class="s2">&quot;messages&quot;</span> <span class="ow">in</span> <span class="n">s</span> <span class="ow">or</span> <span class="s2">&quot;model_prompt_tmpl&quot;</span> <span class="ow">in</span> <span class="n">s</span><span class="p">:</span>
+            <span class="c1"># messages 格式</span>
+            <span class="n">prompt</span> <span class="o">=</span> <span class="n">s_in</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">s_in</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="n">s_in</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">s_in</span><span class="p">)</span>
+            <span class="n">prompt</span> <span class="o">=</span> <span class="n">get_prompt</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">,</span> <span class="n">s_in</span><span class="p">,</span> <span class="n">prompt_type</span><span class="p">)</span>
+        <span class="n">input_ids</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">prompt</span><span class="p">,</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span> 
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;prompt type must be in: </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">PROMPT</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span>
+
+    <span class="k">return</span> <span class="n">input_ids</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">tokenizer</span> <span class="o">=</span> <span class="n">AutoTokenizer</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s1">&#39;/mnt/data/model/chat/Qwen2.5-0.5B-Instruct&#39;</span><span class="p">)</span>
+    <span class="n">s</span><span class="o">=</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span><span class="s2">&quot;67b819d309a5eb68db819961&quot;</span><span class="p">,</span><span class="s2">&quot;dataset_id&quot;</span><span class="p">:</span><span class="s2">&quot;67b817607ed99b70c0c19cbc&quot;</span><span class="p">,</span><span class="s2">&quot;version_id&quot;</span><span class="p">:</span><span class="s2">&quot;67b819d309a5eb68db819943&quot;</span><span class="p">,</span><span class="s2">&quot;task_id&quot;</span><span class="p">:</span><span class="s2">&quot;67b819b609a5eb68db8198cf&quot;</span><span class="p">,</span><span class="s2">&quot;query_id&quot;</span><span class="p">:</span><span class="s2">&quot;67b819bb09a5eb68db819915&quot;</span><span class="p">,</span><span class="s2">&quot;self_or_open_ai&quot;</span><span class="p">:</span><span class="s2">&quot;0&quot;</span><span class="p">,</span><span class="s2">&quot;data_tag&quot;</span><span class="p">:{</span><span class="s2">&quot;cluster&quot;</span><span class="p">:[</span><span class="s2">&quot;aime24&quot;</span><span class="p">]},</span><span class="s2">&quot;query&quot;</span><span class="p">:</span><span class="s2">&quot;Please reason step by step, and put your final answer within </span><span class="se">\\</span><span class="s2">boxed</span><span class="si">{}</span><span class="s2">.</span><span class="se">\n</span><span class="s2"> Question:Among the 900 residents of Aimeville, there are 195 who own a diamond ring, 367 who own a set of golf clubs, and 562 who own a garden spade. In addition, each of the 900 residents owns a bag of candy hearts. There are 437 residents who own exactly two of these things, and 234 residents who own exactly three of these things. Find the number of residents of Aimeville who own all four of these things.&quot;</span><span class="p">,</span><span class="s2">&quot;messages&quot;</span><span class="p">:[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="s2">&quot;content&quot;</span><span class="p">:[{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span><span class="s2">&quot;Please reason step by step, and put your final answer within </span><span class="se">\\</span><span class="s2">boxed</span><span class="si">{}</span><span class="s2">.</span><span class="se">\n</span><span class="s2"> Question:Among the 900 residents of Aimeville, there are 195 who own a diamond ring, 367 who own a set of golf clubs, and 562 who own a garden spade. In addition, each of the 900 residents owns a bag of candy hearts. There are 437 residents who own exactly two of these things, and 234 residents who own exactly three of these things. Find the number of residents of Aimeville who own all four of these things.&quot;</span><span class="p">,</span><span class="s2">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;text&quot;</span><span class="p">}]}],</span><span class="s2">&quot;choices&quot;</span><span class="p">:[{</span><span class="s2">&quot;index&quot;</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="s2">&quot;message&quot;</span><span class="p">:{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span><span class="s2">&quot;content&quot;</span><span class="p">:[{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span><span class="s2">&quot;73&quot;</span><span class="p">,</span><span class="s2">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;text&quot;</span><span class="p">}]}}],</span><span class="s2">&quot;model_prompt_tmpl&quot;</span><span class="p">:</span><span class="s2">&quot;{{prompt}}&quot;</span><span class="p">,</span><span class="s2">&quot;model_prompt_placeholder&quot;</span><span class="p">:[{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span><span class="s2">&quot;prompt&quot;</span><span class="p">,</span><span class="s2">&quot;value&quot;</span><span class="p">:</span><span class="s2">&quot;Please reason step by step, and put your final answer within </span><span class="se">\\</span><span class="s2">boxed</span><span class="si">{}</span><span class="s2">.</span><span class="se">\n</span><span class="s2"> Question:Among the 900 residents of Aimeville, there are 195 who own a diamond ring, 367 who own a set of golf clubs, and 562 who own a garden spade. In addition, each of the 900 residents owns a bag of candy hearts. There are 437 residents who own exactly two of these things, and 234 residents who own exactly three of these things. Find the number of residents of Aimeville who own all four of these things.&quot;</span><span class="p">}],</span><span class="s2">&quot;check_user&quot;</span><span class="p">:</span><span class="s2">&quot;auto_import&quot;</span><span class="p">,</span><span class="s2">&quot;check_time&quot;</span><span class="p">:</span><span class="s2">&quot;2025-02-21 14:14:30&quot;</span><span class="p">,</span><span class="s2">&quot;create_at&quot;</span><span class="p">:</span><span class="s2">&quot;2025-02-21 14:14:43&quot;</span><span class="p">,</span><span class="s2">&quot;create_by&quot;</span><span class="p">:</span><span class="s2">&quot;liyunfei@myhexin.com&quot;</span><span class="p">,</span><span class="s2">&quot;review_user&quot;</span><span class="p">:</span><span class="s2">&quot;liyunfei@myhexin.com&quot;</span><span class="p">,</span><span class="s2">&quot;review_time&quot;</span><span class="p">:</span><span class="s2">&quot;2025-02-21 14:14:30&quot;</span><span class="p">}</span>
+    <span class="n">s2</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;Q1&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span>
+                <span class="p">}</span>
+            <span class="p">]</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;response 1&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span>
+                <span class="p">}</span>
+            <span class="p">]</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;q2&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span>
+                <span class="p">}</span>
+            <span class="p">]</span>
+        <span class="p">}</span>
+    <span class="p">],</span>
+    <span class="s2">&quot;choices&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;index&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">[</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;73&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span>
+                    <span class="p">}</span>
+                <span class="p">]</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+    <span class="p">],</span>
+    <span class="s2">&quot;model_prompt_tmpl&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;model_prompt_placeholder&quot;</span><span class="p">:</span> <span class="p">[]</span>
+<span class="p">}</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;unit test 1&#39;</span><span class="p">)</span>
+    <span class="n">input_ids</span> <span class="o">=</span> <span class="n">convert_sample_to_input_ids</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="s1">&#39;chat_template&#39;</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">input_ids</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;unit test 2&#39;</span><span class="p">)</span>
+    <span class="n">input_ids</span> <span class="o">=</span> <span class="n">convert_sample_to_input_ids</span><span class="p">(</span><span class="n">s2</span><span class="p">,</span> <span class="s1">&#39;chat_template&#39;</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">input_ids</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">input_ids</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; 版权所有 2025, Damien。</p>
+  </div>
+
+  利用 <a href="https://www.sphinx-doc.org/">Sphinx</a> 构建，使用的 
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">主题</a>
+    由 <a href="https://readthedocs.org">Read the Docs</a> 开发.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

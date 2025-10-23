@@ -1,0 +1,370 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="zh-CN" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>inference.predict_multi_gpu &mdash; llm-eval 2.0.0 文档</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=b15d7ad8"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../../_static/translations.js?v=beaddf03"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="搜索" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            llm-eval
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="搜索文档" aria-label="搜索文档" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="导航菜单">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../main.html">main</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../inference.html">inference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../tools.html">tools</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../utils.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="移动版导航菜单" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">llm-eval</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="页面导航">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">模块代码</a></li>
+      <li class="breadcrumb-item active">inference.predict_multi_gpu</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>inference.predict_multi_gpu 源代码</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">argparse</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+<span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">import</span> <span class="nn">signal</span>
+
+<span class="kn">from</span> <span class="nn">subprocess</span> <span class="kn">import</span> <span class="n">Popen</span><span class="p">,</span> <span class="n">PIPE</span><span class="p">,</span> <span class="n">TimeoutExpired</span>
+
+<span class="n">cur_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
+
+<div class="viewcode-block" id="terminate_subprocess">
+<a class="viewcode-back" href="../../inference/inference.predict_multi_gpu.html#inference.predict_multi_gpu.terminate_subprocess">[文档]</a>
+<span class="k">def</span> <span class="nf">terminate_subprocess</span><span class="p">(</span><span class="n">proc</span><span class="p">:</span> <span class="n">Popen</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="p">[</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGINT</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">]:</span>
+        <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">2</span><span class="p">):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">proc</span><span class="o">.</span><span class="n">send_signal</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="c1"># .terminate()</span>
+                <span class="n">proc</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+                <span class="k">return</span>
+            <span class="k">except</span> <span class="n">TimeoutExpired</span><span class="p">:</span>
+                <span class="k">continue</span>
+    <span class="n">proc</span><span class="o">.</span><span class="n">kill</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="print_subprocess_out_err">
+<a class="viewcode-back" href="../../inference/inference.predict_multi_gpu.html#inference.predict_multi_gpu.print_subprocess_out_err">[文档]</a>
+<span class="k">def</span> <span class="nf">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc</span><span class="p">):</span>
+    <span class="n">outs</span><span class="p">,</span> <span class="n">errs</span> <span class="o">=</span> <span class="n">proc</span><span class="o">.</span><span class="n">communicate</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">outs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">outs</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span>
+    <span class="k">if</span> <span class="n">errs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">errs</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span></div>
+
+
+
+<div class="viewcode-block" id="is_gpu_idle">
+<a class="viewcode-back" href="../../inference/inference.predict_multi_gpu.html#inference.predict_multi_gpu.is_gpu_idle">[文档]</a>
+<span class="k">def</span> <span class="nf">is_gpu_idle</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;有任意一块GPU使用率为0，则返回True&quot;&quot;&quot;</span>
+    <span class="n">gpu_info</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">popen</span><span class="p">(</span><span class="s1">&#39;nvidia-smi | grep MiB&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">gpu_info</span><span class="p">:</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[0-9]+%&#39;</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">m</span> <span class="ow">and</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;0%&#39;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span></div>
+
+
+
+<div class="viewcode-block" id="run_predict_multi_gpu">
+<a class="viewcode-back" href="../../inference/inference.predict_multi_gpu.html#inference.predict_multi_gpu.run_predict_multi_gpu">[文档]</a>
+<span class="k">def</span> <span class="nf">run_predict_multi_gpu</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    用于多卡推理，跑文本生成任务。</span>
+<span class="sd">    基于vllm，启动多个推理进程（predict_async.py），并通过统一的data_server实现数据的异步读取和写入，以及推理进程之间的负载均衡。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># ----------------------- 启动 data server（负载数据读写）---------------------------</span>
+    <span class="n">cmd_data_server</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s1">&#39;python&#39;</span><span class="p">,</span> <span class="s1">&#39;</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;data_server.py&quot;</span><span class="p">)),</span>
+        <span class="s1">&#39;--tokenizer&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
+        <span class="s1">&#39;--preprocess&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">preprocess</span><span class="p">,</span>
+        <span class="s1">&#39;--prompt&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">prompt</span><span class="p">,</span>
+        <span class="s1">&#39;--output_key&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">output_key</span><span class="p">,</span>
+        <span class="s1">&#39;--output_type&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">output_type</span><span class="p">,</span>
+        <span class="s1">&#39;--port&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">server_port</span><span class="p">),</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">data</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s1">&#39;--data&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="s1">&#39;--data_type&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">data_type</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s1">&#39;--output_dir&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">max_length</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s1">&#39;--max_length&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">max_length</span><span class="p">)])</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">stop</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s1">&#39;--stop&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">stop</span><span class="p">])</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">reuse</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s1">&#39;--reuse&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">overwrite</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s1">&#39;--overwrite&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">no_order</span><span class="p">:</span>
+        <span class="n">cmd_data_server</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s1">&#39;--no_order&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Starting:&#39;</span><span class="p">,</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd_data_server</span><span class="p">))</span>
+    <span class="n">proc_data_server</span> <span class="o">=</span> <span class="n">Popen</span><span class="p">(</span><span class="n">cmd_data_server</span><span class="p">)</span>  <span class="c1"># , stdout=PIPE, stderr=PIPE)</span>
+
+    <span class="c1"># -------------------------- 启动推理进程（多个）------------------------------------</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+        <span class="n">gpus</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">device</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">gpus</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="nb">range</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">device_count</span><span class="p">())))</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">gpus</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">args</span><span class="o">.</span><span class="n">tensor_parallel</span><span class="p">,</span> <span class="s1">&#39;GPU数量不足，请确认GPU数量大于 tensor_parallel 数值！&#39;</span>
+
+    <span class="n">proc_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">proc_data_server</span><span class="p">]</span>
+    <span class="n">cmd_predict_list</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">gpus</span><span class="p">)</span> <span class="o">//</span> <span class="n">args</span><span class="o">.</span><span class="n">tensor_parallel</span><span class="p">):</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="s1">&#39;,&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">gpus</span><span class="p">[</span><span class="n">i</span> <span class="o">*</span> <span class="n">args</span><span class="o">.</span><span class="n">tensor_parallel</span> <span class="p">:</span> <span class="p">(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">args</span><span class="o">.</span><span class="n">tensor_parallel</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">backend</span> <span class="o">==</span> <span class="s1">&#39;vllm&#39;</span><span class="p">:</span>
+            <span class="n">predict_script</span> <span class="o">=</span> <span class="s1">&#39;predict_async.py&#39;</span>
+        <span class="k">elif</span> <span class="n">args</span><span class="o">.</span><span class="n">backend</span> <span class="o">==</span> <span class="s1">&#39;hf&#39;</span><span class="p">:</span>
+            <span class="n">predict_script</span> <span class="o">=</span> <span class="s1">&#39;predict_async_hf.py&#39;</span>
+        <span class="n">cmd_predict</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="s1">&#39;python&#39;</span><span class="p">,</span> <span class="s1">&#39;</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="n">predict_script</span><span class="p">)),</span>
+            <span class="s1">&#39;--server_addr&#39;</span><span class="p">,</span> <span class="s1">&#39;127.0.0.1&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;--server_port&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">server_port</span><span class="p">),</span>
+            <span class="s1">&#39;--model&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">model</span><span class="p">,</span>
+            <span class="s1">&#39;--device&#39;</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span>
+            <span class="s1">&#39;--output_type&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">output_type</span><span class="p">,</span>
+            <span class="s1">&#39;--max_new_tokens&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">max_new_tokens</span><span class="p">),</span>
+            <span class="s1">&#39;--temperature&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">temperature</span><span class="p">),</span>
+            <span class="s1">&#39;--presence_penalty&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">presence_penalty</span><span class="p">),</span>
+        <span class="p">]</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">max_length</span><span class="p">:</span>
+            <span class="n">cmd_predict</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s1">&#39;--max_length&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">max_length</span><span class="p">)])</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">stop</span><span class="p">:</span>
+            <span class="n">cmd_predict</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="s1">&#39;--stop&#39;</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">stop</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">low_vram</span><span class="p">:</span>
+            <span class="n">cmd_predict</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s1">&#39;--low_vram&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">manual_start</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Manual start:&#39;</span><span class="p">,</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd_predict</span><span class="p">))</span>
+            <span class="n">cmd_predict_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cmd_predict</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Starting:&#39;</span><span class="p">,</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd_predict</span><span class="p">))</span>
+            <span class="n">proc_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Popen</span><span class="p">(</span><span class="n">cmd_predict</span><span class="p">))</span>  <span class="c1"># , stdout=PIPE, stderr=PIPE))</span>
+
+    <span class="c1"># -------------------------- 推理过程中，打印信息 -----------------------------------</span>
+
+    <span class="n">n_pred_0</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+    <span class="n">session</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">log_interval</span><span class="p">)</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">r</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;http://127.0.0.1:</span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">server_port</span><span class="si">}</span><span class="s1">/info&#39;</span><span class="p">)</span>
+            <span class="k">except</span> <span class="n">requests</span><span class="o">.</span><span class="n">exceptions</span><span class="o">.</span><span class="n">ConnectionError</span><span class="p">:</span>
+                <span class="k">pass</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">r</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+                <span class="k">except</span> <span class="n">requests</span><span class="o">.</span><span class="n">exceptions</span><span class="o">.</span><span class="n">JSONDecodeError</span><span class="p">:</span>
+                    <span class="n">terminate_subprocess</span><span class="p">(</span><span class="n">proc_data_server</span><span class="p">)</span>
+                    <span class="n">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc_data_server</span><span class="p">)</span>
+                    <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;Data server 异常&#39;</span>
+                    <span class="k">break</span>
+                <span class="n">samples_per_sec</span> <span class="o">=</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_pred&#39;</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;t_curr&#39;</span><span class="p">]</span> <span class="o">-</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;t_start&#39;</span><span class="p">])</span>
+                <span class="n">tokens_per_sec</span> <span class="o">=</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_token&#39;</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;t_curr&#39;</span><span class="p">]</span> <span class="o">-</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;t_start&#39;</span><span class="p">])</span>
+                <span class="n">s_time</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;[</span><span class="si">{</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S&quot;</span><span class="p">)</span><span class="si">}</span><span class="s1">] &#39;</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">run_forever</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_pred&#39;</span><span class="p">]:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="n">s_time</span> <span class="o">+</span> <span class="s1">&#39;loading...&#39;</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span> <span class="o">&gt;</span> <span class="mi">1800</span><span class="p">:</span>  <span class="c1"># 30分钟没有加载完成，OOM？</span>
+                        <span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">proc_list</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+                            <span class="n">terminate_subprocess</span><span class="p">(</span><span class="n">proc</span><span class="p">)</span>
+                            <span class="n">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc</span><span class="p">)</span>
+                        <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;30分钟没有加载完成，超时退出&#39;</span>
+                        <span class="k">break</span>
+                <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">manual_start</span> <span class="ow">and</span> <span class="n">cmd_predict_list</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_pred&#39;</span><span class="p">]:</span>
+                    <span class="k">pass</span>  <span class="c1"># 推理进程可能还没启动，不打印日志</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">s_skipped</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;, skipped </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;n_skip&quot;</span><span class="p">]</span><span class="si">}</span><span class="s1"> samples &gt;= max len&#39;</span> <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;n_skip&quot;</span><span class="p">]</span> <span class="k">else</span> <span class="s1">&#39;&#39;</span>
+                    <span class="nb">print</span><span class="p">(</span>
+                        <span class="n">s_time</span> <span class="o">+</span> <span class="sa">f</span><span class="s1">&#39;Finished </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;n_pred&quot;</span><span class="p">]</span><span class="si">}</span><span class="s1"> samples &#39;</span>
+                        <span class="sa">f</span><span class="s1">&#39;(</span><span class="si">{</span><span class="n">samples_per_sec</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1"> samples/s, </span><span class="si">{</span><span class="n">tokens_per_sec</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1"> tokens/s</span><span class="si">{</span><span class="n">s_skipped</span><span class="si">}</span><span class="s1">), &#39;</span>
+                        <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;n_done&quot;</span><span class="p">]</span><span class="si">}</span><span class="s1"> files (</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;n_file&quot;</span><span class="p">]</span><span class="si">}</span><span class="s1"> files in total)&#39;</span>
+                    <span class="p">)</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">run_forever</span> <span class="ow">and</span> <span class="n">n_pred_0</span> <span class="ow">and</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_pred&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">n_pred_0</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span> <span class="o">&gt;</span> <span class="mi">600</span> <span class="ow">and</span> <span class="n">is_gpu_idle</span><span class="p">():</span>  <span class="c1"># 10分钟没有预测完成的样本，推理进程卡住不动？-&gt; 检查GPU使用率</span>
+                            <span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">proc_list</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+                                <span class="n">terminate_subprocess</span><span class="p">(</span><span class="n">proc</span><span class="p">)</span>
+                                <span class="n">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc</span><span class="p">)</span>
+                            <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;超过10分钟没有预测完成的样本，且GPU使用率为0，超时退出&#39;</span>
+                            <span class="k">break</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">n_pred_0</span> <span class="o">=</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_pred&#39;</span><span class="p">]</span>
+                        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;post_start&#39;</span><span class="p">]:</span>  <span class="c1"># 下游发送启动信号（当manual_start为True时）</span>
+                    <span class="k">for</span> <span class="n">cmd_predict</span> <span class="ow">in</span> <span class="n">cmd_predict_list</span><span class="p">:</span>
+                        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Starting:&#39;</span><span class="p">,</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd_predict</span><span class="p">))</span>
+                        <span class="n">proc_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Popen</span><span class="p">(</span><span class="n">cmd_predict</span><span class="p">))</span>
+                    <span class="n">cmd_predict_list</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;terminated&#39;</span><span class="p">]:</span>  <span class="c1"># 下游任务已发送结束信号</span>
+                    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># 留5秒时间给子进程自行退出</span>
+                    <span class="k">break</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">args</span><span class="o">.</span><span class="n">run_forever</span> <span class="ow">and</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_done&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_file&#39;</span><span class="p">]:</span>  <span class="c1"># 全部预测完成</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="n">s_time</span> <span class="o">+</span> <span class="s1">&#39;全部预测完成!&#39;</span><span class="p">)</span>
+                    <span class="k">break</span>
+                <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">):</span>
+                    <span class="n">terminate_subprocess</span><span class="p">(</span><span class="n">proc_data_server</span><span class="p">)</span>
+                    <span class="n">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc_data_server</span><span class="p">)</span>
+                    <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;Data server 异常&#39;</span>
+                    <span class="k">break</span>
+                <span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">proc_list</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>  <span class="c1"># 推理进程异常退出</span>
+                    <span class="k">if</span> <span class="n">proc</span><span class="o">.</span><span class="n">poll</span><span class="p">()</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># poll() -&gt; returncode</span>
+                        <span class="n">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc</span><span class="p">)</span>
+                        <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;推理进程异常退出&#39;</span>
+                <span class="k">if</span> <span class="n">err</span><span class="p">:</span>
+                    <span class="k">break</span>
+
+            <span class="k">if</span> <span class="n">proc_data_server</span><span class="o">.</span><span class="n">poll</span><span class="p">()</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># terminated</span>
+                <span class="n">print_subprocess_out_err</span><span class="p">(</span><span class="n">proc_data_server</span><span class="p">)</span>
+                <span class="n">err</span> <span class="o">=</span> <span class="s1">&#39;Data server 异常退出&#39;</span>
+                <span class="k">break</span>
+
+    <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>  <span class="c1"># 提前退出</span>
+        <span class="k">pass</span>
+
+    <span class="c1"># ---------------------------- 预测完成，结束子进程 ---------------------------------</span>
+    <span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">proc_list</span><span class="p">:</span>
+        <span class="n">terminate_subprocess</span><span class="p">(</span><span class="n">proc</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">err</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="n">err</span><span class="p">)</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Model path&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--data&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Data file to predict&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--data_type&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;json&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;json&#39;</span><span class="p">,</span> <span class="s1">&#39;dataset&#39;</span><span class="p">],</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Iutput/Output data type&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--preprocess&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;preprocess&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Module that provides preprocessing function&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--prompt&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;Hithink&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Prompt type&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--output_dir&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Output directory&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--output_key&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;predict_result&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Output key&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--output_type&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;text&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">,</span> <span class="s1">&#39;reward&#39;</span><span class="p">,</span> <span class="s1">&#39;prompt_tokens&#39;</span><span class="p">],</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Output type&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--max_new_tokens&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">2048</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max number of tokens to generate&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--max_input_tokens&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max number of input tokens, longer inputs will be truncated&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--max_length&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Max number of tokens (input and output)&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--temperature&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;0.0 means greedy decoding&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--presence_penalty&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">0.</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;0.0 means no penalty&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--stop&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;token/word at which generation will be stopped&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--reuse&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span>
+                        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;If prediction file exists, reuse previous outputs and only predict samples with empty output&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--overwrite&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span>
+                        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Overwrite if output file exists. If not set, will skip finished samples&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--no_order&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Output will be written in different order than input&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--data_server&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;data_server.py&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Modify to use custom data server&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--server_port&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">17888</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Data server port&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--backend&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;vllm&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;vllm&#39;</span><span class="p">,</span> <span class="s1">&#39;hf&#39;</span><span class="p">],</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Inference backend&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--tensor_parallel&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Number of gpus per model/engine&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--device&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;e.g. 0,1,2... If not specified, use all gpus by default&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--low_vram&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Lower gpu memory usage&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--log_interval&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mf">5.</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;seconds between printed logs&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--run_forever&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;If not set, program will quit when there are no data to predict&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--manual_start&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s1">&#39;store_true&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;If set, workers (predict_async.py) will not start automatically&quot;</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">data</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">!=</span> <span class="n">args</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="s1">&#39;输入路径（--data）与输出路径（--output_dir）不能相同！&#39;</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># 如未指定output_dir，默认保存在模型文件夹/predict下</span>
+        <span class="n">args</span><span class="o">.</span><span class="n">output_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="s1">&#39;predict&#39;</span><span class="p">)</span>
+    
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">prompt</span> <span class="o">==</span> <span class="s1">&#39;llama3&#39;</span><span class="p">:</span>
+        <span class="n">args</span><span class="o">.</span><span class="n">stop</span> <span class="o">=</span> <span class="s1">&#39;,&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">args</span><span class="o">.</span><span class="n">stop</span><span class="p">,</span> <span class="s1">&#39;&lt;|eot_id|&gt;&#39;</span><span class="p">])</span> <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">stop</span> <span class="k">else</span> <span class="s1">&#39;&lt;|eot_id|&gt;&#39;</span>
+
+    <span class="n">run_predict_multi_gpu</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; 版权所有 2025, Damien。</p>
+  </div>
+
+  利用 <a href="https://www.sphinx-doc.org/">Sphinx</a> 构建，使用的 
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">主题</a>
+    由 <a href="https://readthedocs.org">Read the Docs</a> 开发.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

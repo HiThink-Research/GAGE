@@ -1,0 +1,591 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="zh-CN" data-content_root="../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>run &mdash; llm-eval 2.0.0 文档</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=b15d7ad8"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            llm-eval
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="搜索文档" aria-label="搜索文档" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="导航菜单">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../main.html">main</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../inference.html">inference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tools.html">tools</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../utils.html">utils</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="移动版导航菜单" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">llm-eval</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="页面导航">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">模块代码</a></li>
+      <li class="breadcrumb-item active">run</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>run 源代码</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">yaml</span>
+<span class="kn">import</span> <span class="nn">subprocess</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+<span class="kn">import</span> <span class="nn">select</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">argparse</span>
+<span class="kn">import</span> <span class="nn">importlib</span>
+<span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">tqdm</span> <span class="kn">import</span> <span class="n">tqdm</span>
+<span class="kn">from</span> <span class="nn">loguru</span> <span class="kn">import</span> <span class="n">logger</span>
+<span class="kn">from</span> <span class="nn">statistic</span> <span class="kn">import</span> <span class="n">statistic</span>
+<span class="kn">import</span> <span class="nn">pdb</span>
+
+<span class="n">cur_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
+
+<span class="n">remote_model_port</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s1">&#39;REMOTE_MODEL_PORT&#39;</span><span class="p">)</span>
+<span class="n">judge_model_port</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s1">&#39;JUDGE_MODEL_PORT&#39;</span><span class="p">)</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+<span class="n">task_status</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">model_status</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+
+<div class="viewcode-block" id="check_inference_engine_running">
+<a class="viewcode-back" href="../main/run.html#run.check_inference_engine_running">[文档]</a>
+<span class="k">def</span> <span class="nf">check_inference_engine_running</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">port</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">port</span> <span class="o">=</span> <span class="n">remote_model_port</span>
+    <span class="n">ps_res</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">popen</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;ps auxww | grep predict_multi_gpu.py | grep &quot;\-\-server_port </span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s1">&quot; | grep -v grep&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">ps_res</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="run_command">
+<a class="viewcode-back" href="../main/run.html#run.run_command">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_command</span><span class="p">(</span><span class="n">cmd</span><span class="p">):</span>
+    <span class="n">process</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span>
+        <span class="n">cmd</span><span class="p">,</span>
+        <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="c1"># 检查进程是否结束</span>
+        <span class="k">if</span> <span class="n">process</span><span class="o">.</span><span class="n">poll</span><span class="p">()</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">1.</span><span class="p">)</span>
+
+    <span class="c1"># 获取命令的返回码</span>
+    <span class="n">rc</span> <span class="o">=</span> <span class="n">process</span><span class="o">.</span><span class="n">poll</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="send_request">
+<a class="viewcode-back" href="../main/run.html#run.send_request">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">send_request</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">method</span><span class="p">,</span> <span class="n">port</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s1">&#39;file&#39;</span><span class="p">,</span> <span class="n">retry_interval</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">max_retries</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用于请求推理引擎，包括：提交文件、请求推理进度、发送终止信号&quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="n">method</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="s1">&#39;post&#39;</span><span class="p">]</span>
+    <span class="n">retry_times</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">check_inference_engine_running</span><span class="p">(</span><span class="n">port</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;推理引擎已退出！(</span><span class="si">{</span><span class="n">port</span><span class="si">=}</span><span class="s1">)&#39;</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">method</span> <span class="o">==</span> <span class="s1">&#39;post&#39;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;http://localhost:</span><span class="si">{}</span><span class="s1">/</span><span class="si">{}</span><span class="s1">,</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">port</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span><span class="n">data</span><span class="p">))</span>
+                <span class="n">r</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s1">&#39;http://localhost:</span><span class="si">{}</span><span class="s1">/</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">port</span><span class="p">,</span> <span class="n">path</span><span class="p">),</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">r</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;http://localhost:</span><span class="si">{}</span><span class="s1">/</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">port</span><span class="p">,</span> <span class="n">path</span><span class="p">),</span> <span class="n">params</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+            <span class="k">assert</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;status_code&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">r</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">:</span>  <span class="c1"># 有时会出现 ConnectionResetError: [Errno 104] Connection reset by peer，超过系统连接数限制？尝试再次连接</span>
+            <span class="n">traceback</span><span class="o">.</span><span class="n">print_exc</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">retry_times</span> <span class="o">&gt;</span> <span class="n">max_retries</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;请求失败：重试超过</span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s1">次！&#39;</span><span class="p">)</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">retry_interval</span><span class="p">)</span>
+            <span class="n">retry_times</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">continue</span></div>
+
+
+
+<div class="viewcode-block" id="run_judge_inference">
+<a class="viewcode-back" href="../main/run.html#run.run_judge_inference">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_judge_inference</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    运行裁判员模型的推理流程，用于评估特定任务的结果。</span>
+<span class="sd">    </span>
+<span class="sd">    该函数负责准备裁判员模型的输入文件，提交推理请求，并等待推理完成。</span>
+<span class="sd">    根据配置可以使用本地大模型或外部API作为裁判。</span>
+<span class="sd">    </span>
+<span class="sd">    参数:</span>
+<span class="sd">        config (dict): 包含任务配置信息的字典，必须包含以下键:</span>
+<span class="sd">            - save_dir: 保存输出结果的目录</span>
+<span class="sd">            - tasks: 包含特定任务配置的字典</span>
+<span class="sd">        task (str): 要评估的任务名称，此名称用于定位配置中的相关设置</span>
+<span class="sd">            </span>
+<span class="sd">    返回:</span>
+<span class="sd">        list: 包含所有输出文件路径的列表</span>
+<span class="sd">        </span>
+<span class="sd">    流程:</span>
+<span class="sd">        1. 准备裁判员模型的输入文件:</span>
+<span class="sd">           - 如果没有预处理步骤，直接使用任务输出文件</span>
+<span class="sd">           - 如果有预处理步骤，调用指定的预处理函数生成输入文件</span>
+<span class="sd">        2. 提交裁判员推理:</span>
+<span class="sd">           - 如果配置指定了外部API方法，调用相应的外部接口</span>
+<span class="sd">           - 否则使用本地大模型作为裁判</span>
+<span class="sd">        3. 等待推理完成并更新任务状态</span>
+<span class="sd">        </span>
+<span class="sd">    注意:</span>
+<span class="sd">        - 预处理函数需要在配置中正确指定，格式为&quot;module.submodule.function&quot;</span>
+<span class="sd">        - 外部API方法需要在ExternalApi枚举中定义</span>
+<span class="sd">        - 函数执行是异步的，调用时需要使用await</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">output_path</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">judge_data</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;judge&#39;</span><span class="p">]</span>
+    <span class="c1"># 准备裁判员模型的输入文件</span>
+    <span class="k">if</span> <span class="s1">&#39;preprocess&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">judge_data</span><span class="p">:</span>
+        <span class="n">input_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">preprocess_module</span><span class="p">,</span> <span class="n">preprocess_func</span> <span class="o">=</span> <span class="n">judge_data</span><span class="p">[</span><span class="s1">&#39;preprocess&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">rsplit</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># e.g. &quot;utils.judge.data_preprocess&quot;</span>
+        <span class="n">preprocess_module</span> <span class="o">=</span> <span class="n">importlib</span><span class="o">.</span><span class="n">import_module</span><span class="p">(</span><span class="n">preprocess_module</span><span class="p">)</span>
+        <span class="n">preprocess_func</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">preprocess_module</span><span class="p">,</span> <span class="n">preprocess_func</span><span class="p">)</span>
+        <span class="n">judge_input_dir</span> <span class="o">=</span> <span class="s1">&#39;judge/input&#39;</span>
+        <span class="n">judge_prompt_path</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;tasks&#39;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;judge_prompt&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">judge_prompt_path</span><span class="p">:</span>
+            <span class="n">preprocess_func</span><span class="p">(</span><span class="n">input_path</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">input_file</span><span class="o">=</span><span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">,</span> <span class="n">save_dir</span><span class="o">=</span><span class="n">judge_input_dir</span><span class="p">,</span> <span class="n">prompt_path</span><span class="o">=</span><span class="n">judge_prompt_path</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">preprocess_func</span><span class="p">(</span><span class="n">input_path</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">input_file</span><span class="o">=</span><span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">,</span> <span class="n">save_dir</span><span class="o">=</span><span class="n">judge_input_dir</span><span class="p">)</span>
+        <span class="c1">#preprocess_func(input_path=config[&#39;save_dir&#39;], input_file=task + &#39;.jsonl&#39;, save_dir=judge_input_dir)</span>
+        <span class="n">input_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">judge_input_dir</span><span class="p">,</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">)</span>
+    <span class="c1"># 提交裁判员推理</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s1">&#39;input_path&#39;</span><span class="p">:</span> <span class="n">input_file</span><span class="p">,</span>
+        <span class="s1">&#39;output_path&#39;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="s1">&#39;judge/output&#39;</span><span class="p">,</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">)</span>
+    <span class="p">}</span>
+    
+    <span class="k">if</span> <span class="s1">&#39;method&#39;</span> <span class="ow">in</span> <span class="n">judge_data</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">judge_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;inference&#39;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="s1">&#39;output_dir&#39;</span><span class="p">:</span>
+                <span class="n">d</span><span class="p">[</span><span class="s1">&#39;output_path&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">v</span><span class="p">,</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">d</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span>
+        <span class="kn">from</span> <span class="nn">envs.constants</span> <span class="kn">import</span> <span class="n">ExternalApi</span>
+        <span class="n">external_api</span> <span class="o">=</span> <span class="n">ExternalApi</span><span class="p">[</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;judge&#39;</span><span class="p">][</span><span class="s1">&#39;method&#39;</span><span class="p">]]</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="s1">&#39;judge/output&#39;</span><span class="p">),</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">input_file</span><span class="p">,</span><span class="s1">&#39;r&#39;</span><span class="p">,</span><span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">l</span><span class="p">)</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">f</span><span class="p">]</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">output_path</span><span class="p">:</span>
+            <span class="n">output_path</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;output_path&#39;</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">output_path</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;output_path&#39;</span><span class="p">])</span>
+        <span class="n">input_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">sample</span><span class="p">[</span><span class="s1">&#39;instruction&#39;</span><span class="p">]</span> <span class="k">if</span> <span class="s1">&#39;instruction&#39;</span> <span class="ow">in</span> <span class="n">sample</span> <span class="k">else</span> <span class="n">sample</span> <span class="k">for</span> <span class="n">sample</span> <span class="ow">in</span> <span class="n">data</span><span class="p">]</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;开始调用外部接口：</span><span class="si">{}</span><span class="s2"> 评估&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;judge&#39;</span><span class="p">][</span><span class="s1">&#39;method&#39;</span><span class="p">]))</span>
+        <span class="k">await</span> <span class="n">external_api</span><span class="o">.</span><span class="n">texts2texts</span><span class="p">(</span><span class="n">input_list</span><span class="p">,</span><span class="n">output_file</span><span class="o">=</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;output_path&#39;</span><span class="p">])</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;开始使用本地大模型作为裁判进行评估&quot;</span><span class="p">)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="n">send_request</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="s1">&#39;post&#39;</span><span class="p">,</span> <span class="n">judge_model_port</span><span class="p">)</span>
+        <span class="n">output_path</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;output_path&#39;</span><span class="p">])</span>
+
+        <span class="c1"># 等待裁判员推理完成</span>
+        <span class="k">await</span> <span class="n">wait_for_inference</span><span class="p">(</span><span class="n">task</span> <span class="o">+</span> <span class="s1">&#39; judge&#39;</span><span class="p">,</span> <span class="n">judge_model_port</span><span class="p">,</span> <span class="n">input_file</span><span class="p">,</span> <span class="n">output_path</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+
+    <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;judge&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># 裁判员模型推理完成</span>
+    <span class="k">return</span> <span class="n">output_path</span></div>
+
+
+
+<div class="viewcode-block" id="run_task_inference">
+<a class="viewcode-back" href="../main/run.html#run.run_task_inference">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_task_inference</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    为指定任务运行推理，使用外部API或本地模型。</span>
+<span class="sd">    </span>
+<span class="sd">    此函数通过以下步骤处理推理过程：</span>
+<span class="sd">    1. 从配置中确定输入数据路径</span>
+<span class="sd">    2. 检查是否应使用外部API</span>
+<span class="sd">    3. 根据配置执行适当的推理方法</span>
+<span class="sd">    </span>
+<span class="sd">    参数:</span>
+<span class="sd">        config (dict): 包含任务设置和路径的配置字典</span>
+<span class="sd">        task (str): 要运行推理的任务名称</span>
+<span class="sd">    </span>
+<span class="sd">    返回:</span>
+<span class="sd">        None: 此函数执行操作但不返回值</span>
+<span class="sd">    </span>
+<span class="sd">    可能引发:</span>
+<span class="sd">        外部API调用或本地模型推理可能产生的异常</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">input_path</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;data_path&#39;</span><span class="p">]</span>
+    <span class="c1">#获取envs检测是否有external api</span>
+    <span class="n">external_api</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;EXTERNAL_API&#39;</span><span class="p">)</span>
+    
+    <span class="k">if</span> <span class="n">external_api</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Using external api:</span><span class="si">{}</span><span class="s2"> to predict&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">external_api</span><span class="p">))</span>
+        <span class="kn">from</span> <span class="nn">envs.constants</span> <span class="kn">import</span> <span class="n">ExternalApi</span>
+        <span class="n">external_api</span> <span class="o">=</span> <span class="n">ExternalApi</span><span class="p">[</span><span class="n">external_api</span><span class="p">]</span>
+        <span class="k">await</span> <span class="n">wait_for_external_api</span><span class="p">(</span><span class="n">config</span><span class="p">,</span><span class="n">task</span><span class="p">,</span> <span class="n">external_api</span><span class="p">,</span><span class="n">input_path</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">send_request</span><span class="p">({</span>
+            <span class="s1">&#39;input_path&#39;</span><span class="p">:</span> <span class="n">input_path</span><span class="p">,</span>
+            <span class="s1">&#39;output_path&#39;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">),</span>
+            <span class="s1">&#39;generation_params&#39;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span>
+                <span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;max_new_tokens&#39;</span><span class="p">]</span>
+            <span class="p">})</span>
+        <span class="p">},</span> <span class="s1">&#39;post&#39;</span><span class="p">,</span> <span class="n">remote_model_port</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">wait_for_inference</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">remote_model_port</span><span class="p">,</span> <span class="n">input_path</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="wait_for_external_api">
+<a class="viewcode-back" href="../main/run.html#run.wait_for_external_api">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">wait_for_external_api</span><span class="p">(</span><span class="n">config</span><span class="p">,</span><span class="n">task</span><span class="p">,</span> <span class="n">external_api</span><span class="p">,</span><span class="n">input_path</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    调用外部API处理输入数据并保存结果。</span>
+<span class="sd">    </span>
+<span class="sd">    根据输入数据类型（图像或文本）自动选择相应的API调用方法，并将结果保存到指定目录下。</span>
+<span class="sd">    </span>
+<span class="sd">    Args:</span>
+<span class="sd">        config (dict): 配置信息，必须包含&#39;save_dir&#39;键，指定结果保存目录</span>
+<span class="sd">        task (str): 任务名称，用于生成输出文件名</span>
+<span class="sd">        external_api (object): 外部API接口对象，需要实现images2texts和texts2texts方法</span>
+<span class="sd">        input_path (str): 输入数据文件路径，应为jsonl格式</span>
+<span class="sd">        </span>
+<span class="sd">    Returns:</span>
+<span class="sd">        list: API调用的结果列表</span>
+<span class="sd">        </span>
+<span class="sd">    Notes:</span>
+<span class="sd">        - 输入文件必须是jsonl格式，每行为一个可解析为JSON的字符串</span>
+<span class="sd">        - 当消息中包含&quot;image_url&quot;时会调用图像处理API，否则调用文本处理API</span>
+<span class="sd">        - 输出文件将保存为{save_dir}/{task}.jsonl</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">open</span><span class="p">(</span><span class="n">input_path</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf8&#39;</span><span class="p">)]</span>
+
+    <span class="n">output_file</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># NOTE 目前只做了图像和文本的调用支持</span>
+    <span class="k">if</span> <span class="s2">&quot;image_url&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s1">&#39;messages&#39;</span><span class="p">]):</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">external_api</span><span class="o">.</span><span class="n">images2texts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span><span class="n">output_file</span><span class="o">=</span><span class="n">output_file</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">external_api</span><span class="o">.</span><span class="n">texts2texts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span><span class="n">output_file</span><span class="o">=</span><span class="n">output_file</span><span class="p">)</span></div>
+
+        
+
+<div class="viewcode-block" id="wait_for_inference">
+<a class="viewcode-back" href="../main/run.html#run.wait_for_inference">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">wait_for_inference</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">port</span><span class="p">,</span> <span class="n">input_path</span><span class="p">,</span> <span class="n">output_path</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="n">r_old</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="k">await</span> <span class="n">send_request</span><span class="p">({</span>
+            <span class="s1">&#39;input_path&#39;</span><span class="p">:</span> <span class="n">input_path</span><span class="p">,</span>
+            <span class="s1">&#39;output_path&#39;</span><span class="p">:</span> <span class="n">output_path</span><span class="p">,</span>
+        <span class="p">},</span> <span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="n">port</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">r</span> <span class="o">!=</span> <span class="n">r_old</span> <span class="ow">and</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;n_pred&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>  <span class="c1"># 只有状态发生变化时才打印</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;current task:</span><span class="si">{}</span><span class="s2"> status </span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">r</span><span class="p">))</span>  <span class="c1"># {&quot;status_code&quot;:0,&quot;is_done&quot;:false,&quot;n_samples&quot;:244128,&quot;n_pred&quot;:74}</span>
+            <span class="n">r_old</span> <span class="o">=</span> <span class="n">r</span>
+
+        <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;is_done&#39;</span><span class="p">]:</span>
+            <span class="k">break</span></div>
+
+
+
+<div class="viewcode-block" id="maybe_start_judge_model">
+<a class="viewcode-back" href="../main/run.html#run.maybe_start_judge_model">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">maybe_start_judge_model</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    等待全部测试集推理完成后，根据需要启动裁判员模型。</span>
+<span class="sd">    </span>
+<span class="sd">    此协程监控推理过程并管理到裁判员模型的转换：</span>
+<span class="sd">    1. 持续检查所有推理任务是否完成</span>
+<span class="sd">    2. 如果任何任务需要裁判员模型，则终止推理引擎</span>
+<span class="sd">    3. 在允许GPU资源释放的时间后启动裁判员模型进程</span>
+<span class="sd">    </span>
+<span class="sd">    返回：</span>
+<span class="sd">        无</span>
+<span class="sd">        </span>
+<span class="sd">    异常：</span>
+<span class="sd">        RuntimeError: 如果在监控过程中推理引擎意外退出</span>
+<span class="sd">    </span>
+<span class="sd">    注意：</span>
+<span class="sd">        - 如果未设置judge_model_port，函数将立即退出</span>
+<span class="sd">        - 当所有任务完成推理且裁判员模型（如需要）启动后，函数退出</span>
+<span class="sd">        - 在终止推理后等待60秒再启动裁判员模型</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="c1"># 添加判断如果不需要启动裁判员模型直接break</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">judge_model_port</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;不使用本地模型作为裁判，监听进程终止&quot;</span><span class="p">)</span>
+            <span class="k">break</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">check_inference_engine_running</span><span class="p">():</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;推理引擎已退出！&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">all</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;inference&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">task_status</span><span class="o">.</span><span class="n">values</span><span class="p">()):</span>  <span class="c1"># 全部任务都已推理完成</span>
+            <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;judge&#39;</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">False</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">task_status</span><span class="o">.</span><span class="n">values</span><span class="p">()):</span>  <span class="c1"># 任意任务需要裁判员模型</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;测试集推理完成，正在停止推理引擎，释放显卡，以启动裁判员模型&#39;</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">terminate_inference_engine</span><span class="p">(</span><span class="n">remote_model_port</span><span class="p">)</span>  <span class="c1"># 终止模型推理引擎，腾空显卡</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;正在启动裁判员模型&#39;</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">send_request</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s1">&#39;post&#39;</span><span class="p">,</span> <span class="n">judge_model_port</span><span class="p">,</span> <span class="s1">&#39;start&#39;</span><span class="p">)</span>  <span class="c1"># 启动裁判员模型推理进程</span>
+            <span class="k">break</span></div>
+
+
+
+<div class="viewcode-block" id="run_loss_eval">
+<a class="viewcode-back" href="../main/run.html#run.run_loss_eval">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_loss_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">model_path</span><span class="p">):</span>
+    <span class="n">cmd</span> <span class="o">=</span> <span class="s2">&quot;python -u </span><span class="si">{}</span><span class="s2"> --model_name_or_path </span><span class="si">{}</span><span class="s2"> --template </span><span class="si">{}</span><span class="s2"> --task </span><span class="si">{}</span><span class="s2"> --split test --lang default --n_shot 0 --batch_size 8 --save_dir </span><span class="si">{}</span><span class="s2"> --task_path </span><span class="si">{}</span><span class="s2"> --eval_type </span><span class="si">{}</span><span class="s2"> &amp;&amp; &quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;eval.py&quot;</span><span class="p">),</span> <span class="n">model_path</span><span class="p">,</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;prompt_type&#39;</span><span class="p">],</span><span class="n">task</span><span class="p">,</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;data_path&#39;</span><span class="p">],</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;type&#39;</span><span class="p">])</span>
+    <span class="n">cmd</span> <span class="o">+=</span> <span class="s2">&quot;python </span><span class="si">{}</span><span class="s2"> --eval_func </span><span class="si">{}</span><span class="s2"> --input_path &#39;</span><span class="si">{}</span><span class="s2">&#39; --output_path &#39;</span><span class="si">{}</span><span class="s2">&#39;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;post_eval.py&quot;</span><span class="p">),</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;utils/eval_loss.py&quot;</span><span class="p">),</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span><span class="n">task</span><span class="o">+</span><span class="s1">&#39;.jsonl&#39;</span><span class="p">),</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span><span class="n">task</span><span class="o">+</span><span class="s1">&#39;.log&#39;</span><span class="p">))</span>
+    <span class="k">await</span> <span class="n">run_command</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+    <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;inference&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># 模型推理完成</span></div>
+
+
+
+<div class="viewcode-block" id="run_next_word_prob_eval">
+<a class="viewcode-back" href="../main/run.html#run.run_next_word_prob_eval">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_next_word_prob_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">model_path</span><span class="p">):</span>
+    <span class="n">cmd</span> <span class="o">=</span> <span class="s2">&quot;python -u </span><span class="si">{}</span><span class="s2"> --model_name_or_path </span><span class="si">{}</span><span class="s2"> --template </span><span class="si">{}</span><span class="s2"> --task </span><span class="si">{}</span><span class="s2"> --split test --lang default --n_shot 0 --batch_size 8 --save_dir </span><span class="si">{}</span><span class="s2"> --task_path </span><span class="si">{}</span><span class="s2"> --eval_type </span><span class="si">{}</span><span class="s2"> &amp;&amp; &quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;eval.py&quot;</span><span class="p">),</span> <span class="n">model_path</span><span class="p">,</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;prompt_type&#39;</span><span class="p">],</span><span class="n">task</span><span class="p">,</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;data_path&#39;</span><span class="p">],</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;type&#39;</span><span class="p">])</span>
+    <span class="n">cmd</span> <span class="o">+=</span> <span class="s2">&quot;python </span><span class="si">{}</span><span class="s2"> --eval_func </span><span class="si">{}</span><span class="s2"> --input_path &#39;</span><span class="si">{}</span><span class="s2">&#39; --output_path &#39;</span><span class="si">{}</span><span class="s2">&#39;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;post_eval.py&quot;</span><span class="p">),</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;utils/eval_next_word_probability.py&quot;</span><span class="p">),</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span><span class="n">task</span><span class="o">+</span><span class="s1">&#39;.jsonl&#39;</span><span class="p">),</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span><span class="n">task</span><span class="o">+</span><span class="s1">&#39;.log&#39;</span><span class="p">))</span>
+    <span class="k">await</span> <span class="n">run_command</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+    <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;inference&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># 模型推理完成</span></div>
+
+
+
+<div class="viewcode-block" id="run_mt_bench_eval">
+<a class="viewcode-back" href="../main/run.html#run.run_mt_bench_eval">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_mt_bench_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">):</span>
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">get_response</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">send_request</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;prompt&quot;</span><span class="p">:{</span><span class="s2">&quot;instruction&quot;</span><span class="p">:</span><span class="n">msg</span><span class="p">}}),</span> <span class="s1">&#39;post&#39;</span><span class="p">,</span> <span class="n">remote_model_port</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s1">&#39;model&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;data_path&#39;</span><span class="p">],</span><span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">l</span><span class="p">)</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">f</span><span class="p">]</span>
+
+    <span class="n">out</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">data</span><span class="p">,</span><span class="n">desc</span><span class="o">=</span><span class="s2">&quot;predict mtbench&quot;</span><span class="p">):</span>
+        <span class="c1"># import pdb;pdb.set_trace()</span>
+        <span class="n">prompt_1</span> <span class="o">=</span> <span class="n">d</span><span class="p">[</span><span class="s1">&#39;turns&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">result_1</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_response</span><span class="p">(</span><span class="n">prompt_1</span><span class="p">)</span>
+        
+        <span class="n">d</span><span class="p">[</span><span class="s1">&#39;response&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">result_1</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s1">&#39;output&#39;</span><span class="p">]]</span> <span class="k">if</span> <span class="n">result_1</span> <span class="k">else</span> <span class="p">[]</span>
+
+        <span class="n">prompt_2</span> <span class="o">=</span> <span class="s2">&quot;Question:</span><span class="si">{}</span><span class="se">\n</span><span class="s2">Answer:</span><span class="si">{}</span><span class="se">\n</span><span class="s2">Question:</span><span class="si">{}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;turns&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;response&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span><span class="n">d</span><span class="p">[</span><span class="s1">&#39;turns&#39;</span><span class="p">][</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">result_2</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_response</span><span class="p">(</span><span class="n">prompt_2</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">result_1</span><span class="p">:</span>
+            <span class="n">d</span><span class="p">[</span><span class="s1">&#39;response&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result_2</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s1">&#39;output&#39;</span><span class="p">])</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">{}</span><span class="s2">/mtbench.jsonl&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">]),</span><span class="s1">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">out</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">o</span><span class="p">,</span><span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">+</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;inference&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># 模型推理完成</span>
+    
+    <span class="k">await</span> <span class="n">run_post_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">task</span><span class="o">+</span><span class="s1">&#39;.jsonl&#39;</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="run_text_eval">
+<a class="viewcode-back" href="../main/run.html#run.run_text_eval">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_text_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">run_task_inference</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+    <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;inference&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># 模型推理完成</span>
+
+    <span class="k">if</span> <span class="s1">&#39;judge&#39;</span> <span class="ow">in</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">]:</span>
+        <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;judge&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># 等待裁判员模型推理</span>
+        <span class="n">output_path</span> <span class="o">=</span> <span class="k">await</span> <span class="n">run_judge_inference</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+        <span class="n">output_path</span> <span class="o">=</span> <span class="s1">&#39;,&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_path</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">output_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.jsonl&#39;</span><span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">run_post_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">output_path</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="run_post_eval">
+<a class="viewcode-back" href="../main/run.html#run.run_post_eval">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">run_post_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">output_path</span><span class="p">):</span>
+    <span class="n">func_path</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;compare_func&#39;</span><span class="p">][</span><span class="s1">&#39;path&#39;</span><span class="p">]</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;compare_func&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;params&#39;</span><span class="p">)</span>
+    <span class="n">params</span> <span class="o">=</span> <span class="s2">&quot; --kwargs &#39;</span><span class="si">{}</span><span class="s2">&#39;&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">params</span><span class="p">))</span> <span class="k">if</span> <span class="n">params</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">cmd_eval</span> <span class="o">=</span> <span class="s2">&quot;python </span><span class="si">{}</span><span class="s2"> --eval_func </span><span class="si">{}</span><span class="s2"> --input_path &#39;</span><span class="si">{}</span><span class="s2">&#39; --output_path &#39;</span><span class="si">{}</span><span class="s2">&#39;</span><span class="si">{}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cur_path</span><span class="p">,</span> <span class="s2">&quot;post_eval.py&quot;</span><span class="p">),</span>
+        <span class="n">func_path</span><span class="p">,</span> <span class="n">output_path</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;save_dir&#39;</span><span class="p">],</span> <span class="n">task</span> <span class="o">+</span> <span class="s1">&#39;.log&#39;</span><span class="p">),</span> <span class="n">params</span>
+    <span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">cmd_eval</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">run_command</span><span class="p">(</span><span class="n">cmd_eval</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="llm_eval">
+<a class="viewcode-back" href="../main/run.html#run.llm_eval">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">llm_eval</span><span class="p">(</span><span class="n">file_path</span><span class="p">,</span> <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;模型评估</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        file_path (str): config地址</span>
+<span class="sd">        model_name (int): 可选参数，存储模型的sub path</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        None</span>
+
+<span class="sd">    Examples:</span>
+<span class="sd">        &gt;&gt;&gt; llm_eval(path, model_name)</span>
+<span class="sd">        None</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">file_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
+    <span class="n">config</span><span class="p">[</span><span class="s2">&quot;save_dir&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;save_dir&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;/</span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="n">model_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s1">&#39;MODEL_PATH&#39;</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;save_dir&quot;</span><span class="p">],</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">tasks_async</span> <span class="o">=</span> <span class="p">{}</span>
+    
+    <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">]:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;开始评测任务：</span><span class="si">{</span><span class="n">task</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="n">task_status</span><span class="p">[</span><span class="n">task</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;loss&#39;</span><span class="p">]:</span>
+            <span class="n">coro</span> <span class="o">=</span> <span class="n">run_loss_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">model_path</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;next_word_probability&#39;</span><span class="p">]:</span>
+            <span class="n">coro</span> <span class="o">=</span> <span class="n">run_next_word_prob_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">model_path</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">config</span><span class="p">[</span><span class="s1">&#39;tasks&#39;</span><span class="p">][</span><span class="n">task</span><span class="p">][</span><span class="s1">&#39;type&#39;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">task</span> <span class="o">==</span> <span class="s1">&#39;mtbench&#39;</span><span class="p">:</span>
+                <span class="n">coro</span> <span class="o">=</span> <span class="n">run_mt_bench_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">coro</span> <span class="o">=</span> <span class="n">run_text_eval</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+
+        <span class="n">tasks_async</span><span class="p">[</span><span class="n">task</span><span class="p">]</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">coro</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">maybe_start_judge_model</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks_async</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+    
+
+    <span class="n">statistic</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s2">&quot;save_dir&quot;</span><span class="p">],</span><span class="n">config</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="terminate_inference_engine">
+<a class="viewcode-back" href="../main/run.html#run.terminate_inference_engine">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">terminate_inference_engine</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">port</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ports</span> <span class="o">=</span> <span class="p">[</span><span class="n">port</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">ports</span> <span class="o">=</span> <span class="p">[</span><span class="n">remote_model_port</span><span class="p">,</span> <span class="n">judge_model_port</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">port</span> <span class="ow">in</span> <span class="n">ports</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">port</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">model_status</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">port</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;terminated&#39;</span><span class="p">):</span>
+            <span class="k">await</span> <span class="n">send_request</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s1">&#39;post&#39;</span><span class="p">,</span> <span class="n">port</span><span class="p">,</span> <span class="s1">&#39;terminate&#39;</span><span class="p">)</span>
+            <span class="n">model_status</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">port</span><span class="p">,</span> <span class="p">{})[</span><span class="s1">&#39;terminated&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span></div>
+
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../main/run.html#run.main">[文档]</a>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">llm_eval</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="k">await</span> <span class="n">terminate_inference_engine</span><span class="p">()</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">terminate_inference_engine</span><span class="p">()</span>
+        <span class="k">raise</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--config&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;File path of config yaml&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model_name&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;model name that is evaluated&quot;</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+    <span class="c1">## 添加判断，知道推理服务启动再开始评估</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;infer engine initializing </span><span class="si">{:.2f}</span><span class="s2"> s&quot;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="o">-</span><span class="n">t0</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="o">-</span><span class="n">t0</span> <span class="o">&gt;</span> <span class="mi">20</span><span class="p">:</span>
+            <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">(</span><span class="n">args</span><span class="p">))</span>
+            <span class="k">break</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; 版权所有 2025, Damien。</p>
+  </div>
+
+  利用 <a href="https://www.sphinx-doc.org/">Sphinx</a> 构建，使用的 
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">主题</a>
+    由 <a href="https://readthedocs.org">Read the Docs</a> 开发.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
