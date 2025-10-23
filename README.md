@@ -152,8 +152,9 @@ test:
 
 
 ### post eval
-如果已经完成模型推理，评估环节出错，可以手动执行如下代码获取评估结果
+If the model inference has been completed and the evaluation phase fails, you can manually execute the following code to obtain the evaluation results.
 
 ```sh
 python post_eval.py --eval_func benchmark_code/Multiple_Choice_QA/eval_multi_choice.py --input_path xxx.jsonl --output_path xxx.log
 ```
+## 💖 Acknowledgement
