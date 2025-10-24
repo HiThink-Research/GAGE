@@ -17,6 +17,9 @@
 ## Support testsets
 14 NLP testsets，2 Finance testsets，9 audio testsets，5 GUI testsets，18 multimodal testsets，see config folder for more information
 
+TODO:
+- [ ] Upload formatted testsets to HuggingFace
+
 ## Directory structure
 ```
 llm-eval
