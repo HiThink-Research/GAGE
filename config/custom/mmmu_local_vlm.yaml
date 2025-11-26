@@ -1,0 +1,61 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: mmmu_local_vlm
+  description: 本地加载 Qwen2.5-VL-3B（HF Transformers 多模态）评测 MMMU val500，便于与 LMMS/llm-eval 对比。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: mmmu_val_local
+    loader: jsonl
+    params:
+      # 推荐路径：${LOCAL_DATASETS_ROOT:-./local-datasets}/MMMU/mmmu_val_500.jsonl（需自行准备 val500 本地文件）
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/lmms-lab/MMMU/data/mmmu_val_500.jsonl
+      # 不再设置 limit，运行时可用 task.max_samples 或 CLI --max-samples 控制样本数
+      # 数据已是标准 Envelope，含 messages/image_url/choices/answer，无需额外 preprocess
+      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_message_images
+      doc_to_visual_kwargs:
+        content_field: messages.0.content
+
+backends:
+  - backend_id: mmmu_local_vlm_backend
+    type: vlm_transformers
+    config:
+      model_name_or_path: /mnt/model/qwen2_5_vl_3b  # 推荐本地权重；如需从 HF 拉取可改为 Qwen/Qwen2.5-VL-3B-Instruct
+      max_pixels: 12845056  # 对齐 1018 中 LMMS 脚本的图像上限
+      attn_implementation: flash_attention_2
+      dtype: bfloat16  # Qwen2.5-VL 官方推荐；若显存不足可切换 8bit/4bit
+      generation_parameters:
+        max_new_tokens: 128  # MMMU 答案较短，保守设 128（显存足够可调 256）
+        temperature: 0.2
+        top_p: 0.2
+      add_special_tokens: true
+      trust_remote_code: true
+      model_parallel: false  # 单机单卡默认；多卡可改 true（需 accelerate 环境）
+
+role_adapters:
+  - adapter_id: mmmu_qwen25_vl
+    role_type: dut_model
+    backend_id: mmmu_local_vlm_backend
+    capabilities:
+      - vision_chat
+
+metrics:
+  - metric_id: mmmu_acc
+    implementation: mmmu_accuracy
+
+tasks:
+  - task_id: mmmu_val_eval
+    dataset_id: mmmu_val_local
+    max_samples: 500
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmmu_local_vlm_events.jsonl
+    concurrency: 1  # 推荐 1，防止 OOM

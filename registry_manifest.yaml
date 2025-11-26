@@ -1,0 +1,674 @@
+backends:
+- desc: 从外部 Python 文件加载自定义 EngineBackend
+  extra: {}
+  impl: gage_eval.role.model.backends.custom_backend:CustomScriptBackend
+  kind: backends
+  name: custom_script
+  tags:
+  - custom
+  version: v1
+- desc: 返回固定文本的 Dummy 后端（测试用）
+  extra:
+    config_schema_ref: gage_eval.role.model.config.dummy:DummyBackendConfig
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.dummy_backend:DummyBackend
+  kind: backends
+  name: dummy
+  tags:
+  - test
+  - dummy
+  version: v1
+- desc: Faiss 向量检索后端
+  extra:
+    modalities:
+    - embedding
+  impl: gage_eval.role.model.backends.faiss_backend:FaissRetrievalBackend
+  kind: backends
+  name: faiss
+  tags:
+  - retrieval
+  - local
+  version: v1
+- desc: FlagEmbedding 文本向量后端
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.flag_embedding_backend:FlagEmbeddingBackend
+  kind: backends
+  name: flag_embedding
+  tags:
+  - embedding
+  - local
+  version: v1
+- desc: HuggingFace Transformers 本地推理后端
+  extra:
+    modalities:
+    - text
+    - audio
+    - vision
+  impl: gage_eval.role.model.backends.hf_backend:HFBackend
+  kind: backends
+  name: hf
+  tags:
+  - llm
+  - local
+  - multimodal
+  version: v1
+- desc: HuggingFace Transformers delta 权重量化后端
+  extra: {}
+  impl: gage_eval.role.model.backends.hf_delta_backend:HFDeltaBackend
+  kind: backends
+  name: hf_delta
+  tags:
+  - llm
+  - local
+  - delta
+  version: v1
+- desc: HuggingFace Inference API（Serverless）
+  extra:
+    config_schema_ref: gage_eval.role.model.config.hf_inference:HFServerlessBackendConfig
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.hf_http_backend:HFServerlessBackend
+  kind: backends
+  name: hf_serverless
+  tags:
+  - llm
+  - remote
+  - hf
+  version: v1
+- desc: HuggingFace Inference Endpoint（Dedicated TGI）
+  extra:
+    config_schema_ref: gage_eval.role.model.config.hf_inference:HFInferenceEndpointBackendConfig
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.hf_http_backend:HFInferenceEndpointBackend
+  kind: backends
+  name: hf_inference_endpoint
+  tags:
+  - llm
+  - remote
+  - hf
+  version: v1
+- desc: HuggingFace Transformers + LoRA/PEFT 适配器合并后端
+  extra: {}
+  impl: gage_eval.role.model.backends.hf_lora_backend:HFLoRABackend
+  kind: backends
+  name: hf_lora
+  tags:
+  - llm
+  - local
+  - peft
+  version: v1
+- desc: 通用 HTTP 文本生成后端
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.http_backend:HTTPGenerationBackend
+  kind: backends
+  name: http
+  tags:
+  - llm
+  - remote
+  version: v1
+- desc: 通过 LiteLLM 统一接入各类推理服务
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.litellm_backend:LiteLLMBackend
+  kind: backends
+  name: litellm
+  tags:
+  - llm
+  - remote
+  - api
+  version: v1
+- desc: 多 provider HTTP 推理后端（基于 HuggingFace Inference Providers）
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.multi_provider_http_backend:MultiProviderHTTPBackend
+  kind: backends
+  name: multi_provider_http
+  tags:
+  - llm
+  - remote
+  - provider
+  version: v1
+- desc: Nanotron 张量/流水线并行推理后端
+  extra:
+    config_schema_ref: gage_eval.role.model.config.nanotron:NanotronBackendConfig
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.nanotron_backend:NanotronBackend
+  kind: backends
+  name: nanotron
+  tags:
+  - vlm
+  - local
+  - distributed
+  version: v1
+- desc: OpenAI Chat Completion 兼容后端
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.openai_http_backend:OpenAICompatibleHTTPBackend
+  kind: backends
+  name: openai_http
+  tags:
+  - llm
+  - remote
+  - api
+  version: v1
+- desc: SGLang 推理服务后端
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.sglang_backend:SGLangBackend
+  kind: backends
+  name: sglang
+  tags:
+  - llm
+  - remote
+  version: v1
+- desc: HuggingFace TGI 服务推理后端
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.tgi_backend:TGIBackend
+  kind: backends
+  name: tgi
+  tags:
+  - llm
+  - remote
+  version: v1
+- desc: Anthropic Claude 多模态 HTTP 后端
+  extra:
+    config_schema_ref: gage_eval.role.model.config.vendor_http:ClaudeBackendConfig
+    modalities:
+    - text
+    - vision
+  impl: gage_eval.role.model.backends.vendor_http_backend:ClaudeHTTPBackend
+  kind: backends
+  name: claude_http
+  tags:
+  - llm
+  - remote
+  - anthropic
+  version: v1
+- desc: Google Gemini 多模态 HTTP 后端
+  extra:
+    config_schema_ref: gage_eval.role.model.config.vendor_http:GeminiBackendConfig
+    modalities:
+    - text
+    - vision
+    - audio
+  impl: gage_eval.role.model.backends.vendor_http_backend:GeminiHTTPBackend
+  kind: backends
+  name: gemini_http
+  tags:
+  - llm
+  - remote
+  - gemini
+  version: v1
+- desc: OpenAI Batch Chat Completion 后端
+  extra:
+    config_schema_ref: gage_eval.role.model.config.vendor_http:OpenAIBatchBackendConfig
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.vendor_http_backend:OpenAIBatchBackend
+  kind: backends
+  name: openai_batch
+  tags:
+  - llm
+  - remote
+  - openai
+  version: v1
+- desc: vLLM 本地推理后端（tensor parallel 支持）
+  extra:
+    modalities:
+    - text
+  impl: gage_eval.role.model.backends.vllm_backend:VLLMBackend
+  kind: backends
+  name: vllm
+  tags:
+  - llm
+  - local
+  - serving
+  version: v1
+- desc: HuggingFace Vision-Language Transformers 本地推理后端
+  extra:
+    config_schema_ref: gage_eval.role.model.config.vlm_transformers:VLMTransformersBackendConfig
+    modalities:
+    - text
+    - vision
+    - audio
+  impl: gage_eval.role.model.backends.vlm_transformers_backend:VLMTransformersBackend
+  kind: backends
+  name: vlm_transformers
+  tags:
+  - vlm
+  - local
+  - multimodal
+  version: v1
+- desc: faster-whisper 语音识别后端
+  extra:
+    modalities:
+    - audio
+  impl: gage_eval.role.model.backends.whisper_backend:WhisperASRBackend
+  kind: backends
+  name: whisper_asr
+  tags:
+  - asr
+  - local
+  version: v1
+dataset_hubs:
+- desc: 直接引用本地/相对路径的数据源
+  extra: {}
+  impl: gage_eval.assets.datasets.hubs.builtin:InlineDatasetHub
+  kind: dataset_hubs
+  name: inline
+  tags:
+  - local
+  version: v1
+- desc: HuggingFace/ModelScope 远程数据源
+  extra: {}
+  impl: gage_eval.assets.datasets.hubs.builtin:HuggingFaceDatasetHub
+  kind: dataset_hubs
+  name: huggingface
+  tags:
+  - remote
+  - hf
+  version: v1
+dataset_loaders:
+- desc: HuggingFace / ModelScope 远程数据加载器
+  extra:
+    supports_streaming: true
+  impl: gage_eval.assets.datasets.loaders.hf_hub_loader:HuggingFaceDatasetLoader
+  kind: dataset_loaders
+  name: hf_hub
+  tags:
+  - remote
+  - huggingface
+  version: v1
+- desc: ModelScope 远程数据加载器
+  extra:
+    supports_streaming: false
+  impl: gage_eval.assets.datasets.loaders.hf_hub_loader:HuggingFaceDatasetLoader
+  kind: dataset_loaders
+  name: modelscope
+  tags:
+  - remote
+  - modelscope
+  version: v1
+- desc: 本地 JSONL 文件加载器
+  extra:
+    supports_streaming: true
+  impl: gage_eval.assets.datasets.loaders.jsonl_loader:JSONLDatasetLoader
+  kind: dataset_loaders
+  name: jsonl
+  tags:
+  - local
+  - file
+  version: v1
+dataset_preprocessors:
+- desc: 通用对话模板预处理器
+  extra:
+    module: gage_eval.assets.datasets.preprocessors.preprocess
+  impl: gage_eval.assets.datasets.preprocessors.builtin:ChatPromptPreprocessor
+  kind: dataset_preprocessors
+  name: chat_prompt
+  tags:
+  - prompt
+  - chat
+  version: v1
+- desc: COSY2 推理模版预处理器
+  extra:
+    module: gage_eval.assets.datasets.preprocessors.preprocess_cosy2
+  impl: gage_eval.assets.datasets.preprocessors.builtin:Cosy2Preprocessor
+  kind: dataset_preprocessors
+  name: cosy2
+  tags:
+  - prompt
+  version: v1
+- desc: No-think prompt 预处理器
+  extra:
+    module: gage_eval.assets.datasets.preprocessors.preprocess_no_think
+  impl: gage_eval.assets.datasets.preprocessors.builtin:NoThinkPreprocessor
+  kind: dataset_preprocessors
+  name: no_think
+  tags:
+  - prompt
+  version: v1
+- desc: RULER long-form prompt 预处理器
+  extra:
+    module: gage_eval.assets.datasets.preprocessors.preprocess_ruler
+  impl: gage_eval.assets.datasets.preprocessors.builtin:RulerPreprocessor
+  kind: dataset_preprocessors
+  name: ruler
+  tags:
+  - prompt
+  version: v1
+- desc: 多选题场景的标准化预处理器
+  extra:
+    module: gage_eval.assets.datasets.preprocessors.preprocess_multi_choice
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MultiChoicePreprocessor
+  kind: dataset_preprocessors
+  name: multi_choice_standardizer
+  tags:
+  - prompt
+  - multiple-choice
+  version: v1
+- desc: DocVQA 文档问答多模态预处理器
+  extra:
+    module: gage_eval.assets.datasets.preprocessors.preprocess_docvqa
+  impl: gage_eval.assets.datasets.preprocessors.builtin:DocVQAPreprocessor
+  kind: dataset_preprocessors
+  name: docvqa_image_standardizer
+  tags:
+  - prompt
+  - vision
+  - docvqa
+  version: v1
+doc_converters: []
+metrics:
+- desc: 多选题准确率（对齐 llm-eval 多选逻辑）
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.multi_choice:MultiChoiceAccuracyMetric
+  kind: metrics
+  name: multi_choice_accuracy
+  tags:
+  - text
+  - multiple-choice
+  version: v1
+- desc: DocVQA Average Normalized Levenshtein Similarity
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.docvqa_anls:DocVQAANLSMetric
+  kind: metrics
+  name: docvqa_anls
+  tags:
+  - vision
+  - vqa
+  - docvqa
+  version: v1
+- desc: 严格文本匹配指标
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:ExactMatchMetric
+  kind: metrics
+  name: exact_match
+  tags:
+  - text
+  version: v1
+- desc: 预测结果包含参考答案
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:ContainsMatchMetric
+  kind: metrics
+  name: contains
+  tags:
+  - text
+  version: v1
+- desc: 带容差的数值匹配
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:NumericMatchMetric
+  kind: metrics
+  name: numeric_match
+  tags:
+  - numeric
+  version: v1
+- desc: 基于正则表达式的匹配
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:RegexMatchMetric
+  kind: metrics
+  name: regex_match
+  tags:
+  - text
+  - regex
+  version: v1
+- desc: 根据裁判分数阈值计算通过率
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:JudgeThresholdMetric
+  kind: metrics
+  name: judge_threshold
+  tags:
+  - judge
+  version: v1
+- desc: 统计文本长度（字符或词）
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:TextLengthMetric
+  kind: metrics
+  name: text_length
+  tags:
+  - text
+  - analysis
+  version: v1
+- desc: 读取模型输出中的延迟信息
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.text:LatencyMetric
+  kind: metrics
+  name: latency
+  tags:
+  - latency
+  version: v1
+model_hubs:
+- desc: 本地文件系统模型
+  extra: {}
+  impl: gage_eval.assets.models.hubs.local:LocalModelHub
+  kind: model_hubs
+  name: local
+  tags:
+  - local
+  version: v1
+- desc: HuggingFace 模型仓库
+  extra: {}
+  impl: gage_eval.assets.models.hubs.huggingface:HuggingFaceModelHub
+  kind: model_hubs
+  name: huggingface
+  tags:
+  - remote
+  - hf
+  version: v1
+- desc: ModelScope 模型仓库
+  extra: {}
+  impl: gage_eval.assets.models.hubs.modelscope:ModelScopeModelHub
+  kind: model_hubs
+  name: modelscope
+  tags:
+  - remote
+  - modelscope
+  version: v1
+observability_plugins:
+- desc: 默认文件/HTTP 观测插件
+  extra: {}
+  impl: gage_eval.observability.plugins.default:DefaultObservabilityPlugin
+  kind: observability_plugins
+  name: default
+  tags:
+  - file
+  - http
+  version: v1
+pipeline_steps:
+- desc: 汇总评测结果并输出报告的阶段
+  extra:
+    step_kind: global
+  impl: gage_eval.pipeline.steps.report:ReportStep
+  kind: pipeline_steps
+  name: report
+  tags:
+  - report
+  version: v1
+- desc: 自动指标计算阶段
+  extra:
+    step_kind: sample
+  impl: gage_eval.pipeline.steps.auto_eval:AutoEvalStep
+  kind: pipeline_steps
+  name: auto_eval
+  tags:
+  - metrics
+  version: v1
+- desc: 执行 DUT 模型推理的阶段
+  extra:
+    step_kind: sample
+  impl: gage_eval.pipeline.steps.inference:InferenceStep
+  kind: pipeline_steps
+  name: inference
+  tags:
+  - dut
+  version: v1
+- desc: 执行裁判角色的阶段
+  extra:
+    step_kind: sample
+  impl: gage_eval.pipeline.steps.judge:JudgeStep
+  kind: pipeline_steps
+  name: judge
+  tags:
+  - judge
+  version: v1
+- desc: 执行 Helper/Toolchain 等辅助角色的阶段
+  extra:
+    step_kind: sample
+  impl: gage_eval.pipeline.steps.support:SupportStep
+  kind: pipeline_steps
+  name: support
+  tags:
+  - support
+  version: v1
+prompts:
+- desc: 通用 DUT 文本生成 Prompt
+  extra:
+    has_template: true
+    renderer: jinja
+  impl: 'PromptTemplateAsset(prompt_id=''dut/general@v1'', renderer_type=''jinja'',
+    template=''{% if instructions %}{{ instructions }}{% endif %}\n任务：{{ sample.question
+    | default(sample.prompt) }}\n请直接给出答案。'', default_args={''instructions'': ''Follow
+    the task carefully and answer in Chinese unless specified.''})'
+  kind: prompts
+  name: dut/general@v1
+  tags:
+  - dut
+  - general
+  version: v1
+- desc: 通用 Judge 评分 Prompt
+  extra:
+    has_template: true
+    renderer: jinja
+  impl: 'PromptTemplateAsset(prompt_id=''judge/general@v1'', renderer_type=''jinja'',
+    template=''你是一名严谨的中文评审员，请根据事实给出判定。\n【问题】{{ sample.question | default(sample.prompt)
+    }}\n【参考答案】{{ sample.answer | default(sample.reference) }}\n【模型回答】{{ model_output.answer
+    | default(model_output.response) }}\n请输出 JSON，包含 verdict(yes/no) 与 rationale 字段。'',
+    default_args={''instructions'': ''Follow the task carefully and answer in Chinese
+    unless specified.''})'
+  kind: prompts
+  name: judge/general@v1
+  tags:
+  - judge
+  - general
+  version: v1
+reporting_sinks:
+- desc: 将事件保存在内存中（测试用途）
+  extra: {}
+  impl: gage_eval.reporting.recorders:InMemoryRecorder
+  kind: reporting_sinks
+  name: inmemory
+  tags:
+  - memory
+  version: v1
+- desc: 将事件写入本地 JSONL 文件
+  extra: {}
+  impl: gage_eval.reporting.recorders:FileRecorder
+  kind: reporting_sinks
+  name: file
+  tags:
+  - file
+  - local
+  version: v1
+- desc: 推送事件到 HTTP 端点，支持回退
+  extra: {}
+  impl: gage_eval.reporting.recorders:HTTPRecorder
+  kind: reporting_sinks
+  name: http
+  tags:
+  - http
+  - remote
+  version: v1
+roles:
+- desc: 面向被测模型（DUT）的标准角色适配器
+  extra:
+    role_type: dut_model
+  impl: gage_eval.role.adapters.dut_model:DUTModelAdapter
+  kind: roles
+  name: dut_model
+  tags:
+  - role
+  - dut
+  version: v1
+- desc: 具备工具调用能力的 DUT Agent 适配器
+  extra:
+    role_type: dut_agent
+  impl: gage_eval.role.adapters.dut_agent:DUTAgentAdapter
+  kind: roles
+  name: dut_agent
+  tags:
+  - role
+  - agent
+  version: v1
+- desc: 裁判/判分 LLM 角色适配器
+  extra:
+    role_type: judge_model
+  impl: gage_eval.role.adapters.judge_model:JudgeModelAdapter
+  kind: roles
+  name: judge_model
+  tags:
+  - role
+  - judge
+  version: v1
+- desc: 用于提示增强 / 工具调度的辅助角色适配器
+  extra:
+    role_type: helper_model
+  impl: gage_eval.role.adapters.helper_model:HelperModelAdapter
+  kind: roles
+  name: helper_model
+  tags:
+  - role
+  - helper
+  version: v1
+- desc: RAG/知识增强上下文提供角色
+  extra:
+    role_type: context_provider
+  impl: gage_eval.role.adapters.context_provider:ContextProviderAdapter
+  kind: roles
+  name: context_provider
+  tags:
+  - role
+  - context
+  version: v1
+- desc: 封装外部工具/MCP 的统一角色
+  extra:
+    role_type: toolchain
+  impl: gage_eval.role.adapters.toolchain:ToolchainAdapter
+  kind: roles
+  name: toolchain
+  tags:
+  - role
+  - tool
+  version: v1
+- desc: 多模态预处理/后处理角色
+  extra:
+    role_type: modal_processor
+  impl: gage_eval.role.adapters.modal_processor:ModalProcessorAdapter
+  kind: roles
+  name: modal_processor
+  tags:
+  - role
+  - modal
+  version: v1
+templates: []

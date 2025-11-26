@@ -188,4 +188,9 @@ data_server_mt.py
 predict_async_mt.py
 eval_UTA_Analysis2.py
 utils/out.jsonl
-*.yaml
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/

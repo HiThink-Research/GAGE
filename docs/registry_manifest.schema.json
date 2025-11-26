@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "gage-eval registry manifest schema",
+  "type": "object",
+  "patternProperties": {
+    "^[a-z_]+$": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "name", "desc", "version"],
+        "properties": {
+          "kind": {"type": "string"},
+          "name": {"type": "string"},
+          "desc": {"type": "string"},
+          "version": {"type": "string"},
+          "impl": {"type": ["string", "null"]},
+          "tags": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "extra": {"type": "object"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

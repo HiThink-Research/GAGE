@@ -1,0 +1,9 @@
+templates:
+  - id: builtin_llm_eval_compat
+    path: builtin/builtin_llm_eval_compat.yaml
+    description: 复刻 llm-eval baseline，覆盖 inference + judge 流程
+    version: v1alpha1
+  - id: custom_multistep_pipeline
+    path: custom/custom_multistep_pipeline.yaml
+    description: 展示 support/inference/judge 手工编排与多 backend 配置
+    version: v1alpha1

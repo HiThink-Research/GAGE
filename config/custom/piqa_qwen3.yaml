@@ -1,0 +1,92 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+# PIQA + Qwen3 示例配置
+# 目标：演示「顶层 backends + backend_id 引用」与「外置 Prompt + Step 继承/推断」的推荐写法，
+#      作为团队内部新建文本类评测配置的模板。
+metadata:
+  name: piqa_qwen3
+  description: 使用 Qwen3 OpenAI Chat 后端评测 PIQA validation 子集，示范外置 Prompt 与结构化预处理。
+
+custom:
+  # Pipeline 级默认步骤（Task 若未显式声明 steps，将继承这一串步骤）
+  steps:
+    - step: inference    # 仅声明 step 类型，adapter_id 依赖唯一 DUT 角色自动推断
+    - step: auto_eval
+
+prompts:
+  # 外置 Prompt 资产：用于构造 PIQA 推理时的自然语言提示词
+  - prompt_id: piqa_infer_prompt
+    renderer: jinja
+    # params 中保留原先 preprocess_kwargs 中的 system_prompt/instruction 文案，便于查阅与复用
+    params:
+      system_prompt: >
+        你是一位擅长常识推理的助手，请阅读题目并在最后只输出正确选项对应的大写字母（A 或 B）。
+      instruction: >
+        请判断哪个答案更合理，并在最后一行仅输出一个大写字母（A 或 B）。
+    # template 里将上面的模板变量与标准化后的 sample 字段（goal/option_map）组合成完整 Prompt
+    template: |
+      {{ system_prompt }}
+
+      题目：
+      {{ sample.goal }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+datasets:
+  - dataset_id: piqa_validation
+    # 使用 HuggingFace Hub 上的 piqa validation split
+    hub: huggingface
+    hub_params:
+      hub_id: piqa
+      split: validation
+      trust_remote_code: true
+    loader: hf_hub
+    params:
+      # 仅做 PIQA 结构化预处理：补充 choices 和 metadata，不在此处拼接 Prompt
+      preprocess: piqa_struct_only
+      streaming: false  # 关闭 streaming，避免 HF 返回包装结构影响预处理
+
+backends:
+  - backend_id: qwen3_openai_http
+    type: openai_http
+    config:
+      # 本地或远端 OpenAI Chat Completion 兼容服务地址
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen2.5-0.5b-instruct  # 本机建议使用小模型，方便快速迭代
+      default_params:
+        max_new_tokens: 64  # PIQA 答案极短，64 足够
+        temperature: 0.2    # 轻微随机性，提升稳定性
+      async_max_concurrency: 4  # 本地开发机适度并发，避免打满 CPU/网络
+
+role_adapters:
+  - adapter_id: dut_qwen3
+    role_type: dut_model
+    backend_id: qwen3_openai_http
+    # 绑定外置 Prompt 资产，所有 PIQA 推理都通过该模板构造提示词
+    prompt_id: piqa_infer_prompt
+    prompt_params:
+      language: zh  # 预留变量，模板侧可按需使用
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: piqa_validation_eval
+    dataset_id: piqa_validation
+    max_samples: 500  # 本地快速验证，必要时可通过 CLI --max-samples 覆盖
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            # 通过环境变量 GAGE_EVAL_SAVE_DIR 控制输出目录
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_events.jsonl

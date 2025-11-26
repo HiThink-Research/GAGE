@@ -1,0 +1,58 @@
+# 可覆盖字段：
+# 1. backends[0].config.model_path（环境变量 MODEL_PATH 或 CLI --override backends.0.config.model_path=/path/to/model）
+# 2. role_adapters[0].params.max_new_tokens（CLI --override role_adapters.0.params.max_new_tokens=256）
+# 3. tasks[0].max_samples（CLI --override tasks.0.max_samples=100）
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: builtin_llm_eval_compat
+  description: 复刻 llm-eval baseline，默认运行 inference + judge 两阶段
+builtin:
+  pipeline_id: builtin_llm_eval_compat
+datasets:
+  - dataset_id: gsm8k_dev
+    loader: jsonl
+    params:
+      path: config/templates/data/Test_GSM8K.jsonl
+backends:
+  - backend_id: dut_backend
+    type: vllm
+    config:
+      model_path: ${MODEL_PATH:-/mnt/models/vicuna}
+      tensor_parallel_size: 2
+prompts:
+  - prompt_id: judge_template
+    renderer: jinja
+    template: |
+      {{ question }}
+
+      模型回答：{{ answer }}
+
+      请判断回答是否正确，仅输出 yes/no。
+role_adapters:
+  - adapter_id: dut_agent
+    role_type: inference
+    backend_id: dut_backend
+    capabilities:
+      - chat_completion
+    params:
+      max_new_tokens: 512
+  - adapter_id: judge_agent
+    role_type: judge
+    backend_id: dut_backend
+    prompt_id: judge_template
+metrics:
+  - metric_id: exact_match
+    implementation: exact_match
+tasks:
+  - task_id: gsm8k_dev_task
+    dataset_id: gsm8k_dev
+    steps:
+      - step: inference
+        adapter_id: dut_agent
+      - step: judge
+        adapter_id: judge_agent
+      - step: auto_eval
+    reporting:
+      sinks:
+        - type: console
