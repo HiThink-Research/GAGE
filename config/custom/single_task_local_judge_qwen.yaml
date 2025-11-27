@@ -1,0 +1,146 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: multi_task_local_judge_qwen
+  description: 本地 qwen2.5-0.5b-instruct 作为 DUT，qwen3-vl-30b 作为裁判，覆盖 PIQA + MMLU 子集的推理-裁判-指标闭环。
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_qwen25_local
+    - step: judge
+      adapter_id: judge_qwen3
+    - step: auto_eval
+
+prompts:
+  - prompt_id: multi_choice_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一个严谨的多选题助手，请逐步分析后在最后一行给出选项字母。
+      instruction: >
+        先简要说明理由，最后一行只输出一个大写字母（A、B、C 或 D），不需要其他符号。
+    template: |
+      {{ system_prompt }}
+
+      问题：
+      {{ sample.get("question") or sample.get("goal") or sample.get("prompt") }}
+
+      选项：
+      {% for label, text in (sample.get("metadata", {}).get("option_map") or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+  - prompt_id: judge_multi_choice_prompt
+    renderer: jinja
+    params:
+      rubric: >
+        1）先复核题干与选项；2）判断被测模型的答案是否合理；3）必要时给出修正后的标准选项；4）给出 0-1 之间的分数与一句理由。
+    template: |
+      你是可靠的评测裁判，请基于题干、选项和被测模型回答进行判分。
+      {{ rubric }}
+
+      题目：
+      {{ sample.get("question") or sample.get("goal") or sample.get("prompt") }}
+
+      选项：
+      {% for label, text in (sample.get("metadata", {}).get("option_map") or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      被测模型回答：
+      {% set output = payload.get("model_output") %}
+      {% if output is mapping %}
+      {{ output.get("answer") }}
+      {% elif output is sequence and output is not string %}
+      {% set first_item = output|first %}
+      {% if first_item is mapping %}
+      {{ first_item.get("answer") }}
+      {% else %}
+      {{ first_item }}
+      {% endif %}
+      {% else %}
+      {{ output }}
+      {% endif %}
+
+      输出格式固定两行：
+      1) CORRECT: <最终确认的大写选项字母，例如 A>
+      2) SCORE: <0 到 1 的小数> 理由
+
+datasets:
+  - dataset_id: piqa_validation
+    hub: huggingface
+    hub_params:
+      hub_id: piqa
+      split: validation
+      trust_remote_code: true
+    loader: hf_hub
+    params:
+      preprocess: piqa_struct_only
+      streaming: false
+
+backends:
+  - backend_id: dut_local_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen2.5-0.5b-instruct
+      default_params:
+        max_new_tokens: 256
+        temperature: 0.2
+      async_max_concurrency: 4
+
+  - backend_id: judge_qwen3_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen/qwen3-vl-30b
+      default_params:
+        max_new_tokens: 256
+        temperature: 0.3
+      async_max_concurrency: 2
+
+role_adapters:
+  - adapter_id: dut_qwen25_local
+    role_type: dut_model
+    backend_id: dut_local_openai_http
+    prompt_id: multi_choice_infer_prompt
+    prompt_params:
+      language: zh
+    capabilities:
+      - chat_completion
+    concurrency: 4
+
+  - adapter_id: judge_qwen3
+    role_type: judge_model
+    backend_id: judge_qwen3_openai_http
+    prompt_id: judge_multi_choice_prompt
+    prompt_params:
+      language: zh
+    capabilities:
+      - chat_completion
+    concurrency: 2
+
+metrics:
+  - metric_id: model_multi_choice_acc
+    implementation: multi_choice_accuracy
+  - metric_id: judge_multi_choice_acc
+    implementation: multi_choice_accuracy
+    params:
+      prediction_field: judge_output.answer
+  - metric_id: latency
+    implementation: latency
+
+tasks:
+  - task_id: piqa_validation_with_judge
+    dataset_id: piqa_validation
+    max_samples: 64
+    concurrency: 8
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_with_judge_events.jsonl

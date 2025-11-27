@@ -169,7 +169,7 @@ flowchart LR
 对应各步骤的处理逻辑如下：
 
 | 阶段 | 入口函数 | 关键输入 | 关键输出 | 说明 |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | 原始记录 | JSONL 行 | MMMU 原始字段 | 原始 dict | 从本地 `mmmu_val_500.jsonl` 逐行读取 |
 | DataManager | `DataManager.register_source` / `iter_samples` | 原始记录迭代器 | `DataSource.records` | 把数据源注册为可复用 dataset |
 | 标准化 | `SampleStandardizer.normalize` | `id`、`messages`、`choices` 等 | 结构化 Envelope，补 `_dataset_metadata` | 统一字段命名与元数据结构 |
@@ -190,7 +190,7 @@ flowchart LR
 
 3. **标签字段**  
    - `choices[0].message.content[0].text` 在标准化后仍保留在 `sample.choices.0.message.content.0.text`。  
-   - `mmmu_accuracy` 默认从该路径读取正确选项字母，而预测结果从 `model_output.answer` 读取，二者的字段映射在第 9 章的指标配置中完成声明。
+   - `mmmu_accuracy` 默认从该路径读取正确选项字母，而预测结果从 `model_output.answer` 读取，二者的字段映射在第 10 章的指标配置中完成声明。
 
 借助这条链路，MMMU 的本地 JSONL 与 HuggingFace Hub 版本可以通过不同的 loader 与 preprocess 组合，统一规约到相同的 Envelope 结构，确保多模态后端与指标实现无需感知底层数据来源差异。
 
@@ -617,8 +617,7 @@ flowchart LR
 
 迁移策略：
 
-- 新配置优先使用顶层 `backends`，配合 `backend_id` 引用，便于同一后端在多个角色间复用；
-- 旧配置中的 inline backend 写法保留，后续可用迁移脚本批量抽取到顶层（参见 `config-1124.md` 中的迁移工具设计）。
+  - 新配置优先使用顶层 `backends`，配合 `backend_id` 引用，便于同一后端在多个角色间复用；
 
 ### 8.6 Step 继承与智能绑定
 
@@ -824,7 +823,7 @@ role_adapters:
   - `.` 访问 dict key，数字片段访问列表索引（如 `choices.0.message.content.0.text`）；
   - 不支持更复杂表达式（切片、过滤等），避免后续 DSL 难以扩展。
 
-这些规则已经在 9.4 节的参数表与示例中体现，这里作为配置层设计原则进一步固化。
+这些规则已经在 10.4 节的参数表与示例中体现，这里作为配置层设计原则进一步固化。
 
 #### 8.8.3 按任务族的 Canonical 字段表
 
@@ -1219,14 +1218,152 @@ Backend 实现会：
 
 ---
 
-## 9. 扩展指南：注册新指标
+## 9. 内置评估套件与 RunConfig 路线
 
-### 9.1 步骤
+> 详细设计见 `builtin-1126.md`，本节只从架构视角概括与现有代码实现保持一致的核心形态。
+
+### 9.1 三类配置实体与存放位置
+
+- `PipelineConfig`：  
+  - 承载完整数据/角色/后端/步骤/任务/指标结构；  
+  - 文件路径：`gage-eval-main/config/custom/*.yaml`（自定义）或其他工程内配置；  
+  - 运行时由 `PipelineConfig.from_dict` 解析并交给 `build_runtime`。
+- `BuiltinTemplate` (`kind: BuiltinTemplate`)：  
+  - 表示“固化评测逻辑”的只读模板，包含：
+    - `metadata`：`name/version/digest/source_tasks/monolithic` 等；
+    - `definition`：去掉 `api_version/kind` 的 `PipelineConfig` 顶层字典（当前为**具体配置**，不自动写 `${runtime.xxx}` 占位符）；
+    - `parameters`：一组 `runtime.*` 参数描述，用于生成 RunConfig.runtime 默认值（如 `runtime.datasets.piqa_validation`、`runtime.backends.qwen3_openai_http` 等）；  
+  - 存放位置：`gage-eval-main/config/builtin_templates/<suite>/<vN>.yaml`。
+- `RunConfig` (`kind: RunConfig`)：  
+  - 用户可编辑的运行配置，绑定某个 BuiltinTemplate，并填充环境/性能参数：  
+    - `base_task`: 例如 `builtin/piqa_suite`；  
+    - `template_version` / `template_digest`: 与模板元信息强绑定；  
+    - `runtime`: 嵌套树，包含 `datasets/backends/tasks/global` 等；  
+  - 顶层不允许出现 `datasets/backends/tasks/custom/builtin/observability` 等逻辑段，由 `run.py::_validate_run_config_payload` 做最小约束；  
+  - 存放位置：`gage-eval-main/config/run_configs/*.yaml`。
+
+### 9.2 Distill 流程：PipelineConfig → BuiltinTemplate
+
+入口：  
+
+```bash
+PYTHONPATH=gage-eval-main/src \
+python gage-eval-main/run.py \
+  --config gage-eval-main/config/custom/piqa_qwen3.yaml \
+  --distill \
+  --builtin-name piqa_suite
+```
+
+架构要点：
+
+- 调用 `gage_eval.tools.distill.analyze_tasks_for_distill`：  
+  - 当 `tasks` 数量 `<= 1` → `mode=ATOMIC`；  
+  - 当 `tasks > 1` 且无 `--force-merge` → `mode=REJECTED`，直接报错提示拆分任务；  
+  - 当 `tasks > 1` 且带 `--force-merge` → `mode=MONOLITHIC`，生成巨型单体模板。  
+- 通过 `normalize_pipeline_payload` 校验与归一化配置，得到 `definition` 子树：  
+  - 保留 `metadata/custom/prompts/datasets/backends/role_adapters/metrics/tasks` 等；  
+  - 去掉 `api_version/kind` 等顶层元字段；  
+  - 移除空段（如空 `models/parameters`）。  
+- 调用 `_infer_parameters(definition)` 推断参数列表：  
+  - 对每个 `dataset_id` 生成 `runtime.datasets.<id>`（`type: obj`，默认值为整个 dataset 配置块剥掉 `dataset_id`）；  
+  - 对每个 `backend_id` 生成 `runtime.backends.<id>`（`type: obj`，默认值为整个 backend 配置块剥掉 `backend_id`）；  
+  - 对每个 task 的 `max_samples` 生成 `runtime.tasks.<task_id>.max_samples`；  
+  - 对 file sink 的 `output_path` 生成 `runtime.global.output_path`。  
+- 使用 `calculate_definition_digest` 对 `definition` 做稳定哈希，写入 `metadata.digest`；  
+- 根据 `--version` 或目标目录已有 `vN.yaml` 自动确定版本号，生成 `vN.yaml` 文件到 `config/builtin_templates/<name>/`。
+
+### 9.3 Init 流程：BuiltinTemplate → RunConfig / PipelineConfig
+
+入口例子：
+
+- 生成 RunConfig：  
+
+  ```bash
+  PYTHONPATH=gage-eval-main/src \
+  python gage-eval-main/run.py \
+    --init piqa_suite \
+    --init-mode run-config
+  ```
+
+- 生成 PipelineConfig：  
+
+  ```bash
+  PYTHONPATH=gage-eval-main/src \
+  python gage-eval-main/run.py \
+    --init piqa_suite \
+    --init-mode pipeline-config
+  ```
+
+核心实现（节选自 `gage-eval-main/run.py`）：
+
+- `--init` 时，跳过运行逻辑，进入 `_handle_init_mode(args)`：  
+  1. `_resolve_template_path(args.init, args.version)`：  
+     - 若 `--init` 为套件名（如 `piqa_suite`），映射到 `config/builtin_templates/piqa_suite`，按版本选择 `vN.yaml`；  
+     - 也可直接传入模板文件路径。  
+  2. 加载模板并调用 `_build_run_config_payload(template)`：  
+     - 对于 RunConfig 模式：  
+       - 使用 `template.metadata` 填充 `base_task/template_version/template_digest`；  
+       - 将 `parameters` 通过 `_parameters_to_runtime_defaults` 展开为嵌套的 `runtime.datasets/backends/tasks/global` 默认值；  
+       - 写入 `config/run_configs/<suite>_run_<N>.yaml`，并在 `runtime:` 前注入逐行注释示例。  
+     - 对于 PipelineConfig 模式：  
+       - 调用 `_compile_run_config` 与 `_prune_empty_sections` 得到最终 `PipelineConfig` 字典（当前主要用于去除空段，如空 `models/prompts/parameters`）；  
+       - 写入 `config/custom/<suite>_from_VN_<M>.yaml`，作为可完全编辑的配置起点。  
+- 输出 RunConfig 时，会在文件头部插入从模板推导出的“只读快照”注释块，帮助使用者快速理解数据集/后端/步骤/指标结构。
+
+### 9.4 运行时路由：RunConfig 与 PipelineConfig
+
+入口：  
+
+```bash
+PYTHONPATH=gage-eval-main/src \
+python gage-eval-main/run.py \
+  --config gage-eval-main/config/run_configs/piqa_suite_run_1.yaml
+```
+
+关键逻辑（节选自 `run.py::main`）：
+
+- 默认运行模式（无 `--distill/--init`）：  
+  1. 读取 YAML：`config_payload = load_config(...)`；  
+  2. 根据 `kind` 分支：  
+     - `kind != RunConfig`：  
+       - 直接 `PipelineConfig.from_dict(config_payload)`；  
+     - `kind == RunConfig`：  
+       - 调用 `_compile_run_config(run_cfg)`：
+         - 校验 `template_version` 与模板的 `metadata.version`；  
+         - 如同时存在 `template_digest` 与 `metadata.digest` 且不一致，报错退出；  
+         - 对模板 `definition` 做一次 `_apply_runtime_params`（当前只处理 `${runtime.*}` 字符串占位符）；  
+         - 构造 `{api_version, kind=PipelineConfig, **definition}` 字典；  
+       - 再交给 `PipelineConfig.from_dict`。  
+  3. 后续流程（`build_runtime`、`runtime.run()` 等）与普通 PipelineConfig 完全一致。
+
+从架构视角看：
+
+- RunConfig 是 BuiltinTemplate 的“运行时视图”：只承载 runtime 下的环境/性能参数，不携带执行逻辑；  
+- PipelineConfig 仍然是唯一的执行配置入口；  
+- run.py 通过 `kind` 分支实现对 RunConfig 的兼容，而不会破坏原有的 PipelineConfig 运行路径。  
+
+### 9.5 单任务优先与 MONOLITHIC 模式
+
+为保持生态“积木化”与复用性，Distill 在提纯阶段引入了**单任务优先**策略（详细规则见 `builtin-1126.md` 第 9 章）：  
+
+- 默认仅固化单 Task 配置，`len(tasks) <= 1` 视为 ATOMIC；  
+- 当 `len(tasks) > 1` 且不带 `--force-merge` 时，直接拒绝提纯并在 CLI 上给出明确提示；  
+- 当 `len(tasks) > 1` 且带 `--force-merge` 时，生成 `monolithic: true` 的 BuiltinTemplate（模板内包含所有任务），适用于少量确实需要“巨型单体模板”的场景。  
+
+架构层面，仍然推荐：
+
+- 优先使用原子模板 + 外部 orchestrator（Shell、上层调度器）组合多任务；  
+- 将 MONOLITHIC 模板视为高级用法，并在文档/Release note 中明确风险和使用指引。  
+- 旧配置中的 inline backend 写法保留，后续可用迁移脚本批量抽取到顶层（参见 `config-1124.md` 中的迁移工具设计）。
+
+## 10. 扩展指南：注册新指标
+
+### 10.1 步骤
 1. 在 `src/gage_eval/metrics/<domain>/` 创建实现，继承 `SimpleMetric` 或 `Metric`。
 2. 使用 `@registry.asset("metrics", "<metric_id>", ...)` 装饰。
 3. 在 YAML `metrics` 段引用 `metric_id`，必要时提供 `params`。
 
-### 9.2 示例代码（带中文注释）
+### 10.2 示例代码（带中文注释）
 ```python
 # 文件: src/gage_eval/metrics/custom/rouge_l.py
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
@@ -1247,7 +1384,7 @@ class RougeLMetric(SimpleMetric):
         return 1.0 if pred and refs and pred in refs[0] else 0.0
 ```
 
-### 9.3 验证
+### 10.3 验证
 `python -m py_compile src/gage_eval/metrics/custom/rouge_l.py`  
 `metrics` 段引用：
 ```yaml
@@ -1256,7 +1393,7 @@ metrics:
     implementation: rouge_l
 ```
 
-### 9.4 字段映射参数与路径语义
+### 10.4 字段映射参数与路径语义
 
 内置指标以及自定义指标，通常通过 `metrics[].params` 中的一组「字段映射参数」来指定从样本/模型输出中取值的路径。常见参数及含义如下：
 
@@ -1269,7 +1406,7 @@ metrics:
 | `target_field` | `regex_match`、`text_length`、`latency` | `model_output.answer` 或 `model_output.latency_ms` | 通用“目标字段”参数，依据指标语义不同 |
 | `option_map_field` | `multi_choice_accuracy` | `sample.metadata.option_map` | 多选题选项映射表（A/B/C/D→文本） |
 
-#### 9.4.1 根域与点分路径
+#### 10.4.1 根域与点分路径
 
 在实现中，大多数指标通过 `_extract_field(context, descriptor, default=...)` 从 `MetricContext` 提取字段值（参考 `metrics/builtin/text.py`、`multi_choice.py`、`mmmu.py` 等）：
 
@@ -1289,7 +1426,7 @@ metrics:
 - `model_output.answer`  
   - 根域 `model_output`，直接取嵌套字段。
 
-#### 9.4.2 多选与 MM 模型中的特殊逻辑
+#### 10.4.2 多选与 MM 模型中的特殊逻辑
 
 **multi_choice_accuracy**
 - `label_field`：既可以是字母（如 `"B"`），也可以是完整选项文本；内部通过 `_normalize_choice_label` 与 `_match_option_text` 组合解析。
@@ -1302,7 +1439,7 @@ metrics:
 - `label_field` 默认为 `sample.choices.0.message.content.0.text`（参考 MMMU JSONL 格式），支持从列表、集合中取多个候选目标；
 - 匹配逻辑 `_match_prediction` 既支持字母对字母，也支持字符串包含关系（`prediction` 包含 `target` 或大小写不敏感包含）。
 
-#### 9.4.3 文本类指标的路径解析
+#### 10.4.3 文本类指标的路径解析
 
 **exact_match / contains / numeric_match / regex_match / text_length / latency**
 - 统一通过 `text._extract_field` 取值：
@@ -1311,7 +1448,7 @@ metrics:
   - 仅支持字典路径（不做列表索引），适合简单结构（例如 `sample.label`、`model_output.answer`）；
 - 这类指标的 `label_field`/`prediction_field`/`target_field` 通常只需指到纯标量字段（字符串/数字），避免指向复杂嵌套结构。
 
-#### 9.4.4 配置建议
+#### 10.4.4 配置建议
 
 1. **优先显式带根域**：例如 `sample.metadata.correct_choice`、`model_output.answer`，避免路径被默认为 `sample` 导致误读。
 2. **带索引访问列表**：当标准答案位于 `choices[0]` 这类位置时，建议使用 `choices.0.message.content.0.text` 风格，充分利用多选/多模态指标中对数字段的支持。
@@ -1321,15 +1458,15 @@ metrics:
 
 ---
 
-## 10. 扩展指南：注册新 Backend
+## 11. 扩展指南：注册新 Backend
 
-### 10.1 步骤总览
+### 11.1 步骤总览
 1. 定义 Config（Pydantic）：`src/gage_eval/role/model/config/<backend>.py`。
 2. 实现 Backend：继承 `EngineBackend` 或 HTTP 基类。
 3. `@registry.asset("backends", "<type>")` 装饰，声明 `config_schema_ref`。
 4. 在 YAML `role_adapters[].backend` 中设置 `type` 与 `config`。
 
-### 10.2 本地 EngineBackend 示例
+### 11.2 本地 EngineBackend 示例
 ```python
 # 文件 1: src/gage_eval/role/model/config/my_backend.py
 from typing import Optional
@@ -1384,7 +1521,7 @@ class MyBackend(EngineBackend):
         return {"answer": output}
 ```
 
-### 10.3 HTTP Backend 示例
+### 11.3 HTTP Backend 示例
 ```python
 # 文件: src/gage_eval/role/model/backends/my_http_backend.py
 from gage_eval.role.model.backends.http_backend import HTTPBackendBase
@@ -1397,7 +1534,7 @@ class MyHTTPBackend(HTTPBackendBase):
         return {"url": self.base_url, "json": {"prompt": payload["prompt"]}}
 ```
 
-### 10.4 配置引用
+### 11.4 配置引用
 ```yaml
 role_adapters:
   - adapter_id: demo_adapter
@@ -1410,7 +1547,7 @@ role_adapters:
 
 ---
 
-## 11. 调试与最佳实践
+## 12. 调试与最佳实践
 
 1. **并发调优**：优先通过 `--concurrency`/`GAGE_EVAL_THREADS` 控制 SampleLoop，并在 YAML `resource_requirement.pool_size` 声明池大小。
 2. **观测对齐**：出错必看 `events.jsonl` 与 `summary.json` 的 `timings`、吞吐字段。
@@ -1420,7 +1557,7 @@ role_adapters:
 
 ---
 
-## 12. 失败语义与防御性约定
+## 13. 失败语义与防御性约定
 
 框架在多处实现了“软失败”与防御性逻辑，目的是在尽量保留运行与观测的前提下，避免单点错误直接导致整次评测崩溃。
 
@@ -1463,7 +1600,7 @@ role_adapters:
 
 ---
 
-## 13. 旧框架映射表（llm-eval → gage-eval）
+## 14. 旧框架映射表（llm-eval → gage-eval）
 
 为了方便从 `llm-eval` 迁移或对照调试，下面给出两个框架在核心概念上的粗略映射：
 
@@ -1580,7 +1717,7 @@ role_adapters:
 
 ---
 
-## 14. 术语速查
+## 15. 术语速查
 
 | 名称 | 说明 | 代码位置 |
 | --- | --- | --- |
@@ -1592,6 +1729,6 @@ role_adapters:
 
 ---
 
-## 15. 结语
+## 16. 结语
 
 1124 版在 1123 的“去中心化调度”基础上，补齐了多任务、观测、吞吐指标和多模态稳定性。后续新增资产（指标/后端）仅需按 Registry 规范增量注册，即可被 CLI 与 YAML 自动发现。Mermaid 图与表格可直接在 Typora 11.9.0 渲染。欢迎基于此架构继续优化吞吐、扩展更多跨模态能力。

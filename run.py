@@ -9,6 +9,9 @@ import sys
 import signal
 import platform
 import time
+import re
+import copy
+from textwrap import indent
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +28,7 @@ if str(SRC_ROOT) not in sys.path:
 
 import gage_eval  # noqa: F401 - auto-discovery happens on import
 from gage_eval.config import build_default_registry
+from gage_eval.tools.distill import DistillError, analyze_tasks_for_distill
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
@@ -36,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         "-c",
-        required=True,
+        required=False,
         help="Path to the PipelineConfig YAML file.",
     )
     parser.add_argument(
@@ -77,7 +81,55 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Optional max samples override; sets env GAGE_EVAL_MAX_SAMPLES.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--distill",
+        "-d",
+        action="store_true",
+        help="Distill mode: validate config for builtin template generation (single-task first).",
+    )
+    parser.add_argument(
+        "--force-merge",
+        action="store_true",
+        help="Allow multi-task configs in distill mode by creating a monolithic template.",
+    )
+    parser.add_argument(
+        "--init",
+        "-i",
+        help="Init mode: generate RunConfig or PipelineConfig from a builtin template name or template path.",
+    )
+    parser.add_argument(
+        "--init-mode",
+        choices=("run-config", "pipeline-config"),
+        default="run-config",
+        help="Init output type (default: run-config).",
+    )
+    parser.add_argument(
+        "--builtin-name",
+        help="Builtin suite name when running distill/init flows (required for distill).",
+    )
+    parser.add_argument(
+        "--version",
+        help="Template version when distilling; defaults to V1.",
+    )
+    parser.add_argument(
+        "--distill-output",
+        help="Output directory for distill templates (default: config/builtin_templates/<name>/vN.yaml).",
+    )
+    args = parser.parse_args()
+
+    if not args.init and not args.config and not args.distill:
+        parser.error("--config is required unless running in --init or --distill mode.")
+    if args.distill and not args.config:
+        parser.error("--distill requires --config to point to a PipelineConfig.")
+    if args.init and args.distill:
+        parser.error("--init and --distill cannot be used together.")
+    return args
+
+
+def _normalize_version_tag(version: str) -> str:
+    tag = version.strip()
+    tag = tag.upper()
+    return tag if tag.startswith("V") else f"V{tag}"
 
 
 def _ensure_spawn_start_method() -> None:
@@ -105,6 +157,615 @@ def load_config(path: Path) -> dict:
     if not isinstance(data, dict):
         raise ValueError(f"Config '{path}' must be a mapping at the top level")
     return data
+
+
+class _LiteralDumper(yaml.SafeDumper):
+    """YAML dumper that renders multi-line strings in literal style for readability.
+
+    Anchors (&id001/*id001) are disabled to keep generated configs simple.
+    """
+
+    # 禁用 YAML 引用锚点，避免在 RunConfig/PipelineConfig 中出现 &id001/*id001。
+    def ignore_aliases(self, data):
+        return True
+
+
+def _str_representer(dumper: yaml.SafeDumper, data: str):
+    if "\n" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+_LiteralDumper.add_representer(str, _str_representer)
+
+
+def _write_yaml(data: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = yaml.dump(data, Dumper=_LiteralDumper, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    content = _insert_top_level_spacing(content)
+    path.write_text(content, encoding="utf-8")
+
+
+def _dedupe_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    counter = 1
+    while True:
+        candidate = path.with_name(f"{stem}_{counter}{suffix}")
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def _insert_top_level_spacing(content: str) -> str:
+    lines = content.splitlines()
+    formatted: list[str] = []
+    for idx, line in enumerate(lines):
+        stripped = line.lstrip()
+        is_top_level_key = bool(line) and not line[0].isspace() and not line.startswith("-")
+        if is_top_level_key and formatted and formatted[-1] != "":
+            formatted.append("")
+        formatted.append(line)
+    return "\n".join(formatted) + ("\n" if content.endswith("\n") else "")
+
+
+def _inject_runtime_hints(yaml_text: str, run_cfg: dict) -> str:
+    runtime = run_cfg.get("runtime") or {}
+    params: list[str] = []
+    dataset_ids = list((runtime.get("datasets") or {}).keys())
+    backend_ids = list((runtime.get("backends") or {}).keys())
+    task_ids = list((runtime.get("tasks") or {}).keys())
+    if dataset_ids:
+        params.append(f"runtime.datasets.{dataset_ids[0]}: {{...}}  # 可整体替换为本地数据集配置")
+    if backend_ids:
+        params.append(f"runtime.backends.{backend_ids[0]}: {{...}}  # 切换模型服务/参数")
+    if task_ids:
+        params.append(f"runtime.tasks.{task_ids[0]}.max_samples: 50  # 控制本次运行样本数")
+    if not params:
+        return yaml_text
+    lines = yaml_text.splitlines()
+    output: list[str] = []
+    for line in lines:
+        if line.startswith("runtime:"):
+            output.append("# runtime 覆盖示例（按需修改下方键值）：")
+            for hint in params:
+                output.append(f"#   {hint}")
+        output.append(line)
+    return "\n".join(output)
+
+
+def _allocate_numbered_path(prefix: str, directory: Path, *, start: int = 1, suffix: str = ".yaml") -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    pattern = re.compile(rf"^{re.escape(prefix)}(?:_(\d+))?{re.escape(suffix)}$")
+    max_seen = start - 1
+    for path in directory.glob(f"{prefix}*{suffix}"):
+        match = pattern.match(path.name)
+        if not match:
+            continue
+        num_str = match.group(1)
+        num = int(num_str) if num_str is not None else 0
+        max_seen = max(max_seen, num)
+    next_num = max_seen + 1
+    filename = f"{prefix}_{next_num}{suffix}"
+    return directory / filename
+
+
+def _find_latest_version_path(template_dir: Path) -> Path:
+    best_num = -1
+    best_path: Optional[Path] = None
+    for path in template_dir.glob("v*.yaml"):
+        name = path.name.lower()
+        if not name.startswith("v") or not name.endswith(".yaml"):
+            continue
+        num = name[1:-5]
+        if num.isdigit():
+            value = int(num)
+            if value > best_num:
+                best_num = value
+                best_path = path
+    if best_path is None:
+        raise FileNotFoundError(f"No template versions found under {template_dir}")
+    return best_path
+
+
+def _resolve_template_path(init_value: str, version: Optional[str]) -> Path:
+    candidate = Path(init_value).expanduser()
+    if candidate.exists():
+        return candidate
+
+    name = init_value
+    template_dir = REPO_ROOT / "config" / "builtin_templates" / name
+    if not template_dir.exists():
+        raise FileNotFoundError(f"Builtin template '{name}' not found under {template_dir}")
+    if version:
+        normalized = _normalize_version_tag(version)
+        filename = f"{normalized.lower()}.yaml"
+        target = template_dir / filename
+        if not target.exists():
+            raise FileNotFoundError(f"Template version '{normalized}' not found at {target}")
+        return target
+    return _find_latest_version_path(template_dir)
+
+
+def _load_template(path: Path) -> dict:
+    data = load_config(path)
+    if (data.get("kind") or "").lower() != "builtintemplate":
+        raise ValueError(f"Template at {path} must have kind=BuiltInTemplate/BuiltinTemplate")
+    return data
+
+
+def _build_run_config_payload(template: dict, *, name_hint: Optional[str] = None) -> dict:
+    meta = template.get("metadata") or {}
+    template_name = meta.get("name") or name_hint or "builtin_task"
+    version = meta.get("version") or "V1"
+    parameters = template.get("parameters") or []
+    runtime_defaults = _parameters_to_runtime_defaults(parameters) if parameters else _extract_runtime_defaults(template.get("definition") or {})
+    payload = {
+        "api_version": template.get("api_version") or "gage/v1alpha1",
+        "kind": "RunConfig",
+        "metadata": {
+            "name": f"{template_name}_run",
+        },
+        "base_task": f"builtin/{template_name}",
+        "template_version": _normalize_version_tag(version),
+        "template_digest": meta.get("digest"),
+        "runtime": runtime_defaults,
+    }
+    return payload
+
+
+def _lookup_runtime_value(runtime_params: dict, dotted_path: str):
+    node: object = runtime_params
+    for token in dotted_path.split("."):
+        if not isinstance(node, dict) or token not in node:
+            raise KeyError(f"runtime parameter '{dotted_path}' is missing")
+        node = node[token]
+    return node
+
+
+def _apply_runtime_params(definition: object, runtime_params: dict) -> object:
+    pattern = re.compile(r"\$\{runtime\.([A-Za-z0-9_\.]+)\}")
+
+    def _apply(value: object) -> object:
+        if isinstance(value, dict):
+            return {k: _apply(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_apply(v) for v in value]
+        if isinstance(value, str):
+            full_match = pattern.fullmatch(value)
+            if full_match:
+                key = full_match.group(1)
+                return _lookup_runtime_value(runtime_params, key)
+
+            def _repl(match: re.Match[str]) -> str:
+                key = match.group(1)
+                resolved = _lookup_runtime_value(runtime_params, key)
+                return str(resolved)
+
+            return pattern.sub(_repl, value)
+        return value
+
+    return _apply(definition)
+
+
+def _apply_runtime_overrides(definition: dict, runtime_params: dict) -> dict:
+    """Apply common runtime overrides even when templates lack placeholders."""
+
+    rendered = copy.deepcopy(definition)
+
+    runtime_datasets = runtime_params.get("datasets") or {}
+    for ds in rendered.get("datasets") or []:
+        ds_id = ds.get("dataset_id")
+        if not ds_id:
+            continue
+        overrides = runtime_datasets.get(ds_id) or {}
+        if not isinstance(overrides, dict) or not overrides:
+            continue
+
+        # 兼容老语义：runtime.datasets.<id>.hub_limit 仍然只覆盖 limit。
+        hub_limit = None
+        if isinstance(overrides.get("hub_params"), dict):
+            hub_limit = overrides["hub_params"].get("limit")
+        if hub_limit is None:
+            hub_limit = overrides.get("hub_limit")
+        if hub_limit is not None:
+            hub_params = dict(ds.get("hub_params") or ds.get("hub_args") or {})
+            hub_params["limit"] = hub_limit
+            ds["hub_params"] = hub_params
+            ds.pop("hub_args", None)
+
+        # 新语义：允许在 RunConfig 中提供完整的数据集配置对象，按键合并到 dataset 节点下。
+        for key, value in overrides.items():
+            if key in ("hub_params", "hub_args", "params"):
+                base = ds.get(key) or {}
+                if isinstance(base, dict) and isinstance(value, dict):
+                    merged = dict(base)
+                    merged.update(copy.deepcopy(value))
+                    ds[key] = merged
+                else:
+                    ds[key] = copy.deepcopy(value)
+            elif key in ("hub_limit",):
+                # 已在上方处理 hub_limit -> hub_params.limit 映射，这里跳过。
+                continue
+            else:
+                if value is not None:
+                    ds[key] = copy.deepcopy(value)
+
+    runtime_backends = runtime_params.get("backends") or {}
+    for backend in rendered.get("backends") or []:
+        backend_id = backend.get("backend_id")
+        if not backend_id:
+            continue
+        overrides = runtime_backends.get(backend_id) or {}
+        if not isinstance(overrides, dict) or not overrides:
+            continue
+
+        # 支持覆盖 backend.type
+        if "type" in overrides and overrides["type"] is not None:
+            backend["type"] = overrides["type"]
+
+        cfg = backend.setdefault("config", {})
+
+        # 新语义：如果 runtime.backends.<id> 下提供了 config 对象，则对 config 做深度合并。
+        override_cfg = overrides.get("config") or {}
+        if isinstance(override_cfg, dict):
+            for key, value in override_cfg.items():
+                if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+                    merged = dict(cfg[key])
+                    merged.update(copy.deepcopy(value))
+                    cfg[key] = merged
+                else:
+                    cfg[key] = copy.deepcopy(value)
+
+        # 兼容老语义：仍然支持在 overrides 顶层直接写 base_url/model/async_max_concurrency/pool_size。
+        for key in ("base_url", "model", "async_max_concurrency"):
+            if key in overrides and overrides[key] is not None:
+                cfg[key] = overrides[key]
+        if "pool_size" in overrides and overrides["pool_size"] is not None:
+            resource = cfg.setdefault("resource_requirement", {})
+            resource["pool_size"] = overrides["pool_size"]
+
+    runtime_tasks = runtime_params.get("tasks") or {}
+    for task in rendered.get("tasks") or []:
+        task_id = task.get("task_id")
+        if not task_id:
+            continue
+        overrides = runtime_tasks.get(task_id) or {}
+        for key in ("max_samples", "concurrency", "shuffle", "shuffle_seed", "prefetch_factor", "max_inflight"):
+            if key in overrides and overrides[key] is not None:
+                task[key] = overrides[key]
+
+    output_path = (runtime_params.get("global") or {}).get("output_path")
+    if output_path:
+        for task in rendered.get("tasks") or []:
+            reporting = task.get("reporting") or {}
+            sinks = reporting.get("sinks") or []
+            for sink in sinks:
+                if sink.get("type") != "file":
+                    continue
+                params = sink.get("params") or {}
+                params["output_path"] = output_path
+                sink["params"] = params
+            if sinks:
+                reporting["sinks"] = sinks
+                task["reporting"] = reporting
+
+    return rendered
+
+
+def _validate_run_config_payload(payload: dict) -> None:
+    allowed_keys = {"api_version", "kind", "metadata", "base_task", "template_version", "template_digest", "runtime"}
+    logic_keys = {
+        "datasets",
+        "backends",
+        "role_adapters",
+        "metrics",
+        "tasks",
+        "custom",
+        "builtin",
+        "models",
+        "prompts",
+        "observability",
+    }
+    unexpected = set(payload.keys()) - allowed_keys
+    logic_conflict = unexpected & logic_keys
+    if logic_conflict:
+        raise ValueError(f"RunConfig must not contain pipeline logic fields: {', '.join(sorted(logic_conflict))}")
+    if unexpected:
+        raise ValueError(f"RunConfig contains unsupported fields: {', '.join(sorted(unexpected))}")
+    if not payload.get("base_task"):
+        raise ValueError("RunConfig missing required field: base_task")
+    if not payload.get("template_version"):
+        raise ValueError("RunConfig missing required field: template_version")
+
+
+def _compile_run_config(run_cfg: dict, *, template_payload: Optional[dict] = None) -> tuple[dict, Path]:
+    _validate_run_config_payload(run_cfg)
+    base_task: str = run_cfg["base_task"]
+    version = _normalize_version_tag(str(run_cfg["template_version"]))
+    template_path: Path
+    if template_payload is not None:
+        template_path = Path(template_payload.get("_source_path") or "")
+    else:
+        if base_task.startswith("builtin/"):
+            template_path = _resolve_template_path(base_task.replace("builtin/", "", 1), version)
+        else:
+            template_path = Path(base_task).expanduser()
+        template_payload = _load_template(template_path)
+
+    meta = template_payload.get("metadata") or {}
+    template_version = _normalize_version_tag(str(meta.get("version") or version))
+    if template_version != version:
+        raise ValueError(
+            f"RunConfig template_version={version} does not match template version={template_version} "
+            f"from {template_path}"
+        )
+    expected_digest = meta.get("digest")
+    run_digest = run_cfg.get("template_digest")
+    if run_digest and expected_digest and run_digest != expected_digest:
+        raise ValueError(
+            f"RunConfig template_digest mismatch: expected {expected_digest}, got {run_digest} (template: {template_path})"
+        )
+
+    definition = copy.deepcopy(template_payload.get("definition") or {})
+    runtime_params = run_cfg.get("runtime") or {}
+    rendered = _apply_runtime_params(definition, runtime_params)
+    rendered = _apply_runtime_overrides(rendered, runtime_params)
+    pipeline_payload = {"api_version": "gage/v1alpha1", "kind": "PipelineConfig"}
+    pipeline_payload.update(rendered)
+    return pipeline_payload, template_path
+
+
+def _prune_empty_sections(payload: dict, *, keys: set[str]) -> dict:
+    trimmed = dict(payload)
+    for key in keys:
+        val = trimmed.get(key)
+        if val in (None, {}, []):
+            trimmed.pop(key, None)
+    return trimmed
+
+
+def _extract_runtime_defaults(definition: dict) -> dict:
+    task_by_dataset: dict[str, dict] = {}
+    for task in definition.get("tasks") or []:
+        ds_id = task.get("dataset_id")
+        if ds_id:
+            task_by_dataset.setdefault(ds_id, {})
+            if "max_samples" in task:
+                task_by_dataset[ds_id]["max_samples"] = task.get("max_samples")
+
+    runtime = {
+        "datasets": {},
+        "backends": {},
+        "tasks": {},
+        "global": {},
+    }
+    for ds in definition.get("datasets") or []:
+        ds_id = ds.get("dataset_id")
+        if not ds_id:
+            continue
+        ds_runtime: dict = {}
+        ds_runtime_hub_params: dict = {}
+        hub_params = ds.get("hub_params") or {}
+        if "limit" in hub_params:
+            ds_runtime_hub_params["limit"] = hub_params.get("limit")
+        elif task_by_dataset.get(ds_id, {}).get("max_samples") is not None:
+            ds_runtime_hub_params["limit"] = task_by_dataset[ds_id]["max_samples"]
+        if ds_runtime_hub_params:
+            ds_runtime["hub_params"] = ds_runtime_hub_params
+        runtime["datasets"][ds_id] = ds_runtime
+    for backend in definition.get("backends") or []:
+        backend_id = backend.get("backend_id")
+        if not backend_id:
+            continue
+        cfg = backend.get("config") or {}
+        b_runtime: dict = {}
+        for key in ("base_url", "model", "async_max_concurrency"):
+            if key in cfg:
+                b_runtime[key] = cfg.get(key)
+        resource = cfg.get("resource_requirement") or {}
+        if "pool_size" in resource:
+            b_runtime["pool_size"] = resource.get("pool_size")
+        runtime["backends"][backend_id] = b_runtime
+    for task in definition.get("tasks") or []:
+        task_id = task.get("task_id")
+        if not task_id:
+            continue
+        t_runtime: dict = {}
+        for key in ("concurrency", "max_samples"):
+            if key in task:
+                t_runtime[key] = task.get(key)
+        runtime["tasks"][task_id] = t_runtime
+        reporting = task.get("reporting") or {}
+        sinks = reporting.get("sinks") or []
+        for sink in sinks:
+            if sink.get("type") == "file":
+                params = sink.get("params") or {}
+                if "output_path" in params:
+                    runtime["global"]["output_path"] = params.get("output_path")
+                    break
+    # Ensure keys exist even if empty
+    for key in ("datasets", "backends", "tasks", "global"):
+        runtime.setdefault(key, {})
+    return runtime
+
+
+def _parameters_to_runtime_defaults(parameters: list[dict]) -> dict:
+    runtime: dict = {"datasets": {}, "backends": {}, "tasks": {}, "global": {}}
+    for param in parameters:
+        name = param.get("name")
+        default = param.get("default")
+        if not isinstance(name, str) or not name.startswith("runtime."):
+            continue
+        path = name[len("runtime.") :].split(".")
+        cursor = runtime
+        for token in path[:-1]:
+            if token not in cursor or not isinstance(cursor[token], dict):
+                cursor[token] = {}
+            cursor = cursor[token]
+        cursor[path[-1]] = default
+    for key in ("datasets", "backends", "tasks", "global"):
+        runtime.setdefault(key, {})
+    return runtime
+
+
+def _summarize_template_comment(template: dict) -> str:
+    meta = template.get("metadata") or {}
+    definition = template.get("definition") or {}
+    lines = [
+        "# =================================================================",
+        "# 只读模板快照（修改本段不影响模板定义）",
+        f"# Template: {meta.get('name', '<unknown>')} version={meta.get('version', '<unknown>')} monolithic={meta.get('monolithic', False)}",
+        "# -----------------------------------------------------------------",
+    ]
+    datasets = definition.get("datasets") or []
+    if datasets:
+        lines.append("# Datasets:")
+        hint_added = False
+        for ds in datasets:
+            ds_id = ds.get("dataset_id")
+            loader = ds.get("loader") or ds.get("hub") or "<loader>"
+            hub_params = ds.get("hub_params") or {}
+            params = ds.get("params") or {}
+            preprocess = params.get("preprocess")
+            doc_to_visual = params.get("doc_to_visual")
+            lines.append(f"#   - dataset_id: {ds_id}")
+            lines.append(f"#     loader: {loader}")
+            if hub_params:
+                hub_id = hub_params.get("hub_id")
+                split = hub_params.get("split")
+                subset = hub_params.get("subset")
+                limit = hub_params.get("limit")
+                lines.append(f"#     hub_params:")
+                if hub_id:
+                    lines.append(f"#       hub_id: {hub_id}")
+                if split:
+                    lines.append(f"#       split: {split}")
+                if subset:
+                    lines.append(f"#       subset: {subset}")
+                if limit is not None:
+                    lines.append(f"#       limit: {limit}")
+            if preprocess:
+                lines.append(f"#     preprocess: {preprocess}")
+            if doc_to_visual:
+                lines.append(f"#     doc_to_visual: {doc_to_visual}")
+            if not hint_added:
+                lines.append("#     提示：可在 runtime.datasets.<id> 覆盖 hub_params.limit/local_path 等路径配置以指向本地测试集。")
+                hint_added = True
+    backends = definition.get("backends") or []
+    if backends:
+        lines.append("# Backends:")
+        for backend in backends:
+            backend_id = backend.get("backend_id")
+            b_type = backend.get("type")
+            cfg = backend.get("config") or {}
+            base_url = cfg.get("base_url") or cfg.get("endpoint")
+            model = cfg.get("model")
+            async_max = cfg.get("async_max_concurrency")
+            pool_size = (cfg.get("resource_requirement") or {}).get("pool_size")
+            lines.append(f"#   - backend_id: {backend_id}")
+            lines.append(f"#     type: {b_type}")
+            if model:
+                lines.append(f"#     model: {model}")
+            if base_url:
+                lines.append(f"#     base_url: {base_url}")
+            if async_max is not None:
+                lines.append(f"#     async_max_concurrency: {async_max}")
+            if pool_size is not None:
+                lines.append(f"#     pool_size: {pool_size}")
+    roles = {r.get("adapter_id"): r for r in (definition.get("role_adapters") or []) if r.get("adapter_id")}
+    steps = (definition.get("custom") or {}).get("steps") or []
+    if steps:
+        lines.append("# Steps:")
+        for step in steps:
+            lines.append(f"#   - step: {step.get('step')}")
+            lines.append(f"#     adapter_id: {step.get('adapter_id') or '<auto>'}")
+    prompts = definition.get("prompts") or []
+    if prompts:
+        # 建立 prompt_id -> 使用它的 adapter_id 列表映射。
+        prompt_usage: dict[str, list[str]] = {}
+        for adapter_id, role in roles.items():
+            prompt_id = role.get("prompt_id")
+            if not prompt_id:
+                continue
+            prompt_usage.setdefault(str(prompt_id), []).append(str(adapter_id))
+
+        lines.append("# Prompts（只读配置，修改请通过 PipelineConfig）：")
+        lines.append(
+            "#   提示：Prompts 属于评测逻辑的一部分，如需调整，请使用 "
+            "run.py --init <name> --init-mode pipeline-config 生成 PipelineConfig 后在 prompts 段编辑。"
+        )
+        for prompt in prompts:
+            prompt_id = prompt.get("prompt_id") or "<unknown>"
+            renderer = prompt.get("renderer") or "<renderer>"
+            params = prompt.get("params") or {}
+            used_by = ", ".join(sorted(prompt_usage.get(prompt_id, []))) or "<unbound>"
+            lines.append(f"#   - prompt_id: {prompt_id}")
+            lines.append(f"#     renderer: {renderer}")
+            lines.append(f"#     used_by_adapters: {used_by}")
+            if isinstance(params, dict) and params:
+                lines.append("#     params:")
+                for key, value in params.items():
+                    text = str(value)
+                    if "\n" in text:
+                        lines.append(f"#       {key}: |")
+                        for sub in text.splitlines():
+                            lines.append(f"#         {sub}")
+                    else:
+                        lines.append(f"#       {key}: {text}")
+            template_text = prompt.get("template")
+            if isinstance(template_text, str) and template_text.strip():
+                lines.append("#     template: |")
+                for line in template_text.splitlines():
+                    lines.append(f"#       {line}")
+
+    metrics = definition.get("metrics") or []
+    if metrics:
+        lines.append("# Metrics:")
+        for metric in metrics:
+            lines.append(f"#   - metric_id: {metric.get('metric_id')}")
+            lines.append(f"#     implementation: {metric.get('implementation')}")
+    lines.append("# =================================================================")
+    return "\n".join(lines)
+
+
+def _write_run_config_with_comments(run_cfg: dict, template_payload: dict, path: Path) -> None:
+    comment_block = _summarize_template_comment(template_payload)
+    yaml_block = _insert_top_level_spacing(yaml.safe_dump(run_cfg, sort_keys=False, allow_unicode=True))
+    yaml_block = _inject_runtime_hints(yaml_block, run_cfg)
+    content = f"{comment_block}\n{yaml_block}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _handle_init_mode(args: argparse.Namespace) -> None:
+    template_path = _resolve_template_path(args.init, args.version)
+    template_payload = _load_template(template_path)
+    template_payload["_source_path"] = str(template_path)
+    template_name = template_payload.get("metadata", {}).get("name") or Path(args.init).stem
+    version = _normalize_version_tag(template_payload.get("metadata", {}).get("version") or (args.version or "V1"))
+    run_cfg = _build_run_config_payload(template_payload, name_hint=template_name)
+
+    if args.init_mode == "pipeline-config":
+        compiled, _ = _compile_run_config(run_cfg, template_payload=template_payload)
+        output_dir = REPO_ROOT / "config" / "custom"
+        compiled = _prune_empty_sections(
+            compiled,
+            keys={"models", "prompts", "parameters", "role_adapters", "observability", "builtin"},
+        )
+        output = _allocate_numbered_path(f"{template_name}_from_{version}", output_dir, start=1)
+        _write_yaml(compiled, output)
+        print(f"[gage-eval][init] mode=pipeline-config base_task=builtin/{template_name} template_version={version}")
+        print(f"[gage-eval][init] pipeline config written to {output}")
+        return
+
+    output_dir = REPO_ROOT / "config" / "run_configs"
+    output = _allocate_numbered_path(f"{template_name}_run", output_dir, start=1)
+    _write_run_config_with_comments(run_cfg, template_payload, output)
+    print(f"[gage-eval][init] mode=run-config base_task=builtin/{template_name} template_version={version}")
+    print(f"[gage-eval][init] run config written to {output}")
 
 
 def ensure_save_dir(directory: Optional[str]) -> None:
@@ -296,6 +957,65 @@ def _apply_hardware_profile_env(profile: Optional[str]) -> None:
 def main() -> None:
     wall_clock_start = time.perf_counter()
     args = parse_args()
+
+    if args.init:
+        try:
+            _handle_init_mode(args)
+        except Exception as exc:
+            print(f"[gage-eval][init] {exc}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.distill:
+        builtin_name = args.builtin_name
+        config_payload = load_config(Path(args.config).expanduser())
+        if not builtin_name and args.distill_output:
+            # 若指定了 distill 输出目录但未提供名称，默认使用输出目录末级作为模板名。
+            builtin_name = Path(args.distill_output).name
+        try:
+            analysis = analyze_tasks_for_distill(config_payload, force_merge=args.force_merge)
+        except DistillError as exc:
+            context = getattr(exc, "context", None)
+            if context:
+                task_info = ", ".join(context.task_ids) if context.task_ids else "<none>"
+                print(
+                    f"[gage-eval][distill] mode={context.mode} tasks={task_info}",
+                    file=sys.stderr,
+                )
+            print(f"[gage-eval][distill] {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        task_info = ", ".join(analysis.task_ids) if analysis.task_ids else "<none>"
+        print(f"[gage-eval][distill] mode={analysis.mode} tasks={task_info}")
+        if not builtin_name:
+            print("[gage-eval][distill] please provide --builtin-name or set --distill-output to derive a name", file=sys.stderr)
+            sys.exit(1)
+        from gage_eval.tools.distill import distill_to_template
+
+        version = args.version or None
+        output_root = (
+            Path(args.distill_output).expanduser()
+            if args.distill_output
+            else REPO_ROOT / "config" / "builtin_templates"
+        )
+        try:
+            target = distill_to_template(
+                config_payload,
+                builtin_name=builtin_name,
+                version=version,
+                output_root=output_root,
+                force_merge=args.force_merge,
+            )
+        except DistillError as exc:
+            print(f"[gage-eval][distill] {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[gage-eval][distill] template written to {target}")
+        sys.exit(0)
+
+    if not args.config:
+        print("[gage-eval] --config is required for run mode (omit only with --init/--distill)", file=sys.stderr)
+        sys.exit(2)
+
     _ensure_spawn_start_method()
     profile_hint = _detect_hardware_profile()
     _ensure_default_concurrency(args)
@@ -307,14 +1027,25 @@ def main() -> None:
         os.environ["VLLM_NATIVE_MODEL_PATH"] = args.model_path
     _install_signal_handlers()
     config_payload = load_config(Path(args.config).expanduser())
-    config = PipelineConfig.from_dict(config_payload)
+    config_source_desc = args.config
+    raw_kind = (config_payload.get("kind") or "").lower()
+    if raw_kind == "runconfig":
+        try:
+            compiled_payload, template_path = _compile_run_config(config_payload)
+        except Exception as exc:
+            print(f"[gage-eval][runconfig] {exc}", file=sys.stderr)
+            sys.exit(1)
+        config = PipelineConfig.from_dict(compiled_payload)
+        config_source_desc = f"{args.config} (template: {template_path})"
+    else:
+        config = PipelineConfig.from_dict(config_payload)
     ensure_save_dir(args.output_dir)
 
     registry = build_default_registry()
     profile = ResourceProfile(nodes=[NodeResource(node_id="local", gpus=args.gpus, cpus=args.cpus)])
     trace = ObservabilityTrace(run_id=args.run_id)
 
-    print(f"[gage-eval] building runtime from {args.config}")
+    print(f"[gage-eval] building runtime from {config_source_desc}")
     runtime = build_runtime(
         config=config,
         registry=registry,

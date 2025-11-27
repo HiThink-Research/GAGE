@@ -1,0 +1,65 @@
+api_version: gage/v1alpha1
+
+kind: PipelineConfig
+
+metadata:
+  name: mmmu_qwen_vl
+  description: Evaluate MMMU val500 with the Qwen2.5-VL-3B vLLM service.
+
+custom:
+  steps:
+  - step: inference
+  - step: auto_eval
+
+datasets:
+- dataset_id: mmmu_val_huggingface
+  hub: huggingface
+  hub_params:
+    hub_id: modelscope/MMMU-Reasoning-Distill-Validation
+    split: validation
+    trust_remote_code: true
+    limit: 500
+  loader: hf_hub
+  params:
+    preprocess: gage_eval.assets.datasets.preprocessors.preprocess_strip_assistant
+    preprocess_kwargs:
+      roles_to_remove:
+      - assistant
+    doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_message_images
+    doc_to_visual_kwargs:
+      content_field: messages.0.content
+
+backends:
+- backend_id: mmmu_qwen_vl_backend
+  type: openai_http
+  config:
+    base_url: http://127.0.0.1:1234/v1
+    model: qwen2.5-vl-3b-instruct
+    default_params:
+      max_new_tokens: 1024
+      temperature: 0.0
+    resource_requirement:
+      pool_size: 4
+
+role_adapters:
+- adapter_id: mmmu_qwen_vl
+  role_type: dut_model
+  backend_id: mmmu_qwen_vl_backend
+  capabilities:
+  - vision_chat
+
+metrics:
+- metric_id: mmmu_acc
+  implementation: mmmu_accuracy
+
+tasks:
+- task_id: mmmu_val_eval
+  dataset_id: mmmu_val_huggingface
+  max_samples: 500
+  reporting:
+    sinks:
+    - type: console
+    - type: file
+      params:
+        output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmmu_events.jsonl
+  concurrency: 4

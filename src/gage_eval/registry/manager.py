@@ -194,6 +194,19 @@ class RegistryManager:
             try:
                 importlib.import_module(module_info.name)
             except Exception as exc:  # pragma: no cover - optional dependency path
+                recovered = False
+                message = str(exc)
+                # 某些模块在 auto-discover 期间会命中“partially initialized”错误（典型场景：
+                # pipeline.steps.* 与 role_pool 交叉导入）。在警告前尝试一次补救，以避免无谓噪音。
+                if "partially initialized module 'gage_eval.role.role_pool'" in message:
+                    try:
+                        importlib.import_module("gage_eval.role.role_pool")
+                        importlib.import_module(module_info.name)
+                        recovered = True
+                    except Exception:
+                        recovered = False
+                if recovered:
+                    continue
                 warnings.warn(
                     f"[registry] Failed to import {module_info.name}: {exc}",
                     RuntimeWarning,
