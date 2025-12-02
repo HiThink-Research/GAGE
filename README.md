@@ -77,6 +77,7 @@ graph TD
 ### 3.2 预处理与视觉嵌入
 - 支持 `preprocess` 链：如 `preprocess_strip_assistant` 剥离答案段，避免模型偷看。
 - `doc_to_visual` 钩子（如 `embed_local_message_images`）把本地路径转 data URL；元数据 `_dataset_metadata.path` 自动推导根目录。
+- 文本默认渲染：未显式声明 `preprocess` 时，默认尝试按 **tokenizer_name/tokenizer_path/model_path → 环境变量 (GAGE_EVAL_MODEL_PATH/MODEL_PATH)** 的顺序加载 tokenizer，调用 `apply_chat_template` 渲染 `messages`；失败则 fallback 为简易拼接，并在后端侧允许再次渲染。
 
 ```python
 from gage_eval.assets.datasets.converters.image_utils import embed_local_message_images
@@ -89,6 +90,22 @@ def doc_to_visual(sample):
 ### 3.3 并发与背压
 - `SampleLoop` 支持 `shuffle`、`prefetch_factor`、`max_inflight`，遇到高压场景可设置 `GAGE_EVAL_BLOCK_ON_FULL=1` 阻塞而非丢样。
 - 事件 `sample_buffer_state`、`sample_prefetch_wait` 记录在 `events.jsonl`，便于回溯。
+
+### 3.4 文本默认渲染与元数据落盘
+
+```mermaid
+flowchart LR
+  R[records] --> AP[apply_preprocess]
+  AP -->|无显式 preprocess| DEF[默认渲染<br/>AutoTokenizer 优先]
+  DEF -->|成功| WR[写入 prompt/inputs + 模板元数据]
+  DEF -->|失败| FB[简易拼接<br/>template_source=fallback]
+  FB --> WR
+```
+
+关键点：
+- 优先 AutoTokenizer，若无 `apply_chat_template` 再回退 AutoProcessor；Processor 无模板则记为 fallback。
+- 元数据 `chat_template_mode/template_source/rendered_by/cache_suffix` 写回样本；`_tokenizer_path` 优先取数据集配置，否则由后端回填。
+- 多模态消息检测到 image/audio 片段时不做预处理渲染，保持后端侧处理。
 
 ### 3.4 MMMU 数据结构示例
 
@@ -211,7 +228,7 @@ flowchart LR
 | `TaskPlanner` | 步骤规划与上下文维护 | Pipeline 配置中的 steps 定义 | 每个样本的执行计划（support / inference / judge / auto_eval 顺序） |
 | `RoleManager` | 角色分发与实例池管理 | 角色配置、资源画像（GPU/CPU） | 针对每个角色的 RoleInstance 池 |
 | `RoleAdapter` | Prompt 渲染与 Backend 协议转换 | 样本 Envelope、采样参数 | Backend 所需的请求结构（prompt/messages/inputs） |
-| `Backend` | 实际推理执行 | 已归一化的请求 payload | `model_output` 字段（answer、latency_ms 等） |
+| `Backend` | 实际推理执行 | 已归一化的请求 payload | `model_output` 字段（answer、latency_ms 等），并回填模板元数据/`_tokenizer_path` |
 
 其中 **RoleManager** 的核心责任是「把抽象的角色 (DUT/Judge/Helper) 映射到具体的后端实例」：
 
@@ -244,6 +261,7 @@ sequenceDiagram
 ```
 - `generate_batch` 优先被调用，采样参数不一致自动退化串行。
 - VLM 路径：`vlm_transformers_backend` 自动从 messages 提取图片、补 `<image>` 占位，避免 `tokens=0/features>0`。
+- 文本路径：若样本标记为 `template_source=fallback`（预处理阶段未命中模板），后端会使用自身 tokenizer 重新渲染并将模板元数据写入 `model_output`。
 
 结合代码实现，执行链中几个关键挂钩的职责可以概括为：
 

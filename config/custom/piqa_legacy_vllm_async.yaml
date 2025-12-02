@@ -1,8 +1,8 @@
 api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
-  name: piqa_local_vllm_async
-  description: 使用 vllm_backend（本地 AsyncLLMEngine，非 HTTP）加载 Qwen2.5-0.5B 评测 PIQA 500 子集；如需 HTTP 服务端，请改用 openai_http 配置。
+  name: piqa_legacy_vllm_async
+  description: 使用 legacy_vllm_backend（本地 AsyncLLMEngine）加载 Qwen2.5-0.5B，文本类基准，参考 piqa_local_vllm_async。
 
 custom:
   steps:
@@ -14,28 +14,27 @@ datasets:
     loader: jsonl
     params:
       path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
-      # 不再设置 limit，运行时可用 task.max_samples 或 CLI --max-samples 控制样本数
       tokenizer_path: /mnt/model/qwen2_5_05B
 
 backends:
-  - backend_id: piqa_local_vllm_backend
-    type: vllm
+  - backend_id: piqa_legacy_vllm_backend
+    type: legacy_vllm
     config:
-      model_path: /mnt/model/qwen2_5_05B  # H100 可切至更大模型
+      model_path: /mnt/model/qwen2_5_05B  # 文本模型，必要时替换为本地路径
       tensor_parallel_size: 1
       max_tokens: 96
       sampling_params:
         temperature: 0.0
-      max_batch_size: 32  # 1123 实机曾出现 KV Cache OOM，先收敛批量确保稳定
+      max_batch_size: 32
       max_model_len: 2048
       gpu_memory_utilization: 0.9
       batch_timeout_ms: 30
-      async_max_concurrency: 32  # 与 SampleLoop 并发对齐
+      async_max_concurrency: 32  # 与 piqa_local_vllm_async 保持一致
 
 role_adapters:
-  - adapter_id: dut_qwen25_vllm_serving
+  - adapter_id: dut_qwen25_legacy_vllm
     role_type: dut_model
-    backend_id: piqa_local_vllm_backend
+    backend_id: piqa_legacy_vllm_backend
     concurrency: 32
     capabilities:
       - chat_completion
@@ -57,5 +56,5 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_local_vllm_async_events.jsonl
-    concurrency: 32  # 需与大批量对齐，显存足够可探 32
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_legacy_vllm_async_events.jsonl
+    concurrency: 32

@@ -10,6 +10,8 @@ from loguru import logger
 
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
+from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
+from gage_eval.utils.chat_templates import get_fallback_template
 
 
 @registry.asset(
@@ -30,10 +32,15 @@ class VLLMNativeBackend(EngineBackend):
         self._lock = threading.Lock()
         self._vllm_version = self._detect_version()
         if self._vllm_version:
-            logger.info("Detected vLLM version %s (native backend)", self._vllm_version)
+            logger.info("Detected vLLM version {} (native backend)", self._vllm_version)
         # Feature detection: 是否支持 list[SamplingParams] 形式的批量 generate
         self._list_sampling_supported = True
         self._isolated = bool(config.get("process_isolation") or os.environ.get("GAGE_EVAL_VLLM_ISOLATED"))
+        self._chat_template_mode = str(config.get("use_chat_template", "auto"))
+        self._chat_template_policy = ChatTemplatePolicy(mode=self._chat_template_mode)
+        self._fallback_template = get_fallback_template("text")
+        self._tokenizer = None
+        self._cfg_tokenizer_path = config.get("tokenizer_path") or config.get("tokenizer_name")
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         super().__init__(cfg)
@@ -43,6 +50,7 @@ class VLLMNativeBackend(EngineBackend):
         if self._isolated:
             logger.info("VLLMNativeBackend starting isolated process worker")
             return VLLMIsolatedWorker(config)
+        self._tokenizer = self._init_tokenizer(config)
         try:  # pragma: no cover - heavy dependency
             from vllm import LLM
             import torch
@@ -77,20 +85,42 @@ class VLLMNativeBackend(EngineBackend):
         raise RuntimeError("vllm load_model failed after OOM retries") from last_exc
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._check_tokenizer_conflict(payload)
         prompt = payload.get("prompt") or payload.get("text") or ""
         messages = payload.get("messages") or []
-        rendered_prompt = self._render_messages(messages, prompt)
+        policy = self._chat_template_policy
+        caps = BackendCapabilities(supports_mm=False, has_processor_chat_template=False)
+        rendered_prompt = ""
+
+        if ChatTemplateMixin.should_render(payload, policy):
+            template_source = ChatTemplateMixin.select_template("text", policy, caps)
+            template_fn = getattr(self._tokenizer, "apply_chat_template", None) if self._tokenizer else None
+            fallback_tpl = None if template_source == "model" else self._fallback_template
+            rendered_prompt = ChatTemplateMixin.render(
+                messages,
+                template_fn=template_fn,
+                fallback_fn=lambda msgs: self._fallback_render(msgs, fallback_tpl),
+                add_generation_prompt=True,
+                chat_template=fallback_tpl,
+            )
+            payload["chat_template_mode"] = "backend"
+            payload["template_source"] = "model" if template_fn else "fallback"
+            payload["rendered_by"] = "backend"
+        else:
+            rendered_prompt = prompt or self._simple_render(messages)
+
         sampling = dict(self._sampling_defaults)
         sampling.update(payload.get("sampling_params") or {})
         if not rendered_prompt.strip():
-            # Soft skip: allow pipeline继续，不让空提示打断进程
             sample = payload.get("sample") or {}
             sample_id = sample.get("idx") or sample.get("id") or sample.get("sample_id") or "<unknown>"
-            logger.warning("VLLMNativeBackend: empty prompt/messages for sample %s, returning empty answer", sample_id)
+            logger.warning("VLLMNativeBackend: empty prompt/messages for sample {}, returning empty answer", sample_id)
             return {"_skip": True, "_skip_reason": "empty_prompt", "sample_id": sample_id}
+        caps = BackendCapabilities(supports_mm=False, has_processor_chat_template=False)
         return {
             "prompt": rendered_prompt,
             "sampling_params": sampling,
+            "cache_suffix": ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps),
         }
 
     def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -101,10 +131,14 @@ class VLLMNativeBackend(EngineBackend):
         prompt = inputs.get("prompt") or ""
         sampling_params = self._build_sampling_params(inputs.get("sampling_params") or {})
         if self._isolated:
-            return self.model.generate({"prompt": prompt, "sampling_params": sampling_params})
+            result = self.model.generate({"prompt": prompt, "sampling_params": sampling_params})
+            self._attach_template_metadata(inputs, result)
+            return result
         with self._lock:
             outputs = self.model.generate([prompt], sampling_params=sampling_params)
-        return self._extract_first(outputs, batch_path="native_batch")
+        result = self._extract_first(outputs, batch_path="native_batch")
+        self._attach_template_metadata(inputs, result)
+        return result
 
     def generate_batch(self, inputs_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """批量生成，支持 prompts/sampling_params 列表；不支持时退化为单次调用。"""
@@ -161,7 +195,10 @@ class VLLMNativeBackend(EngineBackend):
                 with self._lock:
                     single = self.model.generate([prompt], sampling_params=params)
                 results.append(self._extract_first(single, batch_path="fallback_serial"))
-            return results
+        # 回填模板元数据
+        for prepared, result in zip(prepared_inputs, results):
+            self._attach_template_metadata(prepared, result)
+        return results
 
     def _build_sampling_params(self, runtime_params: Dict[str, Any]):
         try:  # pragma: no cover - heavy dependency
@@ -184,10 +221,22 @@ class VLLMNativeBackend(EngineBackend):
         text = entry.outputs[0].text
         return {"answer": text.strip(), "_batch_path": batch_path}
 
+    def _attach_template_metadata(self, payload: Dict[str, Any], result: Dict[str, Any]) -> None:
+        meta_keys = ("chat_template_mode", "template_source", "rendered_by", "cache_suffix")
+        sample = payload.get("sample") or {}
+        for key in meta_keys:
+            value = payload.get(key)
+            if value is None:
+                value = sample.get(key)
+            if value is not None and key not in result:
+                result[key] = value
+        if "_tokenizer_path" not in result and getattr(self, "_cfg_tokenizer_path", None):
+            result["_tokenizer_path"] = self._cfg_tokenizer_path
+
     @staticmethod
-    def _render_messages(messages: List[Dict[str, Any]], fallback: str) -> str:
+    def _simple_render(messages: List[Dict[str, Any]]) -> str:
         if not messages:
-            return fallback
+            return ""
         segments: List[str] = []
         for message in messages:
             role = message.get("role", "user")
@@ -203,6 +252,21 @@ class VLLMNativeBackend(EngineBackend):
             segments.append(f"{role}: {text}".strip())
         segments.append("assistant:")
         return "\n".join(segments)
+
+    def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
+        return self._simple_render(messages)
+
+    def _init_tokenizer(self, config: Dict[str, Any]):
+        tok_name = config.get("tokenizer_name") or config.get("tokenizer_path") or config.get("model_path")
+        if not tok_name:
+            return None
+        try:  # pragma: no cover - optional dependency
+            from transformers import AutoTokenizer
+
+            return AutoTokenizer.from_pretrained(tok_name, trust_remote_code=bool(config.get("trust_remote_code", True)))
+        except Exception as exc:
+            logger.warning("Failed to load tokenizer '{}' for chat_template fallback: {}", tok_name, exc)
+            return None
 
     @staticmethod
     def _build_model_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -239,6 +303,12 @@ class VLLMNativeBackend(EngineBackend):
 
         return kwargs
 
+    def _check_tokenizer_conflict(self, payload: Dict[str, Any]) -> None:
+        dataset_tok = payload.get("_tokenizer_path") or (payload.get("sample") or {}).get("_tokenizer_path")
+        backend_tok = self._cfg_tokenizer_path
+        if dataset_tok and backend_tok and str(dataset_tok) != str(backend_tok):
+            raise ValueError(f"Conflicting tokenizer_path: dataset={dataset_tok} backend={backend_tok}")
+
     @staticmethod
     def _ensure_spawn_start_method() -> None:
         """Force spawn to avoid CUDA re-init in forked vLLM workers."""
@@ -250,7 +320,7 @@ class VLLMNativeBackend(EngineBackend):
 
         current = mp.get_start_method(allow_none=True)
         if current != "spawn":
-            logger.info("vLLMNativeBackend switching multiprocessing start method to 'spawn' (was %s)", current)
+            logger.info("vLLMNativeBackend switching multiprocessing start method to 'spawn' (was {})", current)
             try:
                 mp.set_start_method("spawn", force=True)
             except RuntimeError as exc:  # pragma: no cover - defensive

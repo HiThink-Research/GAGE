@@ -407,7 +407,7 @@ def _env_int(var: str) -> Optional[int]:
     try:
         return int(value)
     except ValueError:
-        logger.warning("Invalid integer for %s=%s; ignoring override", var, value)
+        logger.warning("Invalid integer for {}={}; ignoring override", var, value)
         return None
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -18,3 +18,7 @@ class VLLMBackendConfig(BackendConfigBase):
     trust_remote_code: bool = True
     output_type: str = Field(default="text", description="Controls output adapter behavior")
     generation_parameters: GenerationParameters = Field(default_factory=GenerationParameters)
+    use_chat_template: Literal["auto", "never"] = Field(
+        default="auto",
+        description="文本任务是否使用 chat_template：auto 默认预处理渲染，never 直传 plain",
+    )

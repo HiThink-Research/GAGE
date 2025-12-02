@@ -110,7 +110,7 @@ class RoleManager:
         if self._concurrency_hint and self._concurrency_hint >= hint:
             return
         self._concurrency_hint = hint
-        logger.info("Updated RoleManager concurrency hint to %s", hint)
+        logger.info("Updated RoleManager concurrency hint to {}", hint)
 
     def borrow_role(self, adapter_id: Optional[str]):
         if not adapter_id:

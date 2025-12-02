@@ -61,7 +61,7 @@ class MultiProviderHTTPBackend(EngineBackend):
             self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         except HfHubHTTPError:
             self._tokenizer = None
-            logger.warning("Tokenizer %s not available; prompts will be sent as raw text", tokenizer_name)
+            logger.warning("Tokenizer {} not available; prompts will be sent as raw text", tokenizer_name)
 
         self._generation = GenerationParameters(**config.get("generation_parameters", {}))
 

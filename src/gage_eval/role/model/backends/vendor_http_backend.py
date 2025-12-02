@@ -287,7 +287,7 @@ def _extract_image_b64(inputs: Dict[str, Any]) -> List[str]:
             with Image.open(path) as img:
                 results.append(_encode_image(img))
         except Exception as exc:
-            logger.warning("Failed to load image %s: %s", path, exc)
+            logger.warning("Failed to load image {}: {}", path, exc)
     return results
 
 
@@ -298,7 +298,7 @@ def _extract_image_objects(inputs: Dict[str, Any]) -> List[Any]:
         try:
             images.append(Image.open(path).convert("RGB"))
         except Exception as exc:
-            logger.warning("Failed to load image %s: %s", path, exc)
+            logger.warning("Failed to load image {}: {}", path, exc)
     return images
 
 

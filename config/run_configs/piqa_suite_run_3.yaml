@@ -66,6 +66,6 @@ runtime:
         async_max_concurrency: 4
   tasks:
     piqa_validation_eval:
-      max_samples: 10
+      max_samples: 500
   global:
     output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_events.jsonl

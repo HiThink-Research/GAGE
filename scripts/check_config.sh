@@ -3,19 +3,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_TEMPLATE_DIR="${ROOT_DIR}/config/templates"
+DEFAULT_TEMPLATE_DIR="${ROOT_DIR}/config/builtin_templates"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 
 CONFIGS=()
 if [[ $# -gt 0 ]]; then
   CONFIGS=("$@")
 else
-  for dir in "${DEFAULT_TEMPLATE_DIR}/builtin" "${DEFAULT_TEMPLATE_DIR}/custom"; do
-    [[ -d "${dir}" ]] || continue
+  if [[ -d "${DEFAULT_TEMPLATE_DIR}" ]]; then
     while IFS= read -r line; do
       CONFIGS+=("$line")
-    done < <(find "${dir}" -type f -name "*.yaml" | sort)
-  done
+    done < <(find "${DEFAULT_TEMPLATE_DIR}" -type f -name "*.yaml" | sort)
+  fi
 fi
 
 if [[ ${#CONFIGS[@]} -eq 0 ]]; then

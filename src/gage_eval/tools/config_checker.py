@@ -11,6 +11,7 @@ import yaml
 
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.task_plan import build_task_plan_specs
+from gage_eval.tools.distill import calculate_definition_digest
 
 
 def _load_yaml(path: Path) -> dict:
@@ -21,8 +22,54 @@ def _load_yaml(path: Path) -> dict:
     return data
 
 
+def _validate_builtin_template(payload: dict, *, materialize_runtime: bool = False) -> None:
+    """Validate BuiltinTemplate by reusing PipelineConfig schema on its definition block."""
+
+    meta = payload.get("metadata") or {}
+    definition = payload.get("definition")
+    if not isinstance(definition, dict):
+        raise ValueError("BuiltinTemplate must contain a 'definition' mapping")
+    if not meta.get("name"):
+        raise ValueError("BuiltinTemplate.metadata.name is required")
+    if not meta.get("version"):
+        raise ValueError("BuiltinTemplate.metadata.version is required")
+
+    # 校验 digest（如果存在）与 definition 一致性，帮助早期发现改动未更新的问题。
+    digest = meta.get("digest")
+    if isinstance(digest, str) and digest.startswith("sha256:"):
+        expected = digest.split("sha256:", 1)[1]
+        computed = calculate_definition_digest(definition)
+        if computed != expected:
+            raise ValueError(
+                f"BuiltinTemplate digest mismatch: metadata {expected} vs computed {computed}. "
+                "Please recompute digest after modifying definition."
+            )
+
+    pipeline_payload = {"api_version": "gage/v1alpha1", "kind": "PipelineConfig"}
+    pipeline_payload.update(definition)
+    config = PipelineConfig.from_dict(pipeline_payload)
+    build_task_plan_specs(config)
+
+    if materialize_runtime:
+        from gage_eval.config import build_default_registry
+        from gage_eval.evaluation.runtime_builder import build_runtime
+        from gage_eval.observability.trace import ObservabilityTrace
+        from gage_eval.role.resource_profile import NodeResource, ResourceProfile
+
+        registry = build_default_registry()
+        profile = ResourceProfile(nodes=[NodeResource(node_id="local", gpus=1, cpus=8)])
+        trace = ObservabilityTrace()
+        build_runtime(config, registry, profile, trace=trace)
+
+
 def validate_config(path: Path, *, materialize_runtime: bool = False) -> None:
     payload = _load_yaml(path)
+    kind = (payload.get("kind") or "").lower()
+    if kind in {"builtintemplate", "builtin"}:
+        _validate_builtin_template(payload, materialize_runtime=materialize_runtime)
+        print(f"[gage-eval] ✓ (BuiltinTemplate) {path}")
+        return
+
     config = PipelineConfig.from_dict(payload)
     build_task_plan_specs(config)
     if materialize_runtime:

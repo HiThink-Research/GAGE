@@ -14,7 +14,9 @@ from loguru import logger
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.vlm_transformers import VLMTransformersBackendConfig
+from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.multimodal import load_multimodal_data
+from gage_eval.utils.chat_templates import get_fallback_template
 
 try:  # pragma: no cover - optional dependency
     from accelerate import Accelerator, InitProcessGroupKwargs
@@ -38,8 +40,17 @@ class VLMTransformersBackend(EngineBackend):
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self._parsed_config = VLMTransformersBackendConfig(**config)
+        self._chat_template_mode = self._parsed_config.use_chat_template_vlm or "auto"
+        self._chat_template_policy = ChatTemplatePolicy(mode=self._chat_template_mode)
+        self._fallback_template = get_fallback_template("vlm")
         self._image_resize_opts = self._build_image_resize_opts()
         self._lock = Lock()
+        self._cfg_tokenizer_path = (
+            config.get("processor_name_or_path")
+            or config.get("tokenizer_path")
+            or config.get("model_path")
+            or config.get("model_name_or_path")
+        )
         # 本地 Native 执行模式
         config = dict(config)
         config.setdefault("execution_mode", "native")
@@ -69,6 +80,9 @@ class VLMTransformersBackend(EngineBackend):
         model_name = cfg.model_path or cfg.model_name_or_path
         processor_name = cfg.processor_name_or_path or model_name
         revision = self._compose_revision(cfg.revision, cfg.subfolder)
+        self._chat_template_mode = cfg.use_chat_template_vlm or "auto"
+        self._chat_template_policy = ChatTemplatePolicy(mode=self._chat_template_mode)
+        self._fallback_template = get_fallback_template("vlm")
 
         attn_impl = cfg.attn_implementation
         if attn_impl is None and self._torch.cuda.is_available():
@@ -149,6 +163,9 @@ class VLMTransformersBackend(EngineBackend):
 
         if not requests:
             return []
+
+        for req in requests:
+            self._check_tokenizer_conflict(req)
 
         # 若采样参数不一致，直接串行避免错配。
         sampling_params_list = [
@@ -232,6 +249,8 @@ class VLMTransformersBackend(EngineBackend):
                         "_batch_path": "native_batch",
                     }
                 )
+            for req, res in zip(requests, results):
+                self._attach_template_metadata(req, res)
             return results
         except Exception as exc:
             logger.warning("VLMTransformersBackend generate_batch fallback to serial due to: {}", exc)
@@ -242,6 +261,7 @@ class VLMTransformersBackend(EngineBackend):
         raw_inputs = request.get("inputs") or sample.get("inputs")
         messages = request.get("messages") or sample.get("messages") or []
         message_images = self._extract_images_from_messages(messages)
+        self._check_tokenizer_conflict(request)
         prompt = self._resolve_prompt(request, sample, raw_inputs, messages, message_images)
 
         model_inputs, input_len, padded_tokens = self._prepare_model_inputs(prompt, raw_inputs, messages, message_images)
@@ -288,6 +308,7 @@ class VLMTransformersBackend(EngineBackend):
         )
         if stop_sequences:
             result["stop_sequences"] = stop_sequences
+        self._attach_template_metadata(request, result)
         return result
 
     # ------------------------------------------------------------------ #
@@ -435,6 +456,10 @@ class VLMTransformersBackend(EngineBackend):
         messages: Optional[List[Dict[str, Any]]] = None,
         message_images: Optional[List[Any]] = None,
     ) -> str:
+        caps = BackendCapabilities(
+            supports_mm=True, has_processor_chat_template=bool(getattr(self.processor, "apply_chat_template", None))
+        )
+        request["cache_suffix"] = ChatTemplateMixin.get_cache_suffix("vlm", self._chat_template_policy, caps)
         explicit_prompt = None
         if isinstance(raw_inputs, dict) and raw_inputs.get("prompt"):
             explicit_prompt = str(raw_inputs["prompt"])
@@ -451,7 +476,7 @@ class VLMTransformersBackend(EngineBackend):
             message_images = self._extract_images_from_messages(messages)
 
         prompt = explicit_prompt or ""
-        rendered = self._render_messages(messages)
+        rendered = self._render_messages(messages, payload=request)
         if not prompt and rendered:
             prompt = rendered
         if not prompt:
@@ -463,18 +488,34 @@ class VLMTransformersBackend(EngineBackend):
             prompt = self._normalize_image_placeholders(prompt, len(message_images))
         return prompt
 
-    def _render_messages(self, messages: List[Dict[str, Any]]) -> str:
+    def _render_messages(self, messages: List[Dict[str, Any]], payload: Optional[Dict[str, Any]] = None) -> str:
         if not messages:
             return ""
-        apply_template = getattr(self.processor, "apply_chat_template", None)
-        if apply_template:
-            try:
-                templated = apply_template(messages, add_generation_prompt=True, tokenize=False)
-                if templated:
-                    return str(templated)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("apply_chat_template failed, fallback to plain render: {}", exc)
+        payload = payload or {}
+        policy = self._chat_template_policy
+        caps = BackendCapabilities(supports_mm=True, has_processor_chat_template=bool(getattr(self.processor, "apply_chat_template", None)))
 
+        if not ChatTemplateMixin.should_render(payload, policy):
+            payload["cache_suffix"] = ChatTemplateMixin.get_cache_suffix("vlm", policy, caps)
+            return self._simple_render(messages)
+
+        template_source = ChatTemplateMixin.select_template("vlm", policy, caps)
+        apply_template = getattr(self.processor, "apply_chat_template", None) if template_source == "model" else None
+        fallback_tpl = None if template_source == "model" else self._fallback_template
+        rendered = ChatTemplateMixin.render(
+            messages,
+            template_fn=apply_template,
+            fallback_fn=lambda msgs: self._fallback_render(msgs, fallback_tpl),
+            add_generation_prompt=True,
+            chat_template=fallback_tpl,
+        )
+        payload["cache_suffix"] = ChatTemplateMixin.get_cache_suffix("vlm", policy, caps)
+        payload["chat_template_mode"] = "backend"
+        payload["template_source"] = "model" if apply_template else "fallback"
+        payload["rendered_by"] = "backend"
+        return rendered
+
+    def _simple_render(self, messages: List[Dict[str, Any]]) -> str:
         segments: List[str] = []
         for message in messages:
             role = message.get("role", "user")
@@ -490,6 +531,9 @@ class VLMTransformersBackend(EngineBackend):
             segments.append(f"{role}: {text}".strip())
         segments.append("assistant:")
         return "\n".join(segments)
+
+    def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
+        return self._simple_render(messages)
 
     def _prepare_model_inputs(self, prompt: str, raw_inputs, messages: List[Dict[str, Any]], message_images: List[Any]):
         if isinstance(raw_inputs, dict):
@@ -643,6 +687,24 @@ class VLMTransformersBackend(EngineBackend):
         if cfg.image_factor is not None:
             opts["factor"] = cfg.image_factor
         return opts
+
+    def _check_tokenizer_conflict(self, payload: Dict[str, Any]) -> None:
+        dataset_tok = payload.get("_tokenizer_path") or (payload.get("sample") or {}).get("_tokenizer_path")
+        backend_tok = self._cfg_tokenizer_path
+        if dataset_tok and backend_tok and str(dataset_tok) != str(backend_tok):
+            raise ValueError(f"Conflicting tokenizer_path: dataset={dataset_tok} backend={backend_tok}")
+
+    def _attach_template_metadata(self, payload: Dict[str, Any], result: Dict[str, Any]) -> None:
+        meta_keys = ("chat_template_mode", "template_source", "rendered_by", "cache_suffix")
+        sample = payload.get("sample") or {}
+        for key in meta_keys:
+            value = payload.get(key)
+            if value is None:
+                value = sample.get(key)
+            if value is not None and key not in result:
+                result[key] = value
+        if "_tokenizer_path" not in result and self._cfg_tokenizer_path:
+            result["_tokenizer_path"] = self._cfg_tokenizer_path
 
 
 def _apply_stop_sequences(text: str, stop) -> str:

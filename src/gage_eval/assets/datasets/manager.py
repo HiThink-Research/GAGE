@@ -163,6 +163,10 @@ def _merge_multimodal_inputs(sample: Dict[str, Any]) -> None:
         if not sample.get("messages"):
             sample["messages"] = raw_inputs
         inputs = {}
+    elif isinstance(raw_inputs, str):
+        # 兼容默认预处理输出的 prompt 字符串，避免被覆盖后丢失
+        sample.setdefault("prompt", raw_inputs)
+        inputs = {}
     else:
         inputs = {}
     sample["inputs"] = inputs

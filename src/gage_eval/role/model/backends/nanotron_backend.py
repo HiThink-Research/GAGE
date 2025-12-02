@@ -380,7 +380,7 @@ class _NanotronRunner:
             use_cache=True,
         )
         if updated.n_samples not in (None, 1):
-            logger.warning("Nanotron backend currently only supports num_samples=1 (got %s)", updated.n_samples)
+            logger.warning("Nanotron backend currently only supports num_samples=1 (got {})", updated.n_samples)
             updated.n_samples = 1
         return updated
 

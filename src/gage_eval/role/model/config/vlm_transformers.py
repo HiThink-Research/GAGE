@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import Field, validator
 
@@ -54,6 +54,10 @@ class VLMTransformersBackendConfig(BackendConfigBase):
     system_prompt: Optional[str] = Field(default=None, description="保留字段，交由 Prompt 渲染层处理")
     extra_processor_kwargs: Dict[str, Any] = Field(
         default_factory=dict, description="覆盖 AutoProcessor.from_pretrained 的自定义 keyword arguments"
+    )
+    use_chat_template_vlm: Literal["auto", "force", "never"] = Field(
+        default="auto",
+        description="多模态任务是否使用 processor.apply_chat_template：auto 尝试兜底，force 严格，never 纯拼接",
     )
 
     @validator("model_name_or_path", always=True)
