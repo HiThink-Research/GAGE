@@ -1,0 +1,74 @@
+models:
+# - name: kimi_8k  # 暂不跑真实 Kimi，避免外网/额度依赖
+#   provider: kimi
+#   model_name: moonshot-v1-8k
+#   api_base: https://api.moonshot.cn/v1
+#   api_key_env: MOONSHOT_API_KEY
+#   max_new_tokens: 16
+#   timeout: 60
+#   parallel_calls: 1
+#   max_samples: 1
+#   concurrency: 1
+  - name: qwen_local
+    provider: openai  # 本地 OpenAI 兼容服务，用于多厂商协议模拟
+    model_name: qwen2.5-0.5b-instruct-mlx
+    api_base: http://127.0.0.1:18080
+    api_key_env: LITELLM_MOCK_API_KEY  # 可留空
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+    max_samples: 1
+    concurrency: 1
+  - name: qwen_local_anthropic
+    provider: anthropic  # 本地模拟 Anthropic 协议，实际仍指向本地 OpenAI 兼容服务
+    model_name: qwen2.5-0.5b-instruct-mlx
+    api_base: http://127.0.0.1:18081
+    api_key_env: LITELLM_MOCK_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+    max_samples: 1
+    concurrency: 1
+  - name: qwen_local_google
+    provider: google  # 本地模拟 Google 协议，实际仍指向本地 OpenAI 兼容服务
+    model_name: models/gemini-1.5-pro  # 使用 litellm 认可的占位模型名
+    api_base: http://127.0.0.1:18082
+    api_key_env: LITELLM_MOCK_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+    max_samples: 1
+    concurrency: 1
+# 以下模型暂时注释：配额/凭证不足导致调用失败，需要更换可用 Key 或补充 GCP ADC 后再启用
+# - name: gpt4o_mini
+#   provider: openai
+#   model_name: gpt-4o-mini
+#   api_base: https://api.openai.com/v1
+#   api_key_env: OPENAI_API_KEY
+#   max_new_tokens: 16
+#   timeout: 60
+#   parallel_calls: 1
+# - name: claude3_haiku  # 新候选，先留作占位；需有效 Anthropic key
+#   provider: anthropic
+#   model_name: claude-3-haiku-20240307
+#   api_base: https://api.anthropic.com
+#   api_key_env: ANTHROPIC_API_KEY
+#   max_new_tokens: 16
+#   timeout: 60
+#   parallel_calls: 1
+# - name: claude35_sonnet
+#   provider: anthropic
+#   model_name: claude-3-5-sonnet-20241022
+#   api_base: https://api.anthropic.com
+#   api_key_env: ANTHROPIC_API_KEY
+#   max_new_tokens: 16
+#   timeout: 60
+#   parallel_calls: 1
+# - name: gemini_flash
+#   provider: google
+#   model_name: gemini-1.5-flash
+#   api_base: https://generativelanguage.googleapis.com/v1beta
+#   api_key_env: GOOGLE_API_KEY
+#   max_new_tokens: 16
+#   timeout: 60
+#   parallel_calls: 1

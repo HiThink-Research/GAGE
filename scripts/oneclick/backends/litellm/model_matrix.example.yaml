@@ -1,0 +1,33 @@
+models:
+  - name: gpt4o_mini
+    provider: openai
+    model_name: gpt-4o-mini
+    api_base: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+  - name: kimi_8k
+    provider: kimi
+    model_name: moonshot-v1-8k
+    api_base: https://api.moonshot.cn/v1
+    api_key_env: MOONSHOT_API_KEY  # 或 KIMI_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+  - name: claude35_sonnet
+    provider: anthropic
+    model_name: claude-3-5-sonnet-20241022
+    api_base: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+  - name: gemini_flash
+    provider: google
+    model_name: gemini-1.5-flash
+    api_base: https://generativelanguage.googleapis.com/v1beta
+    api_key_env: GOOGLE_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1

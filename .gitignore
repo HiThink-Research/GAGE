@@ -126,6 +126,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
 .venv
 env/
 venv/
@@ -188,9 +189,15 @@ data_server_mt.py
 predict_async_mt.py
 eval_UTA_Analysis2.py
 utils/out.jsonl
+demo_hf_backend.py
 
 # macOS
 .DS_Store
 
 # VS Code
 .vscode/
+
+runs/
+scripts/oneclick/.generated/
+scripts/oneclick/.env.example
+.venv311/
