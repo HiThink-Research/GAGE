@@ -207,7 +207,7 @@ flowchart LR
 
 3. **标签字段**  
    - `choices[0].message.content[0].text` 在标准化后仍保留在 `sample.choices.0.message.content.0.text`。  
-   - `mmmu_accuracy` 默认从该路径读取正确选项字母，而预测结果从 `model_output.answer` 读取，二者的字段映射在第 10 章的指标配置中完成声明。
+   - `mmmu_accuracy` 默认从该路径读取正确选项字母，而预测结果从 `model_output.answer` 读取，二者的字段映射在第 11 章的指标配置中完成声明。
 
 借助这条链路，MMMU 的本地 JSONL 与 HuggingFace Hub 版本可以通过不同的 loader 与 preprocess 组合，统一规约到相同的 Envelope 结构，确保多模态后端与指标实现无需感知底层数据来源差异。
 
@@ -342,7 +342,7 @@ sequenceDiagram
   JB-->>JA: raw_response (e.g. "CORRECT: A\nSCORE: 1.0")
   JA-->>JS: judge_output (parsed)
   
-  JS->>TP: update_eval_result(judge_output)
+ JS->>TP: update_eval_result(judge_output)
   
   Note over TP: Step 3: AutoEval
   TP->>TP: calculate_metrics(judge_output)
@@ -367,6 +367,187 @@ metrics:
 
 ---
 
+### 4.9 LiteLLM / Grok / Kimi 适配
+
+#### 4.9.1 参数归一化与 provider 基址推断
+- 采样参数仍经 `GenerationParameters.to_dict()` → `_normalize_sampling_params` 统一为 `max_tokens/temperature/top_p/stop`，并在 reasoning 模型上自动放宽 `max_tokens`。
+- LiteLLM 路径保持 `drop_params=True` 与指数退避（`retry_sleep/retry_multiplier`），所有调用均经 LiteLLM 重试，不再存在 HTTP 兜底分支。
+- `base_url/api_key` 自动推断：Grok 默认 `https://api.x.ai/v1`（读取 `XAI_API_KEY/GROK_API_KEY`），Kimi 默认 `https://api.moonshot.cn/v1`（读取 `KIMI_API_KEY/MOONSHOT_API_KEY`），其他 provider 沿用配置。
+
+| 输入字段 | 归一化后字段 | 说明 |
+| --- | --- | --- |
+| `sampling_params.max_new_tokens` | `max_tokens` | 自动裁剪到 `max_model_length`，reasoning 模型 10x 放宽 |
+| `sampling_params.stop/stop_sequences` | `stop` | Anthropic provider 会过滤空白 stop |
+| `num_samples/n` | `n` | LiteLLM 按 OpenAI 兼容参数发送 |
+| `extra_headers/api_base` | `headers/base_url` | 写入 LiteLLM 全局，覆盖 provider 默认基址 |
+
+```mermaid
+flowchart LR
+  Msg[消息与采样参数] --> Normalize[归一化采样参数]
+  Normalize --> Base[推断 base_url 与 api_key]
+  Base --> LiteLLM[LiteLLM completion 重试]
+  Base --> Grok[x.ai/v1]
+  Base --> Kimi[moonshot.cn/v1]
+  LiteLLM --> Parse[解析 content]
+```
+
+#### 4.9.2 Grok 基址与凭据推断
+- 通过 `provider=grok|xai` 或模型名 `grok-*`、`api_base` 中包含 `api.x.ai` 来识别目标，缺省自动注入 `https://api.x.ai/v1`。
+- 凭据优先级：`api_key` → `XAI_API_KEY` → `GROK_API_KEY` → `LITELLM/OPENAI` 环境变量，确保与 xAI 控制台配置对齐。
+- LiteLLM 参数与其他 provider 一致，仅 `base_url/api_base` 被填充，无需额外 HTTP 适配。
+
+| 目标 | 判定规则 | 默认 base_url | 密钥优先级 | 备注 |
+| --- | --- | --- | --- | --- |
+| Grok xAI | provider `grok/xai`、模型前缀 `grok-`、`api_base` 含 `api.x.ai` | `https://api.x.ai/v1` | `api_key` → `XAI_API_KEY/GROK_API_KEY` → `OPENAI_API_KEY` | 与 OpenAI 参数一致 |
+| Kimi | provider `kimi/moonshot`、模型前缀 `moonshot-`、`api_base` 含 `moonshot` | `https://api.moonshot.cn/v1` | `api_key` → `KIMI_API_KEY/MOONSHOT_API_KEY` → `OPENAI_API_KEY` | 仅 LiteLLM 路径 |
+| 其他 | 无特殊判定 | 用户配置 | `api_key` → `LITELLM/OPENAI` | 兼容 HF/自建 OpenAI |
+
+```python
+from gage_eval.role.model.backends.litellm_backend import LiteLLMBackend
+
+backend = LiteLLMBackend({
+    "model": "grok-1.5",  # 检测到 grok 前缀后自动注入 x.ai 基址
+    "generation_parameters": {"max_new_tokens": 64},
+})
+# Grok/Kimi 场景均走 LiteLLM completion，不再分叉到 HTTP 直连
+```
+
+#### 4.9.3 Kimi 统一走 LiteLLM（无直连兜底）
+- 识别到 Kimi/Moonshot 时仅自动填充 `https://api.moonshot.cn/v1`，重试逻辑完全复用 LiteLLM（指数退避 + `max_retries`）。
+- `force_kimi_direct/prefer_litellm_kimi` 参数被废弃，仅保留兼容警告；请求失败直接冒泡，避免隐藏故障。
+- `_call_with_retries` 统一输出延迟，Kimi 流程也可通过 streaming 或同步路径获取 usage。
+
+#### 4.9.4 OpenAI / Azure 易用性配置
+- OpenAI 走默认 `https://api.openai.com/v1`，优先取 `api_key` → `OPENAI_API_KEY/LITELLM_API_KEY`，无需额外声明 provider。
+- Azure OpenAI 自动识别 `provider=azure`、模型前缀 `azure:*` 或 `api_base` 包含 `openai.azure.com`，缺省从 `AZURE_OPENAI_ENDPOINT` 填充基址，并从 `AZURE_OPENAI_API_KEY/AZURE_API_KEY` 取密钥。
+- `api_version` 自动读取配置 `azure_api_version` 或环境变量 `AZURE_OPENAI_API_VERSION`（默认 `2024-02-15-preview`），并注入 LiteLLM `api_type=azure`。
+- 提示：易用性配置仅注入 base/key/version，不改变原有采样参数归一化与重试逻辑，避免混淆。
+
+```mermaid
+flowchart LR
+  Detect[检测 provider/model/base] --> OpenAI[OpenAI<br/>默认 base 与 OPENAI_API_KEY]
+  Detect --> Azure[Azure<br/>ENV 基址 + api_version]
+  Detect --> Grok[x.ai/v1]
+  Detect --> Kimi[moonshot.cn/v1]
+  Azure --> LiteLLM
+  OpenAI --> LiteLLM
+  Grok --> LiteLLM
+  Kimi --> LiteLLM
+```
+
+| 易用性项 | 自动注入 | 环境变量优先级 | 测试覆盖 |
+| --- | --- | --- | --- |
+| OpenAI 默认基址/密钥 | `base_url=https://api.openai.com/v1`（LiteLLM 默认） | `api_key` → `OPENAI_API_KEY/LITELLM_API_KEY` | `test_litellm_backend_merges_sampling_and_headers` |
+| Azure 基址/版本/密钥 | `base_url=AZURE_OPENAI_ENDPOINT`、`api_type=azure`、`api_version` | `api_key` → `AZURE_OPENAI_API_KEY/AZURE_API_KEY` → `OPENAI_API_KEY` | `test_azure_easy_config_fills_base_and_version` |
+| Grok 基址/密钥 | `base_url=https://api.x.ai/v1` | `api_key` → `XAI_API_KEY/GROK_API_KEY` → `OPENAI_API_KEY` | `test_grok_defaults_to_xai_base` |
+| Kimi 基址/密钥 | `base_url=https://api.moonshot.cn/v1` | `api_key` → `KIMI_API_KEY/MOONSHOT_API_KEY` → `OPENAI_API_KEY` | `test_kimi_uses_litellm_without_http_fallback` |
+
+```python
+# src/gage_eval/role/model/backends/litellm_backend.py
+if self._is_azure_target:
+    # Azure 易用性：基址/版本/密钥优先从 ENV 自动填充
+    kwargs["api_type"] = "azure"
+    if self._azure_api_version:
+        kwargs["api_version"] = self._azure_api_version
+```
+
+#### 4.9.5 本地 LiteLLM 测试与 Flask Mock 数据流
+- 单元测试：`python -m unittest tests.backends.test_litellm_backend`，通过 fake liteLLM 捕获参数，覆盖 OpenAI/Grok/Kimi/Azure 易用性。
+- 本地集成验证：在无公网依赖下使用 Flask Mock 提供 OpenAI/Gemini/Anthropic 兼容端点，LiteLLM 以 `base_url` 指向本地服务即可打通链路。
+- 数据流：RoleAdapter → LiteLLMBackend `_build_litellm_kwargs` → litellm.completion → 本地 Flask Mock → 返回 `choices[0].message.content`。
+
+```mermaid
+flowchart LR
+  UT[python -m unittest] --> Adapter[LiteLLMBackend]
+  Adapter --> LiteLLM[litellm completion]
+  LiteLLM --> Mock[Flask Mock\nOpenAI/Gemini/Anthropic]
+  Mock --> Reply[choices.message.content]
+```
+
+| 文件 | 作用 | 备注 |
+| --- | --- | --- |
+| `tests/backends/test_litellm_backend.py` | fake liteLLM 断言 base_url/api_key/重试 | 无网络依赖 |
+| `scripts/oneclick/backends/litellm/mock_openai.py` | 提供 OpenAI 兼容 `/chat/completions` | `PORT=18080` 默认 |
+| `scripts/oneclick/backends/litellm/mock_google.py` | 提供 Gemini `generateContent` 与 OpenAI 兼容端点 | 可代理到下游 OPENAI |
+| `scripts/oneclick/backends/litellm/mock_anthropic.py` | 提供 Anthropic `messages` 并可转发到 OPENAI | 支持 inline 回显 |
+| `src/gage_eval/role/model/backends/litellm_backend.py` | 归一化采样、provider 判定、调用 LiteLLM | 填充 base/api_key/api_type |
+
+本地串测示例（OpenAI 兼容路径）：
+```bash
+export PORT=18080
+python scripts/oneclick/backends/litellm/mock_openai.py &
+
+python - <<'PY'
+import litellm
+litellm.api_base = "http://127.0.0.1:18080/v1"
+litellm.api_key = "mock"
+resp = litellm.completion(model="gpt-4o-mini", messages=[{"role": "user", "content": "ping"}])
+print(resp["choices"][0]["message"]["content"])
+PY
+```
+将 `api_base` 指向对应 Mock（或通过 YAML 配置 LiteLLMBackend 的 `api_base`），即可完成端到端数据流校验。
+
+快速一键跑法与汇总：
+- `scripts/oneclick/backends/litellm/run_piqa_litellm_local.sh`：启动 5 个 Mock（OpenAI/Anthropic/Google/Grok/Kimi）跑 PIQA，`PIQA_LITELLM_MAX_SAMPLES` 控制样本数，结束自动写入 `runs/piqa_litellm_local/summary.index.json`。
+- `scripts/oneclick/backends/litellm/run_all_models_mock.sh`：使用 `model_matrix.mock.yaml` 渲染模板并跑 5 协议 demo，产出 `runs/litellm_mock_matrix/summary.index.json`。
+- `scripts/oneclick/backends/litellm/collect_summaries.py --root <runs_root>`：对任意 runs 根目录汇总所有 `summary.json`。
+
+### 4.10 TGI / SGLang HTTP 后端
+
+#### 4.10.1 请求构建与 stop/采样参数
+- TGI 后端将 `host/port` 组装成 `base_url`，默认参数 `max_new_tokens/temperature/top_p/repetition_penalty/stop_sequences` 由配置注入，`sampling_params` 中的覆盖项会取代默认值后一起发送到 `/generate`。
+- SGLang 后端把 stop 保持在请求顶层（`request["stop"]`），`sampling_params` 仅保留非空字段并附带 `input_ids/logprob_token_ids`，便于与 top-logprobs 场景复用同一构造逻辑。
+
+```mermaid
+flowchart LR
+  Prompt[prompt 或 input_ids] --> TGIReq[TGI 请求体<br/>parameters + inputs]
+  Prompt --> SGReq[SGLang 请求体<br/>sampling_params + stop]
+  TGIReq --> TGISend[POST /generate]
+  SGReq --> SGSend[POST /generate]
+  SGSend --> SGLogprob[top_logprobs 路径]
+```
+
+#### 4.10.2 响应解析与 logprobs
+- TGI `_extract_tgi_text` 覆盖 `generated_text/choices[].text/list` 等多种返回形态，确保 HF 推理与自建网关都能得到 `answer`。
+- SGLang `_extract_text` 支持 `outputs[0].text/meta_info.output_text` 等分支；当 `output_type=next_token_prob` 时，`_extract_logprobs` 会把 `[(logprob, token_id, token)]` 变换为 `[[token_id, logprob], ...]`，方便后续打分或对齐。
+
+| 后端 | 请求体关键字段 | 停止词位置 | 特殊处理 |
+| --- | --- | --- | --- |
+| TGI | `inputs`、`parameters.max_new_tokens/top_p/repetition_penalty/stop_sequences` | `parameters.stop_sequences` | 默认 `return_full_text=false`，避免回传提示词 |
+| SGLang | `prompt` 或 `input_ids`、`sampling_params` | 顶层 `stop` | `logprob_token_ids`、`output_type=next_token_prob` 触发 top-logprobs 分支 |
+
+```python
+# src/gage_eval/role/model/backends/sglang_backend.py
+def _build_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    sampling_params = dict(self.default_sampling)
+    sampling_params.update(payload.get("sampling_params") or {})
+    request = {
+        "sampling_params": {
+            k: v
+            for k, v in sampling_params.items()
+            if v is not None and k != "stop"
+        }
+    }
+    # stop 保留在顶层，避免服务端重复截断；prompt/input_ids 二选一。
+    if isinstance(payload.get("inputs"), list):
+        request["input_ids"] = payload["inputs"]
+    else:
+        request["prompt"] = payload.get("prompt") or payload.get("sample", {}).get("prompt", "")
+    if sampling_params.get("stop"):
+        request["stop"] = sampling_params["stop"]
+    if payload.get("logprob_token_ids"):
+        request["logprob_token_ids"] = payload["logprob_token_ids"]
+    return request
+```
+
+#### 4.10.3 一键生成测试配置（custom 下）
+- 新增 `scripts/oneclick/backends/tgi|sglang/run_all_models.sh`，读取 `model_matrix.yaml` 渲染到 `config/custom/tgi_generated` / `config/custom/sglang_generated`（默认），便于和现有 custom 配置一起管理。
+- 支持 `DRY_RUN=1` 跳过 `run.py` 实跑，仅生成 YAML 方便在 CI/本地验证模板是否可用；GEN_DIR/OUTPUT_ROOT 等均可通过环境变量覆盖到其他目录。
+- 模板位于 `scripts/oneclick/backends/tgi|sglang/template.yaml`，示例矩阵在 `scripts/oneclick/backends/tgi|sglang/model_matrix.yaml`。
+- 若需要“完整跑通”而非 dry-run，可直接使用 `config/custom/piqa_tgi_unittest.yaml`、`config/custom/piqa_sglang_unittest.yaml`（默认读取 `tests/fixtures/piqa_mini.jsonl`），通过 `TGI_BASE_URL/SGLANG_BASE_URL` 指向本地/远程服务即可。
+
+--- 
+
 ## 5. 内置指标清单
 
 | metric_id | value_key | 默认聚合 | 适用场景 / 核心逻辑 | 默认字段/参数 |
@@ -383,6 +564,13 @@ metrics:
 | docvqa_anls | anls | mean | DocVQA 平均归一化编辑距离（ANLS） | answers:`sample.metadata.answers`，pred:`model_output.answer`，`threshold=0.5` |
 
 > 说明：所有内置指标均通过 `@registry.asset("metrics", ...)` 注册，可在 YAML `metrics[].implementation` 直接引用 `metric_id`，未显式声明的 `default_aggregation` 默认使用 mean。
+
+### 5.9 任务完成跟踪
+
+| 序号 | 工作项 | 状态 | 关联测试 | 备注 |
+| --- | --- | --- | --- | --- |
+| 5 | TGI custom 配置端到端跑通（PIQA mini） | 已完成 | `tests/backends/test_custom_piqa_tgi_sglang_pipeline.py::CustomPiqaPipelineTests::test_piqa_tgi_pipeline_with_custom_config` | 本地 HTTP mock + custom pipeline（config/custom/piqa_tgi_unittest.yaml） |
+| 6 | SGLang custom 配置端到端跑通（PIQA mini） | 已完成 | `tests/backends/test_custom_piqa_tgi_sglang_pipeline.py::CustomPiqaPipelineTests::test_piqa_sglang_pipeline_with_custom_config` | 本地 HTTP mock + custom pipeline（config/custom/piqa_sglang_unittest.yaml） |
 
 ---
 
@@ -423,9 +611,38 @@ ReportStep 现写入：
 
 ---
 
-## 7. 多模态与 VLM 路径
+## 7. 开发工作计划
 
-### 7.1 VLMTransformersBackend 关键逻辑
+### 7.1 任务拆分与状态
+
+| 序号 | 开发任务 | 完成状态 | 可测试性 | 测试方案 |
+| --- | --- | --- | --- | --- |
+| 1 | 梳理 LiteLLM 与 lighteval 参数差异、上下文上限策略 | 进行中 | 对比 fake liteLLM 响应与 GAGE 转换结果 | 计划补充 `tests/backends/test_litellm_gap_pending.py` |
+| 2 | 补齐 LiteLLM streaming/tool 调用分支 | 待办 | mock stream chunk / 工具 schema 断言 | 计划补充 `tests/backends/test_litellm_stream_pending.py` |
+| 3 | 配置校验：provider/base_url/headers 组合合法性 | 待办 | Pydantic 校验 + bad config 断言 | 计划补充 `tests/config/test_litellm_config_pending.py` |
+| 4 | 观测：请求/重试日志下沉到 Trace | 待办 | 捕获 log sink、验证重试计数 | 计划补充 `tests/observability/test_litellm_logging_pending.py` |
+| 5 | TGI custom 配置端到端自检 | 已完成 | 本地 HTTP mock + PIQA mini | `tests/backends/test_custom_piqa_tgi_sglang_pipeline.py::CustomPiqaPipelineTests::test_piqa_tgi_pipeline_with_custom_config` |
+| 6 | SGLang custom 配置端到端自检 | 已完成 | 本地 HTTP mock + PIQA mini | `tests/backends/test_custom_piqa_tgi_sglang_pipeline.py::CustomPiqaPipelineTests::test_piqa_sglang_pipeline_with_custom_config` |
+
+### 7.2 协作与验证路径
+
+```mermaid
+flowchart LR
+  Plan[需求拆解] --> Dev1[任务1 LiteLLM 差异]
+  Plan --> Dev2[任务2 LiteLLM streaming]
+  Plan --> Dev5[任务5 TGI custom 自检]
+  Plan --> Dev6[任务6 SGLang custom 自检]
+  Dev5 --> Test5[tests/backends/test_custom_piqa_tgi_sglang_pipeline.py]
+  Dev6 --> Test6[tests/backends/test_custom_piqa_tgi_sglang_pipeline.py]
+  Test5 --> Status[更新 5.9 状态表]
+  Test6 --> Status
+```
+
+---
+
+## 8. 多模态与 VLM 路径
+
+### 8.1 VLMTransformersBackend 关键逻辑
 ```python
 from gage_eval.role.model.backends.vlm_transformers_backend import VLMTransformersBackend
 
@@ -442,15 +659,15 @@ class VLMTransformersBackend(EngineBackend):
         # processor 统一 resize/encode，确保特征与文本 token 对齐
 ```
 
-### 7.2 vLLM Native/Async
+### 8.2 vLLM Native/Async
 - `vllm_backend` 与 `vllm_native_backend` 支持多模态 `multi_modal_data`，request_id 去重避免 AsyncLLMEngine 冲突。
 - OOM 重试：遇到缓存不足自动按 0.9→0.7→0.5 阶梯降低 `gpu_memory_utilization`。
 
 ---
 
-## 8. 配置与运行入口
+## 9. 配置与运行入口
 
-### 8.1 CLI 入口
+### 9.1 CLI 入口
 `python gage-eval-main/run.py --config ... --concurrency N --max-samples K --output-dir runs/foo`
 
 启动流程：
@@ -458,7 +675,7 @@ class VLMTransformersBackend(EngineBackend):
 2. `build_runtime` 物化 datasets/models/backends。
 3. 运行 SampleLoop，完成后写 `summary.json` 与吞吐指标。
 
-### 8.2 典型 YAML 片段
+### 9.2 典型 YAML 片段
 ```yaml
 datasets:
   - dataset_id: mmmu_val_local
@@ -478,7 +695,7 @@ role_adapters:
     capabilities: [vision_chat]
 ```
 
-### 8.3 环境变量清单
+### 9.3 环境变量清单
 
 | 名称 | 分类 | 默认值/示例 | 说明 |
 | --- | --- | --- | --- |
@@ -525,7 +742,7 @@ role_adapters:
 
 > 建议：在实机环境中，将并发/背压相关环境变量（如 `GAGE_EVAL_THREADS`、`GAGE_EVAL_PREFETCH_FACTOR`、`GAGE_EVAL_MAX_INFLIGHT`）与后端配置（如 vLLM `max_batch_size`）一并调优；落盘与观测类变量 (`GAGE_EVAL_SAVE_DIR`、`GAGE_EVAL_REPORT_HTTP_URL` 等) 则按集群/监控系统统一配置。
 
-### 8.4 PipelineConfig 顶层结构概览
+### 9.4 PipelineConfig 顶层结构概览
 
 1124 版开始，配置层以 `PipelineConfig` 为中心，统一描述“数据源、角色、后端、步骤、任务与指标”的关系。顶层结构（简化）如下：
 
@@ -569,7 +786,7 @@ Schema 校验在 `config/schema.py:normalize_pipeline_payload` 中完成，1124 
 - 只要存在 `tasks`，即可不显式提供 `builtin/custom`；
 - 否则要求提供 `builtin` 或 `custom` 二选一。
 
-### 8.5 顶层 Backends 与 backend_id 引用
+### 9.5 顶层 Backends 与 backend_id 引用
 
 为消除大量重复的 inline backend 配置，1124 版引入顶层 `backends` 列表与 `role_adapters[].backend_id` 引用机制：
 
@@ -637,7 +854,7 @@ flowchart LR
 
   - 新配置优先使用顶层 `backends`，配合 `backend_id` 引用，便于同一后端在多个角色间复用；
 
-### 8.6 Step 继承与智能绑定
+### 9.6 Step 继承与智能绑定
 
 为了减少重复的 `steps` 配置，1124 版在 Task 规划层引入了“默认步骤 + 继承 + 绑定推断”的模式。
 
@@ -676,11 +893,11 @@ flowchart LR
 
 在多任务场景中，`TaskPlanSpec` 会为每个 task 固化一份 `steps` 列表，`RuntimeBuilder` 再据此构建对应的 SampleLoop 与 AutoEvalStep。
 
-### 8.7 Prompt 体系统一设计
+### 9.7 Prompt 体系统一设计
 
 1124 版在不破坏现有行为的前提下，引入了“结构化预处理 + PromptAsset + RoleAdapter 渲染”的统一 Prompt 体系。
 
-#### 8.7.1 两条 Prompt 链路：Inference 与 Judge
+#### 9.7.1 两条 Prompt 链路：Inference 与 Judge
 
 1. **Inference Prompt（目前多为 Preprocessor 驱动）**
 
@@ -750,7 +967,7 @@ def render_prompt(self, payload: Dict[str, Any]) -> PromptRenderResult:
     return self.prompt_renderer.render(context)
 ```
 
-#### 8.7.2 新模型：struct_only 预处理器 + PromptAsset
+#### 9.7.2 新模型：struct_only 预处理器 + PromptAsset
 
 为减少“在预处理器里硬拼 Prompt”带来的结构耦合，新架构引入了 `*_struct_only` 预处理器与 DUTAdapter 渲染 Prompt 的组合：
 
@@ -790,7 +1007,7 @@ role_adapters:
       dataset_name: piqa_val
 ```
 
-#### 8.7.3 兼容性与演进阶段
+#### 9.7.3 兼容性与演进阶段
 
 为平滑过渡，Prompt 体系的演进分为几个阶段：
 
@@ -806,7 +1023,7 @@ role_adapters:
 - 阶段 3：长期收敛
   - 高价值任务逐步迁移到统一 Prompt 模型，原有 hard-coded Prompt 预处理器仅作为 legacy 参考保留。
 
-### 8.8 字段映射与 Canonical Sample Schema
+### 9.8 字段映射与 Canonical Sample Schema
 
 字段映射主要存在于两处：
 
@@ -815,7 +1032,7 @@ role_adapters:
 
 1124 版在 `config-1124.md` 与 `sample-design.md` 的基础上，对字段映射做了以下统一约定。
 
-#### 8.8.1 preprocess_kwargs：结构映射优先
+#### 9.8.1 preprocess_kwargs：结构映射优先
 
 - 推荐在 `preprocess_kwargs` 中只放“结构映射”参数：
   - `question_field`：题干字段；
@@ -830,7 +1047,7 @@ role_adapters:
   - `sample.metadata.correct_choice`：规范化后的选项字母；
   - 以及 `metadata.question_field/choices_field/answer_field` 记录源字段路径。
 
-#### 8.8.2 metrics.params：字段路径 DSL 与命名规范
+#### 9.8.2 metrics.params：字段路径 DSL 与命名规范
 
 - 字段名：
   - 读取标签/预测值的指标统一使用 `label_field/prediction_field`；
@@ -843,7 +1060,7 @@ role_adapters:
 
 这些规则已经在 10.4 节的参数表与示例中体现，这里作为配置层设计原则进一步固化。
 
-#### 8.8.3 按任务族的 Canonical 字段表
+#### 9.8.3 按任务族的 Canonical 字段表
 
 在 `sample-design.md` 的统一 Sample 结构基础上，1124 版为不同任务族定义了 canonical 字段表，作为预处理器、Prompt 模板与指标实现的共同参考。
 
@@ -962,7 +1179,7 @@ role_adapters:
 
 后续如新增任务族，应优先在本表中补充 canonical 字段，再落地预处理器与指标实现。
 
-#### 8.8.4 标准化指标的“零参数”约定
+#### 9.8.4 标准化指标的“零参数”约定
 
 在满足以下条件时：
 
@@ -988,18 +1205,18 @@ metrics:
 
 这条规则是 1124 版配置简化的关键手段之一：**标准任务 + 标准指标 → metrics.params 可选**。
 
-### 8.9 多任务多指标下的指标引用链路
+### 9.9 多任务多指标下的指标引用链路
 
 针对“看不出 metrics 在哪里被用”的困惑，1124 版在配置和 runtime 之间建立了一条清晰的指标引用链路。
 
-#### 8.9.1 配置层：全局 metrics 与 task 级 metric_overrides
+#### 9.9.1 配置层：全局 metrics 与 task 级 metric_overrides
 
 - 顶层 `metrics[]`：定义默认指标集合，适用于所有任务；
 - `tasks[].metric_overrides[]`：
   - 非空时，该 task 只使用覆盖列表中的指标；
   - 为空时，该 task 继承顶层 `metrics`。
 
-#### 8.9.2 TaskPlanSpec：固化“task → 指标集合”
+#### 9.9.2 TaskPlanSpec：固化“task → 指标集合”
 
 在 `task_plan._build_task_plan` 中，每个 `TaskSpec` 会被转换为一个 `TaskPlanSpec`：
 
@@ -1019,7 +1236,7 @@ plan = TaskPlanSpec(
 - `TaskPlanSpec.metrics` 已经是该 task 的**最终指标集合**；
 - 后续 runtime 不再重新解析配置，只依赖这份列表。
 
-#### 8.9.3 RuntimeBuilder 与 AutoEvalStep：按 task 构建指标实例
+#### 9.9.3 RuntimeBuilder 与 AutoEvalStep：按 task 构建指标实例
 
 在 `runtime_builder._prepare_task_entries` 中，每个 `TaskPlanSpec` 都会获得一套独立的 `MetricRegistry + AutoEvalStep`：
 
@@ -1079,11 +1296,11 @@ flowchart LR
 
 整个过程中，**“哪个 task 跑哪些指标”完全由配置显式决定**；智能行为只体现在字段默认路径与 canonical schema 上，不改变 task 与 metric 的绑定关系。
 
-### 8.10 BackendConfig 的 typed + passthrough 模型
+### 9.10 BackendConfig 的 typed + passthrough 模型
 
 1124 版为每种 Backend 定义了 `BackendConfigBase` 派生的 Pydantic 模型，用于描述“推荐字段 + 默认值”，同时通过 `extra="allow"` 允许透传未知字段。
 
-#### 8.10.1 BackendConfig 的定位
+#### 9.10.1 BackendConfig 的定位
 
 - 每个 backend `type` 对应一个配置模型，位于 `gage_eval/role/model/config/*.py` 中，例如：
   - `OpenAIHTTPBackendConfig` 对应 `type: openai_http`；
@@ -1094,7 +1311,7 @@ flowchart LR
   - 提供默认值（如 `base_url="https://api.openai.com/v1"`）；
   - 作为配置作者的“字段速查表”。
 
-#### 8.10.2 typed + passthrough 实现
+#### 9.10.2 typed + passthrough 实现
 
 基础类（简化）：
 
@@ -1121,7 +1338,7 @@ backend = backend_cls(config=typed_config)
 - 已声明字段经过类型校验与默认值填充；
 - 新增字段（例如未来才支持的高级参数）作为 extra 字段保留，并原样传入 Backend 实现。
 
-#### 8.10.3 使用示例
+#### 9.10.3 使用示例
 
 ```yaml
 backends:
@@ -1143,11 +1360,11 @@ backends:
 - 高级参数可以直接写在 `config` 里，由 Backend 实现按需消费；
 - 避免在 RoleAdapter 上重复声明与 Backend 已有能力重叠的字段。
 
-### 8.11 class_path 注入与可扩展点
+### 9.11 class_path 注入与可扩展点
 
 最后一类与配置设计高度相关的是 `class_path`/模块路径扩展点，它们允许在不修改核心框架代码的情况下注入自定义实现。
 
-#### 8.11.1 RoleAdapterSpec.class_path
+#### 9.11.1 RoleAdapterSpec.class_path
 
 - 配置入口：`role_adapters[].class_path: str`；
 - 行为：
@@ -1168,7 +1385,7 @@ role_adapters:
     backend_id: dut_backend
 ```
 
-#### 8.11.2 MetricSpec.implementation
+#### 9.11.2 MetricSpec.implementation
 
 - 配置入口：`metrics[].implementation` 或 `tasks[].metric_overrides[].implementation`；
 - 支持两种形式：
@@ -1186,7 +1403,7 @@ except KeyError:
 return metric_cls(spec)
 ```
 
-#### 8.11.3 Dataset doc_to_* callable
+#### 9.11.3 Dataset doc_to_* callable
 
 - 配置入口：`datasets[].params.doc_to_text/doc_to_visual/doc_to_audio`；
 - 值为 `"pkg.mod:function_name"` 形式；
@@ -1208,7 +1425,7 @@ datasets:
       doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_image_as_data_url
 ```
 
-#### 8.11.4 自定义 Backend：custom_script
+#### 9.11.4 自定义 Backend：custom_script
 
 当需要以纯配置方式挂载一个完全自定义的后端时，可使用 `type: custom_script`：
 
@@ -1228,7 +1445,7 @@ Backend 实现会：
 - 查找并实例化 `class_name` 指定的 `EngineBackend` 子类；
 - 将 `config` 中剩余字段原样透传给该实例。
 
-#### 8.11.5 协同策略
+#### 9.11.5 协同策略
 
 - 对稳定能力，优先在 registry 中注册为短名，并在配置中使用短名；
 - 对实验性/团队自研能力，可先通过 `class_path` 或模块路径方式注入；
@@ -1236,11 +1453,11 @@ Backend 实现会：
 
 ---
 
-## 9. 内置评估套件与 RunConfig 路线
+## 10. 内置评估套件与 RunConfig 路线
 
 > 详细设计见 `builtin-1126.md`，本节只从架构视角概括与现有代码实现保持一致的核心形态。
 
-### 9.1 三类配置实体与存放位置
+### 10.1 三类配置实体与存放位置
 
 - `PipelineConfig`：  
   - 承载完整数据/角色/后端/步骤/任务/指标结构；  
@@ -1260,7 +1477,7 @@ Backend 实现会：
   - 顶层不允许出现 `datasets/backends/tasks/custom/builtin/observability` 等逻辑段，由 `run.py::_validate_run_config_payload` 做最小约束；  
   - 存放位置：`gage-eval-main/config/run_configs/*.yaml`。
 
-### 9.2 Distill 流程：PipelineConfig → BuiltinTemplate
+### 10.2 Distill 流程：PipelineConfig → BuiltinTemplate
 
 入口：  
 
@@ -1290,7 +1507,7 @@ python gage-eval-main/run.py \
 - 使用 `calculate_definition_digest` 对 `definition` 做稳定哈希，写入 `metadata.digest`；  
 - 根据 `--version` 或目标目录已有 `vN.yaml` 自动确定版本号，生成 `vN.yaml` 文件到 `config/builtin_templates/<name>/`。
 
-### 9.3 Init 流程：BuiltinTemplate → RunConfig / PipelineConfig
+### 10.3 Init 流程：BuiltinTemplate → RunConfig / PipelineConfig
 
 入口例子：
 
@@ -1328,7 +1545,7 @@ python gage-eval-main/run.py \
        - 写入 `config/custom/<suite>_from_VN_<M>.yaml`，作为可完全编辑的配置起点。  
 - 输出 RunConfig 时，会在文件头部插入从模板推导出的“只读快照”注释块，帮助使用者快速理解数据集/后端/步骤/指标结构。
 
-### 9.4 运行时路由：RunConfig 与 PipelineConfig
+### 10.4 运行时路由：RunConfig 与 PipelineConfig
 
 入口：  
 
@@ -1360,7 +1577,7 @@ python gage-eval-main/run.py \
 - PipelineConfig 仍然是唯一的执行配置入口；  
 - run.py 通过 `kind` 分支实现对 RunConfig 的兼容，而不会破坏原有的 PipelineConfig 运行路径。  
 
-### 9.5 单任务优先与 MONOLITHIC 模式
+### 10.5 单任务优先与 MONOLITHIC 模式
 
 为保持生态“积木化”与复用性，Distill 在提纯阶段引入了**单任务优先**策略（详细规则见 `builtin-1126.md` 第 9 章）：  
 
@@ -1374,14 +1591,14 @@ python gage-eval-main/run.py \
 - 将 MONOLITHIC 模板视为高级用法，并在文档/Release note 中明确风险和使用指引。  
 - 旧配置中的 inline backend 写法保留，后续可用迁移脚本批量抽取到顶层（参见 `config-1124.md` 中的迁移工具设计）。
 
-## 10. 扩展指南：注册新指标
+## 11. 扩展指南：注册新指标
 
-### 10.1 步骤
+### 11.1 步骤
 1. 在 `src/gage_eval/metrics/<domain>/` 创建实现，继承 `SimpleMetric` 或 `Metric`。
 2. 使用 `@registry.asset("metrics", "<metric_id>", ...)` 装饰。
 3. 在 YAML `metrics` 段引用 `metric_id`，必要时提供 `params`。
 
-### 10.2 示例代码（带中文注释）
+### 11.2 示例代码（带中文注释）
 ```python
 # 文件: src/gage_eval/metrics/custom/rouge_l.py
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
@@ -1402,7 +1619,7 @@ class RougeLMetric(SimpleMetric):
         return 1.0 if pred and refs and pred in refs[0] else 0.0
 ```
 
-### 10.3 验证
+### 11.3 验证
 `python -m py_compile src/gage_eval/metrics/custom/rouge_l.py`  
 `metrics` 段引用：
 ```yaml
@@ -1411,7 +1628,7 @@ metrics:
     implementation: rouge_l
 ```
 
-### 10.4 字段映射参数与路径语义
+### 11.4 字段映射参数与路径语义
 
 内置指标以及自定义指标，通常通过 `metrics[].params` 中的一组「字段映射参数」来指定从样本/模型输出中取值的路径。常见参数及含义如下：
 
@@ -1424,7 +1641,7 @@ metrics:
 | `target_field` | `regex_match`、`text_length`、`latency` | `model_output.answer` 或 `model_output.latency_ms` | 通用“目标字段”参数，依据指标语义不同 |
 | `option_map_field` | `multi_choice_accuracy` | `sample.metadata.option_map` | 多选题选项映射表（A/B/C/D→文本） |
 
-#### 10.4.1 根域与点分路径
+#### 11.4.1 根域与点分路径
 
 在实现中，大多数指标通过 `_extract_field(context, descriptor, default=...)` 从 `MetricContext` 提取字段值（参考 `metrics/builtin/text.py`、`multi_choice.py`、`mmmu.py` 等）：
 
@@ -1444,7 +1661,7 @@ metrics:
 - `model_output.answer`  
   - 根域 `model_output`，直接取嵌套字段。
 
-#### 10.4.2 多选与 MM 模型中的特殊逻辑
+#### 11.4.2 多选与 MM 模型中的特殊逻辑
 
 **multi_choice_accuracy**
 - `label_field`：既可以是字母（如 `"B"`），也可以是完整选项文本；内部通过 `_normalize_choice_label` 与 `_match_option_text` 组合解析。
@@ -1457,7 +1674,7 @@ metrics:
 - `label_field` 默认为 `sample.choices.0.message.content.0.text`（参考 MMMU JSONL 格式），支持从列表、集合中取多个候选目标；
 - 匹配逻辑 `_match_prediction` 既支持字母对字母，也支持字符串包含关系（`prediction` 包含 `target` 或大小写不敏感包含）。
 
-#### 10.4.3 文本类指标的路径解析
+#### 11.4.3 文本类指标的路径解析
 
 **exact_match / contains / numeric_match / regex_match / text_length / latency**
 - 统一通过 `text._extract_field` 取值：
@@ -1466,7 +1683,7 @@ metrics:
   - 仅支持字典路径（不做列表索引），适合简单结构（例如 `sample.label`、`model_output.answer`）；
 - 这类指标的 `label_field`/`prediction_field`/`target_field` 通常只需指到纯标量字段（字符串/数字），避免指向复杂嵌套结构。
 
-#### 10.4.4 配置建议
+#### 11.4.4 配置建议
 
 1. **优先显式带根域**：例如 `sample.metadata.correct_choice`、`model_output.answer`，避免路径被默认为 `sample` 导致误读。
 2. **带索引访问列表**：当标准答案位于 `choices[0]` 这类位置时，建议使用 `choices.0.message.content.0.text` 风格，充分利用多选/多模态指标中对数字段的支持。
@@ -1476,15 +1693,15 @@ metrics:
 
 ---
 
-## 11. 扩展指南：注册新 Backend
+## 12. 扩展指南：注册新 Backend
 
-### 11.1 步骤总览
+### 12.1 步骤总览
 1. 定义 Config（Pydantic）：`src/gage_eval/role/model/config/<backend>.py`。
 2. 实现 Backend：继承 `EngineBackend` 或 HTTP 基类。
 3. `@registry.asset("backends", "<type>")` 装饰，声明 `config_schema_ref`。
 4. 在 YAML `role_adapters[].backend` 中设置 `type` 与 `config`。
 
-### 11.2 本地 EngineBackend 示例
+### 12.2 本地 EngineBackend 示例
 ```python
 # 文件 1: src/gage_eval/role/model/config/my_backend.py
 from typing import Optional
@@ -1539,7 +1756,7 @@ class MyBackend(EngineBackend):
         return {"answer": output}
 ```
 
-### 11.3 HTTP Backend 示例
+### 12.3 HTTP Backend 示例
 ```python
 # 文件: src/gage_eval/role/model/backends/my_http_backend.py
 from gage_eval.role.model.backends.http_backend import HTTPBackendBase
@@ -1552,7 +1769,7 @@ class MyHTTPBackend(HTTPBackendBase):
         return {"url": self.base_url, "json": {"prompt": payload["prompt"]}}
 ```
 
-### 11.4 配置引用
+### 12.4 配置引用
 ```yaml
 role_adapters:
   - adapter_id: demo_adapter
@@ -1565,7 +1782,7 @@ role_adapters:
 
 ---
 
-## 12. 调试与最佳实践
+## 13. 调试与最佳实践
 
 1. **并发调优**：优先通过 `--concurrency`/`GAGE_EVAL_THREADS` 控制 SampleLoop，并在 YAML `resource_requirement.pool_size` 声明池大小。
 2. **观测对齐**：出错必看 `events.jsonl` 与 `summary.json` 的 `timings`、吞吐字段。
@@ -1575,11 +1792,11 @@ role_adapters:
 
 ---
 
-## 13. 失败语义与防御性约定
+## 14. 失败语义与防御性约定
 
 框架在多处实现了“软失败”与防御性逻辑，目的是在尽量保留运行与观测的前提下，避免单点错误直接导致整次评测崩溃。
 
-### 12.1 数据与预处理阶段
+### 13.1 数据与预处理阶段
 
 | 场景 | 文件/逻辑 | 行为 | 对运行的影响 |
 | --- | --- | --- | --- |
@@ -1589,7 +1806,7 @@ role_adapters:
 
 推荐约定：新增预处理/validator 时，尽量沿用“返回 None/emit event 跳过样本”的模式，不直接抛出未捕获异常。
 
-### 12.2 推理与 Backend 阶段
+### 13.2 推理与 Backend 阶段
 
 | 场景 | 文件/逻辑 | 行为 | 对运行的影响 |
 | --- | --- | --- | --- |
@@ -1602,7 +1819,7 @@ role_adapters:
 - 对可预期错误（如配置缺失、路径不存在、空 prompt）优先返回“带 `_skip` 或明确 error 字段的结果”，并在 trace 中记录事件；
 - 对不可恢复错误（如协议变更、严重内部异常）再抛 RuntimeError，让上层决定是否终止。
 
-### 12.3 调度与队列阶段
+### 13.3 调度与队列阶段
 
 历史版本中，`InferenceRuntime`/队列曾引入过下列保护开关（部分仍用于兼容、部分已在新架构中替代）：
 
@@ -1618,7 +1835,7 @@ role_adapters:
 
 ---
 
-## 14. 旧框架映射表（llm-eval → gage-eval）
+## 15. 旧框架映射表（llm-eval → gage-eval）
 
 为了方便从 `llm-eval` 迁移或对照调试，下面给出两个框架在核心概念上的粗略映射：
 
@@ -1641,11 +1858,11 @@ role_adapters:
 | 角色 | 分清 DUT / Judge / Helper 在旧配置里的职责 | 在 `role_adapters` 中为每个角色声明 adapter_id + backend + capabilities |
 | 评分 | 找到对应的 `eval_xxx.py` 逻辑 | 选取或实现等价的 Metric，并在 `metrics` 配置块中声明 `metric_id` 与字段映射 |
 
-### 13.1 迁移示例：MMMU 任务
+### 14.1 迁移示例：MMMU 任务
 
 以 `llm-eval` 中典型的 MMMU 评测为例，迁移到 `gage-eval` 可分为四步：
 
-#### 13.1.1 数据层：复用 JSONL 与图像
+#### 14.1.1 数据层：复用 JSONL 与图像
 
 - **llm-eval**：通常通过预处理脚本（如 `utils/preprocess_mmmu.py`）将原始 MMMU 转成带 `messages`/`choices`/`answer` 的 JSONL，并在 `eval_mmmu.py` 中直接读取该 JSONL。  
 - **gage-eval**：  
@@ -1662,7 +1879,7 @@ role_adapters:
     ```
   - 其中 `embed_local_message_images` 负责把 `messages[].content[].image_url.url` 的本地路径转为 data URL，行为等价于旧框架里把图像“嵌入”到请求中，以便远程/本地多模态后端统一消费。
 
-#### 13.1.2 后端层：从服务端 vLLM 到本地 Transformers
+#### 14.1.2 后端层：从服务端 vLLM 到本地 Transformers
 
 - **llm-eval**：`run_pipeline.py` 会根据配置决定是启动本地 vLLM 服务（`predict_multi_gpu.py --run_forever`），还是调用 HTTP OpenAI 接口。  
 - **gage-eval**：  
@@ -1682,7 +1899,7 @@ role_adapters:
     ```
   - 若想复刻“服务端 vLLM + HTTP”模式，则改为使用 `vllm` 或 `openai_http` backend，并在 `config` 中填充 `base_url` / `model` 等字段，与旧的服务端配置对应。
 
-#### 13.1.3 角色层：从 judge_model/dut_model 到 role_adapters
+#### 14.1.3 角色层：从 judge_model/dut_model 到 role_adapters
 
 - **llm-eval**：在 YAML 中单独给出 `model_path`（DUT）与 `judge_model_path`（裁判），由 `run.py` 在内部起两个服务或复用一个服务。  
 - **gage-eval**：  
@@ -1697,7 +1914,7 @@ role_adapters:
     ```
   - 若需要裁判模型，则额外添加 `role_type: judge_model` 的 adapter，并在 `tasks[].steps` 中插入 `judge` 步骤；旧框架中 judge_model 相关 YAML 字段则可以直接映射到这个裁判 adapter 的 backend config。
 
-#### 13.1.4 评分层：从 eval_mmmu.py 到 mmmu_accuracy
+#### 14.1.4 评分层：从 eval_mmmu.py 到 mmmu_accuracy
 
 - **llm-eval**：`eval_mmmu.py` 中通常会：
   - 从模型输出 JSONL 中读取预测答案；
@@ -1715,7 +1932,7 @@ role_adapters:
     ```
   - 其中 `label_field` 对应旧 JSONL 中 `choices[0].message.content[0].text` 的标准答案位置，`prediction_field` 对应模型输出结构中的 `answer` 字段；这与旧脚本中“从结果文件读取预测，从原始文件读取标准答案”完全等价，但字段路径通过 YAML 配置显式声明，便于复用与审查。
 
-#### 13.1.5 代码落点建议
+#### 14.1.5 代码落点建议
 
 为方便团队协作与代码导航，MMMU 迁移相关代码应按功能落在以下目录：
 
@@ -1735,7 +1952,7 @@ role_adapters:
 
 ---
 
-## 15. 术语速查
+## 16. 术语速查
 
 | 名称 | 说明 | 代码位置 |
 | --- | --- | --- |
@@ -1747,6 +1964,6 @@ role_adapters:
 
 ---
 
-## 16. 结语
+## 17. 结语
 
 1124 版在 1123 的“去中心化调度”基础上，补齐了多任务、观测、吞吐指标和多模态稳定性。后续新增资产（指标/后端）仅需按 Registry 规范增量注册，即可被 CLI 与 YAML 自动发现。Mermaid 图与表格可直接在 Typora 11.9.0 渲染。欢迎基于此架构继续优化吞吐、扩展更多跨模态能力。

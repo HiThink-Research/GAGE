@@ -1,0 +1,72 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: piqa_sglang_unittest
+  description: "PIQA mini + SGLang 后端自检配置（用于集成测试）"
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+prompts:
+  - prompt_id: piqa_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位擅长常识推理的助手，请阅读题目并在最后只输出正确选项对应的大写字母（A 或 B）。
+      instruction: >
+        请判断哪个答案更合理，并在最后一行仅输出一个大写字母（A 或 B）。
+    template: |
+      {{ system_prompt }}
+
+      题目：
+      {{ sample.goal }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+datasets:
+  - dataset_id: piqa_validation_mini
+    loader: jsonl
+    params:
+      path: ${PIQA_MINI_PATH:-./tests/fixtures/piqa_mini.jsonl}
+      preprocess: piqa_struct_only
+      streaming: false
+
+backends:
+  - backend_id: sglang_backend_unit
+    type: sglang
+    config:
+      base_url: ${SGLANG_BASE_URL:-http://127.0.0.1:30000}
+      timeout: 30
+      max_new_tokens: 16
+      temperature: 0.0
+      top_p: 1.0
+      presence_penalty: 0.0
+
+role_adapters:
+  - adapter_id: dut_sglang
+    role_type: dut_model
+    backend_id: sglang_backend_unit
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: piqa_validation_eval
+    dataset_id: piqa_validation_mini
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console

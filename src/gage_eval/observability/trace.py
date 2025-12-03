@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
@@ -83,4 +84,5 @@ class ObservabilityTrace:
 
     @staticmethod
     def _generate_run_id() -> str:
-        return uuid.uuid4().hex[:12]
+        # 使用时间戳形式（MMddHHMMSS），便于人工识别；仍保留秒级精度避免冲突
+        return datetime.now().strftime("%m%d%H%M%S")

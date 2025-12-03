@@ -1,0 +1,224 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+# 使用 LiteLLM 多 provider（openai/anthropic/google）的 PIQA 验证配置
+# 三个后端均指向本地 mock 网关，底层可再转发到本地 OpenAI 兼容服务。
+metadata:
+  name: piqa_litellm_local
+  description: PIQA validation，litellm 后端分别走 openai / anthropic / google 协议，本地 mock 调用。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+prompts:
+  - prompt_id: piqa_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位擅长常识推理的助手，请阅读题目并在最后只输出正确选项对应的大写字母（A 或 B）。
+      instruction: >
+        请判断哪个答案更合理，并在最后一行仅输出一个大写字母（A 或 B）。
+    template: |
+      {{ system_prompt }}
+
+      题目：
+      {{ sample.goal }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+datasets:
+  - dataset_id: piqa_validation
+    hub: huggingface
+    hub_params:
+      hub_id: piqa
+      split: validation
+      trust_remote_code: true
+    loader: hf_hub
+    params:
+      preprocess: piqa_struct_only
+      streaming: false
+
+backends:
+  - backend_id: litellm_openai
+    type: litellm
+    config:
+      provider: openai
+      model: qwen2.5-0.5b-instruct-mlx
+      custom_llm_provider: openai
+      api_base: http://127.0.0.1:18080/v1   # OpenAI 协议代理，底层转发到本地 qwen
+      api_key: mock-key
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.2
+
+  - backend_id: litellm_anthropic
+    type: litellm
+    config:
+      provider: anthropic        # 协议模拟 -> 代理转发到本地 qwen
+      model: claude-3-5-sonnet-20240620
+      custom_llm_provider: anthropic
+      api_base: http://127.0.0.1:18081
+      # Anthropic 协议的 api_base 习惯是裸域名（litellm 会自己拼 /v1/messages），而其它几个协议本身就要求 api_base 带 /v1。
+      api_key: mock-key
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.2
+
+  - backend_id: litellm_google
+    type: litellm
+    config:
+      provider: google           # 协议模拟 -> 代理转发到本地 qwen
+      model: gemini-1.5-flash
+      custom_llm_provider: gemini
+      api_base: http://127.0.0.1:18082/v1
+      api_key: mock-key
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.2
+
+  - backend_id: litellm_grok
+    type: litellm
+    config:
+      provider: grok             # 协议模拟 -> 代理转发到本地 qwen
+      model: grok-1.5
+      custom_llm_provider: xai
+      api_base: http://127.0.0.1:18083/v1
+      api_key: mock-key
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.2
+
+  - backend_id: litellm_kimi
+    type: litellm
+    config:
+      provider: kimi             # 协议模拟 -> 代理转发到本地 qwen
+      model: moonshot-v1-8k
+      custom_llm_provider: moonshot
+      api_base: http://127.0.0.1:18084/v1
+      api_key: mock-key
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.2
+
+role_adapters:
+  - adapter_id: dut_litellm_openai
+    role_type: dut_model
+    backend_id: litellm_openai
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+  - adapter_id: dut_litellm_anthropic
+    role_type: dut_model
+    backend_id: litellm_anthropic
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+  - adapter_id: dut_litellm_google
+    role_type: dut_model
+    backend_id: litellm_google
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+  - adapter_id: dut_litellm_grok
+    role_type: dut_model
+    backend_id: litellm_grok
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+  - adapter_id: dut_litellm_kimi
+    role_type: dut_model
+    backend_id: litellm_kimi
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: piqa_validation_openai
+    dataset_id: piqa_validation
+    steps:
+      - step: inference
+        adapter_id: dut_litellm_openai
+      - step: auto_eval
+    max_samples: ${PIQA_LITELLM_MAX_SAMPLES:-1}
+    concurrency: 4
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_litellm_openai_events.jsonl
+
+  - task_id: piqa_validation_anthropic
+    dataset_id: piqa_validation
+    steps:
+      - step: inference
+        adapter_id: dut_litellm_anthropic
+      - step: auto_eval
+    max_samples: ${PIQA_LITELLM_MAX_SAMPLES:-1}
+    concurrency: 4
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_litellm_anthropic_events.jsonl
+
+  - task_id: piqa_validation_google
+    dataset_id: piqa_validation
+    steps:
+      - step: inference
+        adapter_id: dut_litellm_google
+      - step: auto_eval
+    max_samples: ${PIQA_LITELLM_MAX_SAMPLES:-1}
+    concurrency: 4
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_litellm_google_events.jsonl
+
+  - task_id: piqa_validation_grok
+    dataset_id: piqa_validation
+    steps:
+      - step: inference
+        adapter_id: dut_litellm_grok
+      - step: auto_eval
+    max_samples: ${PIQA_LITELLM_MAX_SAMPLES:-1}
+    concurrency: 4
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_litellm_grok_events.jsonl
+
+  - task_id: piqa_validation_kimi
+    dataset_id: piqa_validation
+    steps:
+      - step: inference
+        adapter_id: dut_litellm_kimi
+      - step: auto_eval
+    max_samples: ${PIQA_LITELLM_MAX_SAMPLES:-1}
+    concurrency: 4
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_litellm_kimi_events.jsonl

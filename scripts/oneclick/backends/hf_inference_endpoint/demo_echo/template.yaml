@@ -1,0 +1,60 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: __PIPELINE_NAME__
+  description: "hf_inference_endpoint 最小闭环 demo（单模型，单任务，低成本参数）"
+
+datasets:
+  - dataset_id: demo_echo_dataset
+    loader: jsonl
+    params:
+      path: config/builtin_templates/demo_echo/data/demo_echo.jsonl
+
+backends:
+  - backend_id: __BACKEND_ID__
+    type: hf_inference_endpoint
+    config:
+      endpoint_name: __ENDPOINT_NAME__
+      namespace: __NAMESPACE__
+      model_name: __MODEL_NAME__
+      revision: __REVISION__
+      reuse_existing: __REUSE_EXISTING__
+      auto_start: __AUTO_START__
+      delete_on_exit: __DELETE_ON_EXIT__
+      accelerator: __ACCELERATOR__
+      vendor: __VENDOR__
+      region: __REGION__
+      instance_type: __INSTANCE_TYPE__
+      instance_size: __INSTANCE_SIZE__
+      endpoint_type: __ENDPOINT_TYPE__
+      framework: __FRAMEWORK__
+      dtype: __DTYPE__
+      wait_timeout: __WAIT_TIMEOUT__
+      poll_interval: __POLL_INTERVAL__
+      enable_async: __ENABLE_ASYNC__
+      async_max_concurrency: __ASYNC_MAX_CONCURRENCY__
+      env_vars: __ENV_VARS__
+      generation_parameters:
+        max_new_tokens: __MAX_NEW_TOKENS__
+        temperature: 0.0
+
+role_adapters:
+  - adapter_id: __ADAPTER_ID__
+    role_type: dut_model
+    backend_id: __BACKEND_ID__
+    capabilities:
+      - chat_completion
+
+metrics: []
+
+tasks:
+  - task_id: __TASK_ID__
+    dataset_id: demo_echo_dataset
+    steps:
+      - step: inference
+        adapter_id: __ADAPTER_ID__
+    max_samples: __MAX_SAMPLES__
+    concurrency: __CONCURRENCY__
+    reporting:
+      sinks:
+        - type: console

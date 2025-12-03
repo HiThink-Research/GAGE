@@ -1,0 +1,52 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: multi_provider_demo
+  description: "使用 multi_provider_http 后端跑 demo_echo 数据集的最小闭环。"
+
+datasets:
+  - dataset_id: demo_echo_dataset
+    loader: jsonl
+    params:
+      path: config/builtin_templates/demo_echo/data/demo_echo.jsonl
+
+backends:
+  - backend_id: multi_provider_backend
+    type: multi_provider_http
+    config:
+      provider: "__PROVIDER__"
+      model_name: "__MODEL_NAME__"
+      tokenizer_name: "__TOKENIZER_NAME__"
+      token: null                  # 默认读取 HF_API_TOKEN
+      timeout: __TIMEOUT__
+      parallel_calls_count: __PARALLEL_CALLS__
+      generation_parameters:
+        max_new_tokens: 16
+        temperature: 0.0
+      http_retry_params:
+        attempts: 3
+        interval: 1.0
+        max_retries: 3
+        base_sleep: 3
+        multiplier: 2
+
+role_adapters:
+  - adapter_id: multi_provider_dut
+    role_type: dut_model
+    backend_id: multi_provider_backend
+    capabilities:
+      - chat_completion
+
+metrics: []
+
+tasks:
+  - task_id: multi_provider_demo
+    dataset_id: demo_echo_dataset
+    steps:
+      - step: inference
+        adapter_id: multi_provider_dut
+    max_samples: __MAX_SAMPLES__
+    concurrency: __CONCURRENCY__
+    reporting:
+      sinks:
+        - type: console

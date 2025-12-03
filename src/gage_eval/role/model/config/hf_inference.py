@@ -16,6 +16,8 @@ class HFServerlessBackendConfig(BackendConfigBase):
 
     model_name: str = Field(description="HuggingFace Hub 模型 ID，如 meta-llama/Llama-3.1-8B-Instruct")
     timeout: int = Field(default=60, ge=1, description="HTTP 超时秒数")
+    enable_async: bool = Field(default=False, description="是否启用 AsyncInferenceClient 路径")
+    async_max_concurrency: int = Field(default=0, ge=0, description="异步请求的最大并发（0 表示不限制）")
     max_retries: int = Field(default=3, ge=0, description="失败后的最大重试次数")
     wait_for_model: bool = Field(default=True, description="调用时是否等待模型冷启动")
     extra_headers: Dict[str, str] = Field(default_factory=dict, description="附加 HTTP Header")
@@ -49,6 +51,8 @@ class HFInferenceEndpointBackendConfig(BackendConfigBase):
     wait_timeout: int = Field(default=1800, ge=60, description="等待 endpoint 就绪的最长秒数")
     poll_interval: int = Field(default=60, ge=5, description="轮询间隔秒")
     huggingface_token: Optional[str] = Field(default=None, description="显式 HuggingFace token（否则读取环境变量）")
+    enable_async: bool = Field(default=False, description="是否启用 async_client 调用路径")
+    async_max_concurrency: int = Field(default=0, ge=0, description="异步请求并发上限（0 表示无限制）")
     generation_parameters: GenerationParameters = Field(
         default_factory=GenerationParameters, description="默认采样参数"
     )
