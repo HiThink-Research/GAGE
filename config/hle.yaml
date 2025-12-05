@@ -1,0 +1,19 @@
+# 步骤（以Qwen/Qwen3-Omni-30B-A3B-Thinking为例）：
+# 1. 下载数据集文件（https://huggingface.co/datasets/cais/hle/blob/main/data/test-00000-of-00001.parquet）到本地
+# 2. 下载Qwen/Qwen3-Omni-30B-A3B-Thinking模型到本地，然后安装运行模型所需依赖：
+# pip install transformers==4.57.3
+# pip install flash-attn --no-build-isolation
+# pip install -r requirements.txt
+# 3. 运行python run_pipeline.py --config config/hle.yaml --model_path {your_local_path_to_Qwen3-Omni-30B-A3B-Thinking} --backend hf 
+
+save_dir: results
+
+preprocess: benchmark_code.HLE.preprocess
+thinker_max_new_tokens: 4096
+
+tasks:
+    HLE:
+        type: text
+        data_path: [YOUR_PATH_TO_TEST_PARQUET]
+        compare_func:
+            path: benchmark_code/HLE/eval_hle.py
