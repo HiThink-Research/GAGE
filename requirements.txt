@@ -23,3 +23,4 @@ pybase64
 sanic
 rouge_chinese
 jieba
+librosa

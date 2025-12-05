@@ -109,7 +109,7 @@ class HFEngineAdaptor(EngineAdaptorBase):
         else:  # list[int]
             input_len = len(inputs)  # input_ids
             input_tensors = dict(
-                inputs=torch.tensor([inputs], device=model.device),
+                input_ids=torch.tensor([inputs], device=model.device),
                 attention_mask=torch.ones((1, input_len), dtype=torch.long, device=model.device)
             )
 
@@ -126,7 +126,7 @@ class HFEngineAdaptor(EngineAdaptorBase):
                 **kwargs,
             )  # input + output, shape: (batch_size, total_len)
 
-            output = output_ids[0].tolist()[input_len:]
+            output = output_ids[0].flatten().tolist()[input_len:]
 
         elif otype == 'turn_taking':
             model = getattr(model, 'thinker', model)  # Qwen2.5-Omni

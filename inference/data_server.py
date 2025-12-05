@@ -3,6 +3,7 @@ import sys
 import argparse
 import random
 import ujson as json
+import base64
 import asyncio
 import time
 import importlib
@@ -820,13 +821,25 @@ async def write_result_async(i_data, i_sample):
 
 def write_result(i_data):
     """将推理结果写入jsonl文件"""
+    def default_serizalizer(obj):
+        return f"Lost data of JSON-unserializable type {obj.__class__.__name__}"
+    def dumps(r):
+        try:
+            json_kwargs = dict(
+                ensure_ascii=False,
+                escape_forward_slashes=False  # ujson需要设置，以保持与标准库（json）一致的行为
+            )
+            return json.dumps(r, **json_kwargs)
+        except Exception as e:
+            import json
+            json_kwargs = dict(
+                ensure_ascii=False,
+                default=default_serizalizer  # 处理不支持JSON化的元素（如bytes）
+            )
+            return json.dumps(r, **json_kwargs)
     try:
         d = file_list[i_data]
         # print('save:', d.output_path)
-        json_kwargs = dict(
-            ensure_ascii=False,
-            escape_forward_slashes=False,  # ujson需要设置，以保持与标准库（json）一致的行为
-        )
         os.makedirs(os.path.split(d.output_path)[0], exist_ok=True)
         if d.n_write == -1:
             d.n_write = 0
@@ -837,7 +850,7 @@ def write_result(i_data):
             if args.no_order:
                 while d.results_new:
                     r = d.results_new.popleft()
-                    f.write(json.dumps(r, **json_kwargs) + '\n')
+                    f.write(dumps(r) + '\n')
                     d.n_write += 1
             else:
                 while d.n_write < len(d.results):
@@ -845,7 +858,7 @@ def write_result(i_data):
                     r = d.results[i]
                     if r is None:
                         break
-                    f.write(json.dumps(r, **json_kwargs) + '\n')
+                    f.write(dumps(r) + '\n')
                     d.results[i] = None  # 释放内存
                     d.n_write += 1
 
