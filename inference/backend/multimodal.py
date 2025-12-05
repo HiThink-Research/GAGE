@@ -1,5 +1,7 @@
 import math
 import librosa
+import base64
+from io import BytesIO
 from PIL import Image
 
 
@@ -23,8 +25,16 @@ def load_multimodal_data(
     audio: list[str] | None = None,
     return_dict=False,
 ):
+    def open_image(x):
+        if x.startswith("data:image"):
+            x = x.split(',', 1)[1]
+            image_data = base64.b64decode(x)
+            return Image.open(BytesIO(image_data))
+        else:
+            return Image.open(x)
+
     if image is not None:
-        image = [Image.open(x) for x in image]
+        image = [open_image(x) for x in image]
         image = [to_rgb(x) for x in image]
         # For Qwen2-VL, Qwen2.5-VL, Omni, 解决processor短边小于28的bug
         # OCRBench数据集需要调整，MIN_PIXELS

@@ -17,7 +17,7 @@ def extract_label(data):
 
 def extract_pred(data):
     if "predict_result" in data:
-        return f'["{data["predict_result"]}"]'
+        return str(data["predict_result"])
     if "prediction" in data:
         return str(data["prediction"])
     if "choices" in data and isinstance(data["choices"], list):
