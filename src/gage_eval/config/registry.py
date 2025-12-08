@@ -35,7 +35,7 @@ class ConfigRegistry:
     # ------------------------------------------------------------------
     # Resolution API
     # ------------------------------------------------------------------
-    def resolve_dataset(self, spec: DatasetSpec) -> Any:
+    def resolve_dataset(self, spec: DatasetSpec, *, trace=None) -> Any:
         loader_name = spec.loader or spec.params.get("loader")
         if not loader_name:
             raise ValueError(f"Dataset '{spec.dataset_id}' missing 'loader'")
@@ -50,7 +50,7 @@ class ConfigRegistry:
         hub_handle = hub.resolve()
         loader_cls = registry.get("dataset_loaders", loader_name)
         loader = loader_cls(spec)
-        return loader.load(hub_handle)
+        return loader.load(hub_handle, trace=trace)
 
     def resolve_role_adapter(
         self,
@@ -154,10 +154,10 @@ class ConfigRegistry:
             )
         return prompts
 
-    def materialize_datasets(self, config: PipelineConfig) -> Dict[str, Any]:
+    def materialize_datasets(self, config: PipelineConfig, *, trace=None) -> Dict[str, Any]:
         datasets: Dict[str, Any] = {}
         for spec in config.datasets:
-            datasets[spec.dataset_id] = self.resolve_dataset(spec)
+            datasets[spec.dataset_id] = self.resolve_dataset(spec, trace=trace)
         return datasets
 
     def materialize_models(self, config: PipelineConfig) -> Dict[str, Any]:

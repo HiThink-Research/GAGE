@@ -68,154 +68,205 @@ graph TD
 
 ---
 
-## 3. 数据与预处理链路
+## 3. 标准 Sample 契约与字段落点（1204/1208 对齐）
 
-### 3.1 数据源装配
-- 数据在 `build_runtime` 中通过 Registry 物化：`registry.materialize_datasets(config)` → `DataManager.register_source`。
-- 每个样本统一走 `SampleStandardizer`，保证 Envelope 结构一致。
+### 3.1 标准 Sample 必备字段
+| 字段 | 作用 | 默认类型/兜底 | 典型来源 |
+| --- | --- | --- | --- |
+| `id` | 样本唯一标识 | str，缺省时用哈希补全 | 原始记录或 normalization |
+| `messages` | 聊天消息列表（文本/多模态混排） | list | 预处理器或原始数据 |
+| `choices` | 结构化选项（多选/评测标签） | list | 预处理器（如多选/PIQA/MMMU） |
+| `inputs` | 推理输入容器（含 prompt/multi_modal_data） | dict | 预处理 merge 结果 |
+| `metadata` | 任务/预处理元信息 | dict | 预处理器写入（answers/option_map 等） |
+| `_dataset_id` / `_dataset_metadata` | 数据集标识与路径等 | str / dict | loader 注入 |
+| `chat_template_mode` / `rendered_by` / `template_source` / `cache_suffix` | 渲染标记，决定后端是否再次模板化 | str | 预处理或后端 |
+| `_tokenizer_path` | 渲染所用 tokenizer | str | loader/preprocess/backends |
 
-### 3.2 预处理与视觉嵌入
-- 支持 `preprocess` 链：如 `preprocess_strip_assistant` 剥离答案段，避免模型偷看。
-- `doc_to_visual` 钩子（如 `embed_local_message_images`）把本地路径转 data URL；元数据 `_dataset_metadata.path` 自动推导根目录。
-- 文本默认渲染：未显式声明 `preprocess` 时，默认尝试按 **tokenizer_name/tokenizer_path/model_path → 环境变量 (GAGE_EVAL_MODEL_PATH/MODEL_PATH)** 的顺序加载 tokenizer，调用 `apply_chat_template` 渲染 `messages`；失败则 fallback 为简易拼接，并在后端侧允许再次渲染。
+> 多模态字段：图片/音频统一落在 `messages[*].content[*].<type>_url.url` 与 `inputs.multi_modal_data.image|audio|video|file`，并在 `_media_meta.images` 记录去重后的索引。
 
-```python
-from gage_eval.assets.datasets.converters.image_utils import embed_local_message_images
-
-def doc_to_visual(sample):
-    # 将 messages.content 中的本地图片转为 data URL，兼容远程/本地 VLM
-    return embed_local_message_images(sample, content_field="messages.0.content")
-```
-
-### 3.3 并发与背压
-- `SampleLoop` 支持 `shuffle`、`prefetch_factor`、`max_inflight`，遇到高压场景可设置 `GAGE_EVAL_BLOCK_ON_FULL=1` 阻塞而非丢样。
-- 事件 `sample_buffer_state`、`sample_prefetch_wait` 记录在 `events.jsonl`，便于回溯。
-
-### 3.4 文本默认渲染与元数据落盘
-
-```mermaid
-flowchart LR
-  R[records] --> AP[apply_preprocess]
-  AP -->|无显式 preprocess| DEF[默认渲染<br/>AutoTokenizer 优先]
-  DEF -->|成功| WR[写入 prompt/inputs + 模板元数据]
-  DEF -->|失败| FB[简易拼接<br/>template_source=fallback]
-  FB --> WR
-```
-
-关键点：
-- 优先 AutoTokenizer，若无 `apply_chat_template` 再回退 AutoProcessor；Processor 无模板则记为 fallback。
-- 元数据 `chat_template_mode/template_source/rendered_by/cache_suffix` 写回样本；`_tokenizer_path` 优先取数据集配置，否则由后端回填。
-- 多模态消息检测到 image/audio 片段时不做预处理渲染，保持后端侧处理。
-
-### 3.4 MMMU 数据结构示例
-
-以实机 MMMU 样本 `validation_Accounting_1` 为例，其原始 JSONL 记录大致形态如下（省略无关字段）：
-
+### 3.2 Envelope 示例（压缩版）
 ```json
 {
-  "id": "validation_Accounting_1",
+  "id": "docvqa_001",
   "messages": [
-    {
-      "role": "user",
-      "content": [
-        {
-          "type": "image_url",
-          "image_url": {
-            "url": "/mnt/.../MMMU/data/images/validation_Accounting_1/validation_Accounting_1_1.png"
-          }
-        },
-        {
-          "type": "text",
-          "text": "Baxter Company has a relevant range ... Answer with the option's letter from the given choices directly."
-        }
-      ]
-    }
+    {"role": "user", "content": [
+      {"type": "text", "text": "请回答文档中的问题"},
+      {"type": "image_url", "image_url": {"url": "/abs/docvqa/page1.png"}}
+    ]}
   ],
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": [
-          {
-            "type": "text",
-            "text": "B"
-          }
-        ]
-      }
-    }
-  ],
-  "question": "<image 1> Baxter Company has a relevant range ...",
-  "options": "['$6', '$7', '$8', '$9']",
-  "answer": "B"
+  "choices": [{"index": 0, "message": {"content": [{"type": "text", "text": "A"}], "role": "assistant"}}],
+  "inputs": {
+    "prompt": "请回答文档中的问题",
+    "multi_modal_data": {"image": ["/abs/docvqa/page1.png"]}
+  },
+  "metadata": {
+    "answers": ["xxx"],
+    "content_root": "/abs/docvqa"
+  },
+  "_dataset_id": "docvqa_val",
+  "_dataset_metadata": {"path": "/abs/docvqa/hle_test_prompted.jsonl"},
+  "chat_template_mode": "preprocess",
+  "rendered_by": "preprocess",
+  "template_source": "manual",
+  "cache_suffix": "-converted"
 }
 ```
 
-关键字段在预处理链路中的角色如下：
-
-| 字段路径 | 含义 | 被哪一环节消费 |
-| --- | --- | --- |
-| `id` | 样本唯一标识 | `SampleStandardizer` 作为 `sample_id`，用于 trace 和缓存 |
-| `messages[0].content[0].image_url.url` | 本地图片路径 | `embed_local_message_images` 转为 data URL |
-| `messages[0].content[1].text` | 题干与指令文本 | 作为用户 prompt 的主要文本部分 |
-| `question` | 带占位的题干文本 | VLM backend 中作为补充或回落 prompt 文本 |
-| `options` | 选项文本列表字符串 | 可经预处理解析为 `metadata.option_map`，供多选指标使用 |
-| `choices[0].message.content[0].text` | 正确选项字母 | 作为 `mmmu_accuracy` 的 label 字段 |
-| `answer` | 正确答案字母或文本 | 兼容旧框架，对齐 lmms eval 记录 |
-
-### 3.5 MMMU 预处理与多模态构建流程
-
-对于本地 MMMU JSONL 配置 `config/custom/mmmu_local_vlm.yaml`，数据到可推理 Envelope 的完整路径可以概括为：
-
-```mermaid
-flowchart LR
-  Raw[原始 MMMU JSONL 行] --> DM[DataManager<br/>register_source]
-  DM --> STD[SampleStandardizer<br/>normalize]
-  STD --> DOC2[doc_to_visual<br/>embed_local_message_images]
-  DOC2 --> MERGE[_merge_multimodal_inputs]
-  MERGE --> LOOP[SampleLoop 输入样本]
-
-  style Raw fill:#ffffff,stroke:#1e88e5
-  style DM fill:#e3f2fd,stroke:#1e88e5
-  style STD fill:#e3f2fd,stroke:#1e88e5
-  style DOC2 fill:#fff8e1,stroke:#f9a825
-  style MERGE fill:#fff8e1,stroke:#f9a825
-  style LOOP fill:#fce4ec,stroke:#d81b60
-```
-
-对应各步骤的处理逻辑如下：
-
-| 阶段 | 入口函数 | 关键输入 | 关键输出 | 说明 |
-| --- | --- | --- | --- | --- |
-| 原始记录 | JSONL 行 | MMMU 原始字段 | 原始 dict | 从本地 `mmmu_val_500.jsonl` 逐行读取 |
-| DataManager | `DataManager.register_source` / `iter_samples` | 原始记录迭代器 | `DataSource.records` | 把数据源注册为可复用 dataset |
-| 标准化 | `SampleStandardizer.normalize` | `id`、`messages`、`choices` 等 | 结构化 Envelope，补 `_dataset_metadata` | 统一字段命名与元数据结构 |
-| 视觉预处理 | `embed_local_message_images` | `messages[0].content[*].image_url.url` | data URL 替换原本路径 | 将本地路径编码为 `data:image/...;base64,...` 以兼容远程/本地 VLM |
-| 多模态合并 | `_merge_multimodal_inputs` | `messages`、`visual` 等 | `inputs.multi_modal_data.image` | 把视觉信息整理到统一的 `inputs` 结构，供 Backend 使用 |
-| SampleLoop 输入 | `SampleLoop._iter_samples` | 上述标准化样本 | 带 `inputs`、`messages` 的 Envelope | 后续 RoleAdapter/Backend 基于该 Envelope 推理 |
-
-对照 MMMU 示例，可以看到处理链路中关键字段的变化：
-
-1. **图片字段**  
-   - 入站：`messages[0].content[0].image_url.url` 为本地文件路径。  
-   - `embed_local_message_images`：读取文件、Base64 编码并写回同一路径字段，同时在 `metadata.image_url` 留存 data URL。  
-   - `_merge_multimodal_inputs`：将图片路径汇总到 `inputs.multi_modal_data.image`，供多模态后端统一消费。
-
-2. **文本字段**  
-   - 题干主文本主要来自 `messages[0].content[1].text` 和 `question` 字段。  
-   - 在 RoleAdapter 阶段，这些内容被整理为 `sample.text` 或直接透传 `messages`，VLM backend 再通过 `_resolve_prompt` 综合利用 `apply_chat_template` 渲染或回落到 `question` 文本。
-
-3. **标签字段**  
-   - `choices[0].message.content[0].text` 在标准化后仍保留在 `sample.choices.0.message.content.0.text`。  
-   - `mmmu_accuracy` 默认从该路径读取正确选项字母，而预测结果从 `model_output.answer` 读取，二者的字段映射在第 10 章的指标配置中完成声明。
-
-借助这条链路，MMMU 的本地 JSONL 与 HuggingFace Hub 版本可以通过不同的 loader 与 preprocess 组合，统一规约到相同的 Envelope 结构，确保多模态后端与指标实现无需感知底层数据来源差异。
+### 3.3 规范与校验
+- Schema 校验入口：`src/gage_eval/assets/datasets/validation.py::validate_sample_schema`，只做类型/必填检查（高性能）。
+- 数据归一化：`utils.normalization.normalize_sample` 负责 id/messages/choices 容器化，保持 DataManager 纯透传。
+- 多模态同步：`utils.multimodal.merge_multimodal_inputs` 收集 messages/doc_to_* 的媒体，写入 `inputs.multi_modal_data` 并同步 `_media_meta.images`。
 
 ---
 
-## 4. 执行链：从 Sample 到 Backend
+## 4. datasets 层级与执行分层（1208 版）
 
-### 4.1 RoleManager 与池化
+### 4.1 分层总览
+```mermaid
+flowchart TD
+  L[Loader<br/>jsonl/hf_hub/csv] --> P[Preprocess<br/>Base/Simple/Task]
+  P --> V[Validator<br/>validate_sample_schema]
+  V --> DM[DataManager<br/>纯透传]
+  DM --> SL[SampleLoop]
+
+  style L fill:#e3f2fd,stroke:#1e88e5
+  style P fill:#fff8e1,stroke:#f9a825
+  style V fill:#e8f5e9,stroke:#43a047
+  style DM fill:#e3f2fd,stroke:#1e88e5
+  style SL fill:#fce4ec,stroke:#d81b60
+```
+
+| 层级 | 关键文件 | 责任边界（现实现） |
+| --- | --- | --- |
+| Loader | `assets/datasets/loaders/*.py` | 解析数据源、limit/streaming、绑定 preprocess/doc_to_*，注入 `_dataset_metadata.path` 绝对路径 |
+| Preprocess | `assets/datasets/preprocessors/` | Base 模板统一：roles 清洗 → to_sample → inputs 归一 → doc_to_* → merge 多模态 → 渲染标记 → normalize |
+| Validator | `assets/datasets/validation.py` | 轻量 schema 校验，fail-fast 容器类型错误 |
+| DataManager | `assets/datasets/manager.py` | 注册/迭代，不再改写样本内容 |
+
+### 4.2 Loader 与 doc_to_* 解析
+- JSONL/HF loader 通过 `loader_utils.resolve_doc_to_callable` 解析 doc_to_*，**自动从 preprocess_kwargs 继承同名参数**，减少重复配置。
+- JSONL 路径统一 `expanduser().resolve()`，`_dataset_metadata.path` 保留绝对路径，预处理可据此推断 `content_root`。
+
+### 4.3 Preprocess 流程（模板方法）
+```mermaid
+sequenceDiagram
+  participant B as BasePreprocessor
+  participant TS as to_sample
+  participant DOC as doc_to_*
+  participant MM as merge_multimodal_inputs
+  participant VA as validate_sample_schema
+
+  B->>TS: to_sample(record, **kwargs)
+  TS-->>B: structured sample
+  B->>B: _normalize_inputs / ensure_inputs_dict
+  B->>DOC: doc_to_text/visual/audio (按需)
+  DOC-->>B: visual/audio/text fragments
+  B->>MM: merge multimodal into inputs.multi_modal_data
+  B->>B: ensure_chat_template_flags / normalize_sample
+  B->>VA: validate_sample_schema
+  VA-->>B: ok / raise
+```
+
+关键实现（节选，中文注释）：
+```python
+# src/gage_eval/assets/datasets/preprocessors/base.py
+class BasePreprocessor(DatasetPreprocessor):
+    def transform(self, sample: Dict[str, Any], **kwargs: Any) -> Any:
+        doc_to_hooks = {k: kwargs.get(k) for k in ("doc_to_text", "doc_to_visual", "doc_to_audio")}
+        raw_inputs = sample.get("inputs")
+        if self.roles_to_remove:
+            _strip_roles(sample, roles_to_remove=self.roles_to_remove)
+        structured = self.to_sample(sample, **{k: v for k, v in kwargs.items() if k not in doc_to_hooks})
+        if structured is not None and structured is not sample:
+            sample.clear()
+            sample.update(structured)
+        self._normalize_inputs(sample, raw_inputs=raw_inputs)
+        validate_sample_schema(sample)  # 容器兜底
+        self._apply_doc_to(sample, **doc_to_hooks)  # 无 multi_modal_data 时才注入 doc_to_visual/audio
+        merge_multimodal_inputs(sample)  # 收集 messages/doc_to_* 到 inputs.multi_modal_data
+        ensure_chat_template_flags(sample)
+        normalize_sample(sample, dataset_id=sample.get("_dataset_id") or "unknown",
+                        dataset_metadata=sample.get("_dataset_metadata") or {})
+        return sample.get("inputs")
+```
+
+### 4.4 DataManager 纯透传
+- `iter_samples` 仅做 validator 调用与 `_dataset_metadata` 兜底，不再合并 doc_to_*；测试用例已对应调整。
+- 设计后果：预处理阶段必须完成 doc_to_* 与多模态合并，后续 SampleLoop 不修改样本。
+
+---
+
+## 5. Preprocessor 设计与任务适配（最新）
+
+### 5.1 类层级
+```mermaid
+classDiagram
+  class DatasetPreprocessor {+transform(sample, **kwargs)}
+  class BasePreprocessor {+transform(); +to_sample()*}
+  class SimplePreprocessor {+to_sample(); +to_legacy()*}
+  class DefaultPreprocessor
+  class MultiChoicePreprocessor
+  class PiqaPreprocessor
+  class DocVQAPreprocessor
+  class MMMUMultimodalPreprocessor
+
+  DatasetPreprocessor <|-- BasePreprocessor
+  BasePreprocessor <|-- SimplePreprocessor
+  SimplePreprocessor <|-- DefaultPreprocessor
+  SimplePreprocessor <|-- MultiChoicePreprocessor
+  SimplePreprocessor <|-- PiqaPreprocessor
+  BasePreprocessor <|-- DocVQAPreprocessor
+  BasePreprocessor <|-- MMMUMultimodalPreprocessor
+```
+
+### 5.2 Simple / Default（文本兜底）
+- **SimplePreprocessor**：`to_sample` 固化为 `to_legacy` → `convert_llmeval_record`，兼容老格式，自动写 `_dataset_id/_dataset_metadata`、`cache_suffix=-converted`。
+- **DefaultPreprocessor**：继承 Simple，支持动态脚本加载或直接透传 legacy 记录；若无多模态则尝试 tokenizer `apply_chat_template` 渲染，失败回退简拼，写入 `_tokenizer_path` 与标记。
+
+### 5.3 DocVQA 任务（最新调整）
+- 去掉 `image_root`/`image_field` 兼容分支，统一使用 `content_root`/`content_field` 推导根目录并绝对化。
+- 默认从 JSONL 路径推断 `content_root`，metadata 仅保留 `content_root` 与 `answers`/`content_field` 等。
+
+### 5.4 MMMU 任务
+- 继承 Base，不做渲染，保持 messages+multi_modal_data；通过 `_merge_multimodal_inputs` 将消息中的图片汇总到 `inputs.multi_modal_data`。
+
+### 5.5 doc_to_* 配置合并
+- Loader 端 `resolve_doc_to_callable` 优先从 `preprocess_kwargs` 复制同名参数，再叠加显式的 `doc_to_*_kwargs`。
+- 典型 DocVQA 配置简化：`config/custom/docvqa_qwen_vl.yaml` 去掉手填 `content_root/doc_to_visual_kwargs`，依赖 JSONL 同目录自动推导。
+
+### 5.6 多模态处理要点
+| 阶段 | 函数 | 规则 |
+| --- | --- | --- |
+| doc_to_visual | 任意可调用 | 仅在样本缺少 `inputs.multi_modal_data` 时运行，避免重复 |
+| embed_local_message_images | utils.multimodal | 将 messages 内本地图片转 data URL，更新 `metadata.content_root` |
+| merge_multimodal_inputs | utils.multimodal | 收集 messages + doc_to_* → inputs.multi_modal_data，写 `_media_meta.images` |
+| _sync_multimodal_with_messages | utils.multimodal | 仅保留消息实际引用的媒体，防泄露 |
+| _maybe_embed_local_media | utils.multimodal | 受 `GAGE_EVAL_EMBED_LOCAL_MEDIA` 或 `_dataset_metadata.embed_local_media` 控制 |
+
+### 5.7 预处理流水线与标记写入
+```mermaid
+flowchart LR
+  R[raw record] --> TS[to_sample]
+  TS --> NORM[_normalize_inputs + validate_sample_schema]
+  NORM --> DOC[doc_to_text/visual/audio]
+  DOC --> MM[merge_multimodal_inputs]
+  MM --> FLAGS[ensure_chat_template_flags]
+  FLAGS --> OUT[标准 Sample]
+
+  style R fill:#ffffff,stroke:#1e88e5
+  style TS fill:#fff8e1,stroke:#f9a825
+  style NORM fill:#fff8e1,stroke:#f9a825
+  style DOC fill:#fff8e1,stroke:#f9a825
+  style MM fill:#fff8e1,stroke:#f9a825
+  style FLAGS fill:#e8f5e9,stroke:#43a047
+  style OUT fill:#fce4ec,stroke:#d81b60
+```
+
+---
+
+## 6. 执行链：从 Sample 到 Backend
+
+### 6.1 RoleManager 与池化
 | 角色 | 适配器 | 后端 | 池化策略 |
 | --- | --- | --- | --- |
 | DUT/Judge/Helper | `ModelRoleAdapter` | 任意注册 Backend | 依据 `resource_requirement.pool_size` 或自动推导 GPU/CPU 并发 |
@@ -244,7 +295,7 @@ flowchart LR
 - **RoleManager** 决定“由哪个角色池中的哪个实例来处理”；  
 - **RoleAdapter + Backend** 决定“如何把 Envelope 翻译成具体调用并拿到结果”。  
 
-### 4.2 SampleLoop 工作流
+### 6.2 SampleLoop 工作流
 ```mermaid
 sequenceDiagram
   autonumber
@@ -282,7 +333,7 @@ sequenceDiagram
 - RoleAdapter 负责把高层 Envelope 映射到 Backend 所需的请求格式，并统一处理响应；
 - Backend 层只需关注“如何从 prompt/inputs 得到 answer”，最大程度保持复用。
 
-### 4.3 任务编排
+### 6.3 任务编排
 - 单任务：`PipelineRuntime.run()` 在单一 dataset/task 上运行 SampleLoop + AutoEval，记录 `inference_s`、`evaluation_s`、`wall_runtime_s` 等时长，并通过 ReportStep 写入 summary。
 - 多任务：`TaskOrchestratorRuntime.run()` 先构造一组 `_TaskRuntimeEntry`（每个包含独立的 SampleLoop/TaskPlanner），再按 TaskSpec 依次执行，最后把所有任务的 metrics 与 timings 聚合为一次性报告。
 
@@ -296,16 +347,16 @@ sequenceDiagram
 无论是哪种 Runtime，最终都通过同一个 `ReportStep` 将：
 
 - 每个任务的指标列表（含 `raw_values` 与格式化后的 `values`）；  
-- 运行维度的 `timings`（第 6 章中的观测指标）；  
+- 运行维度的 `timings`（第 8 章中的观测指标）；  
 - 样本总数与 `tasks[]` 元数据  
 
 写入 `summary.json`，保持 CLI 与 Portal 端对不同模式的读取逻辑一致。
 
-### 4.4 裁判员流程与 JudgeStep 详解
+### 6.4 裁判员流程与 JudgeStep 详解
 
 基于 `runs/4aba7356fdbe` 的成功运行经验，gage-eval 现已支持完整的“推理 → 裁判 → 指标”闭环流程。本节详细说明其架构实现与数据流转。
 
-#### 4.4.1 裁判流的核心组件
+#### 6.4.1 裁判流的核心组件
 
 裁判流程在架构上由三个关键部分协作完成：
 
@@ -318,7 +369,7 @@ sequenceDiagram
 3. **Judge Backend (Backend)**  
    通常复用 `openai_http` 或 `vllm` 等标准后端，执行裁判模型的推理。
 
-#### 4.4.2 裁判数据流转图
+#### 6.4.2 裁判数据流转图
 
 ```mermaid
 sequenceDiagram
@@ -348,7 +399,7 @@ sequenceDiagram
   TP->>TP: calculate_metrics(judge_output)
 ```
 
-#### 4.4.3 指标计算：judge_multi_choice_acc
+#### 6.4.3 指标计算：judge_multi_choice_acc
 
 裁判完成后，结果会存储在 `sample.judge_output` 中。此时，AutoEvalStep 使用 `judge_multi_choice_acc` 指标进行最终打分：
 
@@ -367,7 +418,7 @@ metrics:
 
 ---
 
-## 5. 内置指标清单
+## 7. 内置指标清单
 
 | metric_id | value_key | 默认聚合 | 适用场景 / 核心逻辑 | 默认字段/参数 |
 | --- | --- | --- | --- | --- |
@@ -386,7 +437,7 @@ metrics:
 
 ---
 
-## 6. 观测、缓存与报告
+## 8. 观测、缓存与报告
 
 | 组件 | 输出 | 位置 |
 | --- | --- | --- |
@@ -394,17 +445,17 @@ metrics:
 | EvalCache | 样本缓存、summary、timings | `runs/<run_id>/samples/`、`summary.json` |
 | ReportStep | 聚合指标、timings | `summary.json` |
 
-### 6.1 新增时延与吞吐指标
+### 8.1 新增时延与吞吐指标
 ReportStep 现写入：
 - `wall_runtime_s`：run.py 启动到任务结束的墙钟时长。
 - `throughput_total_samples_per_s`、`throughput_inference_samples_per_s`、`throughput_auto_eval_samples_per_s`
 - `latency_total_ms_per_sample`、`latency_inference_ms_per_sample`
 
-### 6.2 Log Sink 与强制采样
+### 8.2 Log Sink 与强制采样
 - `observability.log_sink` 把 loguru sink 注入 Trace，错误时 `force_log()` 确保样本必留痕。
 - `@observable_stage` 自动记录阶段耗时并汇总到 `timings`.
 
-### 6.3 观测指标清单
+### 8.3 观测指标清单
 | 字段 | 含义 | 产出位置 | 备注 |
 | --- | --- | --- | --- |
 | dataset_materialization_s | 数据集装配耗时 | `summary.json.run.timings` | build_runtime 阶段 |
@@ -423,7 +474,7 @@ ReportStep 现写入：
 
 ---
 
-## 7. 多模态与 VLM 路径
+## 9. 多模态与 VLM 路径
 
 ### 7.1 VLMTransformersBackend 关键逻辑
 ```python
@@ -448,9 +499,9 @@ class VLMTransformersBackend(EngineBackend):
 
 ---
 
-## 8. 配置与运行入口
+## 10. 配置与运行入口
 
-### 8.1 CLI 入口
+### 10.1 CLI 入口
 `python gage-eval-main/run.py --config ... --concurrency N --max-samples K --output-dir runs/foo`
 
 启动流程：
@@ -458,7 +509,7 @@ class VLMTransformersBackend(EngineBackend):
 2. `build_runtime` 物化 datasets/models/backends。
 3. 运行 SampleLoop，完成后写 `summary.json` 与吞吐指标。
 
-### 8.2 典型 YAML 片段
+### 10.2 典型 YAML 片段
 ```yaml
 datasets:
   - dataset_id: mmmu_val_local
@@ -478,7 +529,7 @@ role_adapters:
     capabilities: [vision_chat]
 ```
 
-### 8.3 环境变量清单
+### 10.3 环境变量清单
 
 | 名称 | 分类 | 默认值/示例 | 说明 |
 | --- | --- | --- | --- |
@@ -525,7 +576,7 @@ role_adapters:
 
 > 建议：在实机环境中，将并发/背压相关环境变量（如 `GAGE_EVAL_THREADS`、`GAGE_EVAL_PREFETCH_FACTOR`、`GAGE_EVAL_MAX_INFLIGHT`）与后端配置（如 vLLM `max_batch_size`）一并调优；落盘与观测类变量 (`GAGE_EVAL_SAVE_DIR`、`GAGE_EVAL_REPORT_HTTP_URL` 等) 则按集群/监控系统统一配置。
 
-### 8.4 PipelineConfig 顶层结构概览
+### 10.4 PipelineConfig 顶层结构概览
 
 1124 版开始，配置层以 `PipelineConfig` 为中心，统一描述“数据源、角色、后端、步骤、任务与指标”的关系。顶层结构（简化）如下：
 
@@ -569,7 +620,7 @@ Schema 校验在 `config/schema.py:normalize_pipeline_payload` 中完成，1124 
 - 只要存在 `tasks`，即可不显式提供 `builtin/custom`；
 - 否则要求提供 `builtin` 或 `custom` 二选一。
 
-### 8.5 顶层 Backends 与 backend_id 引用
+### 10.5 顶层 Backends 与 backend_id 引用
 
 为消除大量重复的 inline backend 配置，1124 版引入顶层 `backends` 列表与 `role_adapters[].backend_id` 引用机制：
 
@@ -637,7 +688,7 @@ flowchart LR
 
   - 新配置优先使用顶层 `backends`，配合 `backend_id` 引用，便于同一后端在多个角色间复用；
 
-### 8.6 Step 继承与智能绑定
+### 10.6 Step 继承与智能绑定
 
 为了减少重复的 `steps` 配置，1124 版在 Task 规划层引入了“默认步骤 + 继承 + 绑定推断”的模式。
 
@@ -676,11 +727,11 @@ flowchart LR
 
 在多任务场景中，`TaskPlanSpec` 会为每个 task 固化一份 `steps` 列表，`RuntimeBuilder` 再据此构建对应的 SampleLoop 与 AutoEvalStep。
 
-### 8.7 Prompt 体系统一设计
+### 10.7 Prompt 体系统一设计
 
 1124 版在不破坏现有行为的前提下，引入了“结构化预处理 + PromptAsset + RoleAdapter 渲染”的统一 Prompt 体系。
 
-#### 8.7.1 两条 Prompt 链路：Inference 与 Judge
+#### 10.7.1 两条 Prompt 链路：Inference 与 Judge
 
 1. **Inference Prompt（目前多为 Preprocessor 驱动）**
 
@@ -750,7 +801,7 @@ def render_prompt(self, payload: Dict[str, Any]) -> PromptRenderResult:
     return self.prompt_renderer.render(context)
 ```
 
-#### 8.7.2 新模型：struct_only 预处理器 + PromptAsset
+#### 10.7.2 新模型：struct_only 预处理器 + PromptAsset
 
 为减少“在预处理器里硬拼 Prompt”带来的结构耦合，新架构引入了 `*_struct_only` 预处理器与 DUTAdapter 渲染 Prompt 的组合：
 
@@ -790,7 +841,7 @@ role_adapters:
       dataset_name: piqa_val
 ```
 
-#### 8.7.3 兼容性与演进阶段
+#### 10.7.3 兼容性与演进阶段
 
 为平滑过渡，Prompt 体系的演进分为几个阶段：
 
@@ -806,7 +857,7 @@ role_adapters:
 - 阶段 3：长期收敛
   - 高价值任务逐步迁移到统一 Prompt 模型，原有 hard-coded Prompt 预处理器仅作为 legacy 参考保留。
 
-### 8.8 字段映射与 Canonical Sample Schema
+### 10.8 字段映射与 Canonical Sample Schema
 
 字段映射主要存在于两处：
 
@@ -815,7 +866,7 @@ role_adapters:
 
 1124 版在 `config-1124.md` 与 `sample-design.md` 的基础上，对字段映射做了以下统一约定。
 
-#### 8.8.1 preprocess_kwargs：结构映射优先
+#### 10.8.1 preprocess_kwargs：结构映射优先
 
 - 推荐在 `preprocess_kwargs` 中只放“结构映射”参数：
   - `question_field`：题干字段；
@@ -830,7 +881,7 @@ role_adapters:
   - `sample.metadata.correct_choice`：规范化后的选项字母；
   - 以及 `metadata.question_field/choices_field/answer_field` 记录源字段路径。
 
-#### 8.8.2 metrics.params：字段路径 DSL 与命名规范
+#### 10.8.2 metrics.params：字段路径 DSL 与命名规范
 
 - 字段名：
   - 读取标签/预测值的指标统一使用 `label_field/prediction_field`；
@@ -843,7 +894,7 @@ role_adapters:
 
 这些规则已经在 10.4 节的参数表与示例中体现，这里作为配置层设计原则进一步固化。
 
-#### 8.8.3 按任务族的 Canonical 字段表
+#### 10.8.3 按任务族的 Canonical 字段表
 
 在 `sample-design.md` 的统一 Sample 结构基础上，1124 版为不同任务族定义了 canonical 字段表，作为预处理器、Prompt 模板与指标实现的共同参考。
 
@@ -962,7 +1013,7 @@ role_adapters:
 
 后续如新增任务族，应优先在本表中补充 canonical 字段，再落地预处理器与指标实现。
 
-#### 8.8.4 标准化指标的“零参数”约定
+#### 10.8.4 标准化指标的“零参数”约定
 
 在满足以下条件时：
 
@@ -988,18 +1039,18 @@ metrics:
 
 这条规则是 1124 版配置简化的关键手段之一：**标准任务 + 标准指标 → metrics.params 可选**。
 
-### 8.9 多任务多指标下的指标引用链路
+### 10.9 多任务多指标下的指标引用链路
 
 针对“看不出 metrics 在哪里被用”的困惑，1124 版在配置和 runtime 之间建立了一条清晰的指标引用链路。
 
-#### 8.9.1 配置层：全局 metrics 与 task 级 metric_overrides
+#### 10.9.1 配置层：全局 metrics 与 task 级 metric_overrides
 
 - 顶层 `metrics[]`：定义默认指标集合，适用于所有任务；
 - `tasks[].metric_overrides[]`：
   - 非空时，该 task 只使用覆盖列表中的指标；
   - 为空时，该 task 继承顶层 `metrics`。
 
-#### 8.9.2 TaskPlanSpec：固化“task → 指标集合”
+#### 10.9.2 TaskPlanSpec：固化“task → 指标集合”
 
 在 `task_plan._build_task_plan` 中，每个 `TaskSpec` 会被转换为一个 `TaskPlanSpec`：
 
@@ -1019,7 +1070,7 @@ plan = TaskPlanSpec(
 - `TaskPlanSpec.metrics` 已经是该 task 的**最终指标集合**；
 - 后续 runtime 不再重新解析配置，只依赖这份列表。
 
-#### 8.9.3 RuntimeBuilder 与 AutoEvalStep：按 task 构建指标实例
+#### 10.9.3 RuntimeBuilder 与 AutoEvalStep：按 task 构建指标实例
 
 在 `runtime_builder._prepare_task_entries` 中，每个 `TaskPlanSpec` 都会获得一套独立的 `MetricRegistry + AutoEvalStep`：
 
@@ -1079,11 +1130,11 @@ flowchart LR
 
 整个过程中，**“哪个 task 跑哪些指标”完全由配置显式决定**；智能行为只体现在字段默认路径与 canonical schema 上，不改变 task 与 metric 的绑定关系。
 
-### 8.10 BackendConfig 的 typed + passthrough 模型
+### 10.10 BackendConfig 的 typed + passthrough 模型
 
 1124 版为每种 Backend 定义了 `BackendConfigBase` 派生的 Pydantic 模型，用于描述“推荐字段 + 默认值”，同时通过 `extra="allow"` 允许透传未知字段。
 
-#### 8.10.1 BackendConfig 的定位
+#### 10.10.1 BackendConfig 的定位
 
 - 每个 backend `type` 对应一个配置模型，位于 `gage_eval/role/model/config/*.py` 中，例如：
   - `OpenAIHTTPBackendConfig` 对应 `type: openai_http`；
@@ -1094,7 +1145,7 @@ flowchart LR
   - 提供默认值（如 `base_url="https://api.openai.com/v1"`）；
   - 作为配置作者的“字段速查表”。
 
-#### 8.10.2 typed + passthrough 实现
+#### 10.10.2 typed + passthrough 实现
 
 基础类（简化）：
 
@@ -1121,7 +1172,7 @@ backend = backend_cls(config=typed_config)
 - 已声明字段经过类型校验与默认值填充；
 - 新增字段（例如未来才支持的高级参数）作为 extra 字段保留，并原样传入 Backend 实现。
 
-#### 8.10.3 使用示例
+#### 10.10.3 使用示例
 
 ```yaml
 backends:
@@ -1143,11 +1194,11 @@ backends:
 - 高级参数可以直接写在 `config` 里，由 Backend 实现按需消费；
 - 避免在 RoleAdapter 上重复声明与 Backend 已有能力重叠的字段。
 
-### 8.11 class_path 注入与可扩展点
+### 10.11 class_path 注入与可扩展点
 
 最后一类与配置设计高度相关的是 `class_path`/模块路径扩展点，它们允许在不修改核心框架代码的情况下注入自定义实现。
 
-#### 8.11.1 RoleAdapterSpec.class_path
+#### 10.11.1 RoleAdapterSpec.class_path
 
 - 配置入口：`role_adapters[].class_path: str`；
 - 行为：
@@ -1168,7 +1219,7 @@ role_adapters:
     backend_id: dut_backend
 ```
 
-#### 8.11.2 MetricSpec.implementation
+#### 10.11.2 MetricSpec.implementation
 
 - 配置入口：`metrics[].implementation` 或 `tasks[].metric_overrides[].implementation`；
 - 支持两种形式：
@@ -1186,7 +1237,7 @@ except KeyError:
 return metric_cls(spec)
 ```
 
-#### 8.11.3 Dataset doc_to_* callable
+#### 10.11.3 Dataset doc_to_* callable
 
 - 配置入口：`datasets[].params.doc_to_text/doc_to_visual/doc_to_audio`；
 - 值为 `"pkg.mod:function_name"` 形式；
@@ -1208,7 +1259,7 @@ datasets:
       doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_image_as_data_url
 ```
 
-#### 8.11.4 自定义 Backend：custom_script
+#### 10.11.4 自定义 Backend：custom_script
 
 当需要以纯配置方式挂载一个完全自定义的后端时，可使用 `type: custom_script`：
 
@@ -1228,7 +1279,7 @@ Backend 实现会：
 - 查找并实例化 `class_name` 指定的 `EngineBackend` 子类；
 - 将 `config` 中剩余字段原样透传给该实例。
 
-#### 8.11.5 协同策略
+#### 10.11.5 协同策略
 
 - 对稳定能力，优先在 registry 中注册为短名，并在配置中使用短名；
 - 对实验性/团队自研能力，可先通过 `class_path` 或模块路径方式注入；
@@ -1236,11 +1287,11 @@ Backend 实现会：
 
 ---
 
-## 9. 内置评估套件与 RunConfig 路线
+## 11. 内置评估套件与 RunConfig 路线
 
 > 详细设计见 `builtin-1126.md`，本节只从架构视角概括与现有代码实现保持一致的核心形态。
 
-### 9.1 三类配置实体与存放位置
+### 11.1 三类配置实体与存放位置
 
 - `PipelineConfig`：  
   - 承载完整数据/角色/后端/步骤/任务/指标结构；  
@@ -1260,7 +1311,7 @@ Backend 实现会：
   - 顶层不允许出现 `datasets/backends/tasks/custom/builtin/observability` 等逻辑段，由 `run.py::_validate_run_config_payload` 做最小约束；  
   - 存放位置：`gage-eval-main/config/run_configs/*.yaml`。
 
-### 9.2 Distill 流程：PipelineConfig → BuiltinTemplate
+### 11.2 Distill 流程：PipelineConfig → BuiltinTemplate
 
 入口：  
 
@@ -1290,7 +1341,7 @@ python gage-eval-main/run.py \
 - 使用 `calculate_definition_digest` 对 `definition` 做稳定哈希，写入 `metadata.digest`；  
 - 根据 `--version` 或目标目录已有 `vN.yaml` 自动确定版本号，生成 `vN.yaml` 文件到 `config/builtin_templates/<name>/`。
 
-### 9.3 Init 流程：BuiltinTemplate → RunConfig / PipelineConfig
+### 11.3 Init 流程：BuiltinTemplate → RunConfig / PipelineConfig
 
 入口例子：
 
@@ -1328,7 +1379,7 @@ python gage-eval-main/run.py \
        - 写入 `config/custom/<suite>_from_VN_<M>.yaml`，作为可完全编辑的配置起点。  
 - 输出 RunConfig 时，会在文件头部插入从模板推导出的“只读快照”注释块，帮助使用者快速理解数据集/后端/步骤/指标结构。
 
-### 9.4 运行时路由：RunConfig 与 PipelineConfig
+### 11.4 运行时路由：RunConfig 与 PipelineConfig
 
 入口：  
 
@@ -1360,7 +1411,7 @@ python gage-eval-main/run.py \
 - PipelineConfig 仍然是唯一的执行配置入口；  
 - run.py 通过 `kind` 分支实现对 RunConfig 的兼容，而不会破坏原有的 PipelineConfig 运行路径。  
 
-### 9.5 单任务优先与 MONOLITHIC 模式
+### 11.5 单任务优先与 MONOLITHIC 模式
 
 为保持生态“积木化”与复用性，Distill 在提纯阶段引入了**单任务优先**策略（详细规则见 `builtin-1126.md` 第 9 章）：  
 
@@ -1374,14 +1425,14 @@ python gage-eval-main/run.py \
 - 将 MONOLITHIC 模板视为高级用法，并在文档/Release note 中明确风险和使用指引。  
 - 旧配置中的 inline backend 写法保留，后续可用迁移脚本批量抽取到顶层（参见 `config-1124.md` 中的迁移工具设计）。
 
-## 10. 扩展指南：注册新指标
+## 12. 扩展指南：注册新指标
 
-### 10.1 步骤
+### 12.1 步骤
 1. 在 `src/gage_eval/metrics/<domain>/` 创建实现，继承 `SimpleMetric` 或 `Metric`。
 2. 使用 `@registry.asset("metrics", "<metric_id>", ...)` 装饰。
 3. 在 YAML `metrics` 段引用 `metric_id`，必要时提供 `params`。
 
-### 10.2 示例代码（带中文注释）
+### 12.2 示例代码（带中文注释）
 ```python
 # 文件: src/gage_eval/metrics/custom/rouge_l.py
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
@@ -1402,7 +1453,7 @@ class RougeLMetric(SimpleMetric):
         return 1.0 if pred and refs and pred in refs[0] else 0.0
 ```
 
-### 10.3 验证
+### 12.3 验证
 `python -m py_compile src/gage_eval/metrics/custom/rouge_l.py`  
 `metrics` 段引用：
 ```yaml
@@ -1411,7 +1462,7 @@ metrics:
     implementation: rouge_l
 ```
 
-### 10.4 字段映射参数与路径语义
+### 12.4 字段映射参数与路径语义
 
 内置指标以及自定义指标，通常通过 `metrics[].params` 中的一组「字段映射参数」来指定从样本/模型输出中取值的路径。常见参数及含义如下：
 
@@ -1424,7 +1475,7 @@ metrics:
 | `target_field` | `regex_match`、`text_length`、`latency` | `model_output.answer` 或 `model_output.latency_ms` | 通用“目标字段”参数，依据指标语义不同 |
 | `option_map_field` | `multi_choice_accuracy` | `sample.metadata.option_map` | 多选题选项映射表（A/B/C/D→文本） |
 
-#### 10.4.1 根域与点分路径
+#### 12.4.1 根域与点分路径
 
 在实现中，大多数指标通过 `_extract_field(context, descriptor, default=...)` 从 `MetricContext` 提取字段值（参考 `metrics/builtin/text.py`、`multi_choice.py`、`mmmu.py` 等）：
 
@@ -1444,7 +1495,7 @@ metrics:
 - `model_output.answer`  
   - 根域 `model_output`，直接取嵌套字段。
 
-#### 10.4.2 多选与 MM 模型中的特殊逻辑
+#### 12.4.2 多选与 MM 模型中的特殊逻辑
 
 **multi_choice_accuracy**
 - `label_field`：既可以是字母（如 `"B"`），也可以是完整选项文本；内部通过 `_normalize_choice_label` 与 `_match_option_text` 组合解析。
@@ -1457,7 +1508,7 @@ metrics:
 - `label_field` 默认为 `sample.choices.0.message.content.0.text`（参考 MMMU JSONL 格式），支持从列表、集合中取多个候选目标；
 - 匹配逻辑 `_match_prediction` 既支持字母对字母，也支持字符串包含关系（`prediction` 包含 `target` 或大小写不敏感包含）。
 
-#### 10.4.3 文本类指标的路径解析
+#### 12.4.3 文本类指标的路径解析
 
 **exact_match / contains / numeric_match / regex_match / text_length / latency**
 - 统一通过 `text._extract_field` 取值：
@@ -1466,7 +1517,7 @@ metrics:
   - 仅支持字典路径（不做列表索引），适合简单结构（例如 `sample.label`、`model_output.answer`）；
 - 这类指标的 `label_field`/`prediction_field`/`target_field` 通常只需指到纯标量字段（字符串/数字），避免指向复杂嵌套结构。
 
-#### 10.4.4 配置建议
+#### 12.4.4 配置建议
 
 1. **优先显式带根域**：例如 `sample.metadata.correct_choice`、`model_output.answer`，避免路径被默认为 `sample` 导致误读。
 2. **带索引访问列表**：当标准答案位于 `choices[0]` 这类位置时，建议使用 `choices.0.message.content.0.text` 风格，充分利用多选/多模态指标中对数字段的支持。
@@ -1476,15 +1527,15 @@ metrics:
 
 ---
 
-## 11. 扩展指南：注册新 Backend
+## 13. 扩展指南：注册新 Backend
 
-### 11.1 步骤总览
+### 13.1 步骤总览
 1. 定义 Config（Pydantic）：`src/gage_eval/role/model/config/<backend>.py`。
 2. 实现 Backend：继承 `EngineBackend` 或 HTTP 基类。
 3. `@registry.asset("backends", "<type>")` 装饰，声明 `config_schema_ref`。
 4. 在 YAML `role_adapters[].backend` 中设置 `type` 与 `config`。
 
-### 11.2 本地 EngineBackend 示例
+### 13.2 本地 EngineBackend 示例
 ```python
 # 文件 1: src/gage_eval/role/model/config/my_backend.py
 from typing import Optional
@@ -1539,7 +1590,7 @@ class MyBackend(EngineBackend):
         return {"answer": output}
 ```
 
-### 11.3 HTTP Backend 示例
+### 13.3 HTTP Backend 示例
 ```python
 # 文件: src/gage_eval/role/model/backends/my_http_backend.py
 from gage_eval.role.model.backends.http_backend import HTTPBackendBase
@@ -1552,7 +1603,7 @@ class MyHTTPBackend(HTTPBackendBase):
         return {"url": self.base_url, "json": {"prompt": payload["prompt"]}}
 ```
 
-### 11.4 配置引用
+### 13.4 配置引用
 ```yaml
 role_adapters:
   - adapter_id: demo_adapter
@@ -1565,7 +1616,7 @@ role_adapters:
 
 ---
 
-## 12. 调试与最佳实践
+## 14. 调试与最佳实践
 
 1. **并发调优**：优先通过 `--concurrency`/`GAGE_EVAL_THREADS` 控制 SampleLoop，并在 YAML `resource_requirement.pool_size` 声明池大小。
 2. **观测对齐**：出错必看 `events.jsonl` 与 `summary.json` 的 `timings`、吞吐字段。
@@ -1575,11 +1626,11 @@ role_adapters:
 
 ---
 
-## 13. 失败语义与防御性约定
+## 15. 失败语义与防御性约定
 
 框架在多处实现了“软失败”与防御性逻辑，目的是在尽量保留运行与观测的前提下，避免单点错误直接导致整次评测崩溃。
 
-### 12.1 数据与预处理阶段
+### 15.1 数据与预处理阶段
 
 | 场景 | 文件/逻辑 | 行为 | 对运行的影响 |
 | --- | --- | --- | --- |
@@ -1589,7 +1640,7 @@ role_adapters:
 
 推荐约定：新增预处理/validator 时，尽量沿用“返回 None/emit event 跳过样本”的模式，不直接抛出未捕获异常。
 
-### 12.2 推理与 Backend 阶段
+### 15.2 推理与 Backend 阶段
 
 | 场景 | 文件/逻辑 | 行为 | 对运行的影响 |
 | --- | --- | --- | --- |
@@ -1602,7 +1653,7 @@ role_adapters:
 - 对可预期错误（如配置缺失、路径不存在、空 prompt）优先返回“带 `_skip` 或明确 error 字段的结果”，并在 trace 中记录事件；
 - 对不可恢复错误（如协议变更、严重内部异常）再抛 RuntimeError，让上层决定是否终止。
 
-### 12.3 调度与队列阶段
+### 15.3 调度与队列阶段
 
 历史版本中，`InferenceRuntime`/队列曾引入过下列保护开关（部分仍用于兼容、部分已在新架构中替代）：
 
@@ -1618,7 +1669,7 @@ role_adapters:
 
 ---
 
-## 14. 旧框架映射表（llm-eval → gage-eval）
+## 16. 旧框架映射表（llm-eval → gage-eval）
 
 为了方便从 `llm-eval` 迁移或对照调试，下面给出两个框架在核心概念上的粗略映射：
 
@@ -1641,11 +1692,11 @@ role_adapters:
 | 角色 | 分清 DUT / Judge / Helper 在旧配置里的职责 | 在 `role_adapters` 中为每个角色声明 adapter_id + backend + capabilities |
 | 评分 | 找到对应的 `eval_xxx.py` 逻辑 | 选取或实现等价的 Metric，并在 `metrics` 配置块中声明 `metric_id` 与字段映射 |
 
-### 13.1 迁移示例：MMMU 任务
+### 16.1 迁移示例：MMMU 任务
 
 以 `llm-eval` 中典型的 MMMU 评测为例，迁移到 `gage-eval` 可分为四步：
 
-#### 13.1.1 数据层：复用 JSONL 与图像
+#### 16.1.1 数据层：复用 JSONL 与图像
 
 - **llm-eval**：通常通过预处理脚本（如 `utils/preprocess_mmmu.py`）将原始 MMMU 转成带 `messages`/`choices`/`answer` 的 JSONL，并在 `eval_mmmu.py` 中直接读取该 JSONL。  
 - **gage-eval**：  
@@ -1662,7 +1713,7 @@ role_adapters:
     ```
   - 其中 `embed_local_message_images` 负责把 `messages[].content[].image_url.url` 的本地路径转为 data URL，行为等价于旧框架里把图像“嵌入”到请求中，以便远程/本地多模态后端统一消费。
 
-#### 13.1.2 后端层：从服务端 vLLM 到本地 Transformers
+#### 16.1.2 后端层：从服务端 vLLM 到本地 Transformers
 
 - **llm-eval**：`run_pipeline.py` 会根据配置决定是启动本地 vLLM 服务（`predict_multi_gpu.py --run_forever`），还是调用 HTTP OpenAI 接口。  
 - **gage-eval**：  
@@ -1682,7 +1733,7 @@ role_adapters:
     ```
   - 若想复刻“服务端 vLLM + HTTP”模式，则改为使用 `vllm` 或 `openai_http` backend，并在 `config` 中填充 `base_url` / `model` 等字段，与旧的服务端配置对应。
 
-#### 13.1.3 角色层：从 judge_model/dut_model 到 role_adapters
+#### 16.1.3 角色层：从 judge_model/dut_model 到 role_adapters
 
 - **llm-eval**：在 YAML 中单独给出 `model_path`（DUT）与 `judge_model_path`（裁判），由 `run.py` 在内部起两个服务或复用一个服务。  
 - **gage-eval**：  
@@ -1697,7 +1748,7 @@ role_adapters:
     ```
   - 若需要裁判模型，则额外添加 `role_type: judge_model` 的 adapter，并在 `tasks[].steps` 中插入 `judge` 步骤；旧框架中 judge_model 相关 YAML 字段则可以直接映射到这个裁判 adapter 的 backend config。
 
-#### 13.1.4 评分层：从 eval_mmmu.py 到 mmmu_accuracy
+#### 16.1.4 评分层：从 eval_mmmu.py 到 mmmu_accuracy
 
 - **llm-eval**：`eval_mmmu.py` 中通常会：
   - 从模型输出 JSONL 中读取预测答案；
@@ -1715,7 +1766,7 @@ role_adapters:
     ```
   - 其中 `label_field` 对应旧 JSONL 中 `choices[0].message.content[0].text` 的标准答案位置，`prediction_field` 对应模型输出结构中的 `answer` 字段；这与旧脚本中“从结果文件读取预测，从原始文件读取标准答案”完全等价，但字段路径通过 YAML 配置显式声明，便于复用与审查。
 
-#### 13.1.5 代码落点建议
+#### 16.1.5 代码落点建议
 
 为方便团队协作与代码导航，MMMU 迁移相关代码应按功能落在以下目录：
 
@@ -1735,7 +1786,7 @@ role_adapters:
 
 ---
 
-## 15. 术语速查
+## 17. 术语速查
 
 | 名称 | 说明 | 代码位置 |
 | --- | --- | --- |
@@ -1747,6 +1798,6 @@ role_adapters:
 
 ---
 
-## 16. 结语
+## 18. 结语
 
 1124 版在 1123 的“去中心化调度”基础上，补齐了多任务、观测、吞吐指标和多模态稳定性。后续新增资产（指标/后端）仅需按 Registry 规范增量注册，即可被 CLI 与 YAML 自动发现。Mermaid 图与表格可直接在 Typora 11.9.0 渲染。欢迎基于此架构继续优化吞吐、扩展更多跨模态能力。

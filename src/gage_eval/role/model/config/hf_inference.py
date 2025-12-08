@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
-from pydantic import Field, root_validator
+from pydantic import Field, model_validator
 
 from gage_eval.role.model.config.base import BackendConfigBase
 from gage_eval.role.model.config.generations import GenerationParameters
@@ -53,16 +53,13 @@ class HFInferenceEndpointBackendConfig(BackendConfigBase):
         default_factory=GenerationParameters, description="默认采样参数"
     )
 
-    @root_validator(skip_on_failure=True)
-    def _ensure_name_or_model(cls, values):
-        endpoint_name = values.get("endpoint_name")
-        model_name = values.get("model_name")
-        auto = values.get("auto_start")
-        if not endpoint_name and not model_name:
+    @model_validator(mode="after")
+    def _ensure_name_or_model(self):
+        if not self.endpoint_name and not self.model_name:
             raise ValueError("HFInferenceEndpointBackendConfig 需要 endpoint_name 或 model_name 至少一个")
-        if not endpoint_name and not auto:
+        if not self.endpoint_name and not self.auto_start:
             raise ValueError("未提供 endpoint_name 时必须允许 auto_start 以创建实例")
-        return values
+        return self
 
     def normalized_endpoint_name(self) -> str:
         if self.endpoint_name:

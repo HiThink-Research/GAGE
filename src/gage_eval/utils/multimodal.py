@@ -1,5 +1,7 @@
 import math
 import os
+import base64
+import io
 from PIL import Image
 
 try:  # pragma: no cover - optional dependency
@@ -48,8 +50,25 @@ def load_multimodal_data(
     )
 
     if image is not None:
-        image = [Image.open(x) for x in image]
-        image = [to_rgb(x) for x in image]
+        image_objs = []
+        for src in image:
+            if src is None:
+                continue
+            if isinstance(src, str) and src.startswith("data:"):
+                # data URL -> base64 解码
+                try:
+                    _, b64 = src.split(",", 1)
+                    binary = base64.b64decode(b64)
+                    image_objs.append(Image.open(io.BytesIO(binary)))
+                    continue
+                except Exception:
+                    # 回落到原逻辑尝试 as path
+                    pass
+            if isinstance(src, str):
+                image_objs.append(Image.open(src))
+            elif isinstance(src, Image.Image):
+                image_objs.append(src)
+        image = [to_rgb(x) for x in image_objs]
         # For Qwen2-VL, Qwen2.5-VL, Omni, 解决processor短边小于28的bug
         # OCRBench数据集需要调整，MIN_PIXELS
         # TODO:需要根据模型和数据集类型调整

@@ -14,7 +14,7 @@ datasets:
     loader: jsonl
     params:
       path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/lmms-lab/MMMU/data/mmmu_val_500.jsonl
-      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_message_images
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
       doc_to_visual_kwargs:
         content_field: messages.0.content
 

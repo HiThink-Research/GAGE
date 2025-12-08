@@ -6,6 +6,7 @@ import asyncio
 import base64
 import io
 import types
+import inspect
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -158,10 +159,42 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             if rendered_mm:
                 generate_kwargs["prompt"] = rendered_mm
         try:
-            return self.model.generate(**generate_kwargs)
+            result = self.model.generate(**generate_kwargs)
+            # AsyncLLM.generate 返回 async generator，这里同步消费
+            if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
+                result = self._consume_async_generator(result)
+            elif inspect.iscoroutine(result):
+                result = self._run_coroutine(result)
+            return result
         except Exception:
             logger.warning("legacy_vllm_backend generate failed; returning echo output", exc_info=True)
             return {"outputs": [{"text": str(prompt)}]}
+
+    def _consume_async_generator(self, agen):
+        async def _collect():
+            items = []
+            async for item in agen:
+                items.append(item)
+            return items
+
+        try:
+            return asyncio.run(_collect())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_collect())
+            finally:
+                loop.close()
+
+    def _run_coroutine(self, coro):
+        try:
+            return asyncio.run(coro)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
 
     def _attach_template_metadata(self, payload: Dict[str, Any], result: Dict[str, Any]) -> None:
         meta_keys = ("chat_template_mode", "template_source", "rendered_by", "cache_suffix")
@@ -189,6 +222,15 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
                     return out.get("text") or out
                 if "text" in result:
                     return result["text"]
+            # vLLM RequestOutput 对象
+            if hasattr(result, "outputs"):
+                outputs = getattr(result, "outputs") or []
+                if outputs:
+                    first = outputs[0]
+                    if isinstance(first, dict):
+                        return first.get("text") or first
+                    if hasattr(first, "text"):
+                        return getattr(first, "text")
             return str(result)
 
         if output_type in {"reward", "loss", "prompt_tokens", "next_token_prob"}:
@@ -629,6 +671,12 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         processor = getattr(self, "_processor", None)
         if processor is None:
             logger.warning("legacy_vllm_backend: processor missing, skipping multi_modal_data load")
+            return mm
+
+        # 服务器上 MMMU 这类样本通常提供 HTTP(S) 链接，Pillow 无法直接读取。
+        # 遇到远端 URL 时直接回落原始 multi_modal_data，由模型侧 Processor 处理。
+        images = mm.get("image") or []
+        if any(isinstance(x, str) and x.startswith(("http://", "https://")) for x in images):
             return mm
 
         async def _load():

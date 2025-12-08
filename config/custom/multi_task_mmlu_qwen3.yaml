@@ -41,7 +41,7 @@ datasets:
       split: test
     loader: hf_hub
     params:
-      preprocess: multi_choice_struct_only
+      preprocess: multi_choice_standardizer
       preprocess_kwargs:
         question_field: question
         choices_field: choices
@@ -56,7 +56,7 @@ datasets:
       split: test
     loader: hf_hub
     params:
-      preprocess: multi_choice_struct_only
+      preprocess: multi_choice_standardizer
       preprocess_kwargs:
         question_field: question
         choices_field: choices
@@ -71,7 +71,7 @@ datasets:
       split: test
     loader: hf_hub
     params:
-      preprocess: multi_choice_struct_only
+      preprocess: multi_choice_standardizer
       preprocess_kwargs:
         question_field: question
         choices_field: choices

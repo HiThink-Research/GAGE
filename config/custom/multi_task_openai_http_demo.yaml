@@ -35,7 +35,7 @@ datasets:
       split: test
     loader: hf_hub
     params:
-      preprocess: multi_choice_struct_only
+      preprocess: multi_choice_standardizer
       preprocess_kwargs:
         question_field: question
         choices_field: choices
@@ -52,7 +52,7 @@ datasets:
         question_field: messages.0.content.1.text|messages.0.content.0.text
         answers_field: choices.0.message.content.0.text
         image_field: messages.0.content.0.image_url.url
-      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_image_as_data_url
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_image_as_data_url
 
 backends:
   - backend_id: qwen3_openai_http

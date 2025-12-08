@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import Field, validator
+from pydantic import Field, field_validator
 
 from gage_eval.role.model.config.base import BackendConfigBase
 from gage_eval.role.model.config.generations import GenerationParameters
@@ -55,7 +55,7 @@ class NanotronBackendConfig(BackendConfigBase):
         description="Reuse tokenizer pairwise splitting logic from lighteval (not used in backend yet)",
     )
 
-    @validator("checkpoint_config_path")
+    @field_validator("checkpoint_config_path", mode="after")
     def _validate_paths(cls, value: str) -> str:
         if not value:
             raise ValueError("Nanotron backend requires checkpoint_config_path")

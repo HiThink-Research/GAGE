@@ -17,9 +17,10 @@ datasets:
       path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/lmms-lab/MMMU/data/mmmu_val_500.jsonl
       # 不再设置 limit，运行时可用 task.max_samples 或 CLI --max-samples 控制样本数
       # 数据已是标准 Envelope，含 messages/image_url/choices/answer，无需额外 preprocess
-      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_message_images
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
       doc_to_visual_kwargs:
         content_field: messages.0.content
+        content_root: ${DATA_ROOT:-./}
 
 backends:
   - backend_id: mmmu_local_vlm_backend

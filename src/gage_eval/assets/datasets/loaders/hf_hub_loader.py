@@ -19,6 +19,7 @@ from gage_eval.assets.datasets.loaders.loader_utils import (
     inject_default_params,
     resolve_doc_to_callable,
 )
+from gage_eval.observability.config import get_observability_config
 from gage_eval.registry import registry
 import logging
 from huggingface_hub.errors import EntryNotFoundError # Added import
@@ -34,8 +35,8 @@ logger = logging.getLogger(__name__)
     supports_streaming=True,
 )
 class HuggingFaceDatasetLoader(DatasetLoader):
-    def load(self, hub_handle: Optional[DatasetHubHandle]) -> DataSource:
-        return load_hf_hub_dataset(self.spec, hub_handle)
+    def load(self, hub_handle: Optional[DatasetHubHandle], *, trace=None) -> DataSource:
+        return load_hf_hub_dataset(self.spec, hub_handle, trace=trace)
 
 
 registry.register(
@@ -57,7 +58,7 @@ registry.register(
 )
 
 
-def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle] = None) -> DataSource:
+def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle] = None, *, trace=None) -> DataSource:
     """Download/cache a remote dataset and expose it as a DataSource."""
 
     try:
@@ -103,6 +104,10 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
         "auto",
     )
 
+    doc_to_text = resolve_doc_to_callable(spec, "doc_to_text")
+    doc_to_visual = resolve_doc_to_callable(spec, "doc_to_visual")
+    doc_to_audio = resolve_doc_to_callable(spec, "doc_to_audio")
+
     if streaming:
         dataset = _download_dataset(
             datasets_module=datasets,
@@ -122,7 +127,15 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
         limit = loader_params.get("limit")
         if limit is not None:
             records = _limit_iterable(records, limit)
-        records = apply_preprocess(records, spec, data_path=hub_id)
+        records = apply_preprocess(
+            records,
+            spec,
+            data_path=hub_id,
+            doc_to_text=doc_to_text,
+            doc_to_visual=doc_to_visual,
+            doc_to_audio=doc_to_audio,
+            trace=trace,
+        )
         records = apply_default_params(records, spec)
     else:
         dataset, cache_path = _load_or_cache_dataset(
@@ -146,14 +159,19 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
         if limit is not None:
             dataset = _apply_limit(dataset, limit)
 
-        dataset = _maybe_apply_preprocess(dataset, spec, data_path=hub_id)
+        dataset = _maybe_apply_preprocess(
+            dataset,
+            spec,
+            data_path=hub_id,
+            doc_to_text=doc_to_text,
+            doc_to_visual=doc_to_visual,
+            doc_to_audio=doc_to_audio,
+            trace=trace,
+        )
         dataset = _inject_default_params(dataset, spec)
         records = dataset
         logger.info("Dataset materialized at {}", cache_path)
 
-    doc_to_text = resolve_doc_to_callable(spec, "doc_to_text")
-    doc_to_visual = resolve_doc_to_callable(spec, "doc_to_visual")
-    doc_to_audio = resolve_doc_to_callable(spec, "doc_to_audio")
     metadata_payload = {
         "loader": "hf_hub",
         "hub_id": hub_id,
@@ -171,9 +189,9 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
     return DataSource(
         dataset_id=spec.dataset_id,
         records=records,
-        doc_to_text=doc_to_text,
-        doc_to_visual=doc_to_visual,
-        doc_to_audio=doc_to_audio,
+        doc_to_text=None,
+        doc_to_visual=None,
+        doc_to_audio=None,
         metadata=metadata_payload,
         validation=spec.schema,
         streaming=streaming,
@@ -289,14 +307,37 @@ def _download_dataset(
     )
 
 
-def _maybe_apply_preprocess(dataset, spec: DatasetSpec, *, data_path: str):
+def _maybe_apply_preprocess(
+    dataset,
+    spec: DatasetSpec,
+    *,
+    data_path: str,
+    doc_to_text=None,
+    doc_to_visual=None,
+    doc_to_audio=None,
+    trace=None,
+    observability_config=None,
+):
     ctx = build_preprocess_context(spec, data_path=data_path)
     if not ctx:
         return dataset
+    config = observability_config or get_observability_config()
 
     def _map_fn(sample: Dict[str, Any]):
         new_sample = dict(sample)
-        new_sample["inputs"] = ctx.handle.apply(new_sample, **ctx.kwargs)
+        new_sample.setdefault("_dataset_id", spec.dataset_id)
+        new_sample.setdefault("_dataset_metadata", {"path": data_path})
+        ctx.handle.apply(
+            new_sample,
+            dataset_id=spec.dataset_id,
+            dataset_metadata=new_sample.get("_dataset_metadata"),
+            doc_to_text=doc_to_text,
+            doc_to_visual=doc_to_visual,
+            doc_to_audio=doc_to_audio,
+            trace=trace,
+            observability_config=config,
+            **ctx.kwargs,
+        )
         return new_sample
 
     return dataset.map(_map_fn)

@@ -42,7 +42,7 @@ class RoleManager:
                 shard_plans[0].size += deficit
                 adjusted = sum(plan.size for plan in shard_plans)
                 logger.warning(
-                    "Pool size smaller than concurrency hint, auto-bumping adapter=%s from %s to %s",
+                    "Pool size smaller than concurrency hint, auto-bumping adapter={} from {} to {}",
                     adapter_id,
                     total_planned,
                     adjusted,

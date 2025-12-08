@@ -19,11 +19,11 @@ datasets:
       limit: 500
     loader: hf_hub
     params:
-      preprocess: gage_eval.assets.datasets.preprocessors.preprocess_strip_assistant
+      preprocess: mmmu_multimodal_inputs
       preprocess_kwargs:
         roles_to_remove:
           - assistant
-      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_message_images
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
       doc_to_visual_kwargs:
         content_field: messages.0.content
 
@@ -32,7 +32,7 @@ backends:
     type: openai_http
     config:
       base_url: http://127.0.0.1:1234/v1
-      model: qwen2.5-vl-3b-instruct
+      model: qwen/qwen3-vl-30b
       default_params:
         max_new_tokens: 1024
         temperature: 0.0
@@ -53,7 +53,7 @@ metrics:
 tasks:
   - task_id: mmmu_val_eval
     dataset_id: mmmu_val_huggingface
-    max_samples: 500
+    max_samples: 100
     reporting:
       sinks:
         - type: console

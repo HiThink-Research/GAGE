@@ -1,10 +1,9 @@
-"""Utilities that normalize dataset records into the unified sample schema."""
+"""Normalization helpers extracted from SampleStandardizer."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 try:  # Optional dependency; only used for isinstance checks
@@ -13,30 +12,7 @@ except ImportError:  # pragma: no cover - pillow is optional
     _PILImage = None
 
 
-@dataclass
-class SampleStandardizer:
-    """Convert arbitrary dataset records into the canonical Sample envelope."""
-
-    dataset_id: str
-    metadata: Optional[Dict[str, Any]] = None
-
-    def normalize(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        sample: Dict[str, Any] = dict(record)
-        sample_id = _ensure_sample_id(sample, self.dataset_id)
-        sample["id"] = sample_id
-        sample["messages"] = _ensure_messages(sample)
-        sample["choices"] = _ensure_choices(sample)
-        sample.setdefault("predict_result", sample.get("predict_result") or [])
-        sample.setdefault("eval_result", sample.get("eval_result") or {})
-        sample.setdefault("data_tag", sample.get("data_tag") or {})
-        sample.setdefault("model_prompt_tmpl", sample.get("model_prompt_tmpl") or "")
-        sample.setdefault("model_prompt_placeholder", sample.get("model_prompt_placeholder") or [])
-        sample.setdefault("_dataset_id", self.dataset_id)
-        sample.setdefault("_dataset_metadata", self.metadata or {})
-        return sample
-
-
-def _ensure_sample_id(sample: Dict[str, Any], dataset_id: str) -> str:
+def ensure_sample_id(sample: Dict[str, Any], dataset_id: str) -> str:
     for key in ("id", "sample_id", "uid", "_id"):
         value = sample.get(key)
         if value not in (None, ""):
@@ -45,30 +21,24 @@ def _ensure_sample_id(sample: Dict[str, Any], dataset_id: str) -> str:
     return hashlib.sha1(f"{dataset_id}:{payload}".encode("utf-8")).hexdigest()
 
 
-def _ensure_messages(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
+def normalize_messages(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
     messages = sample.get("messages")
-    normalized_messages: List[Dict[str, Any]] = []
+    normalized: List[Dict[str, Any]] = []
     if isinstance(messages, list):
-        normalized_messages = [_normalize_message(msg) for msg in messages]
+        normalized = [_normalize_message(msg) for msg in messages]
     else:
         prompt = sample.get("prompt") or sample.get("text") or sample.get("question")
         if prompt:
-            normalized_messages = [
+            normalized = [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": str(prompt),
-                        }
-                    ],
+                    "content": [{"type": "text", "text": str(prompt)}],
                 }
             ]
+    return _inject_modal_fragments(sample, normalized)
 
-    return _inject_modal_fragments(sample, normalized_messages)
 
-
-def _ensure_choices(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
+def normalize_choices(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
     choices = sample.get("choices")
     if isinstance(choices, list) and choices:
         normalized: List[Dict[str, Any]] = []
@@ -88,15 +58,85 @@ def _ensure_choices(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
             "index": 0,
             "message": {
                 "role": "assistant",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": str(fallback),
-                    }
-                ],
+                "content": [{"type": "text", "text": str(fallback)}],
             },
         }
     ]
+
+
+def normalize_sample(sample: Dict[str, Any], *, dataset_id: str, dataset_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Normalize core fields (id/messages/choices/metadata/etc.)."""
+
+    sample["id"] = ensure_sample_id(sample, dataset_id)
+    sample["_dataset_id"] = sample.get("_dataset_id") or dataset_id
+    sample["_dataset_metadata"] = sample.get("_dataset_metadata") or (dataset_metadata or {})
+    sample["messages"] = normalize_messages(sample)
+    sample["choices"] = normalize_choices(sample)
+    sample.setdefault("predict_result", sample.get("predict_result") or [])
+    sample.setdefault("eval_result", sample.get("eval_result") or {})
+    sample.setdefault("data_tag", sample.get("data_tag") or {})
+    sample.setdefault("model_prompt_tmpl", sample.get("model_prompt_tmpl") or "")
+    sample.setdefault("model_prompt_placeholder", sample.get("model_prompt_placeholder") or [])
+    return sample
+
+
+def ensure_chat_template_flags(sample: Dict[str, Any]) -> None:
+    """Fill chat template flags when prompt exists but flags missing."""
+
+    if "chat_template_mode" in sample or "prompt" not in sample:
+        return
+    sample["chat_template_mode"] = "preprocess"
+    sample["rendered_by"] = "preprocess"
+    sample["template_source"] = "manual"
+    sample["cache_suffix"] = "-manual"
+
+
+def get_prompt(sample: Dict[str, Any]) -> str | None:
+    """Return prompt from sample or inputs."""
+
+    if isinstance(sample.get("prompt"), str):
+        return sample["prompt"]
+    inputs = sample.get("inputs")
+    if isinstance(inputs, dict) and isinstance(inputs.get("prompt"), str):
+        return inputs["prompt"]
+    return None
+
+
+def list_images(sample: Dict[str, Any]) -> List[str]:
+    """Collect image URLs from inputs.multi_modal_data and messages."""
+
+    urls: List[str] = []
+    inputs = sample.get("inputs")
+    if isinstance(inputs, dict):
+        mm = inputs.get("multi_modal_data") or {}
+        if isinstance(mm, dict):
+            if isinstance(mm.get("image"), list):
+                urls.extend([u for u in mm["image"] if isinstance(u, str)])
+            elif isinstance(mm.get("image"), str):
+                urls.append(mm["image"])
+    messages = sample.get("messages")
+    if isinstance(messages, list):
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for frag in content:
+                if isinstance(frag, dict) and frag.get("type") == "image_url":
+                    payload = frag.get("image_url")
+                    if isinstance(payload, dict) and isinstance(payload.get("url"), str):
+                        urls.append(payload["url"])
+                    elif isinstance(payload, str):
+                        urls.append(payload)
+    seen = set()
+    dedup: List[str] = []
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)
+        dedup.append(u)
+    return dedup
 
 
 def _normalize_choice(choice: Any, default_index: int) -> Dict[str, Any]:
@@ -105,12 +145,7 @@ def _normalize_choice(choice: Any, default_index: int) -> Dict[str, Any]:
             "index": default_index,
             "message": {
                 "role": "assistant",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": choice,
-                    }
-                ],
+                "content": [{"type": "text", "text": choice}],
             },
         }
     if isinstance(choice, dict):
@@ -121,12 +156,7 @@ def _normalize_choice(choice: Any, default_index: int) -> Dict[str, Any]:
             text_value = choice.get("text") or choice.get("answer") or ""
             normalized_message = {
                 "role": "assistant",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": str(text_value),
-                    }
-                ],
+                "content": [{"type": "text", "text": str(text_value)}],
             }
         return {
             "index": choice.get("index", default_index),
@@ -136,12 +166,7 @@ def _normalize_choice(choice: Any, default_index: int) -> Dict[str, Any]:
         "index": default_index,
         "message": {
             "role": "assistant",
-            "content": [
-                {
-                    "type": "text",
-                    "text": str(choice),
-                }
-            ],
+            "content": [{"type": "text", "text": str(choice)}],
         },
     }
 
@@ -252,7 +277,6 @@ def _make_modal_fragment(item: Any, modal_type: str) -> Dict[str, Any]:
     if isinstance(item, (bytes, bytearray)):
         return {"type": modal_type, modal_type: {"data": item}}
     if isinstance(item, str):
-        # Heuristically treat HTTP(s) strings as URL sources
         if item.startswith("http://") or item.startswith("https://"):
             if modal_type == "image":
                 return {"type": "image_url", "image_url": {"url": item}}
@@ -260,11 +284,24 @@ def _make_modal_fragment(item: Any, modal_type: str) -> Dict[str, Any]:
                 return {"type": "audio_url", "audio_url": {"url": item}}
             if modal_type == "video":
                 return {"type": "video_url", "video_url": {"url": item}}
-        return {"type": modal_type, modal_type: item}
-    return {"type": modal_type, modal_type: item}
+        return {"type": modal_type, modal_type: {"url": item}}
+    return {"type": modal_type, modal_type: {"data": item}}
 
 
-def _is_pil_image(value: Any) -> bool:
+def _is_pil_image(obj: Any) -> bool:
     if _PILImage is None:
         return False
-    return isinstance(value, _PILImage.Image)
+    if not isinstance(_PILImage, type):
+        return False
+    return isinstance(obj, _PILImage)  # type: ignore[arg-type]
+
+
+__all__ = [
+    "ensure_sample_id",
+    "normalize_messages",
+    "normalize_choices",
+    "normalize_sample",
+    "ensure_chat_template_flags",
+    "get_prompt",
+    "list_images",
+]

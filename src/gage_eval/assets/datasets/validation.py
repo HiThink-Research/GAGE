@@ -36,7 +36,7 @@ class DefaultEnvelopeModel(BaseModel):
     data_tag: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     label: Optional[Any] = None
-    inputs: Optional[Any] = None
+    inputs: Dict[str, Any] = Field(default_factory=dict)
     sampling_params: Dict[str, Any] = Field(default_factory=dict)
     generation_params: Dict[str, Any] = Field(default_factory=dict)
     model_prompt_tmpl: str = ""
@@ -149,6 +149,26 @@ class SampleValidator:
         if hasattr(instance, "model_dump"):
             return instance.model_dump()  # type: ignore[attr-defined]
         return instance.dict()  # type: ignore[return-value]
+
+
+def validate_sample_schema(sample: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure core fields are of expected container types."""
+
+    if not isinstance(sample.get("messages"), list):
+        sample["messages"] = [] if sample.get("messages") is not None else []
+    if not isinstance(sample.get("choices"), list):
+        sample["choices"] = []
+    if not isinstance(sample.get("metadata"), dict):
+        sample["metadata"] = {}
+    if not isinstance(sample.get("data_tag"), dict):
+        sample["data_tag"] = {}
+    if not isinstance(sample.get("eval_result"), dict):
+        sample["eval_result"] = {}
+    inputs = sample.get("inputs")
+    if not isinstance(inputs, dict):
+        prompt_val = sample.get("prompt") if isinstance(sample.get("prompt"), str) else None
+        sample["inputs"] = {"prompt": prompt_val} if prompt_val else {}
+    return sample
 
 
 def build_validator(config: Optional[Dict[str, Any]]) -> Optional[SampleValidator]:

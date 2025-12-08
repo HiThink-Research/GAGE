@@ -16,11 +16,13 @@ datasets:
     params:
       path: local-datasets/HLE/hle_test_prompted.jsonl
       preprocess: docvqa_image_standardizer
+      # content_root 将基于 JSONL 文件所在目录自动推断为绝对路径
       preprocess_kwargs:
         question_field: messages.0.content.1.text|messages.0.content.0.text
         answers_field: choices.0.message.content.0.text
-        image_field: messages.0.content.0.image_url.url
-      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_image_as_data_url
+        content_field: messages.0.content
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
+      # doc_to_visual_kwargs 自动继承 preprocess_kwargs 的同名字段
 
 backends:
   - backend_id: docvqa_qwen_vl_backend
@@ -29,7 +31,7 @@ backends:
       base_url: http://127.0.0.1:1234/v1  # 替换为实际 Vision-LLM 服务地址
       model: qwen/qwen3-vl-30b 
       default_params:
-        max_new_tokens: 128  # 输出尽量短，避免内存/延迟
+        max_new_tokens: 1024 # 输出尽量短，避免内存/延迟
         temperature: 0.1
       async_max_concurrency: 2  # MacBook 本地轻量并发
 
