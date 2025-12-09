@@ -1,0 +1,49 @@
+# =================================================================
+# 只读模板快照（修改本段不影响模板定义）
+# Template: demo_echo version=V1 monolithic=False
+# -----------------------------------------------------------------
+# Datasets:
+#   - dataset_id: demo_echo_dataset
+#     loader: jsonl
+#     提示：可在 runtime.datasets.<id> 覆盖 hub_params.limit/local_path 等路径配置以指向本地测试集。
+# Backends:
+#   - backend_id: demo_echo_dummy
+#     type: dummy
+# Steps:
+#   - step: inference
+#     adapter_id: <auto>
+# =================================================================
+api_version: gage/v1alpha1
+
+kind: RunConfig
+
+metadata:
+  name: demo_echo_run
+
+base_task: builtin/demo_echo
+
+template_version: V1
+
+template_digest: sha256:7e4d0df9da80860e4df0a305fe324c33ba0d47fc00031ca0c83179bbb1d83afd
+
+# runtime 覆盖示例（按需修改下方键值）：
+#   runtime.datasets.demo_echo_dataset: {...}  # 可整体替换为本地数据集配置
+#   runtime.backends.demo_echo_dummy: {...}  # 切换模型服务/参数
+#   runtime.tasks.demo_echo_task.max_samples: 50  # 控制本次运行样本数
+runtime:
+  datasets:
+    demo_echo_dataset:
+      loader: jsonl
+      params:
+        path: gage-eval-main/config/builtin_templates/demo_echo/data/demo_echo.jsonl
+  backends:
+    demo_echo_dummy:
+      type: dummy
+      config:
+        responses: []
+        echo_prompt: true
+        cycle: true
+  tasks:
+    demo_echo_task:
+      max_samples: 2
+  global: {}

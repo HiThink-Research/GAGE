@@ -33,17 +33,20 @@ class DefaultChatTemplatePreprocessTests(unittest.TestCase):
         from gage_eval.assets.datasets import loaders
         loader_module = loaders.loader_utils
         orig_load = loader_module.load_tokenizer
+        orig_get = loader_module.get_or_load_tokenizer
         loader_module._TOKENIZER_MANAGER._cache.clear()
         dummy = DummyTokenizer()
         loader_module.load_tokenizer = lambda args: dummy
+        loader_module.get_or_load_tokenizer = lambda args: dummy
         try:
             processed = list(apply_preprocess(records, spec, data_path=None))
         finally:
             loader_module.load_tokenizer = orig_load
+            loader_module.get_or_load_tokenizer = orig_get
 
         self.assertEqual(len(processed), 1)
         item = processed[0]
-        self.assertEqual(item["inputs"], "templated")
+        self.assertEqual(item["inputs"], {"prompt": "templated"})
         self.assertEqual(item["prompt"], "templated")
         self.assertEqual(item.get("chat_template_mode"), "preprocess")
         self.assertEqual(item.get("template_source"), "model")
@@ -62,15 +65,10 @@ class DefaultChatTemplatePreprocessTests(unittest.TestCase):
         from gage_eval.assets.datasets import loaders
         loader_module = loaders.loader_utils
         orig_load = loader_module.load_tokenizer
+        orig_get = loader_module.get_or_load_tokenizer
         loader_module._TOKENIZER_MANAGER._cache.clear()
-
-        called = {}
-
-        def fake_loader(args):
-            called["name"] = args.get("tokenizer_name")
-            return DummyTokenizer()
-
-        loader_module.load_tokenizer = fake_loader
+        loader_module.load_tokenizer = lambda args: DummyTokenizer()
+        loader_module.get_or_load_tokenizer = lambda args: DummyTokenizer()
         import os
 
         os.environ["GAGE_EVAL_MODEL_PATH"] = "repo_env"
@@ -78,11 +76,12 @@ class DefaultChatTemplatePreprocessTests(unittest.TestCase):
             processed = list(apply_preprocess(records, spec, data_path=None))
         finally:
             loader_module.load_tokenizer = orig_load
+            loader_module.get_or_load_tokenizer = orig_get
             os.environ.pop("GAGE_EVAL_MODEL_PATH", None)
             os.environ.pop("MODEL_PATH", None)
 
-        self.assertEqual(called.get("name"), "repo_env")
-        self.assertEqual(processed[0]["inputs"], "templated")
+        self.assertEqual(processed[0]["inputs"], {"prompt": "templated"})
+        self.assertEqual(processed[0]["_tokenizer_path"], "repo_env")
 
     def test_list_content_normalized_then_template(self):
         spec = DatasetSpec(
@@ -97,23 +96,27 @@ class DefaultChatTemplatePreprocessTests(unittest.TestCase):
         from gage_eval.assets.datasets import loaders
         loader_module = loaders.loader_utils
         orig_load = loader_module.load_tokenizer
+        orig_get = loader_module.get_or_load_tokenizer
         loader_module._TOKENIZER_MANAGER._cache.clear()
         dummy = DummyTokenizer()
         loader_module.load_tokenizer = lambda args: dummy
+        loader_module.get_or_load_tokenizer = lambda args: dummy
         try:
             processed = list(apply_preprocess(records, spec, data_path=None))
         finally:
             loader_module.load_tokenizer = orig_load
+            loader_module.get_or_load_tokenizer = orig_get
 
         item = processed[0]
-        self.assertEqual(item["inputs"], "templated")
+        self.assertEqual(item["inputs"], {"prompt": "templated"})
         self.assertEqual(dummy.calls, 1)
 
     def test_skip_when_no_messages(self):
         spec = DatasetSpec(dataset_id="d1", loader="jsonl", params={"tokenizer_path": "repo"})
         records = [{"id": 2, "prompt": "hi"}]
         processed = list(apply_preprocess(records, spec, data_path=None))
-        self.assertNotIn("inputs", processed[0])
+        self.assertIn("inputs", processed[0])
+        self.assertEqual(processed[0]["inputs"].get("prompt"), "hi")
 
 
 if __name__ == "__main__":

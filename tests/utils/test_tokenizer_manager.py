@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from gage_eval.assets.datasets.loaders.loader_utils import TokenizerManager
+from gage_eval.assets.datasets.utils.tokenizers import TokenizerManager
 
 
 class DummyLoader:

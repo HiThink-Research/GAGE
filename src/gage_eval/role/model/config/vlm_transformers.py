@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import Field, validator
+from pydantic import Field, field_validator, model_validator
 
 from gage_eval.role.model.config.base import BackendConfigBase
 from gage_eval.role.model.config.generations import GenerationParameters
@@ -60,8 +60,9 @@ class VLMTransformersBackendConfig(BackendConfigBase):
         description="多模态任务是否使用 processor.apply_chat_template：auto 尝试兜底，force 严格，never 纯拼接",
     )
 
-    @validator("model_name_or_path", always=True)
-    def validate_model_source(cls, value, values):
-        if (value is None or value == "") and not values.get("model_path"):
+    @field_validator("model_name_or_path", mode="after")
+    def validate_model_source(cls, value, info):
+        model_path = info.data.get("model_path")
+        if (value is None or value == "") and not model_path:
             raise ValueError("VLMTransformersBackend requires 'model_name_or_path' or injected 'model_path'")
         return value

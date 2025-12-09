@@ -96,7 +96,7 @@ class SampleLoop:
         ff_mode = _env_flag("GAGE_EVAL_FF_MODE", default=False)
 
         logger.info(
-            "SampleLoop running with bounded buffer (workers=%s, max_inflight=%s, prefetch_factor=%s, buffer_capacity=%s)",
+            "SampleLoop running with bounded buffer (workers={}, max_inflight={}, prefetch_factor={}, buffer_capacity={})",
             self._concurrency,
             self._max_inflight,
             self._prefetch_factor,
@@ -302,7 +302,7 @@ class SampleLoop:
                 future.result()
             except Exception as exc:
                 # 确保 worker 异常不会被静默吞掉，便于上层感知并触发 stop_event 逻辑。
-                logger.exception("SampleLoop worker failed (task_id=%s): %s", self._task_id, exc)
+                logger.exception("SampleLoop worker failed (task_id={}): {}", self._task_id, exc)
                 raise
         self._emit_buffer_state(trace, sample_queue, len(futures))
 
@@ -319,7 +319,7 @@ class SampleLoop:
         """Fire-and-forget 模式：使用信号量控制 max_inflight，不再维护 futures 集合。"""
 
         logger.info(
-            "SampleLoop running in fire-and-forget mode (workers=%s, max_inflight=%s, buffer_capacity=%s)",
+            "SampleLoop running in fire-and-forget mode (workers={}, max_inflight={}, buffer_capacity={})",
             self._concurrency,
             self._max_inflight,
             self._buffer_capacity,
@@ -341,7 +341,7 @@ class SampleLoop:
                         except BaseException as exc:
                             worker_errors.append(exc)
                             stop_event.set()
-                            logger.exception("SampleLoop worker failed in FF mode (task_id=%s): %s", self._task_id, exc)
+                            logger.exception("SampleLoop worker failed in FF mode (task_id={}): {}", self._task_id, exc)
                         finally:
                             sem.release()
 

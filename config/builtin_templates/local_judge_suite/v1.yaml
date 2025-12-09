@@ -94,7 +94,7 @@ definition:
       split: test
     loader: hf_hub
     params: &id004
-      preprocess: multi_choice_struct_only
+      preprocess: multi_choice_standardizer
       preprocess_kwargs:
         question_field: question
         choices_field: choices

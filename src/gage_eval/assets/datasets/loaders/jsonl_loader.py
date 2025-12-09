@@ -31,11 +31,11 @@ _STREAMING_THRESHOLD_MB = 512
 class JSONLDatasetLoader(DatasetLoader):
     """Build a :class:`DataSource` from a JSONL file."""
 
-    def load(self, hub_handle: Optional[DatasetHubHandle]) -> DataSource:
+    def load(self, hub_handle: Optional[DatasetHubHandle], *, trace=None) -> DataSource:
         path = _resolve_path(self.spec, hub_handle)
         if not path:
             raise ValueError(f"Dataset '{self.spec.dataset_id}' missing JSONL 'path' argument")
-        filesystem_path = Path(path).expanduser()
+        filesystem_path = Path(path).expanduser().resolve()
         if not filesystem_path.exists():
             raise FileNotFoundError(f"Dataset '{self.spec.dataset_id}' JSONL file not found: {filesystem_path}")
 
@@ -47,14 +47,21 @@ class JSONLDatasetLoader(DatasetLoader):
         else:
             raw_records = _read_jsonl(filesystem_path, limit=limit)
 
-        records = apply_preprocess(raw_records, self.spec, data_path=str(filesystem_path))
-        records = apply_default_params(records, self.spec)
-        if not streaming:
-            records = list(records)
-
         doc_to_text = resolve_doc_to_callable(self.spec, "doc_to_text")
         doc_to_visual = resolve_doc_to_callable(self.spec, "doc_to_visual")
         doc_to_audio = resolve_doc_to_callable(self.spec, "doc_to_audio")
+        records = apply_preprocess(
+            raw_records,
+            self.spec,
+            data_path=str(filesystem_path),
+            doc_to_text=doc_to_text,
+            doc_to_visual=doc_to_visual,
+            doc_to_audio=doc_to_audio,
+            trace=trace,
+        )
+        records = apply_default_params(records, self.spec)
+        if not streaming:
+            records = list(records)
         metadata = {
             "loader": "jsonl",
             "path": str(filesystem_path),
@@ -66,9 +73,9 @@ class JSONLDatasetLoader(DatasetLoader):
         return DataSource(
             dataset_id=self.spec.dataset_id,
             records=records,
-            doc_to_text=doc_to_text,
-            doc_to_visual=doc_to_visual,
-            doc_to_audio=doc_to_audio,
+            doc_to_text=None,
+            doc_to_visual=None,
+            doc_to_audio=None,
             metadata=metadata,
             validation=self.spec.schema,
             streaming=streaming,

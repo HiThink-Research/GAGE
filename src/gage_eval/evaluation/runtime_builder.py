@@ -11,7 +11,6 @@ from loguru import logger
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.config.registry import ConfigRegistry
 from gage_eval.assets.datasets.manager import DataManager, DataSource
-from gage_eval.assets.datasets.standardizer import SampleStandardizer
 from gage_eval.assets.datasets.validation import SampleValidator
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.metrics import MetricRegistry
@@ -90,7 +89,7 @@ def build_runtime(
     )
     data_manager = DataManager()
     dataset_start = time.perf_counter()
-    datasets: Dict[str, DataSource] = registry.materialize_datasets(config)
+    datasets: Dict[str, DataSource] = registry.materialize_datasets(config, trace=trace)
     dataset_elapsed = time.perf_counter() - dataset_start
     cache_store.record_timing("dataset_materialization_s", dataset_elapsed)
     registry.materialize_models(config)
@@ -148,7 +147,6 @@ def _build_single_runtime(
         selected_dataset_id,
         selected_source.streaming,
     )
-    standardizer = SampleStandardizer(dataset_id=selected_dataset_id, metadata=selected_source.metadata or {})
     trace.emit(
         "runtime_bootstrap",
         {
@@ -158,10 +156,10 @@ def _build_single_runtime(
         },
     )
     raw_samples = data_manager.iter_samples(selected_dataset_id, trace=trace)
-    samples = _standardize_samples(
+    samples = _validate_samples(
         raw_samples,
-        standardizer,
         validator=selected_source.validator,
+        dataset_id=selected_dataset_id,
         trace=trace,
     )
 
@@ -229,30 +227,30 @@ def _build_task_orchestrator_runtime(
     return TaskOrchestratorRuntime(task_entries, role_manager, trace, report_step)
 
 
-def _standardize_samples(
+def _validate_samples(
     raw_samples: Iterable[Dict[str, Any]],
-    standardizer: SampleStandardizer,
     *,
     validator: Optional[SampleValidator],
+    dataset_id: str,
     trace: Optional[ObservabilityTrace],
 ) -> Iterable[Dict[str, Any]]:
     for record in raw_samples:
-        sample = standardizer.normalize(record)
+        sample = dict(record)
         if validator:
             validated = validator.validate_envelope(
                 sample,
-                dataset_id=standardizer.dataset_id,
+                dataset_id=dataset_id,
                 sample_id=str(sample.get("id")),
                 trace=trace,
             )
             if validated is None:
                 logger.debug(
                     "Validator skipped sample for dataset_id='{}'",
-                    standardizer.dataset_id,
+                    dataset_id,
                 )
                 continue
             sample = validated
-        logger.trace("Standardized sample id='{}'", sample.get("id"))
+        logger.trace("Validated sample id='{}'", sample.get("id"))
         yield sample
 
 
@@ -456,12 +454,11 @@ def _prepare_task_entries(
         if dataset_id not in datasets:
             raise KeyError(f"Dataset '{dataset_id}' referenced by task '{plan.task_id}' is not registered")
         source = data_manager.get(dataset_id)
-        standardizer = SampleStandardizer(dataset_id=dataset_id, metadata=source.metadata or {})
         raw_samples = data_manager.iter_samples(dataset_id, trace=trace)
-        samples = _standardize_samples(
+        samples = _validate_samples(
             raw_samples,
-            standardizer,
             validator=source.validator,
+            dataset_id=dataset_id,
             trace=trace,
         )
         sample_loop = SampleLoop(
