@@ -50,9 +50,13 @@ def gemini_generate(model_id):
             'index': 0,
             'content': {'role': 'model', 'parts': [{'text': text}]},
             'finishReason': 'STOP',
+<<<<<<< HEAD
         }],
         # litellm 的 Gemini 适配需要 usageMetadata 字段
         'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
+=======
+        }]
+>>>>>>> e9d82f1f2ce7b2049f4aa9e13201d15ec18405cb
     })
 
 @app.route('/v1/chat/completions', methods=['POST'])

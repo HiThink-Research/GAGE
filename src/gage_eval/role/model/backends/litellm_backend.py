@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import time
+import time
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
 from gage_eval.role.model.backends.base_backend import EngineBackend
+from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.registry import registry
 
@@ -93,6 +95,15 @@ class LiteLLMBackend(EngineBackend):
             raise RuntimeError("liteLLM is not installed") from exc
 
         self._litellm = litellm
+        self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
+        litellm.drop_params = True
+        litellm.verbose = bool(self._cfg.verbose)
+        if self.api_key:
+            litellm.api_key = self.api_key
+        if self.api_base:
+            litellm.api_base = self.api_base
+        if self.headers:
+            litellm.headers = self.headers
         self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
         litellm.drop_params = True
         litellm.verbose = bool(self._cfg.verbose)
