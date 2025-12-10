@@ -115,7 +115,16 @@ class SampleLoop:
         producer.start()
 
         if ff_mode:
-            self._run_fire_and_forget(sample_queue, sentinel, stop_event, planner, role_manager, trace, producer_errors)
+            self._run_fire_and_forget(
+                sample_queue,
+                sentinel,
+                stop_event,
+                planner,
+                role_manager,
+                trace,
+                producer,
+                producer_errors,
+            )
         else:
             futures: Set = set()
             try:
@@ -314,6 +323,7 @@ class SampleLoop:
         planner: TaskPlanner,
         role_manager: RoleManager,
         trace: ObservabilityTrace,
+        producer: threading.Thread,
         producer_errors: List[BaseException],
     ) -> None:
         """Fire-and-forget 模式：使用信号量控制 max_inflight，不再维护 futures 集合。"""
