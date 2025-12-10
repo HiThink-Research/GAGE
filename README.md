@@ -418,7 +418,140 @@ metrics:
 
 ---
 
-## 7. 内置指标清单
+## 7. 指标子系统（1209 对齐）
+
+### 7.1 数据流总览
+```mermaid
+flowchart TD
+  Conf[PipelineConfig metrics] --> Spec[MetricSpec 解析<br/>字符串/函数式/KV 简写]
+  Spec --> Reg[MetricRegistry 构建 MetricInstance]
+  Reg --> Ctx[MetricContext.get 字段解析]
+  Ctx --> Comp[Metric compute<br/>Simple/Comparison/派生基类]
+  Comp --> Agg[Aggregator add]
+  Agg --> Sum[AggregatedMetric finalize]
+  Sum --> Report[ReportStep 写 summary]
+
+  style Conf fill:#e3f2fd,stroke:#1e88e5
+  style Spec fill:#fff8e1,stroke:#f9a825
+  style Reg fill:#e8f5e9,stroke:#43a047
+  style Ctx fill:#fce4ec,stroke:#d81b60
+  style Comp fill:#fce4ec,stroke:#d81b60
+  style Agg fill:#fff8e1,stroke:#f9a825
+  style Sum fill:#e8f5e9,stroke:#43a047
+  style Report fill:#e8f5e9,stroke:#43a047
+```
+
+### 7.2 核心工具与上下文
+| 能力 | 位置 | 说明 |
+| --- | --- | --- |
+| 字段解析 | `metrics/utils.py::extract_field` | 支持 dict/list 混合路径（如 `choices.0.message.content`），`on_missing_field` 支持 ignore/warn/error；`MetricContext.get` 统一调用 |
+| 路径行走 | `metrics/utils.py::walk_path` | 点分路径解析，列表数字索引 |
+| 文本归一化 | `metrics/utils.py::normalize_text_advanced` | 大小写、strip、空白折叠可选 |
+| 思维链剥离 | `metrics/utils.py::strip_thought_tags` | 去除 `<think>...</think>`，供推理模型输出清洗 |
+| 数值展平 | `metrics/utils.py::flatten_numeric_list` | 展平嵌套 logprobs 等数值容器 |
+| Levenshtein | `metrics/utils.py::levenshtein_distance` | 供序列距离类指标复用 |
+
+示例代码（公共思维链剥离）：
+```python
+from gage_eval.metrics.utils import strip_thought_tags
+
+clean = strip_thought_tags("<think>reasoning</think>Final")
+# clean == "Final"
+```
+
+### 7.3 基类层次与职责
+```mermaid
+classDiagram
+  class BaseMetric
+  class SimpleMetric
+  class ComparisonMetric
+  class SequenceDistanceMetric
+  class MultiReferenceTextMetric
+  class NumericThresholdMetric
+  class LikelihoodMetric
+  class RankingMetric
+
+  BaseMetric <|-- SimpleMetric
+  SimpleMetric <|-- ComparisonMetric
+  ComparisonMetric <|-- SequenceDistanceMetric
+  ComparisonMetric <|-- MultiReferenceTextMetric
+  ComparisonMetric <|-- NumericThresholdMetric
+  SimpleMetric <|-- LikelihoodMetric
+  SimpleMetric <|-- RankingMetric
+```
+
+| 基类 | 关键点 | 默认字段 | 元数据 |
+| --- | --- | --- | --- |
+| SimpleMetric | `compute_value` 返回值或 (值, metadata) | `score` | 支持 metadata 钩子 |
+| ComparisonMetric | 预测-参考对比骨架 | `model_output.answer` / `sample.label` | 自动注入 prediction/reference |
+| SequenceDistanceMetric | 距离函数可插拔，归一策略 anls/wer/raw | 同上 | distance/normalized/strategy |
+| MultiReferenceTextMetric | 多参考遍历，支持字符串分隔符 | `sample.references` | best_score/best_reference |
+| NumericThresholdMetric | 容差/阈值/范围校验 | `model_output.answer` vs `label` | prediction/reference/invalid_format |
+| LikelihoodMetric | loss 或 token_logprobs → NLL/PPL | `model_output.loss` 或 logprobs | source/token_count/metric_type |
+| RankingMetric | MRR 或 Hit@K，支持对象候选字段 | `model_output.candidates` / `sample.targets` | mrr/hit_at_k/hit_rank/k |
+
+关键实现片段（SequenceDistanceMetric）：
+```python
+class SequenceDistanceMetric(ComparisonMetric):
+    distance_fn = staticmethod(levenshtein_distance)
+
+    def compare(self, prediction, reference):
+        pred = normalize_text_advanced(prediction, collapse_whitespace=True) or ""
+        ref = normalize_text_advanced(reference, collapse_whitespace=True) or ""
+        if not pred and not ref:
+            return 1.0, {"distance": 0, "normalized": 1.0, "strategy": "anls"}
+        dist = self.distance_fn(pred, ref)
+        strategy = str(self.args.get("normalize", "anls")).lower()
+        if strategy == "wer":
+            denom = len(ref) or 1
+            score = max(1.0 - dist / denom, 0.0)
+        elif strategy == "raw":
+            score = float(dist)
+        else:
+            denom = max(len(pred), len(ref)) or 1
+            score = max(1.0 - dist / denom, 0.0)
+        return score, {"distance": dist, "normalized": score, "strategy": strategy}
+```
+
+### 7.4 内置指标现状（部分）
+| metric_id | 基类 | 主要逻辑 | 默认聚合 |
+| --- | --- | --- | --- |
+| `exact_match` | ComparisonMetric | 文本归一化后严格匹配 | mean |
+| `contains` | ComparisonMetric | 预测包含参考 | mean |
+| `numeric_match` | NumericThresholdMetric | 容差/范围校验，invalid_format 标记 | mean |
+| `judge_threshold` | NumericThresholdMetric | 裁判分数阈值转 0/1，metadata 透出 judge | mean |
+| `docvqa_anls` | MultiReferenceTextMetric | 思维链剥离，多参考 ANLS，阈值过滤 | mean |
+| `likelihood` | SimpleMetric | loss 或 token_logprobs → NLL 或 PPL | mean |
+| `ranking` | SimpleMetric | MRR/Hit@K，可从对象候选提字段 | mean |
+
+### 7.5 配置与语法糖
+| 写法 | 解析结果 | 适用场景 |
+| --- | --- | --- |
+| `"exact_match"` | metric_id=exact_match, implementation=exact_match | 最简默认 |
+| `"regex_match(pattern='\\d+')" ` | 解析参数填入 params | 函数式字符串 |
+| `{numeric_match: {tolerance: 0.1}}` | key 为 metric_id，值为 params | KV 简写 |
+
+解析流程与注册链路遵循 7.1 所示数据流，`MetricRegistry` 先尝试 asset 再动态 import，聚合器默认 mean/weighted_mean/identity。
+
+### 7.6 严格模式与缺失字段策略
+| 策略 | 行为 | 适用 |
+| --- | --- | --- |
+| ignore | 返回默认值（通常 0），不告警 | 大规模评测 |
+| warn | 记录 warning 继续计算 | 调试阶段 |
+| error | 抛异常中断 | 接入新数据集 |
+
+统一由 `extract_field` / `MetricContext.get` 执行，指标无需重复写兜底逻辑。
+
+### 7.7 测试与覆盖
+| 维度 | 测试文件 | 覆盖点 |
+| --- | --- | --- |
+| 基类与工具 | `tests/metrics/test_sequence_distance_metric.py`、`test_multi_reference_metric.py`、`test_numeric_threshold_metric.py`、`test_text_utils.py` | 距离策略、多参考分隔符、容差/invalid_format、思维链剥离、数值展平 |
+| 新指标 | `tests/metrics/test_likelihood_metric.py`、`test_ranking_metric.py` | loss/logprobs NLL/PPL、对象候选字段提取、MRR/Hit@K |
+| 集成 | `tests/integration/test_metrics_e2e.py`、`tests/integration/test_metrics_likelihood_ranking.py` | 配置语法糖、端到端 auto_eval、PPL/Hit@K 聚合 |
+
+---
+
+## 8. 内置指标清单
 
 | metric_id | value_key | 默认聚合 | 适用场景 / 核心逻辑 | 默认字段/参数 |
 | --- | --- | --- | --- | --- |
@@ -437,7 +570,7 @@ metrics:
 
 ---
 
-## 8. 观测、缓存与报告
+## 9. 观测、缓存与报告
 
 | 组件 | 输出 | 位置 |
 | --- | --- | --- |
@@ -474,9 +607,9 @@ ReportStep 现写入：
 
 ---
 
-## 9. 多模态与 VLM 路径
+## 10. 多模态与 VLM 路径
 
-### 7.1 VLMTransformersBackend 关键逻辑
+### 10.1 VLMTransformersBackend 关键逻辑
 ```python
 from gage_eval.role.model.backends.vlm_transformers_backend import VLMTransformersBackend
 
@@ -499,7 +632,7 @@ class VLMTransformersBackend(EngineBackend):
 
 ---
 
-## 10. 配置与运行入口
+## 11. 配置与运行入口
 
 ### 10.1 CLI 入口
 `python gage-eval-main/run.py --config ... --concurrency N --max-samples K --output-dir runs/foo`
@@ -1287,7 +1420,7 @@ Backend 实现会：
 
 ---
 
-## 11. 内置评估套件与 RunConfig 路线
+## 12. 内置评估套件与 RunConfig 路线
 
 > 详细设计见 `builtin-1126.md`，本节只从架构视角概括与现有代码实现保持一致的核心形态。
 
@@ -1425,7 +1558,7 @@ python gage-eval-main/run.py \
 - 将 MONOLITHIC 模板视为高级用法，并在文档/Release note 中明确风险和使用指引。  
 - 旧配置中的 inline backend 写法保留，后续可用迁移脚本批量抽取到顶层（参见 `config-1124.md` 中的迁移工具设计）。
 
-## 12. 扩展指南：注册新指标
+## 13. 扩展指南：注册新指标
 
 ### 12.1 步骤
 1. 在 `src/gage_eval/metrics/<domain>/` 创建实现，继承 `SimpleMetric` 或 `Metric`。
@@ -1527,7 +1660,7 @@ metrics:
 
 ---
 
-## 13. 扩展指南：注册新 Backend
+## 14. 扩展指南：注册新 Backend
 
 ### 13.1 步骤总览
 1. 定义 Config（Pydantic）：`src/gage_eval/role/model/config/<backend>.py`。
@@ -1616,7 +1749,7 @@ role_adapters:
 
 ---
 
-## 14. 调试与最佳实践
+## 15. 调试与最佳实践
 
 1. **并发调优**：优先通过 `--concurrency`/`GAGE_EVAL_THREADS` 控制 SampleLoop，并在 YAML `resource_requirement.pool_size` 声明池大小。
 2. **观测对齐**：出错必看 `events.jsonl` 与 `summary.json` 的 `timings`、吞吐字段。
@@ -1626,7 +1759,7 @@ role_adapters:
 
 ---
 
-## 15. 失败语义与防御性约定
+## 16. 失败语义与防御性约定
 
 框架在多处实现了“软失败”与防御性逻辑，目的是在尽量保留运行与观测的前提下，避免单点错误直接导致整次评测崩溃。
 
@@ -1669,7 +1802,7 @@ role_adapters:
 
 ---
 
-## 16. 旧框架映射表（llm-eval → gage-eval）
+## 17. 旧框架映射表（llm-eval → gage-eval）
 
 为了方便从 `llm-eval` 迁移或对照调试，下面给出两个框架在核心概念上的粗略映射：
 
@@ -1786,7 +1919,7 @@ role_adapters:
 
 ---
 
-## 17. 术语速查
+## 18. 术语速查
 
 | 名称 | 说明 | 代码位置 |
 | --- | --- | --- |
@@ -1798,6 +1931,6 @@ role_adapters:
 
 ---
 
-## 18. 结语
+## 19. 结语
 
 1124 版在 1123 的“去中心化调度”基础上，补齐了多任务、观测、吞吐指标和多模态稳定性。后续新增资产（指标/后端）仅需按 Registry 规范增量注册，即可被 CLI 与 YAML 自动发现。Mermaid 图与表格可直接在 Typora 11.9.0 渲染。欢迎基于此架构继续优化吞吐、扩展更多跨模态能力。

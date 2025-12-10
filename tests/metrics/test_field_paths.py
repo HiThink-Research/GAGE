@@ -6,9 +6,8 @@ ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from gage_eval.metrics.builtin.multi_choice import _extract_field as extract_mc_field
-from gage_eval.metrics.builtin.mmmu import _extract_field as extract_mm_field
 from gage_eval.metrics.base import MetricContext
+from gage_eval.metrics.utils import extract_field
 
 
 class FieldPathTests(unittest.TestCase):
@@ -30,9 +29,9 @@ class FieldPathTests(unittest.TestCase):
         )
 
     def test_multi_choice_paths(self):
-        expected = extract_mc_field(self.context, "sample.metadata.correct_choice")
-        prediction = extract_mc_field(self.context, "model_output.answer")
-        option_map = extract_mc_field(self.context, "sample.metadata.option_map")
+        expected = extract_field(self.context, "sample.metadata.correct_choice")
+        prediction = extract_field(self.context, "model_output.answer")
+        option_map = extract_field(self.context, "sample.metadata.option_map")
         self.assertEqual(expected, "B")
         self.assertEqual(prediction, "B")
         self.assertEqual(option_map["B"], "y")
@@ -49,11 +48,11 @@ class FieldPathTests(unittest.TestCase):
             args={},
             trace=None,
         )
-        prediction = extract_mc_field(ctx, "sample.predict_result.0.message.content.0.text")
+        prediction = extract_field(ctx, "sample.predict_result.0.message.content.0.text")
         self.assertEqual(prediction, "B")
 
     def test_mmnu_label_default(self):
-        label = extract_mm_field(self.context, "sample.choices.0.message.content.0.text")
+        label = extract_field(self.context, "sample.choices.0.message.content.0.text")
         self.assertEqual(label, "ans")
 
 

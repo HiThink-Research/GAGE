@@ -5,57 +5,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Optional, Sequence
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
+from gage_eval.metrics.utils import ensure_list_of_strings, extract_field, normalize_text_advanced
 from gage_eval.registry import registry
-
-
-def _extract_field(context: MetricContext, descriptor: Optional[str], default: Any = None) -> Any:
-    if not descriptor:
-        return default
-    roots = {
-        "sample": context.sample,
-        "model_output": context.model_output,
-        "judge_output": context.judge_output,
-    }
-    segments = descriptor.split(".")
-    head = segments[0]
-    if head in roots:
-        base = roots[head]
-        tail = ".".join(segments[1:]) if len(segments) > 1 else None
-    else:
-        base = context.sample
-        tail = descriptor
-    return _walk(base, tail, default)
-
-
-def _walk(current: Any, descriptor: Optional[str], default: Any) -> Any:
-    if descriptor in (None, ""):
-        return current if descriptor in (None, "") else default
-    value = current
-    for segment in descriptor.split('.'):
-        if isinstance(value, Mapping):
-            value = value.get(segment)
-        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            try:
-                value = value[int(segment)]
-            except (ValueError, IndexError):
-                return default
-        else:
-            return default
-        if value is None:
-            return default
-    return value
-
-
-def _coerce_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        return [str(item) for item in value if item is not None]
-    return [str(value)]
-
-
-def _clean_text(value: str) -> str:
-    return value.strip()
 
 
 def _is_choice_letter(value: str) -> bool:
@@ -131,10 +82,17 @@ class MMMUAccuracyMetric(SimpleMetric):
         label_field = self.args.get("label_field", "sample.choices.0.message.content.0.text")
         prediction_field = self.args.get("prediction_field", "model_output.answer")
 
-        raw_targets = _extract_field(context, label_field, default="")
-        targets = [_clean_text(text) for text in _coerce_list(raw_targets) if _clean_text(text)]
-        prediction_raw = _extract_field(context, prediction_field, default="")
-        prediction = _clean_text(str(prediction_raw))
+        raw_targets = extract_field(context, label_field, default="")
+        targets = [
+            normalized
+            for normalized in (
+                normalize_text_advanced(text, strip=True, collapse_whitespace=True)
+                for text in ensure_list_of_strings(raw_targets)
+            )
+            if normalized
+        ]
+        prediction_raw = extract_field(context, prediction_field, default="")
+        prediction = normalize_text_advanced(str(prediction_raw), strip=True, collapse_whitespace=True) or ""
 
         matched = any(_match_prediction(prediction, target) for target in targets)
         score = 1.0 if matched else 0.0

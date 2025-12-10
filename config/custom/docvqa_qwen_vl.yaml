@@ -53,7 +53,7 @@ metrics:
 tasks:
   - task_id: docvqa_eval
     dataset_id: docvqa_val
-    max_samples: 10 # MacBook 快速 smoke，可 CLI 覆盖
+    max_samples: 20 # MacBook 快速 smoke，可 CLI 覆盖
     reporting:
       sinks:
         - type: console

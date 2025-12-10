@@ -6,51 +6,11 @@ import re
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
+from gage_eval.metrics.utils import extract_field, normalize_text_advanced
 from gage_eval.registry import registry
 
 _BOXED_PATTERN = re.compile(r"\\boxed\s*\{([^}]*)\}", re.IGNORECASE)
 _TOKEN_SPLIT = re.compile(r"[^A-Z]+")
-
-
-def _extract_field(context: MetricContext, descriptor: Optional[str], default: Any = None) -> Any:
-    if not descriptor:
-        return default
-    roots = {
-        "sample": context.sample,
-        "model_output": context.model_output,
-        "judge_output": context.judge_output,
-    }
-    parts = descriptor.split(".")
-    root_key = parts[0]
-    base = roots.get(root_key, context.sample)
-    if root_key in roots:
-        tail = ".".join(parts[1:]) if len(parts) > 1 else None
-    else:
-        tail = descriptor
-        base = context.sample
-    return _walk_mapping(base, tail, default)
-
-
-def _walk_mapping(source: Any, descriptor: Optional[str], default: Any = None) -> Any:
-    if source is None or descriptor in (None, ""):
-        return source if descriptor in (None, "") else default
-    current = source
-    for segment in descriptor.split("."):
-        if isinstance(current, Mapping) and segment in current:
-            current = current[segment]
-            continue
-        # 支持以点分隔访问列表索引（如 choices.0.message.content.0.text）
-        if isinstance(current, (list, tuple)):
-            try:
-                idx = int(segment)
-            except (TypeError, ValueError):
-                return default
-            if 0 <= idx < len(current):
-                current = current[idx]
-                continue
-            return default
-        return default
-    return current
 
 
 def _normalize_option_map(raw: Any) -> Mapping[str, str]:
@@ -92,18 +52,14 @@ def _normalize_choice_label(value: Any, allowed_letters: Sequence[str]) -> Optio
 def _match_option_text(value: Any, option_map: Mapping[str, str]) -> Optional[str]:
     if value is None:
         return None
-    normalized_value = _normalize_text(value)
+    normalized_value = normalize_text_advanced(value, collapse_whitespace=True) or ""
     for label, text in option_map.items():
-        option_norm = _normalize_text(text)
+        option_norm = normalize_text_advanced(text, collapse_whitespace=True) or ""
         if not option_norm:
             continue
         if normalized_value == option_norm or option_norm in normalized_value:
             return label
     return None
-
-
-def _normalize_text(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value)).strip().lower()
 
 
 def _extract_prediction_letter(raw_answer: Any, allowed_letters: Sequence[str]) -> Optional[str]:
@@ -149,13 +105,13 @@ class MultiChoiceAccuracyMetric(SimpleMetric):
         option_map_field = self.args.get("option_map_field", "sample.metadata.option_map")
         allow_text_match = bool(self.args.get("allow_text_match", True))
 
-        option_map = _normalize_option_map(_extract_field(context, option_map_field, default={}))
+        option_map = _normalize_option_map(extract_field(context, option_map_field, default={}))
         allowed_letters = tuple(option_map.keys()) or tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        expected_raw = _extract_field(context, label_field)
+        expected_raw = extract_field(context, label_field)
         expected = _normalize_choice_label(expected_raw, allowed_letters) or _match_option_text(
             expected_raw, option_map
         )
-        prediction_raw = _extract_field(context, prediction_field, default="")
+        prediction_raw = extract_field(context, prediction_field, default="")
         prediction = _extract_prediction_letter(prediction_raw, allowed_letters)
         if allow_text_match and not prediction:
             prediction = _match_option_text(prediction_raw, option_map)

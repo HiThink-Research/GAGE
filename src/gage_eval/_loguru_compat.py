@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 
@@ -40,7 +40,7 @@ def ensure_loguru() -> None:
                 "level": {"name": level},
                 "message": formatted,
                 "extra": dict(self._extra),
-                "time": datetime.utcnow(),
+                "time": datetime.now(timezone.utc),
                 "file": {"name": ""},
                 "function": "",
                 "line": 0,
