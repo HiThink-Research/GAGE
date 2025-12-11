@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import os
 import types
 import inspect
 import uuid
@@ -39,6 +40,8 @@ def _ensure_spawn_start_method() -> None:
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
 
+import threading
+
 @registry.asset(
     "backends",
     "legacy_vllm",
@@ -61,7 +64,26 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         _ensure_spawn_start_method()
+        
+        # 初始化后台事件循环线程，避免在主线程反复创建 loop 导致死锁
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._run_loop, name="LegacyVLLMLoop", daemon=True)
+        self._loop_thread.start()
+        
         super().__init__(cfg)
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def shutdown(self) -> None:
+        try:
+            if self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread.is_alive():
+                self._loop_thread.join(timeout=1.0)
+        except Exception:
+            logger.warning("LegacyVLLMBackend shutdown error", exc_info=True)
 
     def load_model(self, config: Dict[str, Any]):
         """加载模型 + processor，并应用兼容性补丁（奖励/MoE/rope scaling/低显存等）。"""
@@ -137,64 +159,58 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
 
     def _generate_one(self, prepared: Dict[str, Any], sampling_params: Any, request_id: str) -> Any:
         prompt = prepared.get("prompt") or ""
+        # 注意：这里 _load_multimodal_payload 内部已经使用了线程池，是线程安全的同步调用
         mm_raw = self._prepare_multi_modal_data(prepared)
         mm_loaded = self._load_multimodal_payload(mm_raw)
         messages = prepared.get("messages") or []
-        generate_kwargs = {
-            "prompt": prompt,
-            "sampling_params": sampling_params,
-            "request_id": request_id,
-        }
-        # 保持与 llm-eval 接口兼容：如有 inputs/token_ids 则透传
-        extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
-        if extra_inputs is not None:
-            generate_kwargs["inputs"] = extra_inputs
-        if mm_loaded:
-            generate_kwargs["inputs"] = {"prompt": prompt, "multi_modal_data": mm_loaded}
-            rendered_mm = self._render_with_processor(messages, prompt)
-            if rendered_mm:
-                generate_kwargs["inputs"]["prompt"] = rendered_mm
-        else:
-            rendered_mm = self._render_with_processor(messages, prompt)
-            if rendered_mm:
-                generate_kwargs["prompt"] = rendered_mm
+
+        # 定义异步任务，将在后台 loop 中运行
+        async def _async_generate():
+            # 构造 prompt
+            if mm_loaded:
+                rendered_mm = self._render_with_processor(messages, prompt)
+                final_prompt_text = rendered_mm if rendered_mm else prompt
+                prompt_input = {"prompt": final_prompt_text, "multi_modal_data": mm_loaded}
+            else:
+                rendered_mm = self._render_with_processor(messages, prompt)
+                prompt_input = rendered_mm if rendered_mm else prompt
+
+            generate_kwargs = {
+                "prompt": prompt_input,
+                "sampling_params": sampling_params,
+                "request_id": request_id,
+            }
+
+            # 合并 extra_inputs
+            extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
+            if isinstance(extra_inputs, dict):
+                for k, v in extra_inputs.items():
+                    if k not in generate_kwargs:
+                        generate_kwargs[k] = v
+
+            try:
+                result = self.model.generate(**generate_kwargs)
+                
+                # 异步收集结果
+                if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
+                    items = []
+                    async for item in result:
+                        items.append(item)
+                    return items
+                elif inspect.iscoroutine(result):
+                    return await result
+                return result
+            except Exception as exc:
+                logger.warning("legacy_vllm_backend generate failed: {} - {}; returning echo output", type(exc).__name__, exc, exc_info=True)
+                return {"outputs": [{"text": str(prompt)}]}
+
+        # 提交到后台线程执行并等待结果
+        future = asyncio.run_coroutine_threadsafe(_async_generate(), self._loop)
         try:
-            result = self.model.generate(**generate_kwargs)
-            # AsyncLLM.generate 返回 async generator，这里同步消费
-            if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
-                result = self._consume_async_generator(result)
-            elif inspect.iscoroutine(result):
-                result = self._run_coroutine(result)
-            return result
-        except Exception:
-            logger.warning("legacy_vllm_backend generate failed; returning echo output", exc_info=True)
+            return future.result()
+        except Exception as exc:
+            logger.error("legacy_vllm_backend: background thread execution failed: {}", exc)
             return {"outputs": [{"text": str(prompt)}]}
-
-    def _consume_async_generator(self, agen):
-        async def _collect():
-            items = []
-            async for item in agen:
-                items.append(item)
-            return items
-
-        try:
-            return asyncio.run(_collect())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(_collect())
-            finally:
-                loop.close()
-
-    def _run_coroutine(self, coro):
-        try:
-            return asyncio.run(coro)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(coro)
-            finally:
-                loop.close()
 
     def _attach_template_metadata(self, payload: Dict[str, Any], result: Dict[str, Any]) -> None:
         meta_keys = ("chat_template_mode", "template_source", "rendered_by", "cache_suffix")
@@ -479,6 +495,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
                 tensor_parallel_size=getattr(args, "tensor_parallel_size", 1),
                 trust_remote_code=getattr(args, "trust_remote_code", True),
                 enforce_eager=getattr(args, "enforce_eager", False),
+                limit_mm_per_prompt=self._resolve_mm_limits(cfg, args),
             )
             engine = AsyncLLMEngine.from_engine_args(engine_args)
             engine.log_requests = False
@@ -507,6 +524,34 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             dummy = DummyEngine(cfg, args)
             dummy.processor = processor
             return dummy, processor
+
+    def _resolve_mm_limits(self, cfg: Any, args: SimpleNamespace) -> Dict[str, int]:
+        """Resolve multi-modal limits; default to a very high image cap to avoid ValueError."""
+
+        # Prefer explicit limits from args/config
+        limit_cfg = getattr(args, "limit_mm_per_prompt", None) or getattr(cfg, "limit_mm_per_prompt", None)
+        if isinstance(limit_cfg, dict) and limit_cfg:
+            return limit_cfg
+
+        env_image = os.environ.get("GAGE_EVAL_VLLM_IMAGE_LIMIT")
+        env_audio = os.environ.get("GAGE_EVAL_VLLM_AUDIO_LIMIT")
+
+        limits: Dict[str, int] = {}
+        if env_image:
+            try:
+                limits["image"] = int(env_image)
+            except ValueError:
+                pass
+        if env_audio:
+            try:
+                limits["audio"] = int(env_audio)
+            except ValueError:
+                pass
+
+        # Default: effectively unlimited images; avoids vLLM default of 1 image raising ValueError
+        if not limits:
+            limits["image"] = 1_000_000
+        return limits
 
     def _init_tokenizer(self, config: Dict[str, Any]):
         tok_name = config.get("tokenizer_name") or config.get("tokenizer_path") or config.get("model_path")
@@ -673,33 +718,23 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             logger.warning("legacy_vllm_backend: processor missing, skipping multi_modal_data load")
             return mm
 
-        # 服务器上 MMMU 这类样本通常提供 HTTP(S) 链接，Pillow 无法直接读取。
-        # 遇到远端 URL 时直接回落原始 multi_modal_data，由模型侧 Processor 处理。
-        images = mm.get("image") or []
-        if any(isinstance(x, str) and x.startswith(("http://", "https://")) for x in images):
-            return mm
-
-        async def _load():
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, load_multimodal_data, processor, mm.get("image"), mm.get("audio"), True)
-
-        try:
-            return asyncio.run(_load())
-        except RuntimeError:
-            # 当前线程已有事件循环，创建新循环以避免冲突
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(_load())
-            finally:
-                loop.close()
-        except Exception:
-            logger.error(
-                "legacy_vllm_backend: load_multimodal_data failed; fallback to raw mm (processor={}, keys={})",
-                processor,
-                list(mm.keys()),
-                exc_info=True,
-            )
+        # 使用线程池执行同步的 load_multimodal_data，避免 asyncio 事件循环嵌套死锁
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def _safe_load():
             try:
                 return load_multimodal_data(processor, mm.get("image"), mm.get("audio"), True)
-            except Exception:
+            except Exception as exc:
+                logger.error(
+                    "legacy_vllm_backend: load_multimodal_data failed in thread; fallback to raw mm (error={})",
+                    exc,
+                )
+                return mm
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_safe_load)
+            try:
+                return future.result()
+            except Exception as exc:
+                logger.error("legacy_vllm_backend: thread pool execution failed: {}", exc)
                 return mm

@@ -64,7 +64,7 @@ metrics:
 tasks:
   - task_id: piqa_validation_eval
     dataset_id: piqa_validation_mini
-    max_samples: 1
+    max_samples: 500
     concurrency: 1
     reporting:
       sinks:

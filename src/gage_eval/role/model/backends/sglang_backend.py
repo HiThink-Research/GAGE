@@ -87,7 +87,9 @@ class SGLangBackend(EngineBackend):
         if isinstance(payload.get("inputs"), list):
             request["input_ids"] = payload["inputs"]
         else:
-            request["prompt"] = payload.get("prompt") or payload.get("sample", {}).get("prompt", "")
+            text = payload.get("prompt") or payload.get("text") or payload.get("sample", {}).get("prompt", "")
+            request["text"] = text  # SGLang >=0.5 expects `text`
+            request["prompt"] = text  # backward compat with older servers
         if sampling_params.get("stop"):
             request["stop"] = sampling_params["stop"]
         if payload.get("logprob_token_ids"):

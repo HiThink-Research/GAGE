@@ -201,3 +201,5 @@ runs/
 scripts/oneclick/.generated/
 scripts/oneclick/.env.example
 .venv311/
+docs/
+AGENTS.md

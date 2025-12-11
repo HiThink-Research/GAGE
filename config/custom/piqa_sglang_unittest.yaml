@@ -32,10 +32,14 @@ prompts:
       {{ instruction }}
 
 datasets:
-  - dataset_id: piqa_validation_mini
-    loader: jsonl
+  - dataset_id: piqa_validation
+    loader: hf_hub
+    hub: huggingface
+    hub_params:
+      hub_id: piqa
+      split: validation
+      trust_remote_code: true
     params:
-      path: ${PIQA_MINI_PATH:-./tests/fixtures/piqa_mini.jsonl}
       preprocess: piqa_struct_only
       streaming: false
 
@@ -64,8 +68,8 @@ metrics:
 
 tasks:
   - task_id: piqa_validation_eval
-    dataset_id: piqa_validation_mini
-    max_samples: 1
+    dataset_id: piqa_validation
+    max_samples: 500
     concurrency: 1
     reporting:
       sinks:
