@@ -41,11 +41,9 @@ class PiqaStructOnlyPreprocessor(PiqaPreprocessor):
         sample.pop("prompt", None)
         sample["messages"] = []
         sample["inputs"] = {}
-        sample.pop("chat_template_mode", None)
-        sample.pop("rendered_by", None)
-        sample.pop("template_source", None)
-        sample.pop("cache_suffix", None)
+        strip_render_flags(sample)
         return sample
 
 
 __all__ = ["PiqaPreprocessor", "PiqaStructOnlyPreprocessor"]
+from gage_eval.assets.datasets.utils.rendering import strip_render_flags
