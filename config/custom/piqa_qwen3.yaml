@@ -82,7 +82,7 @@ metrics:
 tasks:
   - task_id: piqa_validation_eval
     dataset_id: piqa_validation
-    max_samples: 20  # 本地快速验证，必要时可通过 CLI --max-samples 覆盖
+    max_samples: 500  # 本地快速验证，必要时可通过 CLI --max-samples 覆盖
     reporting:
       sinks:
         - type: console

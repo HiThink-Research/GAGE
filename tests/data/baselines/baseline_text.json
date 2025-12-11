@@ -1,0 +1,18 @@
+{
+  "deterministic": [
+    {
+      "metric_id": "exact_match",
+      "aggregation": "mean",
+      "expected": 0.5,
+      "delta": 0.0
+    }
+  ],
+  "semantic": [
+    {
+      "metric_id": "latency",
+      "aggregation": "mean",
+      "expected": 55.0,
+      "delta": 5.0
+    }
+  ]
+}

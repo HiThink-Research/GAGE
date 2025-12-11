@@ -48,7 +48,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     backend_ids = _ensure_unique(backends, "backend_id", "backend", errors)
     prompt_ids = _ensure_unique(prompts, "prompt_id", "prompt", errors)
     adapter_ids = _ensure_unique(role_adapters, "adapter_id", "role adapter", errors)
-    metric_ids = _ensure_unique(metrics, "metric_id", "metric", errors)
+    metric_ids = _ensure_unique(metrics, "metric_id", "metric", errors, allow_str=True)
 
     _validate_role_bindings(role_adapters, backend_ids, prompt_ids, errors)
     _validate_steps(custom, errors)
@@ -84,16 +84,21 @@ def _ensure_list(value: Any, field: str, errors: List[str]) -> List[dict]:
     return []
 
 
-def _ensure_unique(items: List[dict], key: str, label: str, errors: List[str]) -> List[str]:
+def _ensure_unique(items: List[dict], key: str, label: str, errors: List[str], allow_str: bool = False) -> List[str]:
     ids: List[str] = []
     seen = set()
     for item in items:
-        if not isinstance(item, dict):
+        if isinstance(item, dict):
+            value = item.get(key)
+            if not value and allow_str and len(item) == 1:
+                value = next(iter(item.keys()))
+            if not value:
+                errors.append(f"{label} entries must declare '{key}'")
+                continue
+        elif allow_str and isinstance(item, str):
+            value = item
+        else:
             errors.append(f"{label} entries must be dictionaries")
-            continue
-        value = item.get(key)
-        if not value:
-            errors.append(f"{label} entries must declare '{key}'")
             continue
         if value in seen:
             errors.append(f"duplicate {label} id '{value}' detected")

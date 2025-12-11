@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from gage_eval.config.schema import SchemaValidationError, normalize_pipeline_payload
+from gage_eval.observability.logger import ObservableLogger
+
+_logger = ObservableLogger()
 
 
 @dataclass(frozen=True)
@@ -275,15 +278,7 @@ class PipelineConfig:
             for item in normalized.get("role_adapters", [])
         )
 
-        metrics = tuple(
-            MetricSpec(
-                metric_id=item.get("metric_id"),
-                implementation=item.get("implementation"),
-                aggregation=item.get("aggregation"),
-                params=item.get("params") or {},
-            )
-            for item in normalized.get("metrics", [])
-        )
+        metrics = tuple(MetricSpec(**_normalize_metric_entry(item)) for item in normalized.get("metrics", []))
 
         tasks = tuple(
             TaskSpec(
@@ -297,15 +292,7 @@ class PipelineConfig:
                     )
                     for step in item.get("steps", [])
                 ),
-                metric_overrides=tuple(
-                    MetricSpec(
-                        metric_id=metric.get("metric_id"),
-                        implementation=metric.get("implementation"),
-                        aggregation=metric.get("aggregation"),
-                        params=metric.get("params") or {},
-                    )
-                    for metric in item.get("metric_overrides", [])
-                ),
+                metric_overrides=tuple(MetricSpec(**_normalize_metric_entry(metric)) for metric in item.get("metric_overrides", [])),
                 reporting=item.get("reporting", {}),
                 max_samples=item.get("max_samples"),
                 shuffle=item.get("shuffle"),
@@ -332,3 +319,95 @@ class PipelineConfig:
             tasks=tasks,
             observability=observability,
         )
+
+
+def _normalize_metric_entry(entry: Any) -> Dict[str, Any]:
+    """Parse metric entries supporting string/KV shortcuts or full dict."""
+
+    if isinstance(entry, str):
+        # 函数式字符串：exact_match(a=1,b=2)
+        parsed = _parse_fnstyle_metric(entry)
+        if parsed:
+            return parsed
+        return {
+            "metric_id": entry,
+            "implementation": entry,
+            "aggregation": None,
+            "params": {},
+        }
+
+    if isinstance(entry, dict):
+        # KV 简写： {exact_match: {case_sensitive: true}}
+        if len(entry) == 1 and "metric_id" not in entry and "implementation" not in entry:
+            metric_id, payload = next(iter(entry.items()))
+            params: Dict[str, Any] = {}
+            aggregation = None
+            if isinstance(payload, dict):
+                params = dict(payload)
+                aggregation = params.pop("aggregation", None)
+            return {
+                "metric_id": metric_id,
+                "implementation": metric_id,
+                "aggregation": aggregation,
+                "params": params,
+            }
+        metric_id = entry.get("metric_id") or entry.get("implementation")
+        impl = entry.get("implementation") or metric_id
+        return {
+            "metric_id": metric_id,
+            "implementation": impl,
+            "aggregation": entry.get("aggregation"),
+            "params": entry.get("params") or {},
+        }
+
+    raise ValueError(f"Unsupported metric entry format: {entry!r}")
+
+
+def _coerce_value(raw: str) -> Any:
+    lowered = raw.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "none" or lowered == "null":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    # 去掉成对引号
+    if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+        return raw[1:-1]
+    return raw
+
+
+def _parse_fnstyle_metric(entry: str) -> Optional[Dict[str, Any]]:
+    if "(" not in entry or not entry.endswith(")"):
+        return None
+    name, rest = entry.split("(", 1)
+    name = name.strip()
+    if not name:
+        raise ValueError(f"Invalid metric entry: {entry!r}")
+    args_str = rest[:-1].strip()  # drop trailing ')'
+    params: Dict[str, Any] = {}
+    if args_str:
+        for token in args_str.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if "=" not in token:
+                raise ValueError(f"Invalid metric param token '{token}' in entry '{entry}'")
+            key, value = token.split("=", 1)
+            params[key.strip()] = _coerce_value(value.strip())
+    aggregation = params.pop("aggregation", None)
+    _logger.debug("metric_sugar", "Parsed fnstyle metric id={} params={}", name, params)
+    return {
+        "metric_id": name,
+        "implementation": name,
+        "aggregation": aggregation,
+        "params": params,
+    }
