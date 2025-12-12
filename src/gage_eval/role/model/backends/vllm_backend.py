@@ -17,6 +17,7 @@ from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
 def _ensure_spawn_start_method() -> None:
@@ -93,6 +94,7 @@ class VLLMBackend(EngineBackend):
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
 
     def load_model(self, config: Dict[str, Any]):
         try:  # pragma: no cover - heavy dependency
@@ -208,10 +210,26 @@ class VLLMBackend(EngineBackend):
                         text_parts.append(str(fragment.get("text", "")))
                 text = " ".join(text_parts)
             else:
-                text = str(content) if content is not None else ""
+            text = str(content) if content is not None else ""
             segments.append(f"{role}: {text}".strip())
         segments.append("assistant:")
         return "\n".join(segments)
+
+    def shutdown(self) -> None:  # pragma: no cover - best-effort GPU cleanup
+        try:
+            engine = getattr(self, "model", None)
+            if engine and hasattr(engine, "shutdown"):
+                engine.shutdown()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_loop", None):
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if getattr(self, "_loop_thread", None):
+                self._loop_thread.join(timeout=1.0)
+        except Exception:
+            pass
+        torch_gpu_cleanup()
 
     def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
         # 简单文本拼接；若提供兜底模板字符串，可选择扩展为真正模板渲染

@@ -10,7 +10,6 @@ from gage_eval.assets.datasets.utils.mapping import (
     normalize_options,
     resolve_correct_choice,
 )
-from gage_eval.assets.datasets.utils.rendering import set_render_flags
 
 _CHOICE_ALPHABET: Tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
@@ -69,7 +68,10 @@ class MultiChoicePreprocessor(DefaultPreprocessor):
 
         sample["messages"] = messages
         sample["prompt"] = user_prompt
-        set_render_flags(sample, mode="preprocess", source="manual", rendered_by="preprocess", cache_suffix="-converted")
+        sample["chat_template_mode"] = "preprocess"
+        sample["rendered_by"] = "preprocess"
+        sample["template_source"] = "manual"
+        sample["cache_suffix"] = "-converted"
         sample["choices"] = [
             {
                 "index": idx,

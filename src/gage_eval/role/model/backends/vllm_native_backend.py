@@ -12,6 +12,7 @@ from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
 @registry.asset(
@@ -44,6 +45,7 @@ class VLLMNativeBackend(EngineBackend):
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
 
     def load_model(self, config: Dict[str, Any]):
         self._ensure_spawn_start_method()
@@ -267,6 +269,18 @@ class VLLMNativeBackend(EngineBackend):
         except Exception as exc:
             logger.warning("Failed to load tokenizer '{}' for chat_template fallback: {}", tok_name, exc)
             return None
+
+    def shutdown(self) -> None:  # pragma: no cover - best-effort GPU cleanup
+        try:
+            if self._isolated and hasattr(self, "model") and hasattr(self.model, "shutdown"):
+                self.model.shutdown()
+            elif hasattr(self, "model"):
+                model = getattr(self, "model", None)
+                if model and hasattr(model, "shutdown"):
+                    model.shutdown()
+        except Exception:
+            pass
+        torch_gpu_cleanup()
 
     @staticmethod
     def _build_model_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:

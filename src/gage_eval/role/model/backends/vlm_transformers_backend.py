@@ -17,6 +17,7 @@ from gage_eval.role.model.config.vlm_transformers import VLMTransformersBackendC
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.multimodal import load_multimodal_data
 from gage_eval.utils.chat_templates import get_fallback_template
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 try:  # pragma: no cover - optional dependency
     from accelerate import Accelerator, InitProcessGroupKwargs
@@ -55,6 +56,7 @@ class VLMTransformersBackend(EngineBackend):
         config = dict(config)
         config.setdefault("execution_mode", "native")
         super().__init__(config)
+        install_signal_cleanup(self.shutdown)
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -705,6 +707,15 @@ class VLMTransformersBackend(EngineBackend):
                 result[key] = value
         if "_tokenizer_path" not in result and self._cfg_tokenizer_path:
             result["_tokenizer_path"] = self._cfg_tokenizer_path
+
+    def shutdown(self) -> None:  # pragma: no cover - best-effort GPU cleanup
+        try:
+            accelerator = getattr(self, "accelerator", None)
+            if accelerator and hasattr(accelerator, "free_memory"):
+                accelerator.free_memory()
+        except Exception:
+            pass
+        torch_gpu_cleanup()
 
 
 def _apply_stop_sequences(text: str, stop) -> str:

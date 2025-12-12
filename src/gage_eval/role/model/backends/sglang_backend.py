@@ -10,6 +10,7 @@ import requests
 
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.registry import registry
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
 @registry.asset(
@@ -44,6 +45,8 @@ class SGLangBackend(EngineBackend):
             env = dict(config.get("launch_env", {})) or None
             self._process = subprocess.Popen(command, shell=True, env=env)
             self._wait_for_server(config.get("startup_timeout", 600))
+        # Ensure child process and HTTP session are cleaned up on signals/exit.
+        install_signal_cleanup(self.shutdown)
 
     def _wait_for_server(self, timeout: int) -> None:
         end = time.time() + timeout
@@ -105,6 +108,7 @@ class SGLangBackend(EngineBackend):
             except subprocess.TimeoutExpired:
                 self._process.kill()
             self._process = None
+        torch_gpu_cleanup()
 
 
 def _extract_text(data: Any) -> str:

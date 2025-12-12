@@ -5,11 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.assets.datasets.preprocessors.simple_preprocessor import SimplePreprocessor
-from gage_eval.assets.datasets.utils.rendering import (
-    contains_multimodal,
-    render_messages_with_fallback,
-    set_render_flags,
-)
+from gage_eval.assets.datasets.utils.rendering import contains_multimodal, render_messages_with_fallback
 
 
 class DefaultPreprocessor(SimplePreprocessor):
@@ -42,13 +38,10 @@ class DefaultPreprocessor(SimplePreprocessor):
             prompt, source = render_messages_with_fallback(sample.get("messages") or [], self._tokenizer)
             sample["prompt"] = prompt
             sample["inputs"] = {"prompt": prompt}
-            set_render_flags(
-                sample,
-                mode="preprocess",
-                source=source,
-                rendered_by="preprocess",
-                cache_suffix="-chat_template" if source == "model" else "-plain",
-            )
+            sample["chat_template_mode"] = "preprocess"
+            sample["template_source"] = source
+            sample["rendered_by"] = "preprocess"
+            sample["cache_suffix"] = "-chat_template" if source == "model" else "-plain"
             if self._tokenizer_path and "_tokenizer_path" not in sample:
                 sample["_tokenizer_path"] = self._tokenizer_path
         return sample

@@ -19,6 +19,7 @@ from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 from gage_eval.utils.multimodal import load_multimodal_data
 
 
@@ -71,6 +72,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         self._loop_thread.start()
         
         super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -84,6 +86,13 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
                 self._loop_thread.join(timeout=1.0)
         except Exception:
             logger.warning("LegacyVLLMBackend shutdown error", exc_info=True)
+        try:
+            model = getattr(self, "model", None)
+            if model and hasattr(model, "shutdown"):
+                model.shutdown()
+        except Exception:
+            pass
+        torch_gpu_cleanup()
 
     def load_model(self, config: Dict[str, Any]):
         """加载模型 + processor，并应用兼容性补丁（奖励/MoE/rope scaling/低显存等）。"""
