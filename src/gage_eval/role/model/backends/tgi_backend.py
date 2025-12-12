@@ -61,6 +61,25 @@ class TGIBackend(EngineBackend):
     def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         parameters = dict(self.default_parameters)
         parameters.update(payload.get("sampling_params") or {})
+        # TGI requires temperature > 0.0; clamp/omit zero/negative values to keep requests valid.
+        temp = parameters.get("temperature")
+        if temp is not None:
+            try:
+                if float(temp) <= 0:
+                    parameters["temperature"] = None
+                    parameters.setdefault("do_sample", False)
+            except (TypeError, ValueError):
+                pass
+        top_p = parameters.get("top_p")
+        if top_p is not None:
+            try:
+                value = float(top_p)
+                if value >= 1:
+                    parameters["top_p"] = 0.999
+                elif value <= 0:
+                    parameters["top_p"] = 1e-4
+            except (TypeError, ValueError):
+                pass
         body = {
             "inputs": payload.get("prompt") or payload.get("sample", {}).get("prompt", ""),
             "parameters": {k: v for k, v in parameters.items() if v is not None},

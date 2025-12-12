@@ -1,0 +1,2 @@
+{"id": "log-0001", "messages": [{"role": "system", "content": [{"type": "text", "text": "你是一个验证日志采样的助手。"}]}, {"role": "user", "content": [{"type": "text", "text": "回答 A"}]}], "label": "A"}
+{"id": "log-0002", "messages": [{"role": "system", "content": [{"type": "text", "text": "你是一个验证日志采样的助手。"}]}, {"role": "user", "content": [{"type": "text", "text": "回答 B"}]}], "label": "B"}
