@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 def contains_multimodal(messages: list) -> bool:
@@ -65,5 +65,34 @@ def render_messages_with_fallback(messages: list, tokenizer) -> Tuple[str, str]:
             pass
     return _simple_render(messages), "fallback"
 
+def set_render_flags(
+    sample: Dict[str, Any],
+    *,
+    mode: str = "preprocess",
+    source: str = "manual",
+    rendered_by: str = "preprocess",
+    cache_suffix: str = "-converted",
+    overwrite: bool = True,
+) -> None:
+    """统一设置 chat 模板相关标记，避免各预处理器重复赋值。"""
 
-__all__ = ["contains_multimodal", "render_messages_with_fallback"]
+    if overwrite or "chat_template_mode" not in sample:
+        sample["chat_template_mode"] = mode
+    if overwrite or "template_source" not in sample:
+        sample["template_source"] = source
+    if overwrite or "rendered_by" not in sample:
+        sample["rendered_by"] = rendered_by
+    if overwrite or "cache_suffix" not in sample:
+        sample["cache_suffix"] = cache_suffix
+
+
+def strip_render_flags(sample: Dict[str, Any]) -> None:
+    """移除渲染标记（struct-only 预处理器常用）。"""
+
+    sample.pop("chat_template_mode", None)
+    sample.pop("template_source", None)
+    sample.pop("rendered_by", None)
+    sample.pop("cache_suffix", None)
+
+
+__all__ = ["contains_multimodal", "render_messages_with_fallback", "set_render_flags", "strip_render_flags"]

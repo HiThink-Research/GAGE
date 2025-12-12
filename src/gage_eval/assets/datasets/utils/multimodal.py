@@ -7,6 +7,7 @@ import mimetypes
 import hashlib
 import os
 import re
+from io import BytesIO
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
@@ -41,6 +42,54 @@ def collect_content_fragments(sample: Dict[str, Any], *, content_field: str, con
                 frag[key] = payload
         resolved.append(frag)
     return resolved
+
+# ---------------------------------------------------------------------------
+# PIL helpers
+# ---------------------------------------------------------------------------
+
+
+def encode_pil_to_data_url(image: Any, *, format: Optional[str] = None, cache_dir: Optional[str] = None) -> str:
+    """将 PIL.Image 转为 data URL，避免远端无法访问本地对象。"""
+
+    if image is None:
+        raise ValueError("encode_pil_to_data_url requires a PIL Image instance")
+    try:  # 延迟导入，Pillow 为可选依赖
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError("Pillow is required to encode PIL images to data URL") from exc
+
+    buffer = BytesIO()
+    fmt = (format or getattr(image, "format", None) or "PNG").upper()
+    mime = Image.MIME.get(fmt) or f"image/{fmt.lower()}"
+    try:
+        image.save(buffer, format=fmt)
+    except Exception:
+        # 兜底：转换为 RGB 再保存 PNG
+        rgb_image = image.convert("RGB") if hasattr(image, "convert") else image
+        buffer = BytesIO()
+        rgb_image.save(buffer, format="PNG")
+        mime = "image/png"
+    content = buffer.getvalue()
+    encoded = _encode_base64(content, use_process_pool=_should_use_process_pool(Path("."), content))
+    data_url = f"data:{mime};base64,{encoded}"
+
+    if cache_dir:
+        cache_root = Path(cache_dir).expanduser().resolve()
+        digest = hashlib.sha256(content).hexdigest()
+        cache_path = cache_root / f"{digest}.b64"
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(data_url, encoding="utf-8")
+        except Exception:
+            pass
+    return data_url
+
+
+def pil_to_image_fragment(image: Any, *, format: Optional[str] = None, cache_dir: Optional[str] = None) -> Dict[str, Any]:
+    """将 PIL.Image 封装为 image_url 片段，便于直接塞入 messages。"""
+
+    url = encode_pil_to_data_url(image, format=format, cache_dir=cache_dir)
+    return {"type": "image_url", "image_url": {"url": url}}
 
 # ---------------------------------------------------------------------------
 # 轻量媒体处理与嵌入
@@ -225,6 +274,54 @@ def embed_local_message_images(
             attachments.append(converted)
 
     return attachments or None
+
+
+def ensure_image_fragments(
+    sample: Dict[str, Any],
+    *,
+    image_field: str = "image",
+    pil_field: str = "decoded_image",
+    content_root: Optional[str] = None,
+    strict: bool = False,
+    cache_dir: Optional[str] = None,
+) -> list[Dict[str, Any]]:
+    """优先使用 PIL，再回退本地/相对路径，返回 image_url 片段列表。"""
+
+    fragments: list[Dict[str, Any]] = []
+    pil_obj = sample.get(pil_field)
+    if pil_obj is not None:
+        try:
+            frag = pil_to_image_fragment(pil_obj, cache_dir=cache_dir)
+            fragments.append(frag)
+            meta = sample.get("metadata") or {}
+            meta["image_url"] = frag["image_url"]["url"]
+            sample["metadata"] = meta
+        except Exception:
+            if strict:
+                raise
+    if not fragments:
+        path_value = sample.get(image_field)
+        if path_value:
+            converted = embed_local_image_as_data_url(
+                sample,
+                image_field=image_field,
+                strict=strict,
+                cache_dir=cache_dir,
+                content_root=content_root,
+            )
+            if converted:
+                fragments.append(converted)
+                if isinstance(converted.get("image_url"), dict):
+                    meta = sample.get("metadata") or {}
+                    meta["image_url"] = converted["image_url"].get("url")
+                    sample["metadata"] = meta
+    if content_root:
+        meta = sample.get("metadata") or {}
+        meta["content_root"] = content_root
+        if not meta.get("image_root"):
+            meta["image_root"] = content_root
+        sample["metadata"] = meta
+    return fragments
 
 
 def _derive_root(sample: Dict[str, Any], explicit_root: Optional[str]) -> Optional[str]:
@@ -725,3 +822,15 @@ def _should_use_process_pool(resolved_path: Path, content: bytes) -> bool:
         threshold = 5 * 1024 * 1024
     size = len(content) if content else resolved_path.stat().st_size
     return size >= threshold
+
+
+__all__ = [
+    "collect_content_fragments",
+    "encode_pil_to_data_url",
+    "pil_to_image_fragment",
+    "embed_local_image_as_data_url",
+    "embed_local_message_images",
+    "ensure_image_fragments",
+    "merge_multimodal_inputs",
+    "resolve_media_path",
+]
