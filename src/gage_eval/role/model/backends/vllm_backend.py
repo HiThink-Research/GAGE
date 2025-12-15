@@ -210,7 +210,7 @@ class VLLMBackend(EngineBackend):
                         text_parts.append(str(fragment.get("text", "")))
                 text = " ".join(text_parts)
             else:
-            text = str(content) if content is not None else ""
+                text = str(content) if content is not None else ""
             segments.append(f"{role}: {text}".strip())
         segments.append("assistant:")
         return "\n".join(segments)

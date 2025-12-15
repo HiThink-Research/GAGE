@@ -203,3 +203,6 @@ scripts/oneclick/.env.example
 .venv311/
 docs/
 AGENTS.md
+
+# local datasets
+/local-datasets/piqa/

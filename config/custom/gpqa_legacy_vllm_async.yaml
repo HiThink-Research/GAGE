@@ -1,0 +1,90 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: gpqa_legacy_vllm_async
+  description: 使用 legacy_vllm_backend 运行 GPQA（extended）评测，沿用结构化 Prompt。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+prompts:
+  - prompt_id: gpqa_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位精通生物学、物理学和化学的专家级科学顾问。
+        题目具有研究生难度，请严谨推理。
+      instruction: >
+        请仔细分析题目，并从选项中选出唯一正确答案。
+        仅输出正确选项对应的大写字母（如 'A'），不要输出其他文字。
+    template: |
+      {{ system_prompt }}
+
+      {% set metadata = sample.get('metadata', {}) %}
+      {% set option_map = metadata.get('option_map') or {} %}
+      ### 题目：
+      {{ sample.question }}
+
+      ### 选项：
+      {% for label, text in option_map.items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+      ### 答案：
+
+datasets:
+  - dataset_id: gpqa_extended_local
+    hub: huggingface
+    hub_params:
+      hub_id: Idavidrein/gpqa
+      data_files:
+        - repo_id: Idavidrein/gpqa
+          path: gpqa_extended.csv
+      builder_name: csv
+      split: train
+    loader: hf_hub
+    params:
+      preprocess: gpqa_struct_only
+
+backends:
+  - backend_id: gpqa_legacy_vllm_backend
+    type: legacy_vllm
+    config:
+      model_path: ${GPQA_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${GPQA_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      tensor_parallel_size: 1
+      max_tokens: 128
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+
+role_adapters:
+  - adapter_id: dut_gpqa_legacy_qwen
+    role_type: dut_model
+    backend_id: gpqa_legacy_vllm_backend
+    prompt_id: gpqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: gpqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: gpqa_extended_eval
+    dataset_id: gpqa_extended_local
+    max_samples: 546
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/gpqa_legacy_vllm_events.jsonl

@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
 from gage_eval.assets.datasets.preprocessors.default_preprocessor import DefaultPreprocessor
+from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
+    GpqaPreprocessor as NewGpqa,
+    GpqaStructOnlyPreprocessor as NewGpqaStructOnly,
+)
 from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import MultiChoicePreprocessor as NewMultiChoice
 from gage_eval.assets.datasets.preprocessors.docvqa_preprocessor import DocVQAPreprocessor as NewDocVQA
 from gage_eval.assets.datasets.preprocessors.mmmu_preprocessor import MMMUMultimodalPreprocessor as NewMMMU
+from gage_eval.assets.datasets.preprocessors.mathvista_preprocessor import (
+    MathVistaPreprocessor as NewMathVista,
+    MathVistaStructOnlyPreprocessor as NewMathVistaStructOnly,
+)
 from gage_eval.assets.datasets.preprocessors.piqa_preprocessor import (
     PiqaPreprocessor as NewPiqa,
     PiqaStructOnlyPreprocessor as NewPiqaStructOnly,
@@ -55,9 +63,49 @@ class PiqaStructOnlyPreprocessor(NewPiqaStructOnly):
 
 @registry.asset(
     "dataset_preprocessors",
+    "gpqa_multi_choice",
+    desc="GPQA 多选题提示词封装",
+    tags=("prompt", "gpqa", "multiple-choice"),
+)
+class GpqaPreprocessor(NewGpqa):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "gpqa_struct_only",
+    desc="GPQA 多选题结构化预处理（仅补充 choices/metadata，不拼接 Prompt）",
+    tags=("gpqa", "multiple-choice", "struct_only"),
+)
+class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
     "mmmu_multimodal_inputs",
     desc="MMMU 多模态 inputs 构造器（messages -> inputs.multi_modal_data）",
     tags=("prompt", "vision", "mmmu"),
 )
 class MMMUMultimodalPreprocessor(NewMMMU):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "mathvista",
+    desc="MathVista 多模态预处理（生成带 image_url 的 messages）",
+    tags=("prompt", "vision", "mathvista"),
+)
+class MathVistaPreprocessor(NewMathVista):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "mathvista_struct_only",
+    desc="MathVista 结构化预处理（仅保留 inputs/multimodal/metadata，不拼接 prompt）",
+    tags=("prompt", "vision", "mathvista", "struct_only"),
+)
+class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
     pass
