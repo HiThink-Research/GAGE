@@ -129,6 +129,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         sampling = self._build_sampling_params(output_type, payload.get("sampling_params") or {})
         sample_n = int(payload.get("sample_n") or payload.get("generation_params", {}).get("n") or 1)
         request_id = self._resolve_request_id(payload)
+        chat_template_kwargs = payload.get("chat_template_kwargs") or sample.get("chat_template_kwargs")
         caps = BackendCapabilities(supports_mm=True, has_processor_chat_template=bool(self._processor))
         cache_suffix = ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps)
         template_source = payload.get("template_source")
@@ -148,6 +149,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             "template_source": template_source,
             "rendered_by": rendered_by,
             "chat_template_mode": chat_mode,
+            "chat_template_kwargs": chat_template_kwargs,
             "messages": payload.get("messages") or (payload.get("sample") or {}).get("messages") or [],
         }
 
@@ -182,16 +184,17 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         mm_raw = self._prepare_multi_modal_data(prepared)
         mm_loaded = self._load_multimodal_payload(mm_raw)
         messages = prepared.get("messages") or []
+        chat_kwargs = prepared.get("chat_template_kwargs") or {}
 
         # 定义异步任务，将在后台 loop 中运行
         async def _async_generate():
             # 构造 prompt
             if mm_loaded:
-                rendered_mm = self._render_with_processor(messages, prompt)
+                rendered_mm = self._render_with_processor(messages, prompt, chat_template_kwargs=chat_kwargs)
                 final_prompt_text = rendered_mm if rendered_mm else prompt
                 prompt_input = {"prompt": final_prompt_text, "multi_modal_data": mm_loaded}
             else:
-                rendered_mm = self._render_with_processor(messages, prompt)
+                rendered_mm = self._render_with_processor(messages, prompt, chat_template_kwargs=chat_kwargs)
                 prompt_input = rendered_mm if rendered_mm else prompt
 
             generate_kwargs = {
@@ -295,6 +298,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         raw_prompt = payload.get("prompt") or payload.get("text") or (payload.get("sample") or {}).get("prompt") or ""
         policy = ChatTemplatePolicy(mode=self._chat_template_mode)
         caps = BackendCapabilities(supports_mm=True, has_processor_chat_template=bool(self._processor))
+        chat_kwargs = payload.get("chat_template_kwargs") or (payload.get("sample") or {}).get("chat_template_kwargs") or {}
 
         if not ChatTemplateMixin.should_render(payload, policy):
             if raw_prompt:
@@ -304,17 +308,19 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         template_source = ChatTemplateMixin.select_template("text", policy, caps)
         template_fn = getattr(self._tokenizer, "apply_chat_template", None) if self._tokenizer else None
         fallback_tpl = None if template_source == "model" else self._fallback_template
+        norm_messages = self._normalize_messages_for_template(messages)
         rendered = ChatTemplateMixin.render(
-            messages,
+            norm_messages,
             template_fn=template_fn,
             fallback_fn=lambda msgs: self._fallback_render(msgs, fallback_tpl),
             add_generation_prompt=True,
             chat_template=fallback_tpl,
+            **chat_kwargs,
         )
         payload["chat_template_mode"] = "backend"
         payload["template_source"] = "model" if template_fn else "fallback"
         payload["rendered_by"] = "backend"
-        return rendered or self._simple_render(messages) or str(raw_prompt)
+        return rendered or self._simple_render(norm_messages) or str(raw_prompt)
 
     def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
         return self._simple_render(messages)
@@ -338,17 +344,60 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         segments.append("assistant:")
         return "\n".join(segments)
 
-    def _render_with_processor(self, messages: List[Dict[str, Any]], prompt: str) -> Optional[str]:
+    @staticmethod
+    def _normalize_messages_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Flatten list-based content so chat templates see strings instead of lists."""
+
+        normalized: List[Dict[str, Any]] = []
+        for message in messages or []:
+            item = dict(message)
+            content = item.get("content")
+            if isinstance(content, list):
+                parts: List[str] = []
+                for fragment in content:
+                    if isinstance(fragment, dict):
+                        if fragment.get("type") == "text":
+                            parts.append(str(fragment.get("text", "")))
+                        elif fragment.get("type") in {"image", "image_url"}:
+                            parts.append("<image>")
+                    elif fragment is not None:
+                        parts.append(str(fragment))
+                item["content"] = " ".join(part for part in parts if part).strip()
+            elif content is None:
+                item["content"] = ""
+            normalized.append(item)
+        return normalized
+
+    def _render_with_processor(
+        self, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
         apply_template = getattr(self._processor, "apply_chat_template", None) if self._processor else None
         if not apply_template:
             return None
         try:
-            rendered = apply_template(messages, add_generation_prompt=True, tokenize=False)
+            norm_messages = self._normalize_messages_for_template(messages)
+            rendered = apply_template(norm_messages, add_generation_prompt=True, tokenize=False, **(chat_template_kwargs or {}))
             if isinstance(rendered, list):
                 rendered = rendered[0]
             return str(rendered) if rendered else prompt
         except Exception as exc:
             logger.debug("legacy_vllm_backend processor chat_template failed: {}", exc)
+            tok = getattr(self, "_tokenizer", None)
+            tok_apply = getattr(tok, "apply_chat_template", None)
+            if tok_apply:
+                try:
+                    rendered = tok_apply(
+                        self._normalize_messages_for_template(messages),
+                        add_generation_prompt=True,
+                        tokenize=False,
+                        **(chat_template_kwargs or {}),
+                    )
+                    if isinstance(rendered, list):
+                        rendered = rendered[0]
+                    if rendered:
+                        return str(rendered)
+                except Exception as tok_exc:
+                    logger.debug("legacy_vllm_backend tokenizer chat_template failed: {}", tok_exc)
             return None
 
     def _check_tokenizer_conflict(self, payload: Dict[str, Any]) -> None:

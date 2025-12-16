@@ -9,33 +9,33 @@ custom:
     - step: inference
     - step: auto_eval
 
-prompts:
-  - prompt_id: mathvista_infer_prompt
-    renderer: jinja
-    params:
-      system_prompt: >
-        你是一位擅长数学与视觉理解的 AI 助手。题目可能包含图片、多选或开放式作答。
-      instruction: >
-        - 若题目提供选项，仅输出正确选项对应的大写字母（A/B/C/...），不要添加解释。
-        - 若无选项，请直接给出最终答案（数字或文本），不要复读题干。
-    template: |
-      {{ system_prompt }}
+# prompts:
+#   - prompt_id: mathvista_infer_prompt
+#     renderer: jinja
+#     params:
+#       system_prompt: >
+#         你是一位擅长数学与视觉理解的 AI 助手。题目可能包含图片、多选或开放式作答。
+#       instruction: >
+#         - 若题目提供选项，仅输出正确选项对应的大写字母（A/B/C/...），不要添加解释。
+#         - 若无选项，请直接给出最终答案（数字或文本），不要复读题干。
+#     template: |
+#       {{ system_prompt }}
 
-      {% set metadata = sample.get('metadata', {}) %}
-      {% set option_map = metadata.get('option_map') or {} %}
-      ### 题目：
-      {{ sample.question }}
+#       {% set metadata = sample.get('metadata', {}) %}
+#       {% set option_map = metadata.get('option_map') or {} %}
+#       ### 题目：
+#       {{ sample.question }}
 
-      {% if option_map %}
-      ### 选项：
-      {% for label, text in option_map.items() %}
-      {{ label }}. {{ text }}
-      {% endfor %}
-      {% endif %}
+#       {% if option_map %}
+#       ### 选项：
+#       {% for label, text in option_map.items() %}
+#       {{ label }}. {{ text }}
+#       {% endfor %}
+#       {% endif %}
 
-      {{ instruction }}
+#       {{ instruction }}
 
-      ### 答案：
+#       ### 答案：
 
 datasets:
   - dataset_id: mathvista_testmini
@@ -46,7 +46,7 @@ datasets:
     loader: hf_hub
     params:
       streaming: true
-      preprocess: mathvista_struct_only
+      preprocess: mathvista
       preprocess_kwargs:
         pre_encode_images: true
 
@@ -55,9 +55,9 @@ backends:
     type: legacy_vllm
     config:
       # 需使用具备视觉能力的权重；默认指向本机已存在的 2.5-VL-3B 目录
-      model_path: ${MATHVISTA_MODEL_PATH:-/mnt/model/qwen2_5_vl_3b}
-      tokenizer_path: ${MATHVISTA_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
-      processor_path: ${MATHVISTA_PROCESSOR_PATH:-/mnt/model/qwen2_5_vl_3b}
+      model_path: /mnt/model/qwen2_5_vl_3b
+      tokenizer_path: /mnt/model/qwen2_5_vl_3b
+   #   processor_path: ${MATHVISTA_PROCESSOR_PATH:-/mnt/model/qwen2_5_vl_3b}
       tensor_parallel_size: 1
       max_tokens: 512
       sampling_params:
@@ -72,7 +72,7 @@ role_adapters:
   - adapter_id: dut_mathvista_legacy_qwen
     role_type: dut_model
     backend_id: mathvista_legacy_vllm_backend
-    prompt_id: mathvista_infer_prompt
+    # prompt_id: mathvista_infer_prompt
     capabilities:
       - chat_completion
       - multimodal_chat_completion
@@ -84,7 +84,7 @@ metrics:
 tasks:
   - task_id: mathvista_testmini_eval
     dataset_id: mathvista_testmini
-    max_samples: 500
+    max_samples: 10
     reporting:
       sinks:
         - type: console
