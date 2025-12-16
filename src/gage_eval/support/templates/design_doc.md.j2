@@ -1,0 +1,162 @@
+# Benchmark 设计文档：{{ dataset_name | default("<dataset_name>") }}
+
+> 生成语言：{{ language | default("zh") }}（`zh`/`en`）。全文自然语言、表头、注释等须与该语言一致（代码标识符/路径除外）。
+>
+> **格式与风格要求（请严格遵守）**
+> 1. **可读性/一致性**：结构清晰、术语统一，必须对齐新框架 `gage-eval` 的真实目录、Registry、Pipeline 与 BasePreprocessor 语义，避免臆造机制。
+> 2. **Mermaid 兼容 Typora 11.9.0**：只使用标准语法（`flowchart TD`/`sequenceDiagram`/`stateDiagram-v2` 等）；**节点/边标签内避免括号、方括号等特殊符号**；语法尽量简洁。
+> 3. **三级小节按需细分**：允许出现如 `4.9.1`、`4.9.2` 这样的三级编号，但仅在必要处细分，避免无意义拆分。
+> 4. **图表优先**：尽可能用 Mermaid、表格说明字段映射、数据流、执行顺序；必要时引用新框架源码片段并加中文注释说明其作用（仅引用，不修改源码）。
+> 5. **Single Source of Truth**：文档中必须且仅能出现一个 `yaml support_config` 代码块（位于文末），implement 只解析该块。
+
+---
+
+## 1. Sample 格式分析
+
+### 1.1 数据集基本信息
+- Hub ID / 本地路径：{{ hub_id | default("<hub_id_or_local_path>") }}
+- Subset / Split：{{ subset | default("<subset>") }} / {{ split | default("<split>") }}
+- 样本规模（Inspect 产出）：{{ size | default("<size>") }}
+
+### 1.2 样本结构总览
+请用表格总结 `sample.json` 的关键字段（字段名、类型、示例、说明/用途），并标注潜在模态（text/image/audio/video/file）。
+
+| 字段路径 | 类型 | 示例值（截断） | 说明/用途 | 模态 |
+| --- | --- | --- | --- | --- |
+| <field.path> | <type> | <example> | <desc> | <text/vision/...> |
+
+### 1.3 字段映射要点
+基于 schema.json 与样本，说明：
+- 题干/上下文字段路径（可能多路 fallback）
+- 选项/choices 结构
+- 标签/答案结构
+- 多模态引用的位置与解析方式（例如 messages 中 image url 或本地文件路径）
+
+### 1.4 数据流示意（Mermaid）
+```mermaid
+flowchart TD
+  Inspect --> SampleJson
+  SampleJson --> DesignMd
+  DesignMd --> Implement
+  Implement --> PipelineRun
+```
+
+---
+
+## 2. 配置文件设计
+
+### 2.1 support_config 关键字段说明
+请逐项解释文末 `support_config` 中将出现的字段含义、必填/可选性及默认策略，确保与新框架 `PipelineConfig` 一致。
+
+### 2.2 PipelineConfig（OpenAI / vLLM 两份）
+用表格说明双份配置的差异点与共用项（dataset_id、preprocess、doc_to_*、backend/role_adapters/metrics/tasks）。
+
+| 配置项 | openai 版本 | vllm 版本 | 说明 |
+| --- | --- | --- | --- |
+| backend_id | <id> | <id> | |
+| base_url/server_url | <url> | <url> | |
+| model/max_tokens | <...> | <...> | |
+
+---
+
+## 3. Benchmark 整体开发设计
+
+### 3.1 预处理器设计
+说明预处理器的职责边界、继承关系与核心逻辑：
+- 继承 `BasePreprocessor`
+- `to_sample` 字段映射与 messages/choices/answers 构造
+- 多模态 fragments 合并策略
+- `_dataset_id` 显式补齐
+
+**产物路径约定（重要）**
+- Support 是辅助工具模块；**implement 的生成物必须写入主框架目录（不是写到 support 目录）**：
+  - 预处理器逻辑：`src/gage_eval/assets/datasets/preprocessors/{{ dataset_slug | default("<dataset_slug>") }}_preprocessor.py`
+  - 预处理器注册包装：`src/gage_eval/assets/datasets/preprocessors/custom.py`
+  - PipelineConfig：`config/custom/{{ dataset_slug | default("<dataset_slug>") }}_openai.yaml`、`config/custom/{{ dataset_slug | default("<dataset_slug>") }}_vllm.yaml`
+  - 指标实现（若新增）：`src/gage_eval/metrics/builtin/<implementation>.py`（`implementation` 为 registry 名）
+
+必要时引用新框架预处理器源码片段（加中文注释）说明对齐点。
+
+### 3.2 指标（Metrics）设计
+说明：
+- 使用已有 metric 还是需要新增
+- 若新增，采用 registry 名注册还是 class_path 形式
+- 评分聚合方式（mean/weighted_mean/identity）
+
+### 3.3 执行链路示意
+```mermaid
+sequenceDiagram
+  participant Loader
+  participant Preprocess
+  participant Inference
+  participant AutoEval
+  Loader->>Preprocess: records
+  Preprocess->>Inference: samples
+  Inference->>AutoEval: predictions
+```
+
+---
+
+## 4. 基于 TESTING.md 的测试方案
+
+### 4.1 单元测试（support/tests/unit）
+列出需要覆盖的关键单测点与对应文件：
+- Inspect：本地/Mock HF、slug、schema 推断
+- Agent Bridge：协议解析、噪音过滤、超时
+- support_config 解析器：缺块/多块/非法 YAML
+- Config 渲染：输出 YAML schema 校验
+- Git Guard / Command Guard：分支覆盖
+
+### 4.2 集成测试（support/tests/integration）
+至少 3 组场景，覆盖文本/多模态/自定义 metric，全链路 mock agent，不走 network/gpu。
+
+---
+
+## 5. 落地计划
+
+请基于本 Benchmark 开发需要，输出一个**表格形式**的实现计划，必须满足：
+1. 包含「序号」「完成状态」列。
+2. 每个任务独立可测试、可单独验收。
+3. 测试代码放在 Support 自有 `tests/` 下，遵循新框架 `TESTING.md` 规范（markers/fixtures/目录层级）。
+4. 旧有冗余逻辑直接清理删除，不需要标记废弃。
+5. 最后一项为多组集成测试，覆盖全部变更逻辑。
+6. 交付物路径遵循「产物路径约定（重要）」。
+
+| 序号 | 任务 | 交付物 | 验证/测试 | 完成状态 |
+| --- | --- | --- | --- | --- |
+| 1 | <task> | <deliverables> | <pytest case / cli verify> | 未开始 |
+| ... | ... | ... | ... | ... |
+| N | 多组集成测试覆盖全部变更 | support/tests/integration/* | `pytest -m "not gpu and not network" tests/integration` | 未开始 |
+
+---
+
+```yaml support_config
+# Single Source of Truth: implement 只解析此块
+# 允许可选覆盖 language: zh|en
+
+dataset_id: {{ dataset_id | default("<dataset_id>") }}
+preprocess_name: {{ preprocess_name | default("<registry_preprocess_name>") }}
+language: {{ language | default("zh") }}
+
+fields:
+  question_field: {{ (fields | default({})).get("question_field", "<field.path.or.fallback>") }}
+  answers_field: {{ (fields | default({})).get("answers_field", "<field.path>") }}
+  content_field: {{ (fields | default({})).get("content_field", "<field.path>") }}
+
+modalities: {{ modalities | default(["text"]) }}
+
+# Optional doc_to hooks
+doc_to_text: {{ doc_to_text | default("") }}
+doc_to_visual: {{ doc_to_visual | default("") }}
+doc_to_audio: {{ doc_to_audio | default("") }}
+
+metrics:
+  - metric_id: {{ metric_id | default("<metric_id>") }}
+    implementation: {{ metric_impl | default("<registry_name_or_class_path>") }}
+    aggregation: {{ aggregation | default("mean") }}
+
+tests:
+  run_commands:
+    - {{ test_cmd_openai | default("PYTHONPATH=src python run.py --config config/custom/" ~ (dataset_slug | default("<dataset_slug>")) ~ "_openai.yaml") }}
+    - {{ test_cmd_vllm | default("PYTHONPATH=src python run.py --config config/custom/" ~ (dataset_slug | default("<dataset_slug>")) ~ "_vllm.yaml") }}
+```

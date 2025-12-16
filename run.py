@@ -79,7 +79,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-samples",
         type=int,
-        help="Optional max samples override; sets env GAGE_EVAL_MAX_SAMPLES.",
+        help="Override task max_samples (>=0) and sets env GAGE_EVAL_MAX_SAMPLES.",
     )
     parser.add_argument(
         "--distill",
@@ -954,6 +954,96 @@ def _apply_hardware_profile_env(profile: Optional[str]) -> None:
             print("[gage-eval] hardware profile=apple -> set GAGE_EVAL_THREADS=4 (override with --concurrency)")
 
 
+def _apply_cli_max_samples_override(payload: dict, max_samples: int) -> None:
+    """Override task/dataset sample limits in a PipelineConfig payload (in-place)."""
+
+    for task in payload.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        task["max_samples"] = max_samples
+    # Best-effort: also set HF hub loader limit to avoid fetching unnecessary splits.
+    for dataset in payload.get("datasets") or []:
+        if not isinstance(dataset, dict):
+            continue
+        params = dataset.get("params")
+        if isinstance(params, dict):
+            params["limit"] = max_samples
+        hub_params = dataset.get("hub_params")
+        if isinstance(hub_params, dict):
+            hub_params["limit"] = max_samples
+
+
+def _validate_config_wiring(config: PipelineConfig) -> list[str]:
+    """Validate config references without loading data or running the pipeline."""
+
+    import importlib
+
+    from gage_eval.metrics.registry import MetricRegistry
+    from gage_eval.registry import registry as asset_registry
+
+    errors: list[str] = []
+    dataset_ids = {spec.dataset_id for spec in config.datasets}
+    backend_ids = {spec.backend_id for spec in config.backends}
+    prompt_ids = {spec.prompt_id for spec in config.prompts}
+
+    for spec in config.datasets:
+        try:
+            asset_registry.get("dataset_loaders", spec.loader)
+        except KeyError:
+            errors.append(f"Dataset '{spec.dataset_id}' references unknown loader '{spec.loader}'")
+        if spec.hub:
+            try:
+                asset_registry.get("dataset_hubs", spec.hub)
+            except KeyError:
+                errors.append(f"Dataset '{spec.dataset_id}' references unknown hub '{spec.hub}'")
+        elif spec.loader in {"hf_hub", "modelscope"}:
+            errors.append(f"Dataset '{spec.dataset_id}' using loader '{spec.loader}' requires field 'hub'")
+
+        preprocess = spec.params.get("preprocess")
+        if preprocess:
+            try:
+                asset_registry.get("dataset_preprocessors", str(preprocess))
+            except KeyError:
+                errors.append(f"Dataset '{spec.dataset_id}' references unknown preprocessor '{preprocess}'")
+
+    for spec in config.backends:
+        try:
+            asset_registry.get("backends", spec.type)
+        except KeyError:
+            errors.append(f"Backend '{spec.backend_id}' references unknown type '{spec.type}'")
+
+    for spec in config.role_adapters:
+        if spec.class_path:
+            try:
+                module_name, class_name = spec.class_path.rsplit(".", 1)
+                module = importlib.import_module(module_name)
+                getattr(module, class_name)
+            except Exception as exc:
+                errors.append(f"RoleAdapter '{spec.adapter_id}' invalid class_path '{spec.class_path}': {exc}")
+        else:
+            try:
+                asset_registry.get("roles", spec.role_type)
+            except KeyError:
+                errors.append(f"RoleAdapter '{spec.adapter_id}' references unknown role_type '{spec.role_type}'")
+        if spec.backend_id and spec.backend_id not in backend_ids:
+            errors.append(f"RoleAdapter '{spec.adapter_id}' references missing backend_id '{spec.backend_id}'")
+        if spec.prompt_id and spec.prompt_id not in prompt_ids:
+            errors.append(f"RoleAdapter '{spec.adapter_id}' references missing prompt_id '{spec.prompt_id}'")
+
+    metric_registry = MetricRegistry()
+    for spec in config.metrics:
+        try:
+            metric_registry.build_metric(spec)
+        except Exception as exc:
+            errors.append(f"Metric '{spec.metric_id}' failed to build implementation '{spec.implementation}': {exc}")
+
+    for spec in config.tasks:
+        if spec.dataset_id not in dataset_ids:
+            errors.append(f"Task '{spec.task_id}' references missing dataset_id '{spec.dataset_id}'")
+
+    return errors
+
+
 def main() -> None:
     wall_clock_start = time.perf_counter()
     args = parse_args()
@@ -1021,7 +1111,10 @@ def main() -> None:
     _ensure_default_concurrency(args)
     _apply_hardware_profile_env(profile_hint)
     _preflight_checks()
-    if args.max_samples is not None and args.max_samples > 0:
+    if args.max_samples is not None:
+        if args.max_samples < 0:
+            print("[gage-eval] --max-samples must be >= 0", file=sys.stderr)
+            sys.exit(2)
         os.environ["GAGE_EVAL_MAX_SAMPLES"] = str(args.max_samples)
     if args.model_path:
         os.environ["VLLM_NATIVE_MODEL_PATH"] = args.model_path
@@ -1035,13 +1128,27 @@ def main() -> None:
         except Exception as exc:
             print(f"[gage-eval][runconfig] {exc}", file=sys.stderr)
             sys.exit(1)
+        if args.max_samples is not None:
+            _apply_cli_max_samples_override(compiled_payload, args.max_samples)
         config = PipelineConfig.from_dict(compiled_payload)
         config_source_desc = f"{args.config} (template: {template_path})"
     else:
+        if args.max_samples is not None:
+            _apply_cli_max_samples_override(config_payload, args.max_samples)
         config = PipelineConfig.from_dict(config_payload)
-    ensure_save_dir(args.output_dir)
 
     registry = build_default_registry()
+
+    if args.max_samples == 0:
+        errors = _validate_config_wiring(config)
+        if errors:
+            for err in errors:
+                print(f"[gage-eval][validate] {err}", file=sys.stderr)
+            sys.exit(1)
+        print("[gage-eval] --max-samples 0: config wiring validated, skip execution.")
+        sys.exit(0)
+
+    ensure_save_dir(args.output_dir)
     profile = ResourceProfile(nodes=[NodeResource(node_id="local", gpus=args.gpus, cpus=args.cpus)])
     trace = ObservabilityTrace(run_id=args.run_id)
 
