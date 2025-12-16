@@ -117,6 +117,12 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         return engine
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # 将样本侧的模板标记透传进 payload，避免已在预处理阶段渲染的提示被后台重复渲染/改写元数据。
+        sample = payload.get("sample") or {}
+        for key in ("chat_template_mode", "template_source", "rendered_by", "cache_suffix", "_tokenizer_path"):
+            if key not in payload and key in sample:
+                payload[key] = sample.get(key)
+
         self._check_tokenizer_conflict(payload)
         prompt = self._render_prompt(payload)
         output_type = payload.get("output_type", "text")
@@ -129,6 +135,10 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         rendered_by = payload.get("rendered_by")
         chat_mode = payload.get("chat_template_mode")
         return {
+            # 保留原始样本/消息/输入，便于下游多模态与元数据处理
+            "sample": payload.get("sample"),
+            "messages": payload.get("messages") or (payload.get("sample") or {}).get("messages"),
+            "inputs": payload.get("inputs") or (payload.get("sample") or {}).get("inputs"),
             "prompt": prompt,
             "sampling_params": sampling,
             "request_id": request_id,
@@ -499,13 +509,17 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             from vllm.engine.arg_utils import AsyncEngineArgs
             from vllm.engine.async_llm_engine import AsyncLLMEngine
 
-            engine_args = AsyncEngineArgs(
+            limit_mm = self._resolve_mm_limits(cfg, args) if self._is_multimodal_config(cfg, processor) else None
+            engine_kwargs = dict(
                 model=model_id,
                 tensor_parallel_size=getattr(args, "tensor_parallel_size", 1),
                 trust_remote_code=getattr(args, "trust_remote_code", True),
                 enforce_eager=getattr(args, "enforce_eager", False),
-                limit_mm_per_prompt=self._resolve_mm_limits(cfg, args),
             )
+            if limit_mm is not None:
+                engine_kwargs["limit_mm_per_prompt"] = limit_mm
+
+            engine_args = AsyncEngineArgs(**engine_kwargs)
             engine = AsyncLLMEngine.from_engine_args(engine_args)
             engine.log_requests = False
             try:
@@ -533,6 +547,33 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             dummy = DummyEngine(cfg, args)
             dummy.processor = processor
             return dummy, processor
+
+    def _is_multimodal_config(self, cfg: Any, processor: Any) -> bool:
+        """Best-effort detection to decide whether to pass multi-modal limits to vLLM."""
+
+        model_type = str(getattr(cfg, "model_type", "")).lower()
+        if any(tag in model_type for tag in ("vision", "vl", "multimodal")):
+            return True
+
+        # HuggingFace configs for VL models usually carry one of these fields
+        cfg_dict = cfg.__dict__ if hasattr(cfg, "__dict__") else {}
+        vision_keys = (
+            "vision_config",
+            "multi_modal_config",
+            "mm_vision_tower",
+            "vision_tower",
+            "mm_projector",
+        )
+        if any(getattr(cfg, key, None) is not None or key in cfg_dict for key in vision_keys):
+            return True
+
+        # Processor hints (AutoProcessor for VL models exposes image/vision attributes)
+        if processor is not None:
+            processor_keys = ("image_processor", "vision_model", "image_token_id")
+            if any(hasattr(processor, key) for key in processor_keys):
+                return True
+
+        return False
 
     def _resolve_mm_limits(self, cfg: Any, args: SimpleNamespace) -> Dict[str, int]:
         """Resolve multi-modal limits; default to a very high image cap to avoid ValueError."""

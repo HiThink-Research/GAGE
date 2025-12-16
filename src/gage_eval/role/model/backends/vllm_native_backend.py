@@ -87,6 +87,12 @@ class VLLMNativeBackend(EngineBackend):
         raise RuntimeError("vllm load_model failed after OOM retries") from last_exc
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # 透传预处理阶段的模板标记，避免重复渲染。
+        sample = payload.get("sample") or {}
+        for key in ("chat_template_mode", "template_source", "rendered_by", "cache_suffix", "_tokenizer_path"):
+            if key not in payload and key in sample:
+                payload[key] = sample.get(key)
+
         self._check_tokenizer_conflict(payload)
         prompt = payload.get("prompt") or payload.get("text") or ""
         messages = payload.get("messages") or []

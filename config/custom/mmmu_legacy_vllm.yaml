@@ -17,6 +17,7 @@ datasets:
       doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
       doc_to_visual_kwargs:
         content_field: messages.0.content
+      tokenizer_path: ${MMMU_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
 
 backends:
   - backend_id: mmmu_legacy_vllm_backend
@@ -24,6 +25,8 @@ backends:
     config:
       model_path: ${MMMU_MODEL_PATH:-/mnt/model/qwen2_5_vl_3b}  # 多模态模型路径，需支持 vision
       tokenizer_path: ${MMMU_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
+      use_chat_template: force
+      tokenizer_trust_remote_code: true
       tensor_parallel_size: 1
       max_tokens: 128
       sampling_params:

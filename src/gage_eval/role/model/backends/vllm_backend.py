@@ -121,6 +121,12 @@ class VLLMBackend(EngineBackend):
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Render prompt +采样参数，并准备 multi_modal_data."""
 
+        # 透传样本的模板标记，避免预处理阶段已渲染的提示被后台重复渲染。
+        sample = payload.get("sample") or {}
+        for key in ("chat_template_mode", "template_source", "rendered_by", "cache_suffix", "_tokenizer_path"):
+            if key not in payload and key in sample:
+                payload[key] = sample.get(key)
+
         self._check_tokenizer_conflict(payload)
         prompt = self._render_prompt(payload)
         sampling = dict(self._default_sampling)
@@ -130,6 +136,10 @@ class VLLMBackend(EngineBackend):
         caps = BackendCapabilities(supports_mm=self._mm_supported, has_processor_chat_template=False)
         cache_suffix = ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps)
         return {
+            # 保留原始样本/消息/输入，便于多模态与元数据透传
+            "sample": payload.get("sample"),
+            "messages": payload.get("messages") or (payload.get("sample") or {}).get("messages"),
+            "inputs": payload.get("inputs") or (payload.get("sample") or {}).get("inputs"),
             "prompt": prompt,
             "sampling_params": sampling,
             "multi_modal_data": mm_data,

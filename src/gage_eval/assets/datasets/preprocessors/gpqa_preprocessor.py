@@ -6,7 +6,12 @@ import random
 from typing import Any, Dict
 
 from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import MultiChoicePreprocessor
-from gage_eval.assets.datasets.utils.rendering import strip_render_flags
+from gage_eval.assets.datasets.utils.rendering import (
+    contains_multimodal,
+    render_messages_with_fallback,
+    set_render_flags,
+    strip_render_flags,
+)
 
 
 class GpqaPreprocessor(MultiChoicePreprocessor):
@@ -45,16 +50,16 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
         try:
             answer_index = options.index(correct_answer)
         except ValueError:
-            answer_index = 0    
+            answer_index = 0
 
         # step5：更新sample字典，适配父类MultiChoicePreprocessor
         sample["question"] = question
         sample["choices"] = options
         # 整数索引传入
-        sample["answer"] = answer_index 
+        sample["answer"] = answer_index
 
         # step6： 调用父类
-        return super().to_sample(
+        sample = super().to_sample(
             sample,
             question_field="question",
             options_field="choices",
@@ -62,6 +67,27 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
             answer_index_base=0,
             **kwargs,
         )
+        # 尝试复用 tokenizer 的 chat_template 渲染文本（对齐 DefaultPreprocessor 兜底逻辑）
+        messages = sample.get("messages")
+        if (
+            self._tokenizer is not None
+            and isinstance(messages, list)
+            and messages
+            and not contains_multimodal(messages)
+        ):
+            prompt, source = render_messages_with_fallback(messages, self._tokenizer)
+            sample["prompt"] = prompt
+            sample["inputs"] = {"prompt": prompt}
+            set_render_flags(
+                sample,
+                mode="preprocess",
+                source=source,
+                rendered_by="preprocess",
+                cache_suffix="-chat_template" if source == "model" else "-plain",
+            )
+            if getattr(self, "_tokenizer_path", None) and "_tokenizer_path" not in sample:
+                sample["_tokenizer_path"] = self._tokenizer_path
+        return sample
 
 class GpqaStructOnlyPreprocessor(GpqaPreprocessor):
     """GPQA 结构化预处理（不渲染 prompt，仅保留 choices/metadata）。"""
