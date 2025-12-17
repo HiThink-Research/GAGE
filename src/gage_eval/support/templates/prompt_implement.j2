@@ -1,0 +1,66 @@
+【Role】你是评测框架的高效工程师。
+
+【Input】
+下面是从 `design.md` 中提取的唯一真相源 `yaml support_config`（字段映射/指标/测试命令等都以此为准）：
+
+```yaml support_config
+{{ support_config_yaml }}
+```
+
+输出语言配置：{{ language }}（`zh`/`en`，默认 `zh`）。生成的代码注释/Docstring/说明请使用该语言。
+内置指标（无需生成代码）：{{ builtin_metric_ids }}
+
+【Reference（先通读再动笔，必要时多想一步，质量优先，不追求快）】
+- 基础 sample 结构设计（请按此组织 messages/inputs/metadata/choices 等）：`src/gage_eval/assets/datasets/sample.py`
+```
+{{ sample_format_doc }}
+```
+- Metric 抽象与类签名（实现时必须遵循）：`src/gage_eval/metrics/base.py`
+```
+{{ metrics_base_doc }}
+```
+- BasePreprocessor 核心流程（`src/gage_eval/assets/datasets/preprocessors/base.py`）：`to_sample` 只做字段映射/metadata 填充，规范化与多模态合并由基类完成，避免绕过 `normalize_sample`/`merge_multimodal_inputs`/`ensure_chat_template_flags`。
+- BasePreprocessor 规范与现有优秀范例（重点关注 metadata/answers/messages 结构化写法）：
+{{ reference_preprocessor_code }}
+- 标准 PipelineConfig 范例（字段/后端/任务/metrics 写法）：
+{{ reference_config_yaml }}
+
+【Tasks】
+Task 1) 生成预处理器逻辑类文件（只生成这一份，不要生成 custom.py/wrapper，不要生成 config YAML）：
+  - 路径：`src/gage_eval/assets/datasets/preprocessors/{{ dataset_slug }}_preprocessor.py`
+  - 类名：`{{ preprocessor_class_name }}`
+  - 继承：`BasePreprocessor`
+  - 要求：
+    1. imports 必须使用绝对路径 `from gage_eval...`。
+    2. `to_sample(record, **kwargs)` 必须按 `support_config` 的字段映射构造 sample，包含：`messages`（list[dict]，content 需为 list 且元素含 `type/text`）、`answers`（list[str]）、`label`（首个答案）、`metadata`（如 subject/level/unique_id/solution 等存在即写入）、`_dataset_id`（显式补齐，即使原样本缺失）。结构与字段需符合 `sample.py` 的标准，并与 BasePreprocessor 的后续规范化兼容。
+    3. 支持字段 fallback：优先按 `support_config.fields.*`，缺失时给出明确的报错信息；读取嵌套字段时可使用 `extract_field`。
+    4. 为 sample 提供稳定 id（优先 unique_id/id/_id），缺失时允许 BasePreprocessor 兜底；`modalities` 需与 support_config 一致。
+    5. multi-modal：视觉/音频等引用放在 `inputs.multi_modal_data`，不要塞进 messages；如缺失对应模态，给出空列表占位并保持与 doc_to_* 约定兼容。
+    6. system 提示与注释使用 `{{ language }}` 指定语言；如为文本任务，构造 `messages=[system,user]`，避免把标准答案/solution 泄露到 messages。
+
+Task 2) 如 `support_config.metrics` 中存在需要新增代码的指标（`implementation` 为 registry 名，且不在内置列表，且不是 class_path），为每个此类指标生成一个文件：
+  - **注意**：`metric_id` 仅用于报告侧展示；真正用于加载实现的是 `implementation`（registry 名）。
+  - 路径：`src/gage_eval/metrics/builtin/<implementation>.py`
+  - 使用装饰器：`@registry.asset("metrics", "<implementation>", desc="...", default_aggregation="mean")`
+  - 必须实现继承 `ComparisonMetric` 的类（类名用 PascalCase），覆盖 `compare(self, prediction, reference)` 并返回 `(score, metadata)`；避免仅导出函数。类实现需符合 `metrics/base.py` 的设计，声明 `default_reference_field/default_prediction_field`，metadata 中包含可调试字段（如归一化文本、匹配细节）。
+  - 提供最小可用实现（可先做归一化字符串等价 + boxed 提取），并在文件末尾设置 `__all__`。
+
+Task 3) 为新增的预处理器/指标生成最小可运行的单元测试，放在主工程 `tests/` 目录下：
+  - 预处理器测试：验证字段映射（question/answers/label/metadata/modalities/inputs.multi_modal_data）与防泄漏（solution 不进入 messages）。
+  - 指标测试（若生成指标文件）：验证 normalize/compare 的关键路径与边界（空输入、boxed、LaTeX 包装等）。
+  - 在 `support_config.tests.run_commands` 中补充/保留对应 pytest 命令（例如 `pytest -q tests/test_math500_preprocessor.py`）；实现后需确保这些命令可通过。
+
+【Output Format (STRICT)】
+你必须只输出下列协议块，不要输出任何额外解释/闲聊：
+
+### FILE: <absolute_or_repo_relative_path>
+<file content>
+### END
+
+每个文件一个 block，按 Task 顺序输出。
+
+【Constraints】
+- 禁止执行任何 shell 命令/读取本地文件/联网搜索；所有必要信息已经在本 Prompt 中提供。
+- 代码遵循 PEP8 与类型标注。
+- 多模态兜底：若 `support_config` 标注某模态但样本缺失，按 BasePreprocessor on_error 策略处理。
+- 语言一致性：除代码标识符外，注释与文本描述严格按 {{ language }} 输出。

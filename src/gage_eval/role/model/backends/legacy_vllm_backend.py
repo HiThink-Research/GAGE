@@ -9,9 +9,10 @@ import os
 import types
 import inspect
 import uuid
+import re
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -21,6 +22,15 @@ from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin,
 from gage_eval.utils.chat_templates import get_fallback_template
 from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 from gage_eval.utils.multimodal import load_multimodal_data
+
+try:  # pragma: no cover - optional dependency
+    import vllm  # type: ignore
+    from packaging import version as _pkg_version
+    _VLLM_VERSION = getattr(vllm, "__version__", None)
+    _VLLM_PROMPT_V1 = bool(_VLLM_VERSION) and _pkg_version.parse(_VLLM_VERSION) >= _pkg_version.parse("0.8.0")
+except Exception:  # pragma: no cover
+    _VLLM_VERSION = None
+    _VLLM_PROMPT_V1 = False
 
 
 def _ensure_spawn_start_method() -> None:
@@ -60,6 +70,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         self._tokenizer = None
         self._processor = None
         self._cfg_tokenizer_path = config.get("tokenizer_path") or config.get("tokenizer_name")
+        self._force_tokenize_prompt = bool(config.get("force_tokenize_prompt"))
         self._default_sampling = config.get("sampling_params") or {}
         self._max_tokens = int(config.get("max_tokens", 512))
         cfg = dict(config)
@@ -124,12 +135,13 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
                 payload[key] = sample.get(key)
 
         self._check_tokenizer_conflict(payload)
+        chat_template_kwargs = payload.get("chat_template_kwargs") or sample.get("chat_template_kwargs")
         prompt = self._render_prompt(payload)
+        prompt, inputs_val = self._maybe_tokenize_messages(payload, prompt)
         output_type = payload.get("output_type", "text")
         sampling = self._build_sampling_params(output_type, payload.get("sampling_params") or {})
         sample_n = int(payload.get("sample_n") or payload.get("generation_params", {}).get("n") or 1)
         request_id = self._resolve_request_id(payload)
-        chat_template_kwargs = payload.get("chat_template_kwargs") or sample.get("chat_template_kwargs")
         caps = BackendCapabilities(supports_mm=True, has_processor_chat_template=bool(self._processor))
         cache_suffix = ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps)
         template_source = payload.get("template_source")
@@ -149,7 +161,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             "template_source": template_source,
             "rendered_by": rendered_by,
             "chat_template_mode": chat_mode,
-            "chat_template_kwargs": chat_template_kwargs,
+            # "chat_template_kwargs": chat_template_kwargs,
             "messages": payload.get("messages") or (payload.get("sample") or {}).get("messages") or [],
         }
 
@@ -184,47 +196,98 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         mm_raw = self._prepare_multi_modal_data(prepared)
         mm_loaded = self._load_multimodal_payload(mm_raw)
         messages = prepared.get("messages") or []
-        chat_kwargs = prepared.get("chat_template_kwargs") or {}
 
         # 定义异步任务，将在后台 loop 中运行
         async def _async_generate():
-            # 构造 prompt
-            if mm_loaded:
-                rendered_mm = self._render_with_processor(messages, prompt, chat_template_kwargs=chat_kwargs)
-                final_prompt_text = rendered_mm if rendered_mm else prompt
-                prompt_input = {"prompt": final_prompt_text, "multi_modal_data": mm_loaded}
+            # 构造 prompt，优先 processor 渲染
+            rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"))
+            final_prompt_text = rendered_mm if rendered_mm else prompt
+
+            # vLLM v1（>=0.8.0）接口支持单个 PromptInputs dict 作为位置参数；旧接口只接受 keyword prompt/inputs
+            use_v1_prompt = bool(_VLLM_PROMPT_V1)
+            prompt_input: Any
+            mm_payload = mm_loaded
+            if mm_payload:
+                # 确保 prompt 中包含足够的 <image> 占位，防止 vLLM 提示更新不匹配
+                image_field = mm_payload.get("image") if isinstance(mm_payload, dict) else None
+                if isinstance(image_field, (list, tuple)):
+                    image_count = len(image_field)
+                elif image_field is None:
+                    image_count = 0
+                else:
+                    image_count = 1
+                final_prompt_text = self._normalize_image_placeholders(final_prompt_text, image_count)
+                prompt_input = {"prompt": final_prompt_text, "multi_modal_data": mm_payload}
             else:
-                rendered_mm = self._render_with_processor(messages, prompt, chat_template_kwargs=chat_kwargs)
-                prompt_input = rendered_mm if rendered_mm else prompt
+                prompt_input = final_prompt_text
+
+            extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
+            if isinstance(extra_inputs, dict):
+                # 如有 input_ids/prompt_token_ids，则构造 dict 以走 v1 PromptInputs，兼容 llm-eval 行为
+                needs_dict = mm_loaded or use_v1_prompt or "input_ids" in extra_inputs or "prompt_token_ids" in extra_inputs
+                if needs_dict and not isinstance(prompt_input, dict):
+                    prompt_input = {"prompt": final_prompt_text}
+                if isinstance(prompt_input, dict):
+                    mapped_extra = dict(extra_inputs)
+                    if "input_ids" in mapped_extra and "prompt_token_ids" not in mapped_extra:
+                        mapped_extra["prompt_token_ids"] = mapped_extra.get("input_ids")
+                    for k, v in mapped_extra.items():
+                        prompt_input.setdefault(k, v)
 
             generate_kwargs = {
-                "prompt": prompt_input,
                 "sampling_params": sampling_params,
                 "request_id": request_id,
             }
-
-            # 合并 extra_inputs
-            extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
-            if isinstance(extra_inputs, dict):
-                for k, v in extra_inputs.items():
-                    if k not in generate_kwargs:
-                        generate_kwargs[k] = v
+            if use_v1_prompt:
+                generate_args = (prompt_input,)
+            else:
+                if isinstance(prompt_input, dict):
+                    generate_kwargs["inputs"] = prompt_input
+                    generate_kwargs["prompt"] = prompt_input.get("prompt", prompt)
+                else:
+                    generate_kwargs["prompt"] = prompt_input
+                if isinstance(extra_inputs, dict):
+                    mapped_extra = dict(extra_inputs)
+                    if "input_ids" in mapped_extra and "prompt_token_ids" not in mapped_extra:
+                        mapped_extra["prompt_token_ids"] = mapped_extra.get("input_ids")
+                    for k, v in mapped_extra.items():
+                        generate_kwargs.setdefault(k, v)
+                
+                # 防御性修正：确保 prompt_token_ids 是列表，防止 int 导致 len() 报错
+                if "prompt_token_ids" in generate_kwargs:
+                    p_ids = generate_kwargs["prompt_token_ids"]
+                    if isinstance(p_ids, int):
+                        generate_kwargs["prompt_token_ids"] = [p_ids]
+                
+                generate_args = ()
 
             try:
-                result = self.model.generate(**generate_kwargs)
-                
-                # 异步收集结果
-                if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
-                    items = []
-                    async for item in result:
-                        items.append(item)
-                    return items
-                elif inspect.iscoroutine(result):
-                    return await result
-                return result
+                result = self.model.generate(*generate_args, **generate_kwargs)
+            except TypeError as exc:
+                # 旧版 AsyncLLMEngine.generate 不支持 multi_modal_data/inputs 关键字或 v1 位置参数
+                if mm_loaded or generate_args:
+                    logger.warning(
+                        "legacy_vllm_backend generate encountered TypeError ({}); "
+                        "falling back to prompt-only without multi_modal_data",
+                        exc,
+                    )
+                    prompt_for_retry = prompt_input.get("prompt") if isinstance(prompt_input, dict) else prompt_input
+                    result = self.model.generate(prompt=prompt_for_retry or prompt, sampling_params=sampling_params, request_id=request_id)
+                else:
+                    raise
             except Exception as exc:
                 logger.warning("legacy_vllm_backend generate failed: {} - {}; returning echo output", type(exc).__name__, exc, exc_info=True)
                 return {"outputs": [{"text": str(prompt)}]}
+
+            # 异步收集结果
+            if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
+                final_item = None
+                async for item in result:
+                    final_item = item
+                return final_item
+            elif inspect.iscoroutine(result):
+                return await result
+            return result
 
         # 提交到后台线程执行并等待结果
         future = asyncio.run_coroutine_threadsafe(_async_generate(), self._loop)
@@ -295,10 +358,15 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
 
     def _render_prompt(self, payload: Dict[str, Any]) -> str:
         messages = payload.get("messages") or (payload.get("sample") or {}).get("messages") or []
-        raw_prompt = payload.get("prompt") or payload.get("text") or (payload.get("sample") or {}).get("prompt") or ""
+        raw_prompt = payload.get("prompt") or payload.get("text") or (payload.get("sample") or {}).get("prompt")
+        if not raw_prompt:
+            inputs = payload.get("inputs") or (payload.get("sample") or {}).get("inputs")
+            if isinstance(inputs, dict):
+                raw_prompt = inputs.get("prompt")
+        raw_prompt = raw_prompt or ""
         policy = ChatTemplatePolicy(mode=self._chat_template_mode)
         caps = BackendCapabilities(supports_mm=True, has_processor_chat_template=bool(self._processor))
-        chat_kwargs = payload.get("chat_template_kwargs") or (payload.get("sample") or {}).get("chat_template_kwargs") or {}
+        chat_kwargs = payload.get("chat_template_kwargs") or {}
 
         if not ChatTemplateMixin.should_render(payload, policy):
             if raw_prompt:
@@ -308,9 +376,8 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         template_source = ChatTemplateMixin.select_template("text", policy, caps)
         template_fn = getattr(self._tokenizer, "apply_chat_template", None) if self._tokenizer else None
         fallback_tpl = None if template_source == "model" else self._fallback_template
-        norm_messages = self._normalize_messages_for_template(messages)
         rendered = ChatTemplateMixin.render(
-            norm_messages,
+            messages,
             template_fn=template_fn,
             fallback_fn=lambda msgs: self._fallback_render(msgs, fallback_tpl),
             add_generation_prompt=True,
@@ -320,7 +387,84 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         payload["chat_template_mode"] = "backend"
         payload["template_source"] = "model" if template_fn else "fallback"
         payload["rendered_by"] = "backend"
-        return rendered or self._simple_render(norm_messages) or str(raw_prompt)
+        return rendered or self._simple_render(messages) or str(raw_prompt)
+
+    def _maybe_tokenize_messages(self, payload: Dict[str, Any], prompt: str) -> Tuple[str, Any]:
+        """使用 backend tokenizer 生成 prompt_token_ids（若预处理器未提供）。"""
+
+        inputs = payload.get("inputs") or (payload.get("sample") or {}).get("inputs") or {}
+        if isinstance(inputs, dict) and inputs.get("prompt_token_ids"):
+            return prompt, inputs
+        if not self._tokenizer and not (self._processor and hasattr(self._processor, "apply_chat_template")):
+            return prompt, inputs
+
+        policy = self._chat_template_policy
+        force_tokenize = bool(payload.get("force_tokenize_prompt") or self._force_tokenize_prompt)
+        if not ChatTemplateMixin.should_render(payload, policy) and not force_tokenize:
+            return prompt, inputs
+
+        # 默认仅在多模态场景分词，避免纯文本重复调用 tokenizer
+        if not ChatTemplateMixin.detect_multimodal(payload) and not force_tokenize:
+            return prompt, inputs
+
+        messages = payload.get("messages") or (payload.get("sample") or {}).get("messages") or []
+        if not isinstance(messages, list) or not messages:
+            return prompt, inputs
+
+        try:
+            chat_template_fn = None
+            # 优先使用 processor（多模态安全），否则回退 tokenizer
+            if self._processor and hasattr(self._processor, "apply_chat_template"):
+                chat_template_fn = self._processor.apply_chat_template
+            elif self._tokenizer and hasattr(self._tokenizer, "apply_chat_template"):
+                chat_template_fn = self._tokenizer.apply_chat_template
+
+            def _strip_non_text(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                """移除非文本片段，避免 tokenizer 不支持 image/audio 时失败。"""
+                sanitized: List[Dict[str, Any]] = []
+                for m in msgs:
+                    content = m.get("content")
+                    if isinstance(content, list):
+                        texts = []
+                        for frag in content:
+                            if isinstance(frag, dict) and frag.get("type") == "text":
+                                texts.append(str(frag.get("text", "")))
+                        content = [{"type": "text", "text": " ".join(texts)}]
+                    sanitized.append({"role": m.get("role", "user"), "content": content})
+                return sanitized
+
+            sanitized_messages = messages
+            rendered = None
+            tokenized = None
+            if chat_template_fn:
+                try:
+                    rendered = chat_template_fn(messages, tokenize=False, add_generation_prompt=True)
+                    tokenized = chat_template_fn(messages, tokenize=True, add_generation_prompt=True)
+                except Exception:
+                    # 对多模态不支持的 tokenizer，降级为文本-only 拼接再分词
+                    sanitized_messages = _strip_non_text(messages)
+                    rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
+                    tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
+            if isinstance(tokenized, list):
+                first = tokenized[0] if tokenized else []
+                token_ids = first if isinstance(first, (list, tuple)) else tokenized
+            else:
+                token_ids = tokenized
+            new_prompt = str(rendered) if rendered else prompt
+            if not isinstance(inputs, dict):
+                inputs = {}
+            inputs = dict(inputs)
+            inputs["prompt"] = new_prompt
+            if token_ids is not None:
+                inputs["prompt_token_ids"] = token_ids
+            payload.setdefault("template_source", "model")
+            payload.setdefault("rendered_by", "backend")
+            payload.setdefault("chat_template_mode", "backend")
+            payload.setdefault("cache_suffix", "-chat_template")
+            return new_prompt, inputs
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug("legacy_vllm_backend: apply_chat_template tokenize failed, skip prompt_token_ids: {}", exc)
+            return prompt, inputs
 
     def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
         return self._simple_render(messages)
@@ -335,8 +479,11 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             if isinstance(content, list):
                 text_parts = []
                 for fragment in content:
-                    if isinstance(fragment, dict) and fragment.get("type") == "text":
-                        text_parts.append(str(fragment.get("text", "")))
+                    if isinstance(fragment, dict):
+                        if fragment.get("type") == "text":
+                            text_parts.append(str(fragment.get("text", "")))
+                        elif fragment.get("type") in {"image", "image_url"}:
+                            text_parts.append("<image>")
                 text = " ".join(text_parts)
             else:
                 text = str(content) if content is not None else ""
@@ -405,6 +552,21 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         backend_tok = self._cfg_tokenizer_path
         if dataset_tok and backend_tok and str(dataset_tok) != str(backend_tok):
             raise ValueError(f"Conflicting tokenizer_path: dataset={dataset_tok} backend={backend_tok}")
+
+    @staticmethod
+    def _normalize_image_placeholders(prompt: str, image_count: int) -> str:
+        """确保 prompt 中有足够的 <image> 占位符以匹配多模态数据。"""
+
+        marker = "<image>"
+        if not prompt:
+            prompt = ""
+        normalized = re.sub(r"<image\s*\d*>", marker, prompt, flags=re.IGNORECASE)
+        current = normalized.lower().count(marker)
+        missing = max(0, image_count - current)
+        if missing > 0:
+            prefix = " ".join([marker] * missing)
+            normalized = (prefix + " " + normalized).strip()
+        return normalized
 
     def _build_sampling_params(self, output_type: str, runtime_params: Dict[str, Any]):
         base = dict(self._default_sampling)
@@ -737,19 +899,24 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         if not mm:
             mm = sample.get("multi_modal_data")
 
-        images: List[Any] = []
-        audios: List[Any] = []
+        image_sources: List[Any] = []
+        audio_sources: List[Any] = []
         if isinstance(mm, dict):
-            images.extend(self._load_images(mm.get("image") or mm.get("images")))
+            mm_images = mm.get("image") or mm.get("images")
+            if mm_images is not None:
+                image_sources.extend(mm_images if isinstance(mm_images, list) else [mm_images])
             audio_raw = mm.get("audio") or mm.get("audios")
             if audio_raw:
-                audios.extend(audio_raw if isinstance(audio_raw, list) else [audio_raw])
+                audio_sources.extend(audio_raw if isinstance(audio_raw, list) else [audio_raw])
 
         messages = payload.get("messages") or sample.get("messages") or []
-        images.extend(self._load_images(self._extract_images_from_messages(messages)))
+        image_sources.extend(self._extract_images_from_messages(messages))
+
+        image_sources = self._dedup_media_sources(image_sources)
+        images = self._load_images(image_sources)
 
         images = [img for img in images if img is not None]
-        audios = [au for au in audios if au is not None]
+        audios = [au for au in self._dedup_media_sources(audio_sources) if au is not None]
         if not images and not audios:
             return None
         result: Dict[str, Any] = {}
@@ -777,6 +944,28 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
                     if isinstance(url, str):
                         urls.append(url)
         return urls
+
+    @staticmethod
+    def _dedup_media_sources(sources: List[Any]) -> List[Any]:
+        """简单去重媒体来源，避免 messages 与 inputs 重复计数."""
+
+        seen = set()
+        deduped: List[Any] = []
+        for src in sources:
+            key = None
+            if isinstance(src, str):
+                key = src
+            else:
+                try:
+                    key = hash(src)
+                except Exception:
+                    key = None
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            deduped.append(src)
+        return deduped
 
     def _load_images(self, sources) -> List[Any]:
         if sources is None:

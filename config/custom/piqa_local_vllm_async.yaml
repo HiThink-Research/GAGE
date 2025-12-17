@@ -13,15 +13,15 @@ datasets:
   - dataset_id: piqa_validation_local
     loader: jsonl
     params:
-      path: ${PIQA_DATA_PATH:-/mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl}
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
       # 不再设置 limit，运行时可用 task.max_samples 或 CLI --max-samples 控制样本数
-      tokenizer_path: ${PIQA_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: /mnt/model/qwen2_5_05B
 
 backends:
   - backend_id: piqa_local_vllm_backend
     type: vllm
     config:
-      model_path: ${PIQA_MODEL_PATH:-/mnt/model/qwen2_5_05B}  # H100 可切至更大模型
+      model_path: /mnt/model/qwen2_5_05B  # H100 可切至更大模型
       tensor_parallel_size: 1
       max_tokens: 96
       sampling_params:

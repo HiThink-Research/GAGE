@@ -13,14 +13,14 @@ datasets:
   - dataset_id: piqa_validation_local
     loader: jsonl
     params:
-      path: ${PIQA_DATA_PATH:-/mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl}
-      tokenizer_path: ${PIQA_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
+      tokenizer_path: /mnt/model/qwen2_5_05B
 
 backends:
   - backend_id: piqa_legacy_vllm_backend
     type: legacy_vllm
     config:
-      model_path: ${PIQA_MODEL_PATH:-/mnt/model/qwen2_5_05B}  # 文本模型，必要时替换为本地路径
+      model_path: /mnt/model/qwen2_5_05B  # 文本模型，必要时替换为本地路径
       tensor_parallel_size: 1
       max_tokens: 96
       sampling_params:

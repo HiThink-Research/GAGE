@@ -1,0 +1,50 @@
+# ------------------------------------------------------------
+# 复制示例 1：Gemini Client（复制本段并去掉每行开头的 # 即可使用）
+# ------------------------------------------------------------
+# agent:
+#   type: gemini
+#   command: gemini
+#   yolo_args:
+#     - "-y"                 # 触发 yolo 模式
+#     - "--model"
+#     - "gemini-3-pro-preview"
+#   timeout: 600
+#   prompt_flag: ""        
+#
+# ------------------------------------------------------------
+# 复制示例 2：Codex Client（复制本段并去掉每行开头的 # 即可使用）
+# ------------------------------------------------------------
+# agent:
+#   type: codex
+#   command: codex
+#   yolo_args:
+#     - "--model"
+#     - "gpt-5.2"
+#   timeout: 900
+#   prompt_flag: ""          # Codex CLI 使用位置参数传递 prompt
+#
+# 说明：
+# - 本配置仅透传参数给 CLI 工具。请将 --model、--agent 等参数直接添加到 yolo_args 列表中。
+
+agent:
+  type: gemini
+  command: gemini
+  yolo_args:
+    - "-y"
+    - "--model"
+    - "gemini-3-pro-preview"
+  prompt_flag: ""
+  timeout: 900
+
+paths:
+  workspace_root: dev_docs
+  local_datasets_root: local-datasets
+
+execution:
+  dry_run_default: true
+  command_allowlist:
+    - python
+    - pytest
+    - compileall
+
+language: zh

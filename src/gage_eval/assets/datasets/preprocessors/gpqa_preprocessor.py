@@ -67,7 +67,7 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
             answer_index_base=0,
             **kwargs,
         )
-        # 尝试复用 tokenizer 的 chat_template 渲染文本（对齐 DefaultPreprocessor 兜底逻辑）
+        # 尝试复用 tokenizer 的 chat_template 渲染文本并生成 input_ids（对齐 llm-eval 行为）
         messages = sample.get("messages")
         if (
             self._tokenizer is not None
@@ -78,6 +78,12 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
             prompt, source = render_messages_with_fallback(messages, self._tokenizer)
             sample["prompt"] = prompt
             sample["inputs"] = {"prompt": prompt}
+            try:
+                if hasattr(self._tokenizer, "encode"):
+                    sample["inputs"]["input_ids"] = self._tokenizer.encode(prompt)
+            except Exception:
+                # encoding 失败则只保留 prompt，避免中断预处理
+                pass
             set_render_flags(
                 sample,
                 mode="preprocess",

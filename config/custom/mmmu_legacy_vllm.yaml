@@ -13,20 +13,17 @@ datasets:
   - dataset_id: mmmu_val_local
     loader: jsonl
     params:
-      path: ${MMMU_DATA_PATH:-/mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/lmms-lab/MMMU/data/mmmu_val_500.jsonl}
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/lmms-lab/MMMU/data/mmmu_val_500.jsonl
       doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
       doc_to_visual_kwargs:
         content_field: messages.0.content
-      tokenizer_path: ${MMMU_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
 
 backends:
   - backend_id: mmmu_legacy_vllm_backend
     type: legacy_vllm
     config:
-      model_path: ${MMMU_MODEL_PATH:-/mnt/model/qwen2_5_vl_3b}  # 多模态模型路径，需支持 vision
-      tokenizer_path: ${MMMU_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
-      use_chat_template: force
-      tokenizer_trust_remote_code: true
+      model_path: /mnt/model/qwen2_5_vl_3b  # 多模态模型路径，需支持 vision
+      tokenizer_path: /mnt/model/qwen2_5_vl_3b
       tensor_parallel_size: 1
       max_tokens: 128
       sampling_params:

@@ -1,0 +1,62 @@
+{# 
+  Benchmark preprocessor template.
+  - This file is rendered into: src/gage_eval/assets/datasets/preprocessors/<dataset_slug>_preprocessor.py
+  - Registry wrapper should be appended to preprocessors/custom.py (or _generated.py) using the snippet below.
+#}
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
+from gage_eval.assets.datasets.utils.mapping import extract_field
+
+
+class {{ preprocessor_class_name }}(BasePreprocessor):
+    """{{ dataset_name }} 预处理器（自动生成，可按需微调）。"""
+
+    name = "{{ preprocess_name }}"
+    modalities = {{ modalities | default("['text']") }}
+
+    def __init__(self, tokenizer=None, tokenizer_path: Optional[str] = None, **kwargs: Any) -> None:
+        super().__init__(tokenizer=tokenizer, tokenizer_path=tokenizer_path, **kwargs)
+
+    def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
+        merged = dict(self.kwargs)
+        merged.update(kwargs)
+        dataset_id = merged.pop("dataset_id", None) or record.get("_dataset_id") or "{{ dataset_id }}"
+        dataset_meta = merged.pop("dataset_metadata", None) or record.get("_dataset_metadata")
+
+        # 按 design.md 中 `yaml support_config` 的字段映射构造 sample；规范化由 BasePreprocessor 完成。
+        sample: Dict[str, Any] = {
+            "_dataset_id": dataset_id,  # 显式补齐，便于 debug/trace
+            "_dataset_metadata": dataset_meta,
+            "modalities": list({{ modalities | default("['text']") }}),
+            "metadata": {},
+            "answers": [],
+        }
+
+{{ (to_sample_body | default("# (support) fill field mapping here")) | indent(8, true) }}
+
+        # 确保 label/answers 填充与默认指标路径对齐。
+        if sample.get("answers") and not sample.get("label"):
+            sample["label"] = sample["answers"][0]
+        return sample
+
+
+__all__ = ["{{ preprocessor_class_name }}"]
+
+{# -------------------------------------------------------------------------
+Registry wrapper snippet (append to preprocessors/custom.py or _generated.py).
+NOTE: registry.asset requires non-empty desc.
+------------------------------------------------------------------------- #}
+{# 
+@registry.asset(
+    "dataset_preprocessors",
+    "{{ preprocess_name }}",
+    desc="{{ dataset_name }} Preprocessor",
+    tags={{ tags | default("()") }},
+)
+class {{ registry_wrapper_class_name | default(preprocessor_class_name) }}({{ preprocessor_class_name }}):
+    pass
+#}

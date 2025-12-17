@@ -49,3 +49,4 @@ class PiqaStructOnlyPreprocessor(PiqaPreprocessor):
 
 
 __all__ = ["PiqaPreprocessor", "PiqaStructOnlyPreprocessor"]
+from gage_eval.assets.datasets.utils.rendering import strip_render_flags

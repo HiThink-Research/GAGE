@@ -56,6 +56,38 @@ def _resolve_expected_label(
     return None
 
 
+def _extract_numeric_answer(prediction: str, answer_type: str) -> Optional[str]:
+    """尝试从文本中提取数值答案 (integer/float)"""
+    if not prediction:
+        return None
+
+    # 1. 尝试直接转换
+    try:
+        if answer_type == "integer":
+            return str(int(float(prediction)))
+        elif answer_type == "float":
+            return str(float(prediction))
+    except (ValueError, TypeError):
+        pass
+
+    # 2. 尝试提取最后一个数字
+    # 匹配: 可选负号 + 数字 + 可选小数部分
+    # 注意: 这种简单的正则可能无法处理千分位逗号等复杂格式，但在 MathVista 语境下通常足够
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", prediction)
+    if not numbers:
+        return None
+
+    last_num = numbers[-1]
+    try:
+        if answer_type == "integer":
+            return str(int(float(last_num)))
+        elif answer_type == "float":
+            return str(float(last_num))
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
 @registry.asset(
     "metrics",
     "mathvista_accuracy",
@@ -74,6 +106,8 @@ class MathVistaAccuracyMetric(SimpleMetric):
         choices_field = self.args.get("choices_field", "sample.choices")
         answer_field = self.args.get("answer_field", "sample.answer")
         label_field = self.args.get("label_field", "sample.answer")
+        # 新增 answer_type 字段读取
+        answer_type_field = self.args.get("answer_type_field", "sample.answer_type")
 
         # 读取数据
         prediction_raw = extract_field(context, prediction_field, default="")
@@ -83,6 +117,12 @@ class MathVistaAccuracyMetric(SimpleMetric):
         answer = extract_field(context, correct_choice_field)
         if answer is None:
             answer = extract_field(context, answer_field)
+        if answer is None:
+            answer = extract_field(context, "sample.label")
+        if answer is None:
+            answer = extract_field(context, "sample.metadata.answer")
+        
+        answer_type = extract_field(context, answer_type_field)
 
         is_multi_choice = bool(option_map) or bool(choices)
 
@@ -94,7 +134,7 @@ class MathVistaAccuracyMetric(SimpleMetric):
 
             expected_label = _resolve_expected_label(answer, option_map, answer_index_base=0)
             pred_label = None
-            if prediction:
+            if prediction and option_map:
                 extracted = _extract_choice_letter(prediction)
                 if extracted:
                     pred_label = extracted.upper()
@@ -115,7 +155,30 @@ class MathVistaAccuracyMetric(SimpleMetric):
             }
             return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-        # 非多选：按规范化文本精确匹配
+        # 非多选：如果是数值型，尝试数值提取匹配
+        if answer_type in ("integer", "float") and prediction:
+            extracted_num = _extract_numeric_answer(prediction, answer_type)
+            # 同样尝试提取 reference
+            ref_raw = extract_field(context, label_field, default="")
+            # 如果 reference 本身就是标准数字，通常不需要正则，但为了保险也走一遍
+            ref_str = str(ref_raw)
+            ref_num = _extract_numeric_answer(ref_str, answer_type)
+            
+            if extracted_num is not None and ref_num is not None:
+                # 数值匹配 (字符串相等比较即可，因为 _extract_numeric_answer 已经做了规范化)
+                matched = (extracted_num == ref_num)
+                score = 1.0 if matched else 0.0
+                return MetricResult(
+                    sample_id=context.sample_id, 
+                    values={self.value_key: score}, 
+                    metadata={
+                        "prediction": prediction, 
+                        "extracted_prediction": extracted_num,
+                        "reference": ref_num
+                    }
+                )
+
+        # 非多选且非数值（或提取失败）：回退到按规范化文本精确匹配
         references_raw = extract_field(context, label_field, default="")
         references = [
             normalize_text_advanced(text, strip=True, collapse_whitespace=True)

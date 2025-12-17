@@ -10,6 +10,7 @@ from gage_eval.assets.datasets.utils.mapping import (
     normalize_options,
     resolve_correct_choice,
 )
+from gage_eval.assets.datasets.utils.rendering import set_render_flags
 
 _CHOICE_ALPHABET: Tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 

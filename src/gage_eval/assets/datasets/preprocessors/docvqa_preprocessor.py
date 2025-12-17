@@ -14,6 +14,7 @@ from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
 from gage_eval.assets.datasets.utils.mapping import extract_field
 from gage_eval.assets.datasets.utils.normalization import list_images, ensure_chat_template_flags
 from gage_eval.assets.datasets.utils.answers import parse_list_from_string, enrich_answer_with_options
+from gage_eval.assets.datasets.utils.rendering import set_render_flags
 
 
 class DocVQAPreprocessor(BasePreprocessor):
