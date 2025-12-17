@@ -206,3 +206,6 @@ AGENTS.md
 
 # local datasets
 /local-datasets/piqa/
+
+
+.gage_cache/

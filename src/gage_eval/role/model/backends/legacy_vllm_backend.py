@@ -21,6 +21,7 @@ from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
 from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
+from gage_eval.utils.messages import normalize_messages_for_template, stringify_message_content
 from gage_eval.utils.multimodal import load_multimodal_data
 
 try:  # pragma: no cover - optional dependency
@@ -475,18 +476,10 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         segments: List[str] = []
         for message in messages:
             role = message.get("role", "user")
-            content = message.get("content")
-            if isinstance(content, list):
-                text_parts = []
-                for fragment in content:
-                    if isinstance(fragment, dict):
-                        if fragment.get("type") == "text":
-                            text_parts.append(str(fragment.get("text", "")))
-                        elif fragment.get("type") in {"image", "image_url"}:
-                            text_parts.append("<image>")
-                text = " ".join(text_parts)
-            else:
-                text = str(content) if content is not None else ""
+            text = stringify_message_content(
+                message.get("content"),
+                coerce_non_text_fragments=False,
+            )
             segments.append(f"{role}: {text}".strip())
         segments.append("assistant:")
         return "\n".join(segments)
@@ -495,25 +488,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
     def _normalize_messages_for_template(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Flatten list-based content so chat templates see strings instead of lists."""
 
-        normalized: List[Dict[str, Any]] = []
-        for message in messages or []:
-            item = dict(message)
-            content = item.get("content")
-            if isinstance(content, list):
-                parts: List[str] = []
-                for fragment in content:
-                    if isinstance(fragment, dict):
-                        if fragment.get("type") == "text":
-                            parts.append(str(fragment.get("text", "")))
-                        elif fragment.get("type") in {"image", "image_url"}:
-                            parts.append("<image>")
-                    elif fragment is not None:
-                        parts.append(str(fragment))
-                item["content"] = " ".join(part for part in parts if part).strip()
-            elif content is None:
-                item["content"] = ""
-            normalized.append(item)
-        return normalized
+        return normalize_messages_for_template(messages)
 
     def _render_with_processor(
         self, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None
