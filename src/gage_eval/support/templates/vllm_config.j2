@@ -1,0 +1,85 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: {{ dataset_slug }}_vllm
+  description: "Auto-generated vLLM(OpenAI-compatible HTTP) config for {{ dataset_id }}"
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: {{ dataset_id }}
+{% if (loader | default("jsonl")) == "hf_hub" %}
+    hub: {{ hub | default("huggingface") }}
+    hub_params:
+      hub_id: {{ hub_id | default(dataset_id) }}
+{% if subset is defined and subset is not none %}
+      subset: {{ subset }}
+{% endif %}
+      split: {{ split | default("train", true) }}
+      trust_remote_code: {{ trust_remote_code | default(false) | lower }}
+    loader: hf_hub
+    params:
+      preprocess: {{ preprocess_name }}
+      preprocess_kwargs:
+        question_field: {{ fields.question_field | default("") }}
+        answers_field: {{ fields.answers_field | default("") }}
+        content_field: {{ fields.content_field | default("") }}
+{% if doc_to_text | default("") %}
+      doc_to_text: {{ doc_to_text }}
+{% endif %}
+{% if doc_to_visual | default("") %}
+      doc_to_visual: {{ doc_to_visual }}
+{% endif %}
+{% if doc_to_audio | default("") %}
+      doc_to_audio: {{ doc_to_audio }}
+{% endif %}
+{% else %}
+    loader: jsonl
+    params:
+      path: {{ data_path | default("../local-datasets/" ~ dataset_slug ~ ".jsonl") }}
+      preprocess: {{ preprocess_name }}
+      preprocess_kwargs:
+        question_field: {{ fields.question_field | default("") }}
+        answers_field: {{ fields.answers_field | default("") }}
+        content_field: {{ fields.content_field | default("") }}
+{% if doc_to_text | default("") %}
+      doc_to_text: {{ doc_to_text }}
+{% endif %}
+{% if doc_to_visual | default("") %}
+      doc_to_visual: {{ doc_to_visual }}
+{% endif %}
+{% if doc_to_audio | default("") %}
+      doc_to_audio: {{ doc_to_audio }}
+{% endif %}
+{% endif %}
+
+backends:
+  - backend_id: {{ dataset_slug }}_vllm_backend
+    type: openai_http
+    config:
+      base_url: {{ base_url | default("http://127.0.0.1:16666/v1") }}
+      model: {{ model | default("<model_name>") }}
+      default_params:
+        max_new_tokens: {{ max_new_tokens | default(1024) }}
+        temperature: {{ temperature | default(0.1) }}
+
+role_adapters:
+  - adapter_id: {{ dataset_slug }}_dut
+    role_type: dut_model
+    backend_id: {{ dataset_slug }}_vllm_backend
+    capabilities: {{ capabilities | default(["text_chat"]) }}
+
+metrics:
+{% for m in metrics | default([]) %}
+  - metric_id: {{ m.metric_id }}
+    implementation: {{ m.implementation | default(m.metric_id) }}
+    aggregation: {{ m.aggregation | default("mean") }}
+{% endfor %}
+
+tasks:
+  - task_id: {{ dataset_slug }}_eval
+    dataset_id: {{ dataset_id }}
+    max_samples: {{ max_samples | default(20) }}

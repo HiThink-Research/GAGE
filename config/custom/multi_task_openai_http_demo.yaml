@@ -1,0 +1,136 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: multi_task_openai_http_demo
+  description: 使用同一个 OpenAI HTTP 后端在本机同时评测文本多选与 DocVQA，演示多任务使用不同指标的配置方式。
+
+prompts:
+  - prompt_id: multi_choice_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一个专业的助手。请逐步思考，然后在最后一行仅输出一个大写字母（A、B、C 或 D）作为最终答案。
+      instruction: >
+        请仔细推理并在最后一行只输出一个大写字母（A、B、C 或 D）。
+    template: |
+      {{ system_prompt }}
+
+      问题：
+      {{ sample.question }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+datasets:
+  # 文本多选任务：MMLU business_ethics 子集
+  - dataset_id: mmlu_business_ethics
+    hub: huggingface
+    hub_params:
+      hub_id: lighteval/mmlu
+      subset: business_ethics
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: multi_choice_standardizer
+      preprocess_kwargs:
+        question_field: question
+        choices_field: choices
+        answer_field: answer
+        answer_index_base: 0
+
+  # DocVQA 任务：使用本地 HLE 示例 JSONL
+  - dataset_id: docvqa_val
+    loader: jsonl
+    params:
+      path: local-datasets/HLE/hle_test_prompted.jsonl
+      preprocess: docvqa_image_standardizer
+      preprocess_kwargs:
+        question_field: messages.0.content.1.text|messages.0.content.0.text
+        answers_field: choices.0.message.content.0.text
+        image_field: messages.0.content.0.image_url.url
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_image_as_data_url
+
+backends:
+  - backend_id: qwen3_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen/qwen3-vl-30b
+      default_params:
+        max_new_tokens: 256
+        temperature: 0.1
+      async_max_concurrency: 2
+
+role_adapters:
+  # 文本多选 DUT
+  - adapter_id: dut_text
+    role_type: dut_model
+    backend_id: qwen3_openai_http
+    prompt_id: multi_choice_infer_prompt
+    prompt_params:
+      language: zh
+      subject: business_ethics
+      dataset_name: mmlu
+    capabilities:
+      - chat_completion
+
+  # DocVQA DUT（依赖数据内置 Prompt + 预处理器）
+  - adapter_id: dut_docvqa
+    role_type: dut_model
+    backend_id: qwen3_openai_http
+    capabilities:
+      - vision_chat
+
+metrics:
+  # 全局声明一组可复用的指标集合，具体 task 通过 metric_overrides 选择子集
+  - metric_id: multi_choice_acc
+    implementation: multi_choice_accuracy
+  - metric_id: docvqa_anls
+    implementation: docvqa_anls
+  - metric_id: latency
+    implementation: latency
+
+tasks:
+  # 任务 1：MMLU business_ethics，多选准确率 + 延迟
+  - task_id: mmlu_business_ethics_http_eval
+    dataset_id: mmlu_business_ethics
+    steps:
+      - step: inference
+        adapter_id: dut_text
+      - step: auto_eval
+    metric_overrides:
+      - metric_id: multi_choice_acc
+        implementation: multi_choice_accuracy
+      - metric_id: latency
+        implementation: latency
+    max_samples: 5
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/multi_task_http_mmlu_events.jsonl
+
+  # 任务 2：DocVQA ANLS + 延迟
+  - task_id: docvqa_http_eval
+    dataset_id: docvqa_val
+    steps:
+      - step: inference
+        adapter_id: dut_docvqa
+      - step: auto_eval
+    metric_overrides:
+      - metric_id: docvqa_anls
+        implementation: docvqa_anls
+      - metric_id: latency
+        implementation: latency
+    max_samples: 5
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/multi_task_http_docvqa_events.jsonl

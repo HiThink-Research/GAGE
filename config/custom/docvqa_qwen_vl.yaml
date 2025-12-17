@@ -1,0 +1,62 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: docvqa_qwen_vl
+  description: A multi-modal evaluation for DocVQA using a Qwen-VL model.
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+# 1. Dataset Configuration
+datasets:
+  - dataset_id: docvqa_val
+    loader: jsonl
+    params:
+      path: local-datasets/HLE/hle_test_prompted.jsonl
+      preprocess: docvqa_image_standardizer
+      # content_root 将基于 JSONL 文件所在目录自动推断为绝对路径
+      preprocess_kwargs:
+        question_field: messages.0.content.1.text|messages.0.content.0.text
+        answers_field: choices.0.message.content.0.text
+        content_field: messages.0.content
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
+      # doc_to_visual_kwargs 自动继承 preprocess_kwargs 的同名字段
+
+backends:
+  - backend_id: docvqa_qwen_vl_backend
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1  # 替换为实际 Vision-LLM 服务地址
+      model: qwen/qwen3-vl-30b 
+      default_params:
+        max_new_tokens: 1024 # 输出尽量短，避免内存/延迟
+        temperature: 0.1
+      async_max_concurrency: 2  # MacBook 本地轻量并发
+
+role_adapters:
+  - adapter_id: docvqa_qwen_vl
+    role_type: dut_model
+    backend_id: docvqa_qwen_vl_backend
+    # Capability must match what the backend/adapter supports for multi-modal input
+    capabilities:
+      - vision_chat
+
+# 4. Metric Configuration
+metrics:
+  - metric_id: docvqa_anls
+    # This implementation needs to be created as per test-1113.md
+    implementation: docvqa_anls
+
+# 5. Task Configuration
+tasks:
+  - task_id: docvqa_eval
+    dataset_id: docvqa_val
+    max_samples: 20 # MacBook 快速 smoke，可 CLI 覆盖
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/docvqa_events.jsonl

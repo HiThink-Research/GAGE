@@ -1,0 +1,92 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+# MathVista + OpenAI Http Backend 示例配置
+metadata:
+  name: mathvista_openai_http_demo
+  description: 使用 Qwen3 OpenAI Chat 后端评测 MathVista 测试集，示范多模态与结构化预处理。
+
+custom:
+  # Pipeline 级默认步骤（Task 若未显式声明 steps，将继承这一串步骤）
+  steps:
+    - step: inference    # 仅声明 step 类型，adapter_id 依赖唯一 DUT 角色自动推断
+    - step: auto_eval
+
+prompts:
+  - prompt_id: mathvista_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位擅长数学与视觉理解的 AI 助手。题目可能是多选题或开放式作答，请结合图像与文字作答。
+      instruction: >
+        - 如存在选项，请从中选出最合理的一个，并只输出对应的大写字母（A/B/C/D...），不加其他内容。
+        - 如无选项，请直接给出简洁答案（数值/文字），不复述题干。
+    template: |
+      {{ system_prompt }}
+
+      ### 题目：
+      {{ sample.question }}
+
+      {% if sample.metadata.option_map %}
+      ### 选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+      {% endif %}
+
+      {{ instruction }}
+
+      ### 答案：
+
+datasets:
+  - dataset_id: mathvista_testmini
+    # 使用 HuggingFace Hub 上的 MathVista
+    hub: huggingface
+    hub_params:
+      hub_id: AI4Math/MathVista
+      split: testmini # 关键：使用 testmini 以获取答案
+    loader: hf_hub
+    params:
+      streaming: true
+      # MathVista：结构化预处理，避免重复拼接 Prompt
+      preprocess: mathvista_struct_only
+      # HTTP 推理后端不可访问本地文件，默认 pre_encode_images=true 将图片转 data URL
+      preprocess_kwargs:
+        pre_encode_images: true
+
+backends:
+  - backend_id: qwen_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen/qwen3-vl-30b
+      default_params:
+        max_new_tokens: 512
+        temperature: 0.0
+      async_max_concurrency: 2
+
+role_adapters:
+  - adapter_id: dut_qwen
+    role_type: dut_model
+    backend_id: qwen_openai_http
+    prompt_id: mathvista_infer_prompt
+    prompt_params:
+      language: zh
+    capabilities:
+      - chat_completion
+      - multimodal_chat_completion
+
+metrics:
+  - metric_id: mathvista_acc
+    implementation: mathvista_accuracy
+
+tasks:
+  - task_id: mathvista_validation_eval
+    dataset_id: mathvista_testmini
+    max_samples: 100
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mathvista_testmini_events.jsonl

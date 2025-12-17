@@ -1,0 +1,83 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: multi_choice_qwen3
+  description: 迁移自 llm-eval 的多选题 benchmark，使用 Qwen3 OpenAI Chat 后端运行 MMLU 子集。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+prompts:
+  - prompt_id: multi_choice_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一个专业的助手。请逐步思考，然后在最后一行仅输出一个大写字母（A、B、C 或 D）作为最终答案。
+      instruction: >
+        请仔细推理并在最后一行只输出一个大写字母（A、B、C 或 D）。
+    template: |
+      {{ system_prompt }}
+
+      {% if subject %}
+      你正在回答 {{ subject }} 相关的问题。
+      {% endif %}
+
+      问题：
+      {{ sample.question }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+datasets:
+  - dataset_id: mmlu_business_ethics
+    hub: huggingface
+    hub_params:
+      hub_id: lighteval/mmlu
+      subset: business_ethics
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: multi_choice_standardizer
+
+backends:
+  - backend_id: qwen3_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen/qwen3-vl-30b
+      default_params:
+        max_new_tokens: 512
+        temperature: 0.7
+
+role_adapters:
+  - adapter_id: dut_qwen3
+    role_type: dut_model
+    backend_id: qwen3_openai_http
+    prompt_id: multi_choice_infer_prompt
+    prompt_params:
+      language: zh
+      subject: business_ethics
+      dataset_name: mmlu
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: multi_choice_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: mmlu_business_ethics_eval
+    dataset_id: mmlu_business_ethics
+    max_samples: 20
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/multi_choice_events.jsonl

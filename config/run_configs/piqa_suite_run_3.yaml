@@ -1,0 +1,71 @@
+# =================================================================
+# 只读模板快照（修改本段不影响模板定义）
+# Template: piqa_suite version=V2 monolithic=False
+# -----------------------------------------------------------------
+# Datasets:
+#   - dataset_id: piqa_validation
+#     loader: hf_hub
+#     hub_params:
+#       hub_id: piqa
+#       split: validation
+#     preprocess: piqa_struct_only
+#     提示：可在 runtime.datasets.<id> 覆盖 hub_params.limit/local_path 等路径配置以指向本地测试集。
+# Backends:
+#   - backend_id: qwen3_openai_http
+#     type: openai_http
+#     model: qwen2.5-0.5b-instruct
+#     base_url: http://127.0.0.1:1234/v1
+#     async_max_concurrency: 4
+# Steps:
+#   - step: inference
+#     adapter_id: <auto>
+#   - step: auto_eval
+#     adapter_id: <auto>
+# Metrics:
+#   - metric_id: piqa_acc
+#     implementation: multi_choice_accuracy
+# =================================================================
+api_version: gage/v1alpha1
+
+kind: RunConfig
+
+metadata:
+  name: piqa_suite_run
+
+base_task: builtin/piqa_suite
+
+template_version: V2
+
+template_digest: sha256:712ced08d46d5eeb4e330ddaa503f5084695066db37a87ecb6462e3bb4ff10c3
+
+# runtime 覆盖示例（按需修改下方键值）：
+#   runtime.datasets.piqa_validation: {...}  # 可整体替换为本地数据集配置
+#   runtime.backends.qwen3_openai_http: {...}  # 切换模型服务/参数
+#   runtime.tasks.piqa_validation_eval.max_samples: 50  # 控制本次运行样本数
+runtime:
+  datasets:
+    piqa_validation:
+      hub: huggingface
+      hub_params:
+        hub_id: piqa
+        split: validation
+        trust_remote_code: true
+      loader: hf_hub
+      params:
+        preprocess: piqa_struct_only
+        streaming: false
+  backends:
+    qwen3_openai_http:
+      type: openai_http
+      config:
+        base_url: http://127.0.0.1:1234/v1
+        model: qwen2.5-0.5b-instruct
+        default_params:
+          max_new_tokens: 64
+          temperature: 0.2
+        async_max_concurrency: 4
+  tasks:
+    piqa_validation_eval:
+      max_samples: 500
+  global:
+    output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_events.jsonl

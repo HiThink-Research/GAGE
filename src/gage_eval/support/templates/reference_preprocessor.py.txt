@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Mapping
+
+from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
+from gage_eval.assets.datasets.utils.mapping import extract_field
+
+
+class DocVQAPreprocessor(BasePreprocessor):
+    """示例预处理器：演示 metadata/answers/messages 的完整写法。"""
+
+    name = "docvqa_demo"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
+    def to_sample(self, record: Mapping[str, Any], **kwargs: Any) -> Dict[str, Any]:
+        dataset_id = record.get("_dataset_id") or "docvqa_demo"
+        question = extract_field(record, "question")
+        answer = extract_field(record, "answers.0") or extract_field(record, "answer")
+        if question is None or not str(question).strip():
+            raise ValueError("question 字段缺失或为空")
+
+        sample: Dict[str, Any] = {
+            "_dataset_id": dataset_id,
+            "modalities": ["text"],
+            "question": str(question),
+            "answers": [str(answer)] if answer is not None else [],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": "你是文档问答助手，请给出最终答案。"}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": str(question)}],
+                },
+            ],
+        }
+
+        # metadata 透传，用于分组统计/审计
+        meta = dict(record.get("metadata") or {})
+        for key in ("doc_id", "page", "split", "unique_id"):
+            if record.get(key) is not None:
+                meta[key] = record.get(key)
+        if sample.get("answers"):
+            meta["answers"] = sample["answers"]
+            sample["label"] = sample["answers"][0]
+        sample["metadata"] = meta
+        return sample

@@ -1,0 +1,99 @@
+api_version: gage/v1alpha1
+kind: BuiltinTemplate
+metadata:
+  name: piqa_local_vllm_async
+  version: V1
+  digest: sha256:154646281f3f26e71a32c013d90588e149f9ffa240f2fec29c33a099fd5ef511
+  source_tasks:
+  - piqa_validation_eval
+  monolithic: false
+definition:
+  metadata:
+    name: piqa_local_vllm_async
+    description: 使用 vllm_backend（本地 AsyncLLMEngine，非 HTTP）加载 Qwen2.5-0.5B 评测 PIQA
+      500 子集；如需 HTTP 服务端，请改用 openai_http 配置。
+  custom:
+    steps:
+    - step: inference
+    - step: auto_eval
+  datasets:
+  - dataset_id: piqa_validation_local
+    loader: jsonl
+    params:
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
+  backends:
+  - backend_id: piqa_local_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_5_05B
+      tensor_parallel_size: 1
+      max_tokens: 96
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 32
+      max_model_len: 2048
+      gpu_memory_utilization: 0.9
+      batch_timeout_ms: 30
+      async_max_concurrency: 32
+  role_adapters:
+  - adapter_id: dut_qwen25_vllm_serving
+    role_type: dut_model
+    backend_id: piqa_local_vllm_backend
+    concurrency: 32
+    capabilities:
+    - chat_completion
+  metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+    params:
+      label_field: sample.choices.0.message.content.0.text
+      option_map_field: sample.metadata.option_map
+      prediction_field: model_output.answer
+  tasks:
+  - task_id: piqa_validation_eval
+    dataset_id: piqa_validation_local
+    max_samples: 500
+    reporting:
+      sinks:
+      - type: console
+      - type: file
+        params:
+          output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_local_vllm_async_events.jsonl
+    concurrency: 32
+  prompts: []
+parameters:
+- name: runtime.datasets.piqa_validation_local
+  type: obj
+  default:
+    loader: jsonl
+    params:
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
+  description: 数据集配置块，可整体覆盖为本地/自定义来源
+- name: runtime.backends.piqa_local_vllm_backend
+  type: obj
+  default:
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_5_05B
+      tensor_parallel_size: 1
+      max_tokens: 96
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 32
+      max_model_len: 2048
+      gpu_memory_utilization: 0.9
+      batch_timeout_ms: 30
+      async_max_concurrency: 32
+  description: 后端配置块，可整体覆盖为本地/自定义端点
+- name: runtime.tasks.piqa_validation_eval.max_samples
+  type: int
+  default: 500
+  description: 任务级最大样本数
+- name: runtime.tasks.piqa_validation_eval.concurrency
+  type: int
+  default: 32
+  description: 任务调度并发
+- name: runtime.global.output_path
+  type: str
+  default: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_local_vllm_async_events.jsonl
+  description: 事件/结果输出路径
