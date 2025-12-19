@@ -1,3 +1,5 @@
+import base64
+import io
 import sys
 from pathlib import Path
 import types
@@ -87,6 +89,45 @@ class LegacyVLLMBackendMultimodalTests(unittest.TestCase):
         # repeat.png should come from messages; other.png is appended from inputs
         self.assertEqual(load_calls[0], ["repeat.png", "other.png"])
         self.assertEqual(mm["image"], ["img_0_repeat.png", "img_1_other.png"])
+
+    def test_prepare_multi_modal_accepts_image_type(self):
+        backend = make_backend()
+
+        def fake_load(src):
+            return [f"img_{i}_{val}" for i, val in enumerate(src)]
+
+        backend._load_images = fake_load
+        payload = {
+            "messages": [
+                {"role": "user", "content": [{"type": "image", "image": "raw.png"}]},
+            ]
+        }
+        mm = backend._prepare_multi_modal_data(payload)
+        self.assertEqual(mm["image"], ["img_0_raw.png"])
+
+    def test_prepare_multi_modal_extracts_audio_from_messages(self):
+        backend = make_backend()
+        backend._load_images = lambda src: []
+        payload = {
+            "messages": [
+                {"role": "user", "content": [{"type": "audio_url", "audio_url": {"url": "aud.wav"}}]},
+            ]
+        }
+        mm = backend._prepare_multi_modal_data(payload)
+        self.assertEqual(mm["audio"], ["aud.wav"])
+
+    def test_prepare_multi_modal_accepts_input_audio(self):
+        backend = make_backend()
+        backend._load_images = lambda src: []
+        data = base64.b64encode(b"dummy-audio").decode("ascii")
+        payload = {
+            "messages": [
+                {"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": data, "format": "wav"}}]},
+            ]
+        }
+        mm = backend._prepare_multi_modal_data(payload)
+        self.assertEqual(len(mm["audio"]), 1)
+        self.assertTrue(isinstance(mm["audio"][0], io.BytesIO))
 
     def test_load_multimodal_payload_uses_loader(self):
         calls = {}

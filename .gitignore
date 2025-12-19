@@ -209,3 +209,8 @@ AGENTS.md
 /models/
 
 .gage_cache/
+
+# python artifacts
+__pycache__/
+*.pyc
+*.pyo

@@ -881,23 +881,25 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             mm = sample.get("multi_modal_data")
 
         mm_image_sources: List[Any] = []
-        audio_sources: List[Any] = []
+        mm_audio_sources: List[Any] = []
         if isinstance(mm, dict):
             mm_images = mm.get("image") or mm.get("images")
             if mm_images is not None:
                 mm_image_sources.extend(mm_images if isinstance(mm_images, list) else [mm_images])
             audio_raw = mm.get("audio") or mm.get("audios")
             if audio_raw:
-                audio_sources.extend(audio_raw if isinstance(audio_raw, list) else [audio_raw])
+                mm_audio_sources.extend(audio_raw if isinstance(audio_raw, list) else [audio_raw])
 
         messages = payload.get("messages") or sample.get("messages") or []
         message_images = self._extract_images_from_messages(messages)
+        message_audios = self._extract_audios_from_messages(messages)
         image_sources = self._merge_image_sources(mm_image_sources, message_images)
+        audio_sources = self._merge_audio_sources(mm_audio_sources, message_audios)
 
         images = self._load_images(image_sources)
 
         images = [img for img in images if img is not None]
-        audios = [au for au in self._dedup_media_sources(audio_sources) if au is not None]
+        audios = [au for au in audio_sources if au is not None]
         if not images and not audios:
             return None
         result: Dict[str, Any] = {}
@@ -908,23 +910,78 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         return result
 
     @staticmethod
-    def _extract_images_from_messages(messages: List[Dict[str, Any]]) -> List[str]:
-        urls: List[str] = []
+    def _extract_images_from_messages(messages: List[Dict[str, Any]]) -> List[Any]:
+        sources: List[Any] = []
         for message in messages or []:
             content = message.get("content")
             if not isinstance(content, list):
                 continue
             for fragment in content:
-                if isinstance(fragment, dict) and fragment.get("type") == "image_url":
-                    url = (
-                        fragment.get("image_url", {}).get("url")
-                        if isinstance(fragment.get("image_url"), dict)
-                        else fragment.get("image_url")
-                        or fragment.get("url")
-                    )
-                    if isinstance(url, str):
-                        urls.append(url)
-        return urls
+                if not isinstance(fragment, dict):
+                    continue
+                frag_type = fragment.get("type")
+                if frag_type == "image_url":
+                    payload = fragment.get("image_url")
+                elif frag_type == "image":
+                    payload = fragment.get("image")
+                else:
+                    continue
+                if isinstance(payload, dict):
+                    value = payload.get("url") or payload.get("data")
+                elif payload is None:
+                    value = fragment.get("url")
+                else:
+                    value = payload
+                if value is not None:
+                    sources.append(value)
+        return sources
+
+    @staticmethod
+    def _extract_audios_from_messages(messages: List[Dict[str, Any]]) -> List[Any]:
+        sources: List[Any] = []
+        for message in messages or []:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for fragment in content:
+                if not isinstance(fragment, dict):
+                    continue
+                frag_type = fragment.get("type")
+                payload = None
+                if frag_type == "audio_url":
+                    payload = fragment.get("audio_url")
+                elif frag_type == "audio":
+                    payload = fragment.get("audio")
+                elif frag_type == "input_audio":
+                    payload = fragment.get("input_audio")
+                else:
+                    continue
+                if isinstance(payload, dict):
+                    if frag_type == "input_audio":
+                        data = payload.get("data")
+                        fmt = payload.get("format") or "wav"
+                        if isinstance(data, str):
+                            try:
+                                binary = base64.b64decode(data)
+                                buf = io.BytesIO(binary)
+                                try:
+                                    buf.name = f"input_audio.{fmt}"
+                                except Exception:
+                                    pass
+                                sources.append(buf)
+                            except Exception:
+                                continue
+                    else:
+                        value = payload.get("url")
+                        if value is not None:
+                            sources.append(value)
+                elif payload is None:
+                    value = fragment.get("url")
+                    if value is not None:
+                        sources.append(value)
+                else:
+                    sources.append(payload)
+        return sources
 
     @staticmethod
     def _media_dedup_key(src: Any) -> Optional[Any]:
@@ -952,6 +1009,26 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
             if key is not None:
                 if key in seen_message:
                     continue
+            merged.append(src)
+
+        return merged
+
+    def _merge_audio_sources(self, mm_sources: List[Any], message_sources: List[Any]) -> List[Any]:
+        """Preserve repeats within each field; dedup only cross-field repeats."""
+
+        merged: List[Any] = []
+        seen_message = set()
+
+        for src in message_sources or []:
+            key = self._media_dedup_key(src)
+            merged.append(src)
+            if key is not None:
+                seen_message.add(key)
+
+        for src in mm_sources or []:
+            key = self._media_dedup_key(src)
+            if key is not None and key in seen_message:
+                continue
             merged.append(src)
 
         return merged
