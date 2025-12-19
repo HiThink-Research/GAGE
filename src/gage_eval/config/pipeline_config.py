@@ -173,6 +173,7 @@ class PipelineConfig:
     role_adapters: Sequence[RoleAdapterSpec] = field(default_factory=tuple)
     metrics: Sequence[MetricSpec] = field(default_factory=tuple)
     tasks: Sequence[TaskSpec] = field(default_factory=tuple)
+    summary_generators: Sequence[str] = field(default_factory=tuple)
     observability: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -304,6 +305,7 @@ class PipelineConfig:
             for item in normalized.get("tasks", [])
         )
 
+        summary_generators = tuple(_normalize_summary_generator_entry(entry) for entry in normalized.get("summary_generators", []))
         observability = normalized.get("observability") or {}
 
         return PipelineConfig(
@@ -317,8 +319,20 @@ class PipelineConfig:
             role_adapters=role_adapters,
             metrics=metrics,
             tasks=tasks,
+            summary_generators=summary_generators,
             observability=observability,
         )
+
+
+def _normalize_summary_generator_entry(entry: Any) -> str:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        name = entry.get("generator_id") or entry.get("name")
+        if not name:
+            raise ValueError(f"Summary generator entry missing name: {entry!r}")
+        return str(name)
+    raise ValueError(f"Unsupported summary generator entry: {entry!r}")
 
 
 def _normalize_metric_entry(entry: Any) -> Dict[str, Any]:

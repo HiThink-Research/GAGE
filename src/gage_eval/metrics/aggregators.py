@@ -110,3 +110,38 @@ class IdentityAggregator(MetricAggregator):
             count=len(self._results),
             metadata={"samples": [res.to_dict() for res in self._results]},
         )
+
+
+class CategoricalCountAggregator(MetricAggregator):
+    """按分类字段统计计数的聚合器。"""
+
+    def __init__(self, spec: MetricSpec) -> None:
+        super().__init__(spec)
+        self._counts: Dict[str, int] = defaultdict(int)
+        self._total = 0
+        self._category_field = str(spec.params.get("category_field", "failure_reason"))
+        self._include_none = bool(spec.params.get("include_none", False))
+        self._none_label = str(spec.params.get("none_label", "unknown"))
+
+    def add(self, result: MetricResult) -> None:
+        category = result.metadata.get(self._category_field)
+        if category is None:
+            if not self._include_none:
+                return
+            category = self._none_label
+        key = str(category)
+        self._counts[key] += 1
+        self._total += 1
+
+    def finalize(self) -> AggregatedMetric:
+        logger.debug(
+            "CategoricalCountAggregator finalized metric={} samples={}",
+            self.spec.metric_id,
+            self._total,
+        )
+        return AggregatedMetric(
+            metric_id=self.spec.metric_id,
+            aggregation=self.spec.aggregation or "categorical_count",
+            values=dict(self._counts),
+            count=self._total,
+        )

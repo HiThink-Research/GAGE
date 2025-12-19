@@ -37,6 +37,27 @@ class MathVistaPreprocessor(BasePreprocessor):
             raise ValueError("MathVista sample missing 'question'")
         choices = normalize_options(sample.get("choices") or [])
         answer = sample.get("answer")
+        if answer in (None, ""):
+            # 回退常见字段：label/metadata.answer/final_answer/answer_text
+            answer = (
+                sample.get("label")
+                or (sample.get("metadata") or {}).get("answer")
+                or sample.get("final_answer")
+                or sample.get("answer_text")
+            )
+            if answer is not None:
+                sample["answer"] = answer
+        # answer_type 尝试回填
+        answer_type = sample.get("answer_type") or (sample.get("metadata") or {}).get("answer_type")
+        if answer_type is None and answer not in (None, ""):
+            try:
+                # 简单推断类型
+                float_val = float(str(answer).strip())
+                answer_type = "integer" if float_val.is_integer() else "float"
+            except Exception:
+                answer_type = None
+        if answer_type:
+            sample["answer_type"] = answer_type
 
         if content_root:
             sample.setdefault("_dataset_metadata", {})["path"] = content_root
@@ -121,6 +142,42 @@ class MathVistaPreprocessor(BasePreprocessor):
             cache_suffix="-converted",
             overwrite=False,
         )
+
+        # step6: 可选分词（对齐 llm-eval 行为：生成 prompt_token_ids，便于后端直接走 token 输入）
+        tokenize_prompt = kwargs.get("tokenize_prompt") or self.kwargs.get("tokenize_prompt")
+        tokenizer = kwargs.get("tokenizer") or self.kwargs.get("tokenizer")
+        strict_tokenize = kwargs.get("strict_tokenize") or self.kwargs.get("strict_tokenize")
+        if tokenize_prompt and tokenizer and hasattr(tokenizer, "apply_chat_template"):
+            try:
+                rendered_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                tokenized = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
+                token_ids = tokenized[0] if isinstance(tokenized, list) else tokenized
+                if rendered_prompt:
+                    sample["prompt"] = str(rendered_prompt)
+                    sample["inputs"]["prompt"] = sample["prompt"]
+                if token_ids is not None:
+                    sample["inputs"]["prompt_token_ids"] = token_ids
+                # 标记使用了模型模板，便于后端跳过二次渲染
+                set_render_flags(
+                    sample,
+                    mode="preprocess",
+                    source="model",
+                    rendered_by="preprocess",
+                    cache_suffix="-chat_template",
+                    overwrite=True,
+                )
+                tok_path = (
+                    kwargs.get("tokenizer_path")
+                    or kwargs.get("tokenizer_name")
+                    or self.kwargs.get("tokenizer_path")
+                    or self.kwargs.get("tokenizer_name")
+                )
+                if tok_path and "_tokenizer_path" not in sample:
+                    sample["_tokenizer_path"] = tok_path
+            except Exception as exc:
+                if strict_tokenize:
+                    raise
+                sample.setdefault("metadata", {})["tokenize_warning"] = str(exc)
         return sample
 
 

@@ -209,7 +209,7 @@ class StepExecutionContext:
 
     def execute_judge(self) -> None:
         logger.trace("Executing judge step adapter={}", getattr(self.judge, "_adapter_id", None))
-        payload = {"sample": self.sample, "model_output": self._model_output or {}}
+        payload = {"sample": self.sample, "model_output": self._model_output or {}, "trace": self.trace}
         self._judge_output = self.judge.execute(payload, self.role_manager, self.trace)
         update_eval_result(self.sample, self._judge_output)
 

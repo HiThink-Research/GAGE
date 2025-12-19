@@ -19,9 +19,25 @@ class DummyModel:
         return {"outputs": [{"text": f"resp-{rid}"}]}
 
 
-def make_backend(config=None):
+class StreamModel:
+    """Return an async generator to simulate streaming responses."""
+
+    def __init__(self):
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+
+        async def _agen():
+            yield {"outputs": [{"text": "partial"}]}
+            yield {"outputs": [{"text": "final"}]}
+
+        return _agen()
+
+
+def make_backend(config=None, model_factory=None):
     orig_load = LegacyVLLMBackend.load_model
-    LegacyVLLMBackend.load_model = lambda self, cfg: DummyModel()
+    LegacyVLLMBackend.load_model = lambda self, cfg: (model_factory() if model_factory else DummyModel())
     try:
         backend = LegacyVLLMBackend(config or {"model_path": "repo"})
     finally:
@@ -63,6 +79,26 @@ class LegacyVLLMBackendOutputTypeTests(unittest.TestCase):
         self.assertEqual({c["request_id"] for c in calls}, expected_ids)
         # Answers should follow the derived ids
         self.assertEqual(out["answer"], ["resp-req_0", "resp-req_1", "resp-req_2"])
+
+    def test_streaming_generator_returns_final_item(self):
+        backend = make_backend(model_factory=StreamModel)
+        prepared = backend.prepare_inputs({"model_path": "repo", "prompt": "hi"})
+        out = backend.generate(prepared)
+        self.assertEqual(out["answer"], "final")
+
+    def test_prompt_token_ids_int_is_coerced(self):
+        backend = make_backend()
+        prepared = backend.prepare_inputs(
+            {
+                "model_path": "repo",
+                "prompt": "hi",
+                "inputs": {"prompt_token_ids": 7},
+            }
+        )
+        backend.generate(prepared)
+        # prompt_token_ids should be coerced to list before calling model.generate
+        self.assertIsInstance(backend.model.calls[0]["prompt_token_ids"], list)
+        self.assertEqual(backend.model.calls[0]["prompt_token_ids"], [7])
 
 
 if __name__ == "__main__":

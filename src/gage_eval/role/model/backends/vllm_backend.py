@@ -17,6 +17,7 @@ from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
 def _ensure_spawn_start_method() -> None:
@@ -93,6 +94,7 @@ class VLLMBackend(EngineBackend):
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
 
     def load_model(self, config: Dict[str, Any]):
         try:  # pragma: no cover - heavy dependency
@@ -119,6 +121,12 @@ class VLLMBackend(EngineBackend):
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Render prompt +采样参数，并准备 multi_modal_data."""
 
+        # 透传样本的模板标记，避免预处理阶段已渲染的提示被后台重复渲染。
+        sample = payload.get("sample") or {}
+        for key in ("chat_template_mode", "template_source", "rendered_by", "cache_suffix", "_tokenizer_path"):
+            if key not in payload and key in sample:
+                payload[key] = sample.get(key)
+
         self._check_tokenizer_conflict(payload)
         prompt = self._render_prompt(payload)
         sampling = dict(self._default_sampling)
@@ -128,6 +136,10 @@ class VLLMBackend(EngineBackend):
         caps = BackendCapabilities(supports_mm=self._mm_supported, has_processor_chat_template=False)
         cache_suffix = ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps)
         return {
+            # 保留原始样本/消息/输入，便于多模态与元数据透传
+            "sample": payload.get("sample"),
+            "messages": payload.get("messages") or (payload.get("sample") or {}).get("messages"),
+            "inputs": payload.get("inputs") or (payload.get("sample") or {}).get("inputs"),
             "prompt": prompt,
             "sampling_params": sampling,
             "multi_modal_data": mm_data,
@@ -212,6 +224,22 @@ class VLLMBackend(EngineBackend):
             segments.append(f"{role}: {text}".strip())
         segments.append("assistant:")
         return "\n".join(segments)
+
+    def shutdown(self) -> None:  # pragma: no cover - best-effort GPU cleanup
+        try:
+            engine = getattr(self, "model", None)
+            if engine and hasattr(engine, "shutdown"):
+                engine.shutdown()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_loop", None):
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if getattr(self, "_loop_thread", None):
+                self._loop_thread.join(timeout=1.0)
+        except Exception:
+            pass
+        torch_gpu_cleanup()
 
     def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
         # 简单文本拼接；若提供兜底模板字符串，可选择扩展为真正模板渲染

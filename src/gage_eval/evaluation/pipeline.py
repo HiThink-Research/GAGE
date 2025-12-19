@@ -212,6 +212,8 @@ class PipelineFactory:
         ]
         if role_specs:
             cache_store.set_metadata("role_adapters", role_specs)
+        if config.summary_generators:
+            cache_store.set_metadata("summary_generators", list(config.summary_generators))
         adapters = self._registry.materialize_role_adapters(
             config,
             backends=backend_instances,

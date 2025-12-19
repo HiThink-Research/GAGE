@@ -15,6 +15,7 @@ from gage_eval.assets.datasets.preprocessors.piqa_preprocessor import (
     PiqaPreprocessor as NewPiqa,
     PiqaStructOnlyPreprocessor as NewPiqaStructOnly,
 )
+from gage_eval.assets.datasets.preprocessors.swebench_pro_preprocessor import SwebenchProPreprocessor as NewSwebenchPro
 from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
     GpqaPreprocessor as NewGpqa,
     GpqaStructOnlyPreprocessor as NewGpqaStructOnly,
@@ -92,13 +93,12 @@ class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
 
 @registry.asset(
     "dataset_preprocessors",
-    "mathvista_preprocess",
+    "mathvista_preprocessor",
     desc="MathVista 多模态预处理（题干+图片+可选多选项）",
     tags=("prompt", "vision", "mathvista"),
 )
 class MathVistaPreprocessor(NewMathVista):
     pass
-
 
 @registry.asset(
     "dataset_preprocessors",
@@ -107,4 +107,14 @@ class MathVistaPreprocessor(NewMathVista):
     tags=("mathvista", "vision", "struct_only"),
 )
 class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "swebench_pro_standardizer",
+    desc="标准化 SWE-bench Pro 字段，并可按 smoke 实例过滤",
+    tags=("swebench", "preprocess"),
+)
+class SwebenchProStandardizer(NewSwebenchPro):
     pass

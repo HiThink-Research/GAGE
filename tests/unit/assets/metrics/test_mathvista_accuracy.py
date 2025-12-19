@@ -57,3 +57,25 @@ def test_mathvista_accuracy_open_ended_exact_match():
     ctx2 = build_context(sample, {"answer": "43"})
     res2 = metric.compute(ctx2)
     assert res2.values["acc"] == 0.0
+
+
+@pytest.mark.fast
+def test_mathvista_accuracy_numeric_extraction_integer():
+    metric = MathVistaAccuracyMetric(MetricSpec(metric_id="m1", implementation="mathvista_accuracy"))
+    sample = {"answer": "1000", "answer_type": "integer"}
+    ctx = build_context(sample, {"answer": "The total volume is 1000 milliliters (ml)."})
+    res = metric.compute(ctx)
+    assert res.values["acc"] == 1.0
+    assert res.metadata["extracted_prediction"] == "1000"
+    assert res.metadata["reference"] == "1000"
+
+
+@pytest.mark.fast
+def test_mathvista_accuracy_numeric_extraction_float():
+    metric = MathVistaAccuracyMetric(MetricSpec(metric_id="m1", implementation="mathvista_accuracy"))
+    sample = {"answer": 3.14, "answer_type": "float"}
+    ctx = build_context(sample, {"answer": "approx 3.140 in total"})
+    res = metric.compute(ctx)
+    assert res.values["acc"] == 1.0
+    assert res.metadata["extracted_prediction"] == "3.14"
+    assert res.metadata["reference"] == "3.14"

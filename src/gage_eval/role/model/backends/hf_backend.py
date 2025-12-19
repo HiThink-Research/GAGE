@@ -9,6 +9,7 @@ from typing import Any, Dict, Tuple, Optional
 from gage_eval.utils.multimodal import load_multimodal_data
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
 @registry.asset(
@@ -41,6 +42,7 @@ class HFBackend(EngineBackend):
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -215,6 +217,16 @@ class HFBackend(EngineBackend):
             "pad_token_id": self.tokenizer.pad_token_id,
         }
         return {k: v for k, v in kwargs.items() if v is not None}
+
+    def shutdown(self) -> None:  # pragma: no cover - best-effort cleanup
+        with self._lock:
+            try:
+                model = getattr(self, "model", None)
+                if model and hasattr(model, "to"):
+                    model.to("cpu")
+            except Exception:
+                pass
+        torch_gpu_cleanup()
 
 
 def _apply_stop_sequences(text: str, stop) -> str:

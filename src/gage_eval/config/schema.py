@@ -30,6 +30,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     role_adapters = _ensure_list(data.get("role_adapters"), "role_adapters", errors)
     metrics = _ensure_list(data.get("metrics"), "metrics", errors)
     tasks = _ensure_list(data.get("tasks"), "tasks", errors)
+    summary_generators = _ensure_list(data.get("summary_generators"), "summary_generators", errors)
 
     builtin = data.get("builtin")
     custom = data.get("custom")
@@ -72,6 +73,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["role_adapters"] = role_adapters
     data["metrics"] = metrics
     data["tasks"] = tasks
+    data["summary_generators"] = summary_generators
     return data
 
 

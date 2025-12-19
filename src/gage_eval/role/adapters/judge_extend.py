@@ -1,4 +1,4 @@
-"""Context provider adapter (RAG/knowledge retriever)."""
+"""Judge extension adapter (delegates to judge_impls)."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 
 @registry.asset(
     "roles",
-    "context_provider",
-    desc="RAG/知识增强上下文提供角色",
-    tags=("role", "context"),
-    role_type="context_provider",
+    "judge_extend",
+    desc="裁判扩展坞角色适配器",
+    tags=("role", "judge"),
+    role_type="judge_extend",
 )
-class ContextProviderAdapter(RoleAdapter):
+class JudgeExtendAdapter(RoleAdapter):
     def __init__(
         self,
         adapter_id: str,
@@ -23,20 +23,20 @@ class ContextProviderAdapter(RoleAdapter):
         implementation: str,
         implementation_params: Optional[Dict[str, Any]] = None,
         capabilities=(),
-        role_type: str = "context_provider",
+        role_type: str = "judge_extend",
         **_,
     ) -> None:
         resolved_caps = tuple(capabilities) if capabilities else ("text",)
         super().__init__(adapter_id=adapter_id, role_type=role_type, capabilities=resolved_caps)
         if not implementation:
-            raise ValueError("ContextProviderAdapter requires non-empty implementation")
+            raise ValueError("JudgeExtendAdapter requires non-empty implementation")
         self._implementation = implementation
         self._implementation_params = dict(implementation_params or {})
-        impl_cls = registry.get("context_impls", implementation)
+        impl_cls = registry.get("judge_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
-        provider = getattr(self._impl, "aprovide", None) or getattr(self._impl, "provide", None)
+        provider = getattr(self._impl, "ainvoke", None) or getattr(self._impl, "invoke", None)
         if provider is None:
-            raise TypeError(f"context_impls '{implementation}' must define provide/aprovide")
+            raise TypeError(f"judge_impls '{implementation}' must define invoke/ainvoke")
         self._provider = ensure_async(provider)
 
     async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
@@ -49,7 +49,7 @@ class ContextProviderAdapter(RoleAdapter):
             return {}
         if isinstance(result, dict):
             return result
-        return {"context": result}
+        return {"result": result}
 
     def _merge_params(self, payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         merged = dict(self._implementation_params)

@@ -1,0 +1,90 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: swebench_pro_public
+  description: SWE-bench Pro Public split（官方标准流程）。
+
+custom:
+  steps:
+    - step: support
+      adapter_id: swebench_context_provider
+    - step: inference
+      adapter_id: swebench_dut_model
+    - step: judge
+      adapter_id: swebench_docker_judge
+    - step: auto_eval
+
+datasets:
+  - dataset_id: swebench_pro_public
+    hub: huggingface
+    hub_params:
+      hub_id: ScaleAI/SWE-bench_Pro
+      split: test
+      trust_remote_code: true
+    loader: hf_hub
+    params:
+      preprocess: swebench_pro_standardizer
+      streaming: false
+
+backends:
+  - backend_id: swebench_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:8000/v1
+      model: qwen/qwen3-coder-30b
+      default_params:
+        max_new_tokens: 2048
+        temperature: 0.2
+      async_max_concurrency: 2
+
+role_adapters:
+  - adapter_id: swebench_context_provider
+    role_type: context_provider
+    params:
+      implementation: swebench_repo
+      implementation_params:
+        repo_source: docker_image
+        repo_root: /app
+        topk_files: 20
+        max_tree_depth: 3
+        max_tree_lines: 200
+        max_file_lines: 200
+        max_file_chars: 8000
+        block_network: true
+        docker_platform: linux/amd64
+
+  - adapter_id: swebench_dut_model
+    role_type: dut_model
+    backend_id: swebench_openai_http
+    capabilities:
+      - chat_completion
+
+  - adapter_id: swebench_docker_judge
+    role_type: judge_extend
+    params:
+      implementation: swebench_docker
+      implementation_params:
+        scripts_dir: third_party/swebench_pro/run_scripts
+        dockerhub_username: jefzda
+        block_network: true
+        test_timeout_s: 900
+        docker_platform: linux/amd64
+
+metrics:
+  - metric_id: swebench_resolve_rate
+    implementation: swebench_resolve_rate
+  - metric_id: swebench_failure_reason
+    implementation: swebench_failure_reason
+    aggregation: categorical_count
+
+tasks:
+  - task_id: swebench_pro_public_eval
+    dataset_id: swebench_pro_public
+    concurrency: 4
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/swebench_pro_public_events.jsonl

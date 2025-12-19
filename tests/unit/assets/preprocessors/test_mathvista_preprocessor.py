@@ -89,3 +89,16 @@ def test_mathvista_struct_only_strips_render_flags(tmp_path):
     assert out["choices"]
     assert out["metadata"]["option_map"]["A"] == "Yes"
     assert out["inputs"] == {} or isinstance(out["inputs"], dict)
+
+
+@pytest.mark.fast
+def test_mathvista_preprocess_fills_answer_from_label_and_infers_type():
+    pre = MathVistaPreprocessor()
+    sample = {
+        "question": "How many apples?",
+        "label": "3",
+        "decoded_image": Image.new("RGB", (1, 1)),
+    }
+    out = pre.to_sample(sample)
+    assert out["answer"] == "3"
+    assert out.get("answer_type") == "integer"

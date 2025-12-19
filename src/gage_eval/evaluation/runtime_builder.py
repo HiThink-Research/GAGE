@@ -64,6 +64,9 @@ def _record_config_metadata(config: PipelineConfig, cache_store: EvalCache) -> N
     if role_specs:
         cache_store.set_metadata("role_adapters", role_specs)
 
+    if config.summary_generators:
+        cache_store.set_metadata("summary_generators", list(config.summary_generators))
+
 
 def build_runtime(
     config: PipelineConfig,

@@ -73,6 +73,9 @@ def test_gpqa_preprocess_applies_tokenizer_chat_template(monkeypatch):
             self.calls += 1
             return "templated_prompt"
 
+        def encode(self, text):
+            return [1, 2, 3]
+
     tok = DummyTokenizer()
     pre = GpqaPreprocessor(tokenizer=tok, tokenizer_path="tok-path")
     sample = {
@@ -85,7 +88,8 @@ def test_gpqa_preprocess_applies_tokenizer_chat_template(monkeypatch):
     out = pre.to_sample(sample)
     # chat_template 结果应覆盖 prompt/inputs，并打 chat_template 标记
     assert out["prompt"] == "templated_prompt"
-    assert out["inputs"] == {"prompt": "templated_prompt"}
+    assert out["inputs"]["prompt"] == "templated_prompt"
+    assert out["inputs"]["input_ids"] == [1, 2, 3]
     assert out.get("template_source") == "model"
     assert out.get("cache_suffix") == "-chat_template"
     assert out.get("_tokenizer_path") == "tok-path"

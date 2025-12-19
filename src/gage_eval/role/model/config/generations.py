@@ -42,6 +42,18 @@ class GenerationParameters(BaseModel):
         }
         return {k: v for k, v in params.items() if v is not None}
 
+    def to_inference_providers_dict(self) -> Dict[str, Any]:
+        """Translate parameters for HF Inference Providers (OpenAI-compatible)."""
+        params = {
+            "max_tokens": self.max_new_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "presence_penalty": self.presence_penalty,
+            "frequency_penalty": self.frequency_penalty,
+            "stop": self.stop,
+        }
+        return {k: v for k, v in params.items() if v is not None}
+
     def to_dict(self) -> Dict[str, Any]:
         """Return a shallow copy excluding `None` entries."""
 

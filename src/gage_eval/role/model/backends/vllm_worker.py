@@ -15,8 +15,22 @@ import os
 import traceback
 from typing import Any, Dict, Tuple
 
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
+
 
 def _worker_loop(conn, config: Dict[str, Any]):
+    def _cleanup(llm=None):
+        try:
+            if llm and hasattr(llm, "shutdown"):
+                llm.shutdown()
+        except Exception:
+            pass
+        torch_gpu_cleanup()
+        try:
+            conn.close()
+        except Exception:
+            pass
+
     try:
         from vllm import LLM, SamplingParams  # type: ignore
     except Exception as exc:
@@ -41,6 +55,7 @@ def _worker_loop(conn, config: Dict[str, Any]):
         if config.get("enforce_eager") is not None:
             model_kwargs["enforce_eager"] = bool(config.get("enforce_eager"))
         llm = LLM(model=model_path, **model_kwargs)
+        install_signal_cleanup(lambda: _cleanup(llm))
         conn.send((0, {"status": "ready"}))
         while True:
             msg = conn.recv()
@@ -62,6 +77,8 @@ def _worker_loop(conn, config: Dict[str, Any]):
                 conn.send((req_id, {"error": traceback.format_exc()}))
     except Exception:
         conn.send((-1, {"error": traceback.format_exc()}))
+    finally:
+        _cleanup(locals().get("llm"))
 
 
 class VLLMIsolatedWorker:

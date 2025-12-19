@@ -12,6 +12,8 @@ ensure_loguru()
 _AUTO_DISCOVERY_PACKAGES = {
     "backends": ("gage_eval.role.model.backends",),
     "roles": ("gage_eval.role.adapters", "gage_eval.role.model"),
+    "context_impls": ("gage_eval.role.context",),
+    "judge_impls": ("gage_eval.role.judge",),
     "dataset_hubs": ("gage_eval.assets.datasets.hubs",),
     "dataset_loaders": ("gage_eval.assets.datasets.loaders",),
     "dataset_preprocessors": ("gage_eval.assets.datasets.preprocessors.builtin",),

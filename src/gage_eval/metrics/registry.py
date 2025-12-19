@@ -12,6 +12,7 @@ from gage_eval.metrics.aggregators import (
     MeanAggregator,
     MetricAggregator,
     WeightedMeanAggregator,
+    CategoricalCountAggregator,
 )
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
@@ -28,6 +29,7 @@ class MetricRegistry:
         self.register_aggregator("mean", lambda spec: MeanAggregator(spec))
         self.register_aggregator("weighted_mean", lambda spec: WeightedMeanAggregator(spec))
         self.register_aggregator("identity", lambda spec: IdentityAggregator(spec))
+        self.register_aggregator("categorical_count", lambda spec: CategoricalCountAggregator(spec))
 
     # ------------------------------------------------------------------ #
     # Registration API
