@@ -204,8 +204,8 @@ scripts/oneclick/.env.example
 docs/
 AGENTS.md
 
-# local datasets
-/local-datasets/piqa/
-
+# local datasets and models (local assets only)
+/local-datasets/
+/models/
 
 .gage_cache/

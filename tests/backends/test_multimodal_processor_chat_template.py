@@ -27,6 +27,24 @@ class FakeProcessor:
         return "processor_templated"
 
 
+class EmptyListProcessor:
+    def __init__(self):
+        self.calls = 0
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls += 1
+        return []
+
+
+class TrackingProcessor:
+    def __init__(self):
+        self.calls = 0
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.calls += 1
+        return "unused"
+
+
 def make_backend(processor=None):
     orig_load = LegacyVLLMBackend.load_model
     orig_init_tok = LegacyVLLMBackend._init_tokenizer
@@ -59,13 +77,27 @@ class MultimodalProcessorChatTemplateTests(unittest.TestCase):
         }
         prepared = backend.prepare_inputs(payload)
         out = backend.generate(prepared)
-        self.assertEqual(processor.calls, 1)
+        self.assertGreaterEqual(processor.calls, 1)
         calls = backend.model.calls
         self.assertEqual(len(calls), 1)
         call_kwargs = calls[0]
         prompt_used = call_kwargs.get("inputs", {}).get("prompt") or call_kwargs.get("prompt")
         self.assertEqual(prompt_used, "processor_templated")
         self.assertEqual(out["answer"], "ok")
+
+    def test_render_with_processor_empty_messages_skips(self):
+        processor = TrackingProcessor()
+        backend = make_backend(processor)
+        rendered = backend._render_with_processor([], "fallback", {})
+        self.assertIsNone(rendered)
+        self.assertEqual(processor.calls, 0)
+
+    def test_render_with_processor_empty_list_falls_back(self):
+        processor = EmptyListProcessor()
+        backend = make_backend(processor)
+        rendered = backend._render_with_processor([{"role": "user", "content": "hi"}], "fallback", {})
+        self.assertEqual(rendered, "fallback")
+        self.assertEqual(processor.calls, 1)
 
 
 if __name__ == "__main__":

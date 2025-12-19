@@ -496,10 +496,14 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         apply_template = getattr(self._processor, "apply_chat_template", None) if self._processor else None
         if not apply_template:
             return None
+        if not messages:
+            return None
         try:
             norm_messages = self._normalize_messages_for_template(messages)
             rendered = apply_template(norm_messages, add_generation_prompt=True, tokenize=False, **(chat_template_kwargs or {}))
             if isinstance(rendered, list):
+                if not rendered:
+                    return prompt
                 rendered = rendered[0]
             return str(rendered) if rendered else prompt
         except Exception as exc:
@@ -515,6 +519,8 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
                         **(chat_template_kwargs or {}),
                     )
                     if isinstance(rendered, list):
+                        if not rendered:
+                            return prompt
                         rendered = rendered[0]
                     if rendered:
                         return str(rendered)
@@ -874,20 +880,20 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         if not mm:
             mm = sample.get("multi_modal_data")
 
-        image_sources: List[Any] = []
+        mm_image_sources: List[Any] = []
         audio_sources: List[Any] = []
         if isinstance(mm, dict):
             mm_images = mm.get("image") or mm.get("images")
             if mm_images is not None:
-                image_sources.extend(mm_images if isinstance(mm_images, list) else [mm_images])
+                mm_image_sources.extend(mm_images if isinstance(mm_images, list) else [mm_images])
             audio_raw = mm.get("audio") or mm.get("audios")
             if audio_raw:
                 audio_sources.extend(audio_raw if isinstance(audio_raw, list) else [audio_raw])
 
         messages = payload.get("messages") or sample.get("messages") or []
-        image_sources.extend(self._extract_images_from_messages(messages))
+        message_images = self._extract_images_from_messages(messages)
+        image_sources = self._merge_image_sources(mm_image_sources, message_images)
 
-        image_sources = self._dedup_media_sources(image_sources)
         images = self._load_images(image_sources)
 
         images = [img for img in images if img is not None]
@@ -921,20 +927,43 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         return urls
 
     @staticmethod
+    def _media_dedup_key(src: Any) -> Optional[Any]:
+        if isinstance(src, str):
+            return src
+        try:
+            return hash(src)
+        except Exception:
+            return None
+
+    def _merge_image_sources(self, mm_sources: List[Any], message_sources: List[Any]) -> List[Any]:
+        """Preserve repeats within each field; dedup only cross-field repeats."""
+
+        merged: List[Any] = []
+        seen_message = set()
+
+        for src in message_sources or []:
+            key = self._media_dedup_key(src)
+            merged.append(src)
+            if key is not None:
+                seen_message.add(key)
+
+        for src in mm_sources or []:
+            key = self._media_dedup_key(src)
+            if key is not None:
+                if key in seen_message:
+                    continue
+            merged.append(src)
+
+        return merged
+
+    @staticmethod
     def _dedup_media_sources(sources: List[Any]) -> List[Any]:
         """简单去重媒体来源，避免 messages 与 inputs 重复计数."""
 
         seen = set()
         deduped: List[Any] = []
         for src in sources:
-            key = None
-            if isinstance(src, str):
-                key = src
-            else:
-                try:
-                    key = hash(src)
-                except Exception:
-                    key = None
+            key = LegacyVLLMBackend._media_dedup_key(src)
             if key is not None:
                 if key in seen:
                     continue
@@ -948,6 +977,7 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         if not isinstance(sources, list):
             sources = [sources]
         images: List[Any] = []
+        cache: Dict[Any, Any] = {}
         try:  # pragma: no cover - heavy dependency
             from PIL import Image
         except ImportError:
@@ -957,18 +987,28 @@ class LegacyVLLMBackend(EngineBackend, ChatTemplateMixin):
         for src in sources:
             if src is None:
                 continue
+            key = self._media_dedup_key(src)
+            if key is not None and key in cache:
+                images.append(cache[key])
+                continue
             try:
+                loaded = None
                 if isinstance(src, Image.Image):
-                    images.append(src)
+                    loaded = src
                 elif isinstance(src, str) and src.startswith("data:"):
                     _, b64 = src.split(",", 1)
                     binary = base64.b64decode(b64)
-                    images.append(Image.open(io.BytesIO(binary)).convert("RGB"))
+                    loaded = Image.open(io.BytesIO(binary)).convert("RGB")
                 elif isinstance(src, str):
                     path = Path(src)
-                    images.append(Image.open(path).convert("RGB"))
+                    loaded = Image.open(path).convert("RGB")
                 else:
                     logger.debug("Unsupported image source type {}; skipping", type(src))
+                if loaded is None:
+                    continue
+                if key is not None:
+                    cache[key] = loaded
+                images.append(loaded)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Failed to load image source {}: {}", src, exc)
         return images
