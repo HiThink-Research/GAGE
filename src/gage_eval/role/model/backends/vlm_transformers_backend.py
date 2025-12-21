@@ -17,7 +17,6 @@ from gage_eval.role.model.config.vlm_transformers import VLMTransformersBackendC
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.multimodal import load_multimodal_data
 from gage_eval.utils.chat_templates import get_fallback_template
-from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 try:  # pragma: no cover - optional dependency
     from accelerate import Accelerator, InitProcessGroupKwargs
@@ -56,7 +55,6 @@ class VLMTransformersBackend(EngineBackend):
         config = dict(config)
         config.setdefault("execution_mode", "native")
         super().__init__(config)
-        install_signal_cleanup(self.shutdown)
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -64,12 +62,14 @@ class VLMTransformersBackend(EngineBackend):
     def load_model(self, _: Dict[str, Any]):
         try:  # pragma: no cover - heavy dependency
             import torch
-            from transformers import AutoModelForImageTextToText, AutoProcessor
+            from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
             from transformers.utils.quantization_config import BitsAndBytesConfig
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("transformers + torch are required for VLMTransformersBackend") from exc
 
         self._torch = torch
+        self._auto_config = AutoConfig
+        self._auto_model_cls = AutoModelForImageTextToText
         self.accelerator = self._init_accelerator()
         self.device = self._resolve_device()
 
@@ -108,7 +108,16 @@ class VLMTransformersBackend(EngineBackend):
         if max_memory:
             model_kwargs["max_memory"] = max_memory
 
-        model = AutoModelForImageTextToText.from_pretrained(model_name, **_drop_none(model_kwargs))
+        model_config = self._load_model_config(
+            model_name,
+            revision=revision,
+            trust_remote_code=cfg.trust_remote_code,
+            cache_dir=cfg.cache_dir,
+        )
+        model_cls = self._resolve_model_cls(model_config)
+        if model_config is not None:
+            model_kwargs["config"] = model_config
+        model = model_cls.from_pretrained(model_name, **_drop_none(model_kwargs))
         model.eval()
         torch.set_grad_enabled(False)
 
@@ -234,7 +243,7 @@ class VLMTransformersBackend(EngineBackend):
                         **generation_kwargs,
                     )
 
-            sequences = outputs.sequences if hasattr(outputs, "sequences") else outputs
+            sequences = self._extract_sequences(outputs)
             if sequences.dim() == 1:
                 sequences = sequences.unsqueeze(0)
             generated_tokens = sequences[:, input_len:]
@@ -281,7 +290,7 @@ class VLMTransformersBackend(EngineBackend):
                     **generation_kwargs,
                 )
 
-        sequences = outputs.sequences if hasattr(outputs, "sequences") else outputs
+        sequences = self._extract_sequences(outputs)
         if sequences.dim() == 1:
             sequences = sequences.unsqueeze(0)
         generated_tokens = sequences[:, input_len:]
@@ -316,6 +325,74 @@ class VLMTransformersBackend(EngineBackend):
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
+    def _load_model_config(
+        self,
+        model_name: str,
+        *,
+        revision: str,
+        trust_remote_code: bool,
+        cache_dir: Optional[str],
+    ):
+        try:
+            config = self._auto_config.from_pretrained(
+                model_name,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+                cache_dir=cache_dir,
+            )
+        except Exception:
+            return None
+
+        text_cfg = getattr(config, "text_config", None)
+        rope_scaling = getattr(config, "rope_scaling", None)
+        if text_cfg is not None and getattr(text_cfg, "rope_scaling", None) is None and rope_scaling is not None:
+            try:
+                text_cfg.rope_scaling = rope_scaling
+            except Exception:
+                pass
+        return config
+
+    def _resolve_model_cls(self, config):
+        if config is None:
+            return self._auto_model_cls
+        model_type = getattr(config, "model_type", "") or ""
+        config_name = config.__class__.__name__
+        if model_type == "qwen3_omni_moe" or config_name == "Qwen3OmniMoeConfig":
+            try:
+                from transformers import Qwen3OmniMoeForConditionalGeneration
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Qwen3OmniMoeForConditionalGeneration is unavailable; "
+                    "upgrade transformers to support Qwen3 Omni."
+                ) from exc
+            return Qwen3OmniMoeForConditionalGeneration
+        if model_type == "qwen3_vl_moe" or config_name == "Qwen3VLMoeConfig":
+            try:
+                from transformers import Qwen3VLMoeForConditionalGeneration
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Qwen3VLMoeForConditionalGeneration is unavailable; "
+                    "upgrade transformers to support Qwen3-VL-30B-A3B."
+                ) from exc
+            return Qwen3VLMoeForConditionalGeneration
+        return self._auto_model_cls
+
+    def _extract_sequences(self, outputs):
+        if hasattr(outputs, "sequences"):
+            sequences = outputs.sequences
+        else:
+            sequences = outputs
+        if isinstance(sequences, dict) and "sequences" in sequences:
+            sequences = sequences["sequences"]
+        if isinstance(sequences, (tuple, list)):
+            if not sequences:
+                return sequences
+            for item in sequences:
+                if hasattr(item, "sequences"):
+                    return item.sequences
+            return sequences[0]
+        return sequences
+
     def _init_accelerator(self):
         if Accelerator is None:
             return None
@@ -707,15 +784,6 @@ class VLMTransformersBackend(EngineBackend):
                 result[key] = value
         if "_tokenizer_path" not in result and self._cfg_tokenizer_path:
             result["_tokenizer_path"] = self._cfg_tokenizer_path
-
-    def shutdown(self) -> None:  # pragma: no cover - best-effort GPU cleanup
-        try:
-            accelerator = getattr(self, "accelerator", None)
-            if accelerator and hasattr(accelerator, "free_memory"):
-                accelerator.free_memory()
-        except Exception:
-            pass
-        torch_gpu_cleanup()
 
 
 def _apply_stop_sequences(text: str, stop) -> str:

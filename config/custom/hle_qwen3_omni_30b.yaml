@@ -1,0 +1,70 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: hle_qwen3_vl_30b_local_mmmu
+  description: HLE with Qwen3-VL-30B-A3B-Instruct (MMMU-style preprocess; inference + capture)
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: hle_docvqa
+    loader: jsonl
+    params:
+      path: /mnt/ssd2/dyh/HLE/hle_test_prompted.jsonl
+      preprocess: mmmu_multimodal_inputs
+      preprocess_kwargs:
+        roles_to_remove:
+          - assistant
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
+      doc_to_visual_kwargs:
+        content_root: /mnt/ssd2/dyh/HLE
+        content_field: messages.0.content
+
+backends:
+  - backend_id: qwen3_vl_local
+    type: vlm_transformers
+    config:
+      model_name_or_path: /mnt/ssd2/models/Qwen3-Omni-30B-A3B-Instruct
+      device_map: auto
+      dtype: float16
+      attn_implementation: sdpa
+      add_special_tokens: true
+      trust_remote_code: true
+      max_pixels: 12845056
+      use_chat_template_vlm: force
+      generation_parameters:
+        max_new_tokens: 128
+        do_sample: false
+        temperature: 1.0
+        top_p: 1.0
+
+role_adapters:
+  - adapter_id: dut_qwen3_vl
+    role_type: dut_model
+    backend_id: qwen3_vl_local
+    capabilities:
+      - vision_chat
+
+metrics:
+  - metric_id: dump_len
+    implementation: text_length
+    params:
+      target_field: model_output.answer
+
+tasks:
+  - task_id: hle_eval
+    dataset_id: hle_docvqa
+    steps:
+      - step: inference
+      - step: auto_eval
+    max_samples: 2
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/hle_qwen3_vl_30b_events.jsonl
