@@ -15,6 +15,7 @@ from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.role.model.config.vlm_transformers import VLMTransformersBackendConfig
 from gage_eval.role.model.config.nanotron import NanotronBackendConfig, NanotronParallelismConfig
 from gage_eval.role.model.config.hf_inference import HFServerlessBackendConfig, HFInferenceEndpointBackendConfig
+from gage_eval.role.model.config.inference_providers import InferenceProvidersBackendConfig
 from gage_eval.role.model.config.dummy import DummyBackendConfig
 from gage_eval.role.model.config.vendor_http import (
     ClaudeBackendConfig,
@@ -40,6 +41,7 @@ __all__ = [
     "NanotronParallelismConfig",
     "HFServerlessBackendConfig",
     "HFInferenceEndpointBackendConfig",
+    "InferenceProvidersBackendConfig",
     "DummyBackendConfig",
     "ClaudeBackendConfig",
     "GeminiBackendConfig",

@@ -1,0 +1,39 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: demo_echo_pipeline
+  description: "最小可运行冒烟，使用 dummy backend 回显 prompt。"
+
+datasets:
+  - dataset_id: demo_echo_dataset
+    loader: jsonl
+    params:
+      path: config/builtin_templates/demo_echo/data/demo_echo.jsonl
+
+backends:
+  - backend_id: demo_echo_dummy
+    type: dummy
+    config:
+      responses: []        # 留空走 echo 模式
+      echo_prompt: true
+      cycle: true
+
+role_adapters:
+  - adapter_id: demo_echo_dut
+    role_type: dut_model
+    backend_id: demo_echo_dummy
+    capabilities:
+      - chat_completion
+
+metrics: []
+
+tasks:
+  - task_id: demo_echo_task
+    dataset_id: demo_echo_dataset
+    steps:
+      - step: inference
+        adapter_id: demo_echo_dut
+    max_samples: 1
+    reporting:
+      sinks:
+        - type: console

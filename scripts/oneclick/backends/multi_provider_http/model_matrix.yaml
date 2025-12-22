@@ -1,0 +1,39 @@
+models:
+  # 保留有可用 API 的 provider：HF 推理、Kimi（Together）、OpenAI
+  - name: qwen25_7b_together
+    provider: together
+    model_name: Qwen/Qwen2.5-7B-Instruct
+    tokenizer_name: Qwen/Qwen2.5-7B-Instruct
+    max_new_tokens: 8
+    timeout: 120
+    parallel_calls: 1
+  - name: smollm3_3b
+    provider: hf-inference
+    model_name: HuggingFaceTB/SmolLM3-3B
+    tokenizer_name: HuggingFaceTB/SmolLM3-3B
+    max_new_tokens: 8
+    timeout: 120
+    parallel_calls: 1
+  - name: kimi_k2_thinking
+    provider: together
+    model_name: moonshotai/Kimi-K2-Thinking
+    tokenizer_name: moonshotai/Kimi-K2-Thinking
+    max_new_tokens: 8
+    timeout: 120
+    parallel_calls: 1
+  # - name: gpt4o_mini_openai
+  #   provider: openai
+  #   model_name: gpt-4o-mini
+  #   tokenizer_name: gpt-4o-mini
+  #   max_new_tokens: 8
+  #   timeout: 120
+  #   parallel_calls: 1
+
+# 其他 provider 暂未配置（缺少可用 API）；后续可按需追加：
+# - name: your_model_id
+#   provider: together
+#   model_name: your/model
+#   tokenizer_name: your/model
+#   max_new_tokens: 16
+#   timeout: 120
+#   parallel_calls: 2

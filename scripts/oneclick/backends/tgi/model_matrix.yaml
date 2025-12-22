@@ -1,0 +1,12 @@
+models:
+  - name: piqa_tgi_demo
+    base_url: http://127.0.0.1:8080
+    max_new_tokens: 64
+    temperature: 0.2
+    top_p: 0.9
+    stop:
+      - "</s>"
+    max_samples: 8
+    concurrency: 1
+    data_limit: 200
+    timeout: 120

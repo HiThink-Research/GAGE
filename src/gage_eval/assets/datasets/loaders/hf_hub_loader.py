@@ -22,6 +22,7 @@ from gage_eval.assets.datasets.loaders.loader_utils import (
 from gage_eval.observability.config import get_observability_config
 from gage_eval.registry import registry
 import logging
+from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError # Added import
 
 logger = logging.getLogger(__name__)
@@ -296,15 +297,39 @@ def _download_dataset(
             dataset = dataset.to_hf_dataset()
         return dataset
 
-    return datasets_module.load_dataset(
-        path=hub_id,
-        name=normalized_subset,
-        split=split,
-        revision=revision,
-        trust_remote_code=trust_remote,
-        streaming=streaming,
-        **load_kwargs,
-    )
+    try:
+        return datasets_module.load_dataset(
+            path=hub_id,
+            name=normalized_subset,
+            split=split,
+            revision=revision,
+            trust_remote_code=trust_remote,
+            streaming=streaming,
+            **load_kwargs,
+        )
+    except UnicodeDecodeError as exc:
+        # Some hubs serve the dataset script gzipped, causing UTF-8 decode failures.
+        if source == "huggingface":
+            script_name = f"{hub_id.split('/')[-1]}.py"
+            try:
+                local_script = hf_hub_download(
+                    repo_id=hub_id,
+                    repo_type="dataset",
+                    filename=script_name,
+                    revision=revision,
+                )
+                return datasets_module.load_dataset(
+                    path=local_script,
+                    name=normalized_subset,
+                    split=split,
+                    revision=revision,
+                    trust_remote_code=trust_remote,
+                    streaming=streaming,
+                    **load_kwargs,
+                )
+            except Exception:
+                pass
+        raise exc
 
 
 def _maybe_apply_preprocess(

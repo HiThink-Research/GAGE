@@ -17,8 +17,10 @@ def wrap_backend(backend: Backend) -> Backend:
 
     wrapped: Backend = _AsyncBackendProxy(backend)
     if getattr(backend, "transport", None) == "http" or hasattr(backend, "http_retry_params"):
-        params = getattr(backend, "http_retry_params", {})
-        wrapped = _HttpRetryBackendProxy(wrapped, **params)
+        params = getattr(backend, "http_retry_params", {}) or {}
+        attempts = int(params.get("attempts", 3))
+        interval = float(params.get("interval", 1.0))
+        wrapped = _HttpRetryBackendProxy(wrapped, attempts=attempts, interval=interval)
     return wrapped
 
 

@@ -63,6 +63,26 @@ class PiqaStructOnlyPreprocessor(NewPiqaStructOnly):
 
 @registry.asset(
     "dataset_preprocessors",
+    "gpqa_multi_choice",
+    desc="GPQA 多选题提示词封装",
+    tags=("prompt", "gpqa", "multiple-choice"),
+)
+class GpqaPreprocessor(NewGpqa):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "gpqa_struct_only",
+    desc="GPQA 多选题结构化预处理（仅补充 choices/metadata，不拼接 Prompt）",
+    tags=("gpqa", "multiple-choice", "struct_only"),
+)
+class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
     "mmmu_multimodal_inputs",
     desc="MMMU 多模态 inputs 构造器（messages -> inputs.multi_modal_data）",
     tags=("prompt", "vision", "mmmu"),
@@ -92,13 +112,12 @@ class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
 
 @registry.asset(
     "dataset_preprocessors",
-    "mathvista_preprocess",
+    "mathvista_preprocessor",
     desc="MathVista 多模态预处理（题干+图片+可选多选项）",
     tags=("prompt", "vision", "mathvista"),
 )
 class MathVistaPreprocessor(NewMathVista):
     pass
-
 
 @registry.asset(
     "dataset_preprocessors",

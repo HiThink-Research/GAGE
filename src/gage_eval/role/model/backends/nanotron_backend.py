@@ -12,6 +12,7 @@ from loguru import logger
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.nanotron import NanotronBackendConfig
+from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
 @registry.asset(
@@ -29,6 +30,7 @@ class NanotronBackend(EngineBackend):
         self._parsed_config = NanotronBackendConfig(**config)
         self._runner: Optional[_NanotronRunner] = None
         super().__init__(config)
+        install_signal_cleanup(self.shutdown)
 
     def load_model(self, _: Dict[str, Any]):
         self._runner = _NanotronRunner(self._parsed_config)
@@ -66,6 +68,9 @@ class NanotronBackend(EngineBackend):
             sampling_params=merged_params,
         )
         return {"answer": answer, "token_ids": token_ids}
+
+    def shutdown(self) -> None:  # pragma: no cover - best-effort GPU cleanup
+        torch_gpu_cleanup()
 
 
 # ---------------------------------------------------------------------------

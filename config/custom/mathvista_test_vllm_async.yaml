@@ -1,0 +1,93 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: mathvista_legacy_vllm_async
+  description: 使用 vllm_backend 运行 MathVista testmini（多模态）评测。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+# prompts:
+#   - prompt_id: mathvista_infer_prompt
+#     renderer: jinja
+#     params:
+#       system_prompt: >
+#         你是一位擅长数学与视觉理解的 AI 助手。题目可能包含图片、多选或开放式作答。
+#       instruction: >
+#         - 若题目提供选项，仅输出正确选项对应的大写字母（A/B/C/...），不要添加解释。
+#         - 若无选项，请直接给出最终答案（数字或文本），不要复读题干。
+#     template: |
+#       {{ system_prompt }}
+
+#       {% set metadata = sample.get('metadata', {}) %}
+#       {% set option_map = metadata.get('option_map') or {} %}
+#       ### 题目：
+#       {{ sample.question }}
+
+#       {% if option_map %}
+#       ### 选项：
+#       {% for label, text in option_map.items() %}
+#       {{ label }}. {{ text }}
+#       {% endfor %}
+#       {% endif %}
+
+#       {{ instruction }}
+
+#       ### 答案：
+
+datasets:
+  - dataset_id: mathvista_testmini
+    hub: huggingface
+    hub_params:
+      hub_id: AI4Math/MathVista
+      split: testmini
+    loader: hf_hub
+    params:
+      streaming: true
+      preprocess: mathvista_preprocessor
+      preprocess_kwargs:
+        pre_encode_images: true
+
+backends:
+  - backend_id: mathvista_legacy_vllm_backend
+    type: vllm
+    config:
+      # 需使用具备视觉能力的权重；默认指向本机已存在的 2.5-VL-3B 目录
+      model_path: /mnt/model/qwen2_5_vl_3b
+      tokenizer_path: /mnt/model/qwen2_5_vl_3b
+      force_tokenize_prompt: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 4
+      max_model_len: 8192
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
+
+role_adapters:
+  - adapter_id: dut_mathvista_legacy_qwen
+    role_type: dut_model
+    backend_id: mathvista_legacy_vllm_backend
+    # prompt_id: mathvista_infer_prompt
+    capabilities:
+      - chat_completion
+      - multimodal_chat_completion
+
+metrics:
+  - metric_id: mathvista_acc
+    implementation: mathvista_accuracy
+
+tasks:
+  - task_id: mathvista_testmini_eval
+    dataset_id: mathvista_testmini
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mathvista_legacy_vllm_events.jsonl

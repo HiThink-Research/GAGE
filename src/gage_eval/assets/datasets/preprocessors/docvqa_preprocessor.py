@@ -83,7 +83,10 @@ class DocVQAPreprocessor(BasePreprocessor):
 
         sample["messages"] = messages
         sample["prompt"] = question
-        set_render_flags(sample, mode="preprocess", source="manual", rendered_by="preprocess", cache_suffix="-converted")
+        sample["chat_template_mode"] = "preprocess"
+        sample["rendered_by"] = "preprocess"
+        sample["template_source"] = "manual"
+        sample["cache_suffix"] = "-converted"
 
         # 5. Embed Local Images
         target_content_field = f"messages.{user_msg_index}.content"

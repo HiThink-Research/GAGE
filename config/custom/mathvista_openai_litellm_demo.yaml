@@ -1,0 +1,161 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+# MathVista + OpenAI Http Backend 示例配置
+metadata:
+  name: mathvista_openai_http_demo
+  description: 使用 Qwen3 OpenAI Chat 后端评测 MathVista 测试集，示范多模态与结构化预处理。
+
+custom:
+  # Pipeline 级默认步骤：本地 legacy_vllm 推理 + OpenAI 裁判
+  steps:
+    - step: inference
+      adapter_id: dut_legacy_vllm
+    - step: judge
+      adapter_id: judge_openai_litellm
+    - step: auto_eval
+
+prompts:
+  - prompt_id: mathvista_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位擅长数学与视觉理解的 AI 助手。题目可能是多选题或开放式作答，请结合图像与文字作答。
+      instruction: >
+        - 如存在选项，请从中选出最合理的一个，并只输出对应的大写字母（A/B/C/D...），不加其他内容。
+        - 如无选项，请直接给出简洁答案（数值/文字），不复述题干。
+    template: |
+      {{ system_prompt }}
+
+      {% set option_map = sample.get('metadata', {}).get('option_map') or {} %}
+      ### 题目：
+      {{ sample.question }}
+
+      {% if option_map %}
+      ### 选项：
+      {% for label, text in option_map.items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+      {% endif %}
+
+      {{ instruction }}
+
+      ### 答案：
+
+  - prompt_id: mathvista_judge_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是可靠的裁判，需要先独立解题，再判断被测模型回答是否合理。
+      instruction: >
+        先自行求解（可结合题目和选项），再对比模型回答，给出 0~1 的分数。严格按照下面格式输出，不能添加任何解释或文字：
+        <score>
+        其中 <score> 只能是 0 到 1 之间的数字（可含小数），不要输出其它内容。
+    template: |
+      {{ system_prompt }}
+
+      {% set option_map = sample.get('metadata', {}).get('option_map') or {} %}
+      题目：
+      {{ sample.question }}
+
+      {% if option_map %}
+      选项：
+      {% for label, text in option_map.items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+      {% endif %}
+
+      被测模型的回答：
+      {{ payload.get("model_output", {}).get("answer") }}
+
+      {{ instruction }}
+
+datasets:
+  - dataset_id: mathvista_testmini
+    # 使用 HuggingFace Hub 上的 MathVista
+    hub: huggingface
+    hub_params:
+      hub_id: AI4Math/MathVista
+      split: test
+    loader: hf_hub
+    params:
+      streaming: true
+      # MathVista：直接拼装带图片的 messages，供 OpenAI 接口消费
+      preprocess: mathvista
+      # HTTP 推理后端不可访问本地文件，默认 pre_encode_images=true 将图片转 data URL
+      preprocess_kwargs:
+        pre_encode_images: true
+        system_prompt: |
+          你是一位擅长数学与视觉理解的 AI 助手。题目可能是多选题或开放式作答，请结合图像与文字作答。
+          - 如存在选项，请从中选出最合理的一个，并只输出对应的大写字母（A/B/C/D...），不加其他内容。
+          - 如无选项，请直接给出简洁答案（数值/文字），不复述题干。
+
+backends:
+  - backend_id: legacy_qwen_local
+    type: legacy_vllm
+    config:
+      model_path: /mnt/model/qwen2_5_vl_3b
+
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 4
+      max_model_len: 8192
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 4
+      output_type: text
+
+  - backend_id: judge_openai_litellm
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 32
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_legacy_vllm
+    role_type: dut_model
+    backend_id: legacy_qwen_local
+    prompt_id: mathvista_infer_prompt
+    prompt_params:
+      language: zh
+    capabilities:
+      - chat_completion
+      - multimodal_chat_completion
+
+  - adapter_id: judge_openai_litellm
+    role_type: judge_model
+    backend_id: judge_openai_litellm
+    prompt_id: mathvista_judge_prompt
+    prompt_params:
+      language: zh
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: judge_pass@0.5
+    implementation: judge_threshold
+    params:
+      threshold: 0.5
+      prediction_field: judge_output.answer
+      on_missing_field: warn
+      fallback: 0.0
+  - metric_id: latency
+    implementation: latency
+
+tasks:
+  - task_id: mathvista_validation_eval
+    dataset_id: mathvista_testmini
+    max_samples: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mathvista_testmini_events.jsonl

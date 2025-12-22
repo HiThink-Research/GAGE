@@ -41,7 +41,10 @@ class PiqaStructOnlyPreprocessor(PiqaPreprocessor):
         sample.pop("prompt", None)
         sample["messages"] = []
         sample["inputs"] = {}
-        strip_render_flags(sample)
+        sample.pop("chat_template_mode", None)
+        sample.pop("rendered_by", None)
+        sample.pop("template_source", None)
+        sample.pop("cache_suffix", None)
         return sample
 
 

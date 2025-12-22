@@ -1,0 +1,45 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: kimi_openai_http_demo
+  description: "使用 Kimi (moonshot) OpenAI 兼容接口跑 demo_echo 的最小闭环。"
+
+datasets:
+  - dataset_id: demo_echo_dataset
+    loader: jsonl
+    params:
+      path: config/builtin_templates/demo_echo/data/demo_echo.jsonl
+
+backends:
+  - backend_id: kimi_openai_http
+    type: openai_http
+    config:
+      base_url: https://api.moonshot.cn/v1
+      model: moonshot-v1-8k
+      require_api_key: true
+      timeout: 120
+      default_params:
+        max_new_tokens: 16
+        temperature: 0.0
+      async_max_concurrency: 2
+
+role_adapters:
+  - adapter_id: kimi_dut
+    role_type: dut_model
+    backend_id: kimi_openai_http
+    capabilities:
+      - chat_completion
+
+metrics: []
+
+tasks:
+  - task_id: kimi_demo
+    dataset_id: demo_echo_dataset
+    steps:
+      - step: inference
+        adapter_id: kimi_dut
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console

@@ -1,186 +1,521 @@
-"""VLLM backend adaptor（本地 AsyncLLMEngine，文本+多模态，迁移 llm-eval 思路，非 HTTP 客户端）。"""
+"""vLLM backend with legacy compatibility (AsyncLLMEngine, text/vision/audio)."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
-import contextlib
-import io
+import inspect
 import os
 import threading
-import uuid
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+import types
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
+
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
+from gage_eval.role.model.backends.shared_utils import (
+    build_engine_args,
+    build_sampling_params,
+    build_sampling_params_base,
+    check_tokenizer_conflict,
+    collect_multimodal_sources,
+    convert_text_like_output,
+    detect_vllm_version,
+    ensure_spawn_start_method,
+    finalize_backend_result,
+    graceful_loop_shutdown,
+    has_multimodal_inputs,
+    load_images,
+    load_multimodal_payload,
+    maybe_tokenize_messages,
+    normalize_image_placeholders,
+    normalize_messages_safe,
+    render_prompt_with_template,
+    render_with_processor,
+    resolve_request_id,
+    resolve_sampling_class,
+    resolve_vllm_mm_support,
+    run_coroutine_threadsafe_with_timeout,
+    simple_render_messages,
+)
+from gage_eval.role.model.backends.vllm_request import normalize_request_payload
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
+from gage_eval.utils.cleanup import install_signal_cleanup
 
+try:  # pragma: no cover - optional dependency
+    import vllm  # type: ignore
+    from packaging import version as _pkg_version
 
-def _ensure_spawn_start_method() -> None:
-    """Force spawn to avoid CUDA re-init issues in forked vLLM workers."""
-
-    try:
-        import torch.multiprocessing as mp  # type: ignore
-    except Exception:  # pragma: no cover - torch missing
-        import multiprocessing as mp  # type: ignore
-
-    current = mp.get_start_method(allow_none=True)
-    if current != "spawn":
-        try:
-            mp.set_start_method("spawn", force=True)
-        except Exception:
-            logger.warning("vLLMBackend failed to set multiprocessing start method to spawn")
-    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+    _VLLM_VERSION = getattr(vllm, "__version__", None)
+    _VLLM_PROMPT_V1 = bool(_VLLM_VERSION) and _pkg_version.parse(_VLLM_VERSION) >= _pkg_version.parse("0.8.0")
+except Exception:  # pragma: no cover
+    _VLLM_VERSION = None
+    _VLLM_PROMPT_V1 = False
 
 
 @registry.asset(
     "backends",
     "vllm",
-    desc="vLLM 本地推理后端（tensor parallel 支持，多模态可选）",
+    desc="vLLM 本地推理后端（AsyncLLMEngine，文本/多模态）",
     tags=("llm", "local", "serving"),
-    modalities=("text", "vision"),
+    modalities=("text", "vision", "audio"),
 )
-class VLLMBackend(EngineBackend):
-    """Backend that proxies requests to vLLM AsyncLLMEngine (in-process)."""
+class VLLMBackend(EngineBackend, ChatTemplateMixin):
+    """Backend that proxies requests to vLLM AsyncLLMEngine with unified request shaping."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        self._default_sampling = config.get("sampling_params") or {}
-        self._max_tokens = int(config.get("max_tokens", 512))
-        self._request_timeout = float(config.get("request_timeout", 300))
-        self._mm_supported = True  # 版本探测后可能关闭，遇到 TypeError 也会降级
-        self._mm_strategy = "inputs"  # inputs | disabled
-        self._list_sampling_supported = True
-        self._cfg_tokenizer_path = config.get("tokenizer_path") or config.get("tokenizer_name")
-        self._strict_mm = bool(
-            config.get("strict_multi_modal")
-            or os.environ.get("GAGE_EVAL_VLLM_STRICT_MM", "").lower() in {"1", "true", "yes", "on"}
-        )
-        if config.get("force_prompt_only") or os.environ.get("GAGE_EVAL_VLLM_PROMPT_ONLY", "").lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            self._mm_supported = False
-            self._mm_strategy = "disabled"
-        _ensure_spawn_start_method()
-        self._vllm_version = self._detect_version()
-        if self._vllm_version:
-            logger.info("Detected vLLM version {}", self._vllm_version)
-            # vLLM 0.8.3 之前多模态支持不稳定，先默认关闭再由运行时探针拉起
-            try:
-                from packaging import version
-
-                if version.parse(self._vllm_version) < version.parse("0.8.3"):
-                    self._mm_supported = False
-                    self._mm_strategy = "disabled"
-                    logger.warning("vLLM < 0.8.3 detected; defaulting multi_modal_data unsupported")
-            except Exception:
-                pass
-        else:
-            self._mm_strategy = "inputs"
-        # 持久事件循环线程，避免每次调用 run_until_complete 破坏 vLLM 合批
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(target=self._run_loop, name="VLLMBackendLoop", daemon=True)
-        self._loop_thread.start()
         self._chat_template_mode = str(config.get("use_chat_template", "auto"))
         self._chat_template_policy = ChatTemplatePolicy(mode=self._chat_template_mode)
         self._fallback_template = get_fallback_template("text")
-        self._tokenizer = None  # optional AutoTokenizer for fallback rendering
+        self._tokenizer = None
+        self._processor = None
+        self._cfg_tokenizer_path = config.get("tokenizer_path") or config.get("tokenizer_name")
+        self._force_tokenize_prompt = bool(config.get("force_tokenize_prompt"))
+        self._default_sampling = config.get("sampling_params") or {}
+        self._max_tokens = int(config.get("max_tokens", 512))
+        self._request_timeout = float(config.get("request_timeout", 300))
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
+        ensure_spawn_start_method()
+        self._vllm_version = detect_vllm_version()
+        if self._vllm_version:
+            logger.info("Detected vLLM version {}", self._vllm_version)
+        self._mm_supported, self._mm_strategy, self._strict_mm = resolve_vllm_mm_support(config, self._vllm_version)
+
+        # Initialize a dedicated event loop thread to avoid deadlocks when vLLM spins loops internally.
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._run_loop, name="VLLMBackendLoop", daemon=True)
+        self._loop_thread.start()
+
         super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def shutdown(self) -> None:
+        graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
 
     def load_model(self, config: Dict[str, Any]):
+        """加载模型 + processor，并应用兼容性补丁（奖励/MoE/rope scaling/低显存等）。"""
+
+        trust_remote_code = bool(config.get("trust_remote_code", True))
+        model_id = config.get("model_path") or config.get("model")
+        if not model_id:
+            raise ValueError("vllm_backend requires 'model_path' or 'model' in config")
+
+        output_type = config.get("output_type", "text")
+        args_ns = build_engine_args(config, output_type=output_type, trust_remote_code=trust_remote_code)
+        cfg_obj = self._load_auto_config(model_id, trust_remote_code=trust_remote_code)
+        self._processor = self._load_auto_processor(model_id, trust_remote_code=trust_remote_code)
+        self._tokenizer = self._init_tokenizer(config)
+        cfg_obj = self._apply_model_patches(cfg_obj, args_ns)
+        engine, processor = self._build_engine(cfg_obj, self._processor, model_id, args_ns)
+        self._processor = processor
+        return engine
+
+    def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize inbound payloads and attach chat/multimodal metadata."""
+
+        ctx = normalize_request_payload(payload, request_prefix="vllm")
+        prepared: Dict[str, Any] = {
+            "sample": ctx.sample,
+            "messages": ctx.messages or [],
+            "inputs": ctx.inputs or {},
+            "prompt": ctx.prompt or (ctx.inputs.get("prompt") if isinstance(ctx.inputs, dict) else "") or "",
+            "prompt_meta": ctx.prompt_meta or {},
+            "cache_namespace": ctx.cache_namespace,
+            "chat_template_kwargs": ctx.chat_template_kwargs or {},
+            "output_type": ctx.output_type or "text",
+            "sampling_params": ctx.sampling_params or {},
+            "sample_n": max(int(ctx.sample_n or 1), 1),
+            "request_id": ctx.request_id,
+        }
+        prepared.update(ctx.chat_meta)
+
+        check_tokenizer_conflict(prepared, self._cfg_tokenizer_path)
+        prompt = self._render_prompt(prepared)
+        prompt, inputs_val = self._maybe_tokenize_messages(prepared, prompt)
+        prepared["prompt"] = prompt
+        prepared["inputs"] = inputs_val
+
+        sampling_base = build_sampling_params_base(
+            self._default_sampling, prepared.get("sampling_params") or {}, max_tokens=self._max_tokens
+        )
+        sampling = build_sampling_params(
+            ctx.output_type,
+            sampling_base,
+            default_sampling=self._default_sampling,
+            max_tokens=self._max_tokens,
+            sampling_class_resolver=resolve_sampling_class,
+        )
+        prepared["sampling_params"] = sampling
+        if not prepared.get("request_id"):
+            prepared["request_id"] = resolve_request_id(prepared, prefix="vllm")
+
+        caps = BackendCapabilities(supports_mm=self._mm_supported, has_processor_chat_template=bool(self._processor))
+        prepared["cache_suffix"] = ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps)
+
+        return prepared
+
+    def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """同步包装，支持 sample_n 多路采样与 output_type 路由."""
+
+        logger.info(
+            "vllm_backend handling request_id={} output_type={} sample_n={}",
+            inputs.get("request_id"),
+            inputs.get("output_type"),
+            inputs.get("sample_n"),
+        )
+        return self._generate_prepared(inputs, batch_path="native_single")
+
+    def generate_batch(self, inputs_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        prepared_list = [self.prepare_inputs(item) for item in inputs_list]
+        if any((item.get("sample_n") or 1) > 1 for item in prepared_list):
+            logger.debug("vllm_backend: sample_n>1 in batch; falling back to per-request execution")
+            return [self._generate_prepared(item, batch_path="native_single") for item in prepared_list]
+
+        results: List[Dict[str, Any]] = []
+        for item in prepared_list:
+            results.append(self._generate_prepared(item, batch_path="native_batch"))
+        return results
+
+    def _generate_prepared(self, prepared: Dict[str, Any], *, batch_path: str) -> Dict[str, Any]:
+        output_type = prepared.get("output_type") or "text"
+        sample_n = max(int(prepared.get("sample_n") or 1), 1)
+        sampling_params = prepared["sampling_params"]
+        base_request_id = prepared.get("request_id") or resolve_request_id(prepared, prefix="vllm")
+        outputs = []
+        for idx in range(sample_n):
+            rid = base_request_id if sample_n == 1 else f"{base_request_id}_{idx}"
+            result = self._generate_one(prepared, sampling_params, rid)
+            outputs.append(self._convert_output(result, output_type))
+        return finalize_backend_result(
+            prepared,
+            outputs,
+            sample_n=sample_n,
+            batch_path=batch_path,
+            backend_tag="vllm_backend",
+            cfg_tokenizer_path=self._cfg_tokenizer_path,
+        )
+
+    def _generate_one(self, prepared: Dict[str, Any], sampling_params: Any, request_id: str) -> Any:
+        prompt = prepared["prompt"]
+        messages = prepared["messages"]
+        mm_requested = has_multimodal_inputs(prepared)
+        if mm_requested and not self._mm_supported:
+            if self._strict_mm:
+                raise RuntimeError("multi_modal_data disabled for this vLLM version")
+            logger.warning("vllm_backend multi_modal_data disabled; falling back to prompt-only")
+        # 注意：这里 _load_multimodal_payload 内部已经使用了线程池，是线程安全的同步调用
+        mm_raw = self._prepare_multi_modal_data(prepared) if mm_requested and self._mm_supported else None
+        mm_loaded = self._load_multimodal_payload(mm_raw) if mm_raw else None
+
+        # 定义异步任务，将在后台 loop 中运行
+        async def _async_generate():
+            # 构造 prompt，优先 processor 渲染
+            rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"))
+            final_prompt_text = rendered_mm if rendered_mm else prompt
+
+            # vLLM v1（>=0.8.0）接口支持单个 PromptInputs dict 作为位置参数；旧接口只接受 keyword prompt/inputs
+            use_v1_prompt = bool(_VLLM_PROMPT_V1)
+            prompt_input: Any
+            mm_payload = None
+            if mm_loaded and self._mm_supported:
+                if self._mm_strategy == "inputs":
+                    mm_payload = mm_loaded
+                else:
+                    if self._strict_mm:
+                        raise RuntimeError("multi_modal_data disabled for this vLLM version")
+                    logger.warning("vllm_backend multi_modal_data disabled; falling back to prompt-only")
+            if mm_payload:
+                # 确保 prompt 中包含足够的 <image> 占位，防止 vLLM 提示更新不匹配
+                image_field = mm_payload.get("image") if isinstance(mm_payload, dict) else None
+                if isinstance(image_field, (list, tuple)):
+                    image_count = len(image_field)
+                elif image_field is None:
+                    image_count = 0
+                else:
+                    image_count = 1
+                final_prompt_text = normalize_image_placeholders(final_prompt_text, image_count)
+                prompt_input = {"prompt": final_prompt_text, "multi_modal_data": mm_payload}
+            else:
+                prompt_input = final_prompt_text
+
+            extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
+            if isinstance(extra_inputs, dict):
+                # 如有 input_ids/prompt_token_ids，则构造 dict 以走 v1 PromptInputs，兼容 llm-eval 行为
+                needs_dict = mm_loaded or use_v1_prompt or "input_ids" in extra_inputs or "prompt_token_ids" in extra_inputs
+                if needs_dict and not isinstance(prompt_input, dict):
+                    prompt_input = {"prompt": final_prompt_text}
+                if isinstance(prompt_input, dict):
+                    mapped_extra = dict(extra_inputs)
+                    if "input_ids" in mapped_extra and "prompt_token_ids" not in mapped_extra:
+                        mapped_extra["prompt_token_ids"] = mapped_extra.get("input_ids")
+                    for k, v in mapped_extra.items():
+                        prompt_input.setdefault(k, v)
+
+            generate_kwargs = {
+                "sampling_params": sampling_params,
+                "request_id": request_id,
+            }
+            if use_v1_prompt:
+                generate_args = (prompt_input,)
+            else:
+                if isinstance(prompt_input, dict):
+                    generate_kwargs["inputs"] = prompt_input
+                    generate_kwargs["prompt"] = prompt_input.get("prompt", prompt)
+                else:
+                    generate_kwargs["prompt"] = prompt_input
+                if isinstance(extra_inputs, dict):
+                    mapped_extra = dict(extra_inputs)
+                    if "input_ids" in mapped_extra and "prompt_token_ids" not in mapped_extra:
+                        mapped_extra["prompt_token_ids"] = mapped_extra.get("input_ids")
+                    for k, v in mapped_extra.items():
+                        generate_kwargs.setdefault(k, v)
+
+                # 防御性修正：确保 prompt_token_ids 是列表，防止 int 导致 len() 报错
+                if "prompt_token_ids" in generate_kwargs:
+                    p_ids = generate_kwargs["prompt_token_ids"]
+                    if isinstance(p_ids, int):
+                        generate_kwargs["prompt_token_ids"] = [p_ids]
+
+                generate_args = ()
+
+            try:
+                result = self.model.generate(*generate_args, **generate_kwargs)
+            except TypeError as exc:
+                # 旧版 AsyncLLMEngine.generate 不支持 multi_modal_data/inputs 关键字或 v1 位置参数
+                if mm_loaded or generate_args:
+                    if mm_loaded:
+                        self._mm_supported = False
+                        self._mm_strategy = "disabled"
+                        if self._strict_mm:
+                            raise RuntimeError(
+                                f"multi_modal_data unsupported in this vLLM version; strict mode enabled ({exc})"
+                            ) from exc
+                    logger.warning(
+                        "vllm_backend generate encountered TypeError ({}); "
+                        "falling back to prompt-only without multi_modal_data",
+                        exc,
+                    )
+                    prompt_for_retry = prompt_input.get("prompt") if isinstance(prompt_input, dict) else prompt_input
+                    result = self.model.generate(prompt=prompt_for_retry or prompt, sampling_params=sampling_params, request_id=request_id)
+                else:
+                    raise
+            except Exception as exc:
+                logger.warning(
+                    "vllm_backend generate failed: {} - {}; returning echo output", type(exc).__name__, exc, exc_info=True
+                )
+                return {"outputs": [{"text": str(prompt)}]}
+
+            # 异步收集结果
+            if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
+                final_item = None
+                async for item in result:
+                    final_item = item
+                return final_item
+            if inspect.iscoroutine(result):
+                return await result
+            return result
+
+        # 提交到后台线程执行并等待结果
+        try:
+            abort_fn = getattr(self.model, "abort", None)
+            return run_coroutine_threadsafe_with_timeout(
+                self._loop,
+                _async_generate(),
+                timeout=self._request_timeout,
+                request_id=request_id,
+                abort_fn=abort_fn,
+                logger_prefix="vllm_backend",
+                timeout_result_fn=lambda: {"outputs": [{"text": str(prompt)}]},
+            )
+        except Exception as exc:
+            logger.error("vllm_backend: background thread execution failed: {}", exc)
+            return {"outputs": [{"text": str(prompt)}]}
+
+    # ------------------------------------------------------------------ #
+    # 模型加载与补丁                                                         #
+    # ------------------------------------------------------------------ #
+    def _load_auto_config(self, model_id: str, trust_remote_code: bool):
+        try:  # pragma: no cover - heavy dependency
+            from transformers import AutoConfig
+
+            return AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+        except Exception as exc:
+            logger.warning("vllm_backend: using dummy AutoConfig for {} ({})", model_id, exc)
+            text_cfg = SimpleNamespace(
+                max_position_embeddings=4096,
+                model_type="llama",
+                rope_scaling={},
+            )
+            return SimpleNamespace(
+                architectures=["RewardModel"],
+                model_type="llama",
+                rope_scaling={},
+                max_position_embeddings=4096,
+                seq_length=0,
+                text_config=text_cfg,
+                moe_intermediate_size=None,
+            )
+
+    def _load_auto_processor(self, model_id: str, trust_remote_code: bool):
+        try:  # pragma: no cover - heavy dependency
+            from transformers import AutoProcessor
+
+            return AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+        except Exception as exc:
+            logger.warning("vllm_backend: using dummy processor for {} ({})", model_id, exc)
+            return SimpleNamespace(feature_extractor=SimpleNamespace(sampling_rate=16000))
+
+    def _apply_model_patches(self, cfg: Any, args: SimpleNamespace):
+        """仿照 llm-eval：Reward/MoE/rope scaling/低显存缓存等补丁。"""
+
+        # RewardModel 架构修正
+        archs = getattr(cfg, "architectures", []) or []
+        model_type = getattr(cfg, "model_type", "") or getattr(getattr(cfg, "text_config", cfg), "model_type", "")
+        if "RewardModel" in archs:
+            if model_type == "llama" and "LlamaForRewardModel" not in archs:
+                archs.append("LlamaForRewardModel")
+            elif model_type == "qwen2" and "Qwen2ForRewardModel" not in archs:
+                archs.append("Qwen2ForRewardModel")
+            cfg.architectures = archs
+
+        # rope scaling 补丁
+        rope_scaling = getattr(cfg, "rope_scaling", {}) or {}
+        factor = 1.0 if rope_scaling.get("rope_type") == "llama3" else rope_scaling.get("factor", 1.0)
+        max_model_length = int(
+            (getattr(cfg, "max_position_embeddings", 0) or 0) * factor
+            or getattr(cfg, "seq_length", 0)
+            or getattr(getattr(cfg, "text_config", cfg), "max_position_embeddings", 0) * factor
+        )
+        text_config = getattr(cfg, "text_config", cfg)
+        if args.max_length and args.max_length != max_model_length:
+            target = int(args.max_length / factor) if factor else int(args.max_length)
+            try:
+                setattr(text_config, "max_position_embeddings", target)
+            except Exception:
+                pass
+        cfg.text_config = text_config
+
+        # MoE 专家并行
+        if getattr(cfg, "moe_intermediate_size", None) is not None:
+            if getattr(args, "tensor_parallel_size", 1) > 1:
+                setattr(args, "enable_expert_parallel", True)
+
+        # 低显存 cache block 估算
+        if getattr(args, "low_vram", False):
+            max_length = args.max_length or max_model_length or 8192
+            block_size = args.block_size or 32
+            num_cache_blocks = int((max_length or 8192) * 1.1 / block_size)
+            for key in ("num_gpu_blocks", "num_cpu_blocks", "forced_num_gpu_blocks", "num_gpu_blocks_override"):
+                if getattr(args, key, None) is None:
+                    setattr(args, key, num_cache_blocks)
+
+        return cfg
+
+    def _build_engine(self, cfg: Any, processor: Any, model_id: str, args: SimpleNamespace):
         try:  # pragma: no cover - heavy dependency
             from vllm.engine.arg_utils import AsyncEngineArgs  # type: ignore
             from vllm.engine.async_llm_engine import AsyncLLMEngine  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError("vllm is not installed") from exc
 
-        # optional tokenizer for chat template fallback
-        self._tokenizer = self._init_tokenizer(config)
+            limit_mm = self._resolve_mm_limits(cfg, args) if self._is_multimodal_config(cfg, processor) else None
+            engine_kwargs = dict(
+                model=model_id,
+                tensor_parallel_size=getattr(args, "tensor_parallel_size", 1),
+                trust_remote_code=getattr(args, "trust_remote_code", True),
+                enforce_eager=getattr(args, "enforce_eager", False),
+            )
+            if limit_mm is not None:
+                engine_kwargs["limit_mm_per_prompt"] = limit_mm
 
-        model_path = config.get("model_path")
-        if not model_path:
-            raise ValueError("VLLMBackend requires 'model_path' in the backend config")
+            engine_args = AsyncEngineArgs(**engine_kwargs)
+            engine = AsyncLLMEngine.from_engine_args(engine_args)
+            engine.log_requests = False
+            try:
+                (getattr(engine, "engine_core", None) or engine.engine).log_stats = False
+            except Exception:
+                pass
+            return engine, processor
+        except Exception as exc:
+            logger.warning("vllm_backend: vLLM not available, using DummyEngine ({})", exc)
 
-        engine_args = AsyncEngineArgs(
-            model=model_path,
-            tensor_parallel_size=config.get("tensor_parallel_size", 1),
-            trust_remote_code=bool(config.get("trust_remote_code", True)),
-            enforce_eager=bool(config.get("enforce_eager", False)),
+            class DummyEngine:
+                def __init__(self, cfg_obj, args_obj):
+                    self.cfg = cfg_obj
+                    self.args = args_obj
+                    self.calls: List[Dict[str, Any]] = []
+
+                def generate(self, **kwargs):
+                    self.calls.append(kwargs)
+                    rid = kwargs.get("request_id", "")
+                    return {"outputs": [{"text": f"dummy-{rid}"}]}
+
+                def abort(self, *_args, **_kwargs):
+                    return None
+
+            dummy = DummyEngine(cfg, args)
+            dummy.processor = processor
+            return dummy, processor
+
+    def _is_multimodal_config(self, cfg: Any, processor: Any) -> bool:
+        """Best-effort detection to decide whether to pass multi-modal limits to vLLM."""
+
+        model_type = str(getattr(cfg, "model_type", "")).lower()
+        if any(tag in model_type for tag in ("vision", "vl", "multimodal")):
+            return True
+
+        # HuggingFace configs for VL models usually carry one of these fields
+        cfg_dict = cfg.__dict__ if hasattr(cfg, "__dict__") else {}
+        vision_keys = (
+            "vision_config",
+            "multi_modal_config",
+            "mm_vision_tower",
+            "vision_tower",
+            "mm_projector",
         )
-        return AsyncLLMEngine.from_engine_args(engine_args)
+        if any(getattr(cfg, key, None) is not None or key in cfg_dict for key in vision_keys):
+            return True
 
-    def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Render prompt +采样参数，并准备 multi_modal_data."""
+        # Processor hints (AutoProcessor for VL models exposes image/vision attributes)
+        if processor is not None:
+            processor_keys = ("image_processor", "vision_model", "image_token_id")
+            if any(hasattr(processor, key) for key in processor_keys):
+                return True
 
-        self._check_tokenizer_conflict(payload)
-        prompt = self._render_prompt(payload)
-        sampling = dict(self._default_sampling)
-        sampling.update(payload.get("sampling_params") or {})
-        mm_data = self._prepare_multi_modal_data(payload)
-        request_id = self._resolve_request_id(payload)
-        caps = BackendCapabilities(supports_mm=self._mm_supported, has_processor_chat_template=False)
-        cache_suffix = ChatTemplateMixin.get_cache_suffix("text", self._chat_template_policy, caps)
-        return {
-            "prompt": prompt,
-            "sampling_params": sampling,
-            "multi_modal_data": mm_data,
-            "request_id": request_id,
-            "cache_suffix": cache_suffix,
-        }
+        return False
 
-    def _resolve_request_id(self, payload: Dict[str, Any]) -> str:
-        """Ensure every request has a non-empty, unique id for AsyncLLMEngine."""
+    def _resolve_mm_limits(self, cfg: Any, args: SimpleNamespace) -> Dict[str, int]:
+        """Resolve multi-modal limits; default to a very high image cap to avoid ValueError."""
 
-        candidate = payload.get("request_id")
-        if not candidate:
-            sample = payload.get("sample") or {}
-            if isinstance(sample, dict):
-                for key in ("request_id", "id", "sample_id", "idx"):
-                    candidate = sample.get(key)
-                    if candidate:
-                        break
-        if not candidate:
-            candidate = payload.get("id") or payload.get("sample_id")
+        # Prefer explicit limits from args/config
+        limit_cfg = getattr(args, "limit_mm_per_prompt", None) or getattr(cfg, "limit_mm_per_prompt", None)
+        if isinstance(limit_cfg, dict) and limit_cfg:
+            return limit_cfg
 
-        request_id = str(candidate).strip() if candidate is not None else ""
-        if not request_id:
-            request_id = f"gage_vllm_{uuid.uuid4().hex}"
-        return request_id
+        env_image = os.environ.get("GAGE_EVAL_VLLM_IMAGE_LIMIT")
+        env_audio = os.environ.get("GAGE_EVAL_VLLM_AUDIO_LIMIT")
 
-    def _render_prompt(self, payload: Dict[str, Any]) -> str:
-        messages = payload.get("messages") or (payload.get("sample") or {}).get("messages") or []
-        raw_prompt = payload.get("prompt") or payload.get("text") or (payload.get("sample") or {}).get("prompt") or ""
-        policy = ChatTemplatePolicy(mode=self._chat_template_mode)
-        caps = BackendCapabilities(supports_mm=self._mm_supported, has_processor_chat_template=False)
+        limits: Dict[str, int] = {}
+        if env_image:
+            try:
+                limits["image"] = int(env_image)
+            except ValueError:
+                pass
+        if env_audio:
+            try:
+                limits["audio"] = int(env_audio)
+            except ValueError:
+                pass
 
-        # 如果已渲染或禁用，回退到原始 prompt/简易拼接
-        if not ChatTemplateMixin.should_render(payload, policy):
-            if raw_prompt:
-                return str(raw_prompt)
-            return self._simple_render(messages)
-
-        # 选择模板来源
-        template_source = ChatTemplateMixin.select_template("text", policy, caps)
-        template_fn = getattr(self._tokenizer, "apply_chat_template", None) if self._tokenizer else None
-        fallback_tpl = None if template_source == "model" else self._fallback_template
-        rendered = ChatTemplateMixin.render(
-            messages,
-            template_fn=template_fn,
-            fallback_fn=lambda msgs: self._fallback_render(msgs, fallback_tpl),
-            add_generation_prompt=True,
-            chat_template=fallback_tpl,
-        )
-        payload["chat_template_mode"] = "backend"
-        payload["template_source"] = "model" if template_fn else "fallback"
-        payload["rendered_by"] = "backend"
-        return rendered or self._simple_render(messages) or str(raw_prompt)
+        # Default: effectively unlimited images; avoids vLLM default of 1 image raising ValueError
+        if not limits:
+            limits["image"] = 1_000_000
+        return limits
 
     def _init_tokenizer(self, config: Dict[str, Any]):
         tok_name = config.get("tokenizer_name") or config.get("tokenizer_path") or config.get("model_path")
@@ -189,275 +524,99 @@ class VLLMBackend(EngineBackend):
         try:  # pragma: no cover - optional dependency
             from transformers import AutoTokenizer
 
-            return AutoTokenizer.from_pretrained(tok_name, trust_remote_code=bool(config.get("trust_remote_code", True)))
+            return AutoTokenizer.from_pretrained(
+                tok_name, trust_remote_code=bool(config.get("trust_remote_code", True))
+            )
         except Exception as exc:
-            logger.warning("Failed to load tokenizer '{}' for chat_template fallback: {}", tok_name, exc)
+            logger.warning("vllm_backend failed to load tokenizer '{}': {}", tok_name, exc)
             return None
 
-    def _simple_render(self, messages: List[Dict[str, Any]]) -> str:
-        if not messages:
-            return ""
-        segments: List[str] = []
-        for message in messages:
-            role = message.get("role", "user")
-            content = message.get("content")
-            if isinstance(content, list):
-                text_parts = []
-                for fragment in content:
-                    if isinstance(fragment, dict) and fragment.get("type") == "text":
-                        text_parts.append(str(fragment.get("text", "")))
-                text = " ".join(text_parts)
-            else:
-                text = str(content) if content is not None else ""
-            segments.append(f"{role}: {text}".strip())
-        segments.append("assistant:")
-        return "\n".join(segments)
-
-    def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
-        # 简单文本拼接；若提供兜底模板字符串，可选择扩展为真正模板渲染
-        return self._simple_render(messages)
-
-    def _build_sampling_params(self, runtime_params: Dict[str, Any]):
-        try:  # pragma: no cover - heavy dependency
-            from vllm import SamplingParams
-        except ImportError as exc:
-            raise RuntimeError("vllm is not installed") from exc
-        params = dict(self._default_sampling)
-        params.update(runtime_params or {})
-        params.setdefault("max_tokens", self._max_tokens)
-        return SamplingParams(**params)
-
-    # ------------------------------ #
-    # Sync wrappers for async engine #
-    # ------------------------------ #
-    def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        return self._run_async(self._generate_async(inputs))
-
-    def generate_batch(self, inputs_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        return self._run_async(self._generate_batch_async(inputs_list))
-
-    def _run_async(self, coro):
-        # 始终将任务投递到持久事件循环线程，避免在调用线程创建/关闭事件循环。
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result()
-
-    def _run_loop(self) -> None:
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
-
-    async def _generate_async(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """单请求 async 路径，支持文本/多模态。"""
-
-        prepared = self.prepare_inputs(inputs)
-        sampling_params = self._build_sampling_params(prepared.get("sampling_params") or {})
-        request_id = prepared.get("request_id") or self._resolve_request_id(prepared)
-        try:
-            result = await asyncio.wait_for(
-                self._generate_one(prepared, sampling_params, request_id),
-                timeout=self._request_timeout,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("vLLM request_id={} timeout after {:.1f}s, aborting", request_id, self._request_timeout)
-            with contextlib.suppress(Exception):
-                await self.model.abort(request_id)
-            raise
-        final = self._extract_first([result], batch_path="native_batch")
-        self._attach_template_metadata(prepared, final)
-        return final
-
-    async def _generate_batch_async(self, inputs_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """批量并发提交 AsyncLLMEngine（vLLM 自身负责合批）。"""
-
-        prepared = [self.prepare_inputs(item) for item in inputs_list]
-        tasks = []
-        for idx, item in enumerate(prepared):
-            sampling_params = self._build_sampling_params(item.get("sampling_params") or {})
-            request_id = item.get("request_id") or self._resolve_request_id(item)
-            tasks.append(
-                asyncio.wait_for(
-                    self._generate_one(item, sampling_params, request_id),
-                    timeout=self._request_timeout,
-                )
-            )
-        try:
-            results = await asyncio.gather(*tasks)
-        except asyncio.TimeoutError as exc:
-            logger.warning("vLLM batch timeout: {}", exc)
-            for item in prepared:
-                rid = item.get("request_id") or (item.get("sample") or {}).get("idx")
-                if rid:
-                    with contextlib.suppress(Exception):
-                        await self.model.abort(rid)
-            raise
-        enriched = []
-        for prepared_item, out in zip(prepared, results):
-            result = self._extract_first([out], batch_path="native_batch")
-            self._attach_template_metadata(prepared_item, result)
-            enriched.append(result)
-        return enriched
-
-    async def _generate_one(self, prepared: Dict[str, Any], sampling_params, request_id: str):
-        mm_data = prepared.get("multi_modal_data")
-        generate_kwargs = dict(
-            prompt=prepared.get("prompt") or "",
-            sampling_params=sampling_params,
-            request_id=request_id,
-        )
-
-        # 多模态尝试：部分 vLLM 不支持 multi_modal_data/inputs，会 TypeError，需降级。
-        try:
-            if mm_data and self._mm_supported:
-                if self._mm_strategy == "inputs":
-                    generate_kwargs_mm = dict(generate_kwargs)
-                    generate_kwargs_mm["inputs"] = {"prompt": generate_kwargs["prompt"], "multi_modal_data": mm_data}
-                    result = self.model.generate(**generate_kwargs_mm)
-                else:
-                    if self._strict_mm:
-                        raise RuntimeError("multi_modal_data disabled for this vLLM version")
-                    logger.warning("vLLM multi_modal_data disabled; falling back to prompt-only")
-                    result = self.model.generate(**generate_kwargs)
-            else:
-                result = self.model.generate(**generate_kwargs)
-        except TypeError as exc:
-            if mm_data and self._mm_supported:
-                self._mm_supported = False
-                if self._strict_mm:
-                    raise RuntimeError(
-                        f"vLLM backend does not support multi_modal_data in this version; strict mode enabled ({exc})"
-                    ) from exc
-                logger.warning(
-                    "vLLM backend detected multi_modal_data unsupported in this vLLM version; falling back to prompt-only (images ignored). Error: %s",
-                    exc,
-                )
-                result = self.model.generate(**generate_kwargs)
-            else:
-                raise
-
-        # vLLM 0.8.x AsyncLLMEngine.generate 可能返回 async generator；需要异步迭代取最终结果
-        if hasattr(result, "__aiter__"):
-            final = None
-            async for item in result:
-                final = item
-            return final
-        # 或返回 awaitable/RequestOutput
-        if asyncio.iscoroutine(result):
-            return await result
+    # ------------------------------------------------------------------ #
+    # 适配/渲染/采样辅助                                                      #
+    # ------------------------------------------------------------------ #
+    def _convert_output(self, result: Any, output_type: str) -> Any:
+        if output_type in {"text", "beam"}:
+            return convert_text_like_output(result)
+        if output_type in {"reward", "loss", "prompt_tokens", "next_token_prob"}:
+            return result
         return result
 
-    def shutdown(self) -> None:
-        """Stop内部事件循环，释放资源。"""
+    def _render_prompt(self, prepared: Dict[str, Any]) -> str:
+        messages = prepared["messages"]
+        raw_prompt = prepared["prompt"]
+        policy = ChatTemplatePolicy(mode=self._chat_template_mode)
+        caps = BackendCapabilities(supports_mm=self._mm_supported, has_processor_chat_template=bool(self._processor))
+        chat_kwargs = prepared["chat_template_kwargs"]
+        return render_prompt_with_template(
+            prepared,
+            tokenizer=self._tokenizer,
+            fallback_template=self._fallback_template,
+            policy=policy,
+            caps=caps,
+            chat_kwargs=chat_kwargs,
+            simple_renderer=simple_render_messages,
+        )
 
-        try:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._loop_thread.join(timeout=1.0)
-        except Exception:
-            logger.warning("VLLMBackend shutdown encountered an error", exc_info=True)
+    def _maybe_tokenize_messages(self, prepared: Dict[str, Any], prompt: str) -> Tuple[str, Any]:
+        """使用 backend tokenizer 生成 prompt_token_ids（若预处理器未提供）。"""
 
-    @staticmethod
-    def _extract_first(outputs, *, batch_path: str = "native_batch") -> Dict[str, Any]:
-        if not outputs:
-            return {"answer": ""}
-        entry = outputs[0]
-        if not getattr(entry, "outputs", None):
-            return {"answer": ""}
-        text = entry.outputs[0].text
-        return {"answer": text.strip(), "_batch_path": batch_path}
+        force_tokenize = bool(prepared.get("force_tokenize_prompt") or self._force_tokenize_prompt)
+        new_prompt, new_inputs, meta = maybe_tokenize_messages(
+            prepared,
+            prompt,
+            tokenizer=self._tokenizer,
+            processor=self._processor,
+            policy=self._chat_template_policy,
+            force_tokenize=force_tokenize,
+        )
+        for k, v in (meta or {}).items():
+            prepared.setdefault(k, v)
+        return new_prompt, new_inputs
 
-    def _attach_template_metadata(self, payload: Dict[str, Any], result: Dict[str, Any]) -> None:
-        meta_keys = ("chat_template_mode", "template_source", "rendered_by", "cache_suffix")
-        sample = payload.get("sample") or {}
-        for key in meta_keys:
-            value = payload.get(key)
-            if value is None:
-                value = sample.get(key)
-            if value is not None:
-                result[key] = value
-        if "_tokenizer_path" not in result and self._cfg_tokenizer_path:
-            result["_tokenizer_path"] = self._cfg_tokenizer_path
+    def _fallback_render(self, messages: List[Dict[str, Any]], tpl: Optional[str]) -> str:
+        return simple_render_messages(messages)
 
-    def _prepare_multi_modal_data(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        sample = payload.get("sample") or {}
-        raw_inputs = payload.get("inputs") or sample.get("inputs") or {}
-        mm = raw_inputs.get("multi_modal_data") if isinstance(raw_inputs, dict) else None
-        if not mm:
-            mm = sample.get("multi_modal_data")
+    def _render_with_processor(
+        self, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        rendered = render_with_processor(self._processor, normalize_messages_safe(messages), prompt, chat_template_kwargs)
+        if rendered is not None:
+            return rendered
+        tok = getattr(self, "_tokenizer", None)
+        tok_apply = getattr(tok, "apply_chat_template", None)
+        if tok_apply:
+            try:
+                rendered_tok = tok_apply(
+                    normalize_messages_safe(messages),
+                    add_generation_prompt=True,
+                    tokenize=False,
+                    **(chat_template_kwargs or {}),
+                )
+                if isinstance(rendered_tok, list):
+                    rendered_tok = rendered_tok[0]
+                if rendered_tok:
+                    return str(rendered_tok)
+            except Exception as tok_exc:
+                logger.debug("vllm_backend tokenizer chat_template failed: {}", tok_exc)
+        return None
 
-        images: List[Any] = []
-        if isinstance(mm, dict):
-            images.extend(self._load_images(mm.get("image") or mm.get("images")))
-        messages = payload.get("messages") or sample.get("messages") or []
-        images.extend(self._load_images(self._extract_images_from_messages(messages)))
-
-        # 去除空条目
+    def _prepare_multi_modal_data(self, prepared: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        sources = collect_multimodal_sources(prepared)
+        images = self._load_images(sources.get("image"))
+        audios = sources.get("audio") or []
         images = [img for img in images if img is not None]
-        if not images:
+        audios = [au for au in audios if au is not None]
+        if not images and not audios:
             return None
-        return {"image": images}
-
-    @staticmethod
-    def _extract_images_from_messages(messages: List[Dict[str, Any]]) -> List[str]:
-        urls: List[str] = []
-        for message in messages or []:
-            content = message.get("content")
-            if not isinstance(content, list):
-                continue
-            for fragment in content:
-                if isinstance(fragment, dict) and fragment.get("type") == "image_url":
-                    url = fragment.get("image_url", {}).get("url") if isinstance(fragment.get("image_url"), dict) else fragment.get("image_url") or fragment.get("url")
-                    if isinstance(url, str):
-                        urls.append(url)
-        return urls
+        result: Dict[str, Any] = {}
+        if images:
+            result["image"] = images
+        if audios:
+            result["audio"] = audios
+        return result
 
     def _load_images(self, sources) -> List[Any]:
-        if sources is None:
-            return []
-        if not isinstance(sources, list):
-            sources = [sources]
-        images: List[Any] = []
-        try:  # pragma: no cover - heavy dependency
-            from PIL import Image
-        except ImportError:
-            logger.warning("Pillow not installed; skipping image loading for multi_modal_data")
-            return []
+        return load_images(sources)
 
-        for src in sources:
-            if src is None:
-                continue
-            try:
-                if isinstance(src, Image.Image):
-                    images.append(src)
-                elif isinstance(src, str) and src.startswith("data:"):
-                    _, b64 = src.split(",", 1)
-                    binary = base64.b64decode(b64)
-                    images.append(Image.open(io.BytesIO(binary)).convert("RGB"))
-                elif isinstance(src, str):
-                    path = Path(src)
-                    images.append(Image.open(path).convert("RGB"))
-                else:
-                    logger.debug("Unsupported image source type {}; skipping", type(src))
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("Failed to load image source {}: {}", src, exc)
-        return images
-
-    @staticmethod
-    def _detect_version() -> Optional[str]:
-        try:  # pragma: no cover - optional dependency
-            import vllm  # type: ignore
-        except Exception:
-            logger.warning("vLLM not installed; version detection skipped")
-            return None
-        ver = getattr(vllm, "__version__", None)
-        if isinstance(ver, str):
-            return ver
-        try:
-            from importlib.metadata import version as meta_version
-
-            return meta_version("vllm")
-        except Exception:
-            return None
-
-    def _check_tokenizer_conflict(self, payload: Dict[str, Any]) -> None:
-        dataset_tok = payload.get("_tokenizer_path") or (payload.get("sample") or {}).get("_tokenizer_path")
-        backend_tok = self._cfg_tokenizer_path
-        if dataset_tok and backend_tok and str(dataset_tok) != str(backend_tok):
-            raise ValueError(f"Conflicting tokenizer_path: dataset={dataset_tok} backend={backend_tok}")
+    def _load_multimodal_payload(self, mm: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return load_multimodal_payload(mm, getattr(self, "_processor", None), logger_prefix="vllm_backend")
