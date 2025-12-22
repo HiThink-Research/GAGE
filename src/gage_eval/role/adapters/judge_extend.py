@@ -56,10 +56,22 @@ class JudgeExtendAdapter(RoleAdapter):
         if not payload:
             return merged
         step = payload.get("step")
+        step_params: Any = None
         if isinstance(step, dict):
             step_params = step.get("params") or step.get("args")
-            if isinstance(step_params, dict):
-                merged.update(step_params)
+        elif step is not None:
+            getter = getattr(step, "get", None)
+            if callable(getter):
+                try:
+                    step_params = getter("params") or getter("args")
+                except Exception:
+                    step_params = None
+            if step_params is None and hasattr(step, "params"):
+                step_params = getattr(step, "params")
+            if step_params is None and hasattr(step, "args"):
+                step_params = getattr(step, "args")
+        if isinstance(step_params, dict):
+            merged.update(step_params)
         extra_params = payload.get("params")
         if isinstance(extra_params, dict):
             merged.update(extra_params)
