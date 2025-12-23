@@ -23,12 +23,12 @@ datasets:
         gpqa_prompt_type: zero_shot
         #gpqa_prompt_type: 5_shot
 backends:
-  - backend_id: gpqa_legacy_vllm_backend
+  - backend_id: gpqa_vllm_backend
     type: vllm
     config:
       model_path: ${GPQA_MODEL_PATH:-/mnt/model/qwen2_5_05B}
       tokenizer_path: ${GPQA_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
-      use_chat_template: force
+      force_tokenize_prompt: true
       tokenizer_trust_remote_code: true      
       tensor_parallel_size: 1
       max_tokens: 128
@@ -41,9 +41,9 @@ backends:
       async_max_concurrency: 32
 
 role_adapters:
-  - adapter_id: dut_gpqa_legacy_qwen
+  - adapter_id: dut_gpqa_vllm_qwen
     role_type: dut_model
-    backend_id: gpqa_legacy_vllm_backend
+    backend_id: gpqa_vllm_backend
     capabilities:
       - chat_completion
 
@@ -54,7 +54,7 @@ metrics:
 tasks:
   - task_id: gpqa_diamond_eval
     dataset_id: gpqa_diamond_local
-    max_samples: 5
+    max_samples: 546
     reporting:
       sinks:
         - type: console

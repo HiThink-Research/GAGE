@@ -1,7 +1,7 @@
 api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
-  name: mathvista_legacy_vllm_async
+  name: mathvista_vllm_async
   description: 使用 vllm_backend 运行 MathVista testmini（多模态）评测。
 
 custom:
@@ -51,7 +51,7 @@ datasets:
         pre_encode_images: true
 
 backends:
-  - backend_id: mathvista_legacy_vllm_backend
+  - backend_id: mathvista_vllm_backend
     type: vllm
     config:
       # 需使用具备视觉能力的权重；默认指向本机已存在的 2.5-VL-3B 目录
@@ -69,9 +69,9 @@ backends:
       output_type: text
 
 role_adapters:
-  - adapter_id: dut_mathvista_legacy_qwen
+  - adapter_id: dut_mathvista_vllm_qwen
     role_type: dut_model
-    backend_id: mathvista_legacy_vllm_backend
+    backend_id: mathvista_vllm_backend
     # prompt_id: mathvista_infer_prompt
     capabilities:
       - chat_completion
@@ -84,10 +84,10 @@ metrics:
 tasks:
   - task_id: mathvista_testmini_eval
     dataset_id: mathvista_testmini
-    max_samples: 10
+    max_samples: 100
     reporting:
       sinks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mathvista_legacy_vllm_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mathvista_vllm_events.jsonl

@@ -21,7 +21,7 @@ class ConfigFieldMappingTests(unittest.TestCase):
         paths = [
             "config/custom/mmmu_qwen_vl.yaml",
             "config/custom/mmmu_local_vlm.yaml",
-            "config/custom/mmmu_legacy_vllm.yaml",
+            "config/custom/mmmu_vllm.yaml",
         ]
         for rel in paths:
             cfg = self._load(rel)

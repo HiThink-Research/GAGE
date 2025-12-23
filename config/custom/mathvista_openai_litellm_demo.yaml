@@ -10,7 +10,7 @@ custom:
   # Pipeline 级默认步骤：本地 vllm 推理 + OpenAI 裁判
   steps:
     - step: inference
-      adapter_id: dut_legacy_vllm
+      adapter_id: dut_vllm
     - step: judge
       adapter_id: judge_openai_litellm
     - step: auto_eval
@@ -91,7 +91,7 @@ datasets:
           - 如无选项，请直接给出简洁答案（数值/文字），不复述题干。
 
 backends:
-  - backend_id: legacy_qwen_local
+  - backend_id: qwen_local_vllm
     type: vllm
     config:
       model_path: /mnt/model/qwen2_5_vl_3b
@@ -119,9 +119,9 @@ backends:
       max_retries: 6
 
 role_adapters:
-  - adapter_id: dut_legacy_vllm
+  - adapter_id: dut_vllm
     role_type: dut_model
-    backend_id: legacy_qwen_local
+    backend_id: qwen_local_vllm
     prompt_id: mathvista_infer_prompt
     prompt_params:
       language: zh

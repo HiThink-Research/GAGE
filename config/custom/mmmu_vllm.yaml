@@ -1,7 +1,7 @@
 api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
-  name: mmmu_legacy_vllm
+  name: mmmu_vllm
   description: 多模态基准，使用 vllm_backend（本地 AsyncLLMEngine）评测 MMMU val500，参考 mmmu_local_vlm。
 
 custom:
@@ -19,7 +19,7 @@ datasets:
         content_field: messages.0.content
 
 backends:
-  - backend_id: mmmu_legacy_vllm_backend
+  - backend_id: mmmu_vllm_backend
     type: vllm
     config:
       model_path: /mnt/model/qwen2_5_vl_3b  # 多模态模型路径，需支持 vision
@@ -35,9 +35,9 @@ backends:
       async_max_concurrency: 1  # 对齐 mmmu_local_vlm，默认单并发防止多模态显存抖动
 
 role_adapters:
-  - adapter_id: mmmu_legacy_vllm_adapter
+  - adapter_id: mmmu_vllm_adapter
     role_type: dut_model
-    backend_id: mmmu_legacy_vllm_backend
+    backend_id: mmmu_vllm_backend
     capabilities:
       - vision_chat
 
@@ -54,5 +54,5 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmmu_legacy_vllm_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmmu_vllm_events.jsonl
     concurrency: 1

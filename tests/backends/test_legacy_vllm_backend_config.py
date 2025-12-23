@@ -15,24 +15,24 @@ def load_yaml(path: Path):
 
 class LegacyVLLMBackendConfigTests(unittest.TestCase):
     def test_text_config_backend_type(self):
-        cfg = load_yaml(Path(__file__).resolve().parents[2] / "config" / "custom" / "piqa_legacy_vllm_async.yaml")
+        cfg = load_yaml(Path(__file__).resolve().parents[2] / "config" / "custom" / "piqa_vllm_async.yaml")
         backend = cfg["backends"][0]
-        self.assertEqual(backend["type"], "legacy_vllm")
+        self.assertEqual(backend["type"], "vllm")
         self.assertIn("model_path", backend["config"])
 
     def test_multimodal_config_backend_type(self):
-        cfg = load_yaml(Path(__file__).resolve().parents[2] / "config" / "custom" / "mmmu_legacy_vllm.yaml")
+        cfg = load_yaml(Path(__file__).resolve().parents[2] / "config" / "custom" / "mmmu_vllm.yaml")
         backend = cfg["backends"][0]
-        self.assertEqual(backend["type"], "legacy_vllm")
+        self.assertEqual(backend["type"], "vllm")
         # dataset should include doc_to_visual
         dataset = cfg["datasets"][0]
         self.assertIn("doc_to_visual", dataset["params"])
 
     def test_run_configs_reference_custom(self):
-        piqa_run = load_yaml(Path(__file__).resolve().parents[2] / "config" / "run_configs" / "piqa_legacy_vllm_async_run_1.yaml")
-        self.assertEqual(piqa_run["base_task"], "custom/piqa_legacy_vllm_async")
-        mmmu_run = load_yaml(Path(__file__).resolve().parents[2] / "config" / "run_configs" / "mmmu_legacy_vllm_run_1.yaml")
-        self.assertEqual(mmmu_run["base_task"], "custom/mmmu_legacy_vllm")
+        piqa_run = load_yaml(Path(__file__).resolve().parents[2] / "config" / "run_configs" / "piqa_vllm_async_run_1.yaml")
+        self.assertEqual(piqa_run["base_task"], "custom/piqa_vllm_async")
+        mmmu_run = load_yaml(Path(__file__).resolve().parents[2] / "config" / "run_configs" / "mmmu_vllm_run_1.yaml")
+        self.assertEqual(mmmu_run["base_task"], "custom/mmmu_vllm")
 
 
 if __name__ == "__main__":

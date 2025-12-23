@@ -1,7 +1,7 @@
 api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
-  name: gpqa_legacy_vllm_async
+  name: gpqa_vllm_async
   description: 使用 vllm_backend 运行 GPQA（extended）评测，沿用结构化 Prompt。
 
 custom:
@@ -26,7 +26,7 @@ datasets:
       preprocess: gpqa_multi_choice
       tokenizer_path: /mnt/model/qwen2_5_05B
 backends:
-  - backend_id: gpqa_legacy_vllm_backend
+  - backend_id: gpqa_vllm_backend
     type: vllm
     config:
       model_path: /mnt/model/qwen2_5_05B
@@ -42,9 +42,9 @@ backends:
       async_max_concurrency: 32
 
 role_adapters:
-  - adapter_id: dut_gpqa_legacy_qwen
+  - adapter_id: dut_gpqa_vllm_qwen
     role_type: dut_model
-    backend_id: gpqa_legacy_vllm_backend
+    backend_id: gpqa_vllm_backend
     capabilities:
       - chat_completion
 
@@ -55,10 +55,10 @@ metrics:
 tasks:
   - task_id: gpqa_extended_eval
     dataset_id: gpqa_extended_local
-    max_samples: 10
+    max_samples: 546
     reporting:
       sinks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/gpqa_legacy_vllm_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/gpqa_vllm_events.jsonl
