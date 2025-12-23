@@ -104,6 +104,9 @@ class MathVistaPreprocessor(BasePreprocessor):
         # step3.2: 追加图像片段（若存在）
         if img_frag:
             content.append(img_frag)
+            # 保证 prompt 中包含 <image> 占位，避免后端多模态校验失败
+            question_with_image = f"<image>\\n{question}" if "<image>" not in str(question) else str(question)
+            sample["prompt"] = sample.get("prompt") or question_with_image
         # step3.3: 组织 system/user 消息
         messages: List[Dict[str, Any]] = []
         if system_prompt:

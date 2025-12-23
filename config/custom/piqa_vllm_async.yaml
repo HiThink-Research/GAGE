@@ -1,0 +1,60 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: piqa_vllm_async
+  description: 使用 vllm_backend（本地 AsyncLLMEngine）加载 Qwen2.5-0.5B，文本类基准，参考 piqa_local_vllm_async。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: piqa_validation_local
+    loader: jsonl
+    params:
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
+      tokenizer_path: /mnt/model/qwen2_5_05B
+
+backends:
+  - backend_id: piqa_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_5_05B  # 文本模型，必要时替换为本地路径
+      tensor_parallel_size: 1
+      max_tokens: 96
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 32
+      max_model_len: 2048
+      gpu_memory_utilization: 0.9
+      batch_timeout_ms: 30
+      async_max_concurrency: 32  # 与 piqa_local_vllm_async 保持一致
+
+role_adapters:
+  - adapter_id: dut_qwen25_vllm
+    role_type: dut_model
+    backend_id: piqa_vllm_backend
+    concurrency: 32
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+    params:
+      label_field: sample.choices.0.message.content.0.text
+      option_map_field: sample.metadata.option_map
+      prediction_field: model_output.answer
+
+tasks:
+  - task_id: piqa_validation_eval
+    dataset_id: piqa_validation_local
+    max_samples: 500
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_vllm_async_events.jsonl
+    concurrency: 32

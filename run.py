@@ -156,7 +156,36 @@ def load_config(path: Path) -> dict:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
         raise ValueError(f"Config '{path}' must be a mapping at the top level")
-    return data
+    return _expand_env(data)
+
+
+_ENV_PATTERN = re.compile(r"^\$\{([^}:]+)(?::-(.*))?\}$")
+
+
+def _expand_env(value):
+    """Recursively expand ${VAR:-default} in YAML configs and cast simple numbers."""
+
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    if isinstance(value, str):
+        match = _ENV_PATTERN.match(value.strip())
+        if not match:
+            return value
+        var, default = match.group(1), match.group(2)
+        resolved = os.getenv(var, default if default is not None else "")
+        # 尝试把纯数字转换为 int/float，避免 max_samples 比较时报类型错误
+        if isinstance(resolved, str) and resolved.strip():
+            try:
+                return int(resolved)
+            except ValueError:
+                try:
+                    return float(resolved)
+                except ValueError:
+                    return resolved
+        return resolved
+    return value
 
 
 class _LiteralDumper(yaml.SafeDumper):

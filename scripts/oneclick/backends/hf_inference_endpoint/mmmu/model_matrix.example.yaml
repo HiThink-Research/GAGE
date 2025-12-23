@@ -1,0 +1,38 @@
+models:
+  - name: mmmu_qwen_endpoint
+    endpoint_name: your-endpoint-name
+    namespace: null
+    model_name: Qwen/Qwen2.5-VL-7B-Instruct
+    revision: main
+    vendor: aws
+    region: us-east-1
+    instance_type: nvidia-a10g
+    instance_size: x1
+    endpoint_type: protected
+    accelerator: gpu
+    dtype: bfloat16
+    reuse_existing: false
+    auto_start: true
+    delete_on_exit: false
+    wait_timeout: 1800
+    poll_interval: 60
+    max_new_tokens: 512
+    enable_async: false
+    async_max_concurrency: 0
+    env_vars:
+      HF_MODEL_TRUST_REMOTE_CODE: "true"
+    data_limit: 50
+    max_samples: 50
+    concurrency: 2
+
+# 按需追加更多 endpoint 配置：
+# - name: my_endpoint
+#   endpoint_name: xxx
+#   model_name: your/model
+#   vendor: aws
+#   region: us-east-1
+#   instance_type: nvidia-a10g
+#   instance_size: x1
+#   data_limit: 50
+#   max_samples: 50
+#   concurrency: 2

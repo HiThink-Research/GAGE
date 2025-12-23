@@ -1,0 +1,11 @@
+models:
+  - name: gpt4o_mini_openai
+    provider: openai
+    model_name: gpt-4o-mini
+    api_base: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    max_new_tokens: 16
+    timeout: 60
+    parallel_calls: 1
+    max_samples: 50
+    concurrency: 1

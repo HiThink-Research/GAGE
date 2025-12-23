@@ -157,6 +157,24 @@ def embed_local_image_as_data_url(
     return {"type": "image_url", "image_url": {"url": data_url}}
 
 
+def encode_pil_to_data_url(pil_image, format: str = "PNG", **save_kwargs: Any) -> str:
+    """将 PIL Image 编码为 data URL，供远端 HTTP 接口消费。"""
+
+    try:
+        from PIL import Image  # type: ignore
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError("encode_pil_to_data_url requires Pillow installed") from exc
+
+    if not isinstance(pil_image, Image.Image):
+        raise TypeError("encode_pil_to_data_url expects a PIL.Image instance")
+
+    buf = BytesIO()
+    pil_image.save(buf, format=format, **save_kwargs)
+    encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+    mime_type = mimetypes.types_map.get(f".{format.lower()}", f"image/{format.lower()}")
+    return f"data:{mime_type};base64,{encoded}"
+
+
 def _extract_nested(sample: Dict[str, Any], field: Optional[str]) -> Any:
     if not field:
         return None

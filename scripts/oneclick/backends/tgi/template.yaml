@@ -1,0 +1,77 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: __PIPELINE_NAME__
+  description: "PIQA + TGI backend demo（自动生成，适用于本地/远程 TGI 服务）"
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+prompts:
+  - prompt_id: piqa_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位擅长常识推理的助手，请阅读题目并在最后只输出正确选项对应的大写字母（A 或 B）。
+      instruction: >
+        请判断哪个答案更合理，并在最后一行仅输出一个大写字母（A 或 B）。
+    template: |
+      {{ system_prompt }}
+
+      题目：
+      {{ sample.goal }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+datasets:
+  - dataset_id: piqa_validation
+    hub: huggingface
+    hub_params:
+      hub_id: piqa
+      split: validation
+      trust_remote_code: true
+    loader: hf_hub
+    params:
+      preprocess: piqa_struct_only
+      streaming: false
+      data_limit: __DATA_LIMIT__
+
+backends:
+  - backend_id: __BACKEND_ID__
+    type: tgi
+    config:
+      base_url: __BASE_URL__
+      timeout: __TIMEOUT__
+      max_new_tokens: __MAX_NEW_TOKENS__
+      temperature: __TEMPERATURE__
+      top_p: __TOP_P__
+      stop: __STOP__
+
+role_adapters:
+  - adapter_id: __ADAPTER_ID__
+    role_type: dut_model
+    backend_id: __BACKEND_ID__
+    prompt_id: piqa_infer_prompt
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: __TASK_ID__
+    dataset_id: piqa_validation
+    max_samples: __MAX_SAMPLES__
+    concurrency: __CONCURRENCY__
+    reporting:
+      sinks:
+        - type: console

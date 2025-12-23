@@ -22,6 +22,13 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
 )
 from gage_eval.registry import registry
 
+# 1.benchmark GPQA-diamond
+from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
+
+# 2.benchmark MathVista
+from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
+
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -59,6 +66,26 @@ class PiqaPreprocessor(NewPiqa):
     tags=("piqa", "multiple-choice", "struct_only"),
 )
 class PiqaStructOnlyPreprocessor(NewPiqaStructOnly):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "gpqa_multi_choice",
+    desc="GPQA 多选题提示词封装",
+    tags=("prompt", "gpqa", "multiple-choice"),
+)
+class GpqaPreprocessor(NewGpqa):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "gpqa_struct_only",
+    desc="GPQA 多选题结构化预处理（仅补充 choices/metadata，不拼接 Prompt）",
+    tags=("gpqa", "multiple-choice", "struct_only"),
+)
+class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
     pass
 
 
@@ -110,11 +137,22 @@ class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
     pass
 
 
+# 1.benchmark GPQA-diamond
 @registry.asset(
     "dataset_preprocessors",
-    "swebench_pro_standardizer",
-    desc="标准化 SWE-bench Pro 字段，并可按 smoke 实例过滤",
-    tags=("swebench", "preprocess"),
+    "gpqa_diamond_multi_choice",
+    desc="GPQA diamond 子集多选题提示词封装",
+    tags=("prompt", "gpqa", "gpqa_diamond", "multiple-choice"),
 )
-class SwebenchProStandardizer(NewSwebenchPro):
+class GpqaDiamondPreprocessor(NewGpqaDiamond):
+    pass
+
+# 2.benchmark MathVista
+@registry.asset(
+    "dataset_preprocessors",
+    "mathvista_chat_preprocessor",
+    desc="MathVista 多模态预处理（题干+图片+可选多选项）",
+    tags=("prompt", "vision", "mathvista"),
+)
+class MathVistaChatPreprocessor(NewMathVistaChat):
     pass

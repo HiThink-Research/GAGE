@@ -1,0 +1,42 @@
+models:
+  - name: demo_endpoint
+    # 若已有已运行的 endpoint，可填写名称并设置 reuse_existing=true、auto_start=false
+    endpoint_name: your-endpoint-name
+    namespace: null
+    # 若 endpoint 不存在，将基于 model_name 自动创建（需具备创建权限与额度）
+    model_name: Qwen/Qwen2.5-7B-Instruct
+    revision: main
+    vendor: aws
+    region: us-east-1
+    instance_type: nvidia-a10g
+    instance_size: x1
+    endpoint_type: protected
+    accelerator: gpu
+    dtype: float16
+    reuse_existing: true
+    auto_start: true
+    delete_on_exit: false
+    wait_timeout: 1800
+    poll_interval: 60
+    max_new_tokens: 64
+    enable_async: false
+    async_max_concurrency: 0
+    env_vars:
+      # 仅示例，可按需追加
+      HF_MODEL_TRUST_REMOTE_CODE: "true"
+    max_samples: 1
+    concurrency: 1
+
+# 按需追加更多 endpoint 配置：
+# - name: my_endpoint
+#   endpoint_name: xxx
+#   model_name: your/model
+#   vendor: aws
+#   region: us-east-1
+#   instance_type: nvidia-a10g
+#   instance_size: x1
+#   max_new_tokens: 64
+#   reuse_existing: true
+#   auto_start: false
+#   max_samples: 1
+#   concurrency: 1

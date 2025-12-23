@@ -1,0 +1,49 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: log_sink_smoke
+  description: 冒烟测试 log sink，确保日志事件写入 ObservabilityTrace。
+
+observability:
+  enabled: true
+  default_sample_rate: 1.0
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: log_sink_dummy
+    - step: auto_eval
+
+datasets:
+  - dataset_id: log_sink_dataset
+    loader: jsonl
+    params:
+      path: tests/log_sink_smoke/fixtures/dummy_samples.jsonl
+
+role_adapters:
+  - adapter_id: log_sink_dummy
+    role_type: dut_model
+    backend:
+      type: dummy
+      config:
+        responses:
+          - A
+          - B
+        cycle: false
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: log_sink_metric
+    implementation: tests.log_sink_smoke.metrics.log_metric:LogSinkMetric
+
+tasks:
+  - task_id: log_sink_task
+    dataset_id: log_sink_dataset
+    max_samples: 2
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/log_sink_smoke/events.jsonl

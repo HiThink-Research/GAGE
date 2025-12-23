@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 
 def contains_multimodal(messages: list) -> bool:
@@ -65,34 +65,45 @@ def render_messages_with_fallback(messages: list, tokenizer) -> Tuple[str, str]:
             pass
     return _simple_render(messages), "fallback"
 
+
 def set_render_flags(
     sample: Dict[str, Any],
     *,
-    mode: str = "preprocess",
-    source: str = "manual",
-    rendered_by: str = "preprocess",
-    cache_suffix: str = "-converted",
+    mode: str | None = None,
+    source: str | None = None,
+    rendered_by: str | None = None,
+    cache_suffix: str | None = None,
     overwrite: bool = True,
 ) -> None:
-    """统一设置 chat 模板相关标记，避免各预处理器重复赋值。"""
-
-    if overwrite or "chat_template_mode" not in sample:
-        sample["chat_template_mode"] = mode
-    if overwrite or "template_source" not in sample:
-        sample["template_source"] = source
-    if overwrite or "rendered_by" not in sample:
-        sample["rendered_by"] = rendered_by
-    if overwrite or "cache_suffix" not in sample:
-        sample["cache_suffix"] = cache_suffix
-
-
-def strip_render_flags(sample: Dict[str, Any]) -> None:
-    """移除渲染标记（struct-only 预处理器常用）。"""
-
-    sample.pop("chat_template_mode", None)
-    sample.pop("template_source", None)
-    sample.pop("rendered_by", None)
-    sample.pop("cache_suffix", None)
+    """Record how a prompt/messages payload was rendered."""
+    flags = {
+        "chat_template_mode": mode,
+        "template_source": source,
+        "rendered_by": rendered_by,
+        "cache_suffix": cache_suffix,
+    }
+    for key, value in flags.items():
+        if value is None:
+            continue
+        if overwrite or key not in sample:
+            sample[key] = value
 
 
-__all__ = ["contains_multimodal", "render_messages_with_fallback", "set_render_flags", "strip_render_flags"]
+def strip_render_flags(sample: Dict[str, Any], *, keys: Iterable[str] | None = None) -> None:
+    """Remove render bookkeeping fields so downstream renderers can run again."""
+    to_remove = list(keys) if keys is not None else [
+        "chat_template_mode",
+        "template_source",
+        "rendered_by",
+        "cache_suffix",
+    ]
+    for key in to_remove:
+        sample.pop(key, None)
+
+
+__all__ = [
+    "contains_multimodal",
+    "render_messages_with_fallback",
+    "set_render_flags",
+    "strip_render_flags",
+]
