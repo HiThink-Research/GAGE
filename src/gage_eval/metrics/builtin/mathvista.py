@@ -87,7 +87,6 @@ def _extract_numeric_answer(prediction: str, answer_type: str) -> Optional[str]:
         return None
     return None
 
-
 @registry.asset(
     "metrics",
     "mathvista_accuracy",
@@ -106,8 +105,6 @@ class MathVistaAccuracyMetric(SimpleMetric):
         choices_field = self.args.get("choices_field", "sample.choices")
         answer_field = self.args.get("answer_field", "sample.answer")
         label_field = self.args.get("label_field", "sample.answer")
-        # 新增 answer_type 字段读取
-        answer_type_field = self.args.get("answer_type_field", "sample.answer_type")
 
         # 读取数据
         prediction_raw = extract_field(context, prediction_field, default="")
@@ -117,14 +114,96 @@ class MathVistaAccuracyMetric(SimpleMetric):
         answer = extract_field(context, correct_choice_field)
         if answer is None:
             answer = extract_field(context, answer_field)
+
+        is_multi_choice = bool(option_map) or bool(choices)
+
+        if is_multi_choice:
+            # 建立 label -> text 映射
+            if not option_map and choices:
+                option_map = {c.get("label"): extract_field(c, "message.content.0.text") for c in choices if c}
+            option_map = {str(k).upper(): v for k, v in option_map.items() if k is not None}
+
+            expected_label = _resolve_expected_label(answer, option_map, answer_index_base=0)
+            pred_label = None
+            if prediction:
+                extracted = _extract_choice_letter(prediction)
+                if extracted:
+                    pred_label = extracted.upper()
+                else:
+                    # 尝试文本匹配
+                    pred_norm = normalize_text_advanced(prediction, strip=True, collapse_whitespace=True)
+                    for label, text in option_map.items():
+                        if normalize_text_advanced(str(text), strip=True, collapse_whitespace=True) == pred_norm:
+                            pred_label = label.upper()
+                            break
+            matched = bool(expected_label and pred_label and expected_label == pred_label)
+            score = 1.0 if matched else 0.0
+            metadata = {
+                "prediction_raw": prediction_raw,
+                "prediction_label": pred_label,
+                "expected_label": expected_label,
+                "option_map": option_map,
+            }
+            return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
+
+        # 非多选：按规范化文本精确匹配
+        references_raw = extract_field(context, label_field, default="")
+        references = [
+            normalize_text_advanced(text, strip=True, collapse_whitespace=True)
+            for text in ensure_list_of_strings(references_raw)
+        ]
+        references = [r for r in references if r]
+        matched = bool(prediction and references and any(prediction == ref for ref in references))
+        score = 1.0 if matched else 0.0
+        metadata = {"prediction": prediction, "references": references}
+        return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
+
+# 2.benchmark MathVista
+@registry.asset(
+    "metrics",
+    "mathvista_chat_accuracy",
+    desc="MathVista 混合题型准确率（多选题优先按选项字母匹配，其余按规范化文本匹配）。",
+    tags=("vision", "mathvista"),
+    default_aggregation="mean",
+)
+class MathVistaChataccuracyMetric(SimpleMetric):
+    value_key = "acc"
+
+    def compute(self, context: MetricContext) -> MetricResult:
+        # 配置字段
+        prediction_field = self.args.get("prediction_field", "model_output.answer")
+        option_map_field = self.args.get("option_map_field", "sample.metadata.option_map")
+        correct_choice_field = self.args.get("correct_choice_field", "sample.metadata.correct_choice")
+        choices_field = self.args.get("choices_field", "sample.choices")
+        answer_field = self.args.get("answer_field", "sample.answer")
+        label_field = self.args.get("label_field", "sample.answer")
+        # 新增 answer_type 字段读取
+        answer_type_field = self.args.get("answer_type_field", "sample.answer_type")
+        question_type_field  = self.args.get("question_type_field", "sample.question_type")
+        shot_type_field  = self.args.get("shot_type_field", "sample.shot_type")
+        # 读取数据
+        answer_type = extract_field(context, answer_type_field)
+        shot_type = extract_field(context, shot_type_field)
+        question_type = extract_field(context, question_type_field)
+
+        prediction_raw = extract_field(context, prediction_field, default="")
+
+        if shot_type == 'code':
+            prediction, error = evaluate_code(prediction_raw)
+        else:
+            prediction = normalize_text_advanced(str(prediction_raw), strip=True, collapse_whitespace=True) or ""
+        option_map = extract_field(context, option_map_field, default={}) or {}
+        choices = extract_field(context, choices_field, default=[]) or []
+        answer = extract_field(context, correct_choice_field)
+        if answer is None:
+            answer = extract_field(context, answer_field)
         if answer is None:
             answer = extract_field(context, "sample.label")
         if answer is None:
             answer = extract_field(context, "sample.metadata.answer")
-        
-        answer_type = extract_field(context, answer_type_field)
 
-        is_multi_choice = bool(option_map) or bool(choices)
+
+        is_multi_choice = question_type == 'multi_choice'
 
         if is_multi_choice:
             # 建立 label -> text 映射
@@ -191,4 +270,4 @@ class MathVistaAccuracyMetric(SimpleMetric):
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
 
-__all__ = ["MathVistaAccuracyMetric"]
+__all__ = ["MathVistaAccuracyMetric", "MathVistaChataccuracyMetric"]

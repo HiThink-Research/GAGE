@@ -7,7 +7,7 @@ metadata:
   description: 使用 Qwen3 OpenAI Chat 后端评测 MathVista 测试集，示范多模态与结构化预处理。
 
 custom:
-  # Pipeline 级默认步骤：本地 legacy_vllm 推理 + OpenAI 裁判
+  # Pipeline 级默认步骤：本地 vllm 推理 + OpenAI 裁判
   steps:
     - step: inference
       adapter_id: dut_legacy_vllm
@@ -92,7 +92,7 @@ datasets:
 
 backends:
   - backend_id: legacy_qwen_local
-    type: legacy_vllm
+    type: vllm
     config:
       model_path: /mnt/model/qwen2_5_vl_3b
 

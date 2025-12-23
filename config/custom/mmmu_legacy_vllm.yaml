@@ -2,7 +2,7 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
   name: mmmu_legacy_vllm
-  description: 多模态基准，使用 legacy_vllm_backend（本地 AsyncLLMEngine）评测 MMMU val500，参考 mmmu_local_vlm。
+  description: 多模态基准，使用 vllm_backend（本地 AsyncLLMEngine）评测 MMMU val500，参考 mmmu_local_vlm。
 
 custom:
   steps:
@@ -20,7 +20,7 @@ datasets:
 
 backends:
   - backend_id: mmmu_legacy_vllm_backend
-    type: legacy_vllm
+    type: vllm
     config:
       model_path: /mnt/model/qwen2_5_vl_3b  # 多模态模型路径，需支持 vision
       tokenizer_path: /mnt/model/qwen2_5_vl_3b

@@ -24,6 +24,9 @@ from gage_eval.registry import registry
 # 1.benchmark GPQA-diamond
 from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
 
+# 2.benchmark MathVista
+from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
+
 
 @registry.asset(
     "dataset_preprocessors",
@@ -141,4 +144,14 @@ class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
     tags=("prompt", "gpqa", "gpqa_diamond", "multiple-choice"),
 )
 class GpqaDiamondPreprocessor(NewGpqaDiamond):
+    pass
+
+# 2.benchmark MathVista
+@registry.asset(
+    "dataset_preprocessors",
+    "mathvista_chat_preprocessor",
+    desc="MathVista 多模态预处理（题干+图片+可选多选项）",
+    tags=("prompt", "vision", "mathvista"),
+)
+class MathVistaChatPreprocessor(NewMathVistaChat):
     pass

@@ -2,7 +2,7 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
   name: piqa_legacy_vllm_async
-  description: 使用 legacy_vllm_backend（本地 AsyncLLMEngine）加载 Qwen2.5-0.5B，文本类基准，参考 piqa_local_vllm_async。
+  description: 使用 vllm_backend（本地 AsyncLLMEngine）加载 Qwen2.5-0.5B，文本类基准，参考 piqa_local_vllm_async。
 
 custom:
   steps:
@@ -18,7 +18,7 @@ datasets:
 
 backends:
   - backend_id: piqa_legacy_vllm_backend
-    type: legacy_vllm
+    type: vllm
     config:
       model_path: /mnt/model/qwen2_5_05B  # 文本模型，必要时替换为本地路径
       tensor_parallel_size: 1

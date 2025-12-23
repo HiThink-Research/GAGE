@@ -46,8 +46,12 @@ datasets:
     loader: hf_hub
     params:
       streaming: true
-      preprocess: mathvista_preprocessor
+      preprocess: mathvista_chat_preprocessor
       preprocess_kwargs:
+        use_caption: true
+        use_ocr: true
+        shot_num: 1
+        shot_type: 'solution'
         pre_encode_images: true
 
 backends:
@@ -62,7 +66,7 @@ backends:
       max_tokens: 512
       sampling_params:
         temperature: 0.0
-      max_batch_size: 4
+      max_batch_size: 1
       max_model_len: 8192
       gpu_memory_utilization: 0.9
       async_max_concurrency: 8
@@ -79,7 +83,7 @@ role_adapters:
 
 metrics:
   - metric_id: mathvista_acc
-    implementation: mathvista_accuracy
+    implementation: mathvista_chat_accuracy # mathvista_accuracy
 
 tasks:
   - task_id: mathvista_testmini_eval
