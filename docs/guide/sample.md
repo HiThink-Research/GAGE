@@ -658,15 +658,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-### 1.7 迁移与落地建议
 
-- 数据接入阶段将 `options` 映射为 `metadata.option_map` 与 `choices`，保证现有指标可运行。
-- 默认以 `references` 作为指标输入字段，`label` 仅作为兼容别名。
-- 多模态资源统一走 `messages`，`raw_assets` 仅在需要原始对象时启用。
-- `task_type` 与历史 `question_type` 在预处理阶段统一，保证模板选择一致。
-- `few_shot_examples` 在预处理阶段拼接为 `messages`，运行期可不保留。
-- 执行环境优先写 `sandbox`，执行器不支持时再下沉到 `metadata.execution`。
-- 样本级评估策略统一收敛到 `eval_config`，去偏置输入使用 `unconditioned_input`。
 
 **Agent 执行流示意**
 

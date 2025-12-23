@@ -15,8 +15,8 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 
 ### 1.1 你可以用它做什么
 
-- 基准评测：多选、问答、数学、代码等文本任务
-- 多模态评测：图文问答、文档问答、视觉推理
+- 基准评测：多选、问答、数学、代码等文本任务（如 MMLU, PIQA, GPQA）
+- 多模态评测：图文问答、文档问答、视觉推理（如 MMMU, DocVQA, MathVista）
 - LLM as Judge：推理后引入裁判角色判分
 - 工程类评测：SWE-bench Pro，通过上下文注入与离线 Docker 裁判实现可复现评测
 
@@ -155,7 +155,7 @@ Step 执行要点：
 ### 2.1 环境要求
 
 - Python 3.10+
-- 推荐：Linux + CUDA（使用本地 `vllm` / `vlm_transformers` 时）
+- 推荐：Linux + CUDA（使用本地 `vllm` 时）
 - 仅跑远端 HTTP 后端或 `dummy` 示例：CPU 环境也可运行（但 `requirements.txt` 仍包含 GPU 相关依赖，可能需要自行拆分）
 
 ### 2.2 安装
@@ -629,10 +629,11 @@ flowchart TD
 
 | backend type | 典型场景 | 说明 |
 | --- | --- | --- |
+| `vllm` | 本地推理（主推） | 基于 AsyncLLMEngine，**统一支持文本与多模态**，具备高性能并发与探针能力 |
+| `litellm` | 远端服务（主推） | 统一接入各类远端 API (OpenAI/Anthropic/Kimi/Grok 等)，支持参数归一化 |
+| `sglang` | 高性能推理 | 接入 SGLang Server，支持极致吞吐与 KV Cache 复用 |
+| `tgi` | 高性能推理 | 接入 HuggingFace TGI Server |
 | `openai_http` | 远端服务 | OpenAI ChatCompletion 兼容接口 |
-| `vllm_native` | 本地 LLM 推理 | 进程内加载 vLLM 模型，适合压测与离线评测 |
-| `vllm` | 本地 LLM 推理 | AsyncLLMEngine 版本，支持更复杂的并发与多模态探针 |
-| `vlm_transformers` | 本地多模态 | HuggingFace VLM 推理，自动处理多模态输入 |
 | `dummy` | 冒烟测试 | 回显 prompt 或按 responses 轮播 |
 
 ### 4.4 RoleAdapters
@@ -782,7 +783,7 @@ metrics:
 | `--max-samples` | 覆盖样本数上限，写入 `GAGE_EVAL_MAX_SAMPLES` |
 | `--output-dir` | 产物根目录，写入 `GAGE_EVAL_SAVE_DIR` |
 | `--run-id` | 固定 run_id，便于复现与比对 |
-| `--model-path` | 覆盖 vLLM native 的 `model_path`，写入 `VLLM_NATIVE_MODEL_PATH` |
+| `--model-path` | 覆盖 `vllm` 后端的 `model_path` |
 
 #### 4.7.2 常用环境变量
 
@@ -860,9 +861,11 @@ python gage-eval-main/run.py --init demo_echo --init-mode pipeline-config
 | --- | --- | --- | --- | --- | --- |
 | 最小冒烟 | 入门 | RunConfig 编译；dummy backend | [`gage-eval-main/config/run_configs/demo_echo_run_1.yaml`](config/run_configs/demo_echo_run_1.yaml) | `inference -> auto_eval` | `dut_model` |
 | 文本多选 | 入门 | 结构化 choices；自动指标 | [`gage-eval-main/config/custom/piqa_qwen3.yaml`](config/custom/piqa_qwen3.yaml) | `inference -> auto_eval` | `dut_model` |
+| GPQA | 进阶 | 专家级多选；Few-shot | [`gage-eval-main/config/custom/gpqa_diamond_vllm_async_chat.yaml`](config/custom/gpqa_diamond_vllm_async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
 | LLM 裁判 | 进阶 | 推理后引入裁判；阈值或裁判指标 | [`gage-eval-main/config/custom/single_task_local_judge_qwen.yaml`](config/custom/single_task_local_judge_qwen.yaml) | `inference -> judge -> auto_eval` | `dut_model`, `judge_model` |
 | 多任务编排 | 进阶 | TaskOrchestrator；task override | [`gage-eval-main/config/custom/multi_task_openai_http_demo.yaml`](config/custom/multi_task_openai_http_demo.yaml) | 各 task 自定义 | `dut_model` |
 | DocVQA | 进阶 | doc_to_visual；image_url | [`gage-eval-main/config/custom/docvqa_qwen_vl.yaml`](config/custom/docvqa_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
+| MathVista | 进阶 | 多模态输入；答案抽取 | [`gage-eval-main/config/custom/mathvista_vllm_async_chat.yaml`](config/custom/mathvista_vllm_async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
 | MMMU | 进阶 | HF Hub；多模态预处理；并发控制 | [`gage-eval-main/config/custom/mmmu_qwen_vl.yaml`](config/custom/mmmu_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
 | SWE-bench Pro | 高级 | context_provider；judge_extend；离线 Docker 裁判 | [`gage-eval-main/config/custom/swebench_pro_smoke.yaml`](config/custom/swebench_pro_smoke.yaml) | `support -> inference -> judge -> auto_eval` | `context_provider`, `dut_model`, `judge_extend` |
 
