@@ -1,0 +1,83 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: __PIPELINE_NAME__
+  description: "MMMU val (subset) via hf_inference_endpoint backend"
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: mmmu_val_huggingface
+    hub: huggingface
+    hub_params:
+      hub_id: modelscope/MMMU-Reasoning-Distill-Validation
+      split: validation
+      trust_remote_code: true
+      limit: __DATA_LIMIT__
+    loader: hf_hub
+    params:
+      preprocess: gage_eval.assets.datasets.preprocessors.preprocess_strip_assistant
+      preprocess_kwargs:
+        roles_to_remove:
+          - assistant
+      doc_to_visual: gage_eval.assets.datasets.converters.image_utils:embed_local_message_images
+      doc_to_visual_kwargs:
+        content_field: messages.0.content
+
+backends:
+  - backend_id: __BACKEND_ID__
+    type: hf_inference_endpoint
+    config:
+      endpoint_name: __ENDPOINT_NAME__
+      namespace: __NAMESPACE__
+      model_name: __MODEL_NAME__
+      revision: __REVISION__
+      reuse_existing: __REUSE_EXISTING__
+      auto_start: __AUTO_START__
+      delete_on_exit: __DELETE_ON_EXIT__
+      accelerator: __ACCELERATOR__
+      vendor: __VENDOR__
+      region: __REGION__
+      instance_type: __INSTANCE_TYPE__
+      instance_size: __INSTANCE_SIZE__
+      endpoint_type: __ENDPOINT_TYPE__
+      framework: __FRAMEWORK__
+      dtype: __DTYPE__
+      wait_timeout: __WAIT_TIMEOUT__
+      poll_interval: __POLL_INTERVAL__
+      enable_async: __ENABLE_ASYNC__
+      async_max_concurrency: __ASYNC_MAX_CONCURRENCY__
+      env_vars: __ENV_VARS__
+      generation_parameters:
+        max_new_tokens: __MAX_NEW_TOKENS__
+        temperature: 0.0
+
+role_adapters:
+  - adapter_id: __ADAPTER_ID__
+    role_type: dut_model
+    backend_id: __BACKEND_ID__
+    capabilities:
+      - vision_chat
+
+metrics:
+  - metric_id: mmmu_acc
+    implementation: mmmu_accuracy
+
+tasks:
+  - task_id: __TASK_ID__
+    dataset_id: mmmu_val_huggingface
+    steps:
+      - step: inference
+        adapter_id: __ADAPTER_ID__
+      - step: auto_eval
+    max_samples: __MAX_SAMPLES__
+    concurrency: __CONCURRENCY__
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmmu_events.jsonl

@@ -1,0 +1,135 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: multi_task_mmlu_qwen3
+  description: A multi-task evaluation using three subsets of MMLU (business_ethics, computer_security, international_law).
+
+# Default custom pipeline steps (tasks may override if needed)
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+prompts:
+  - prompt_id: multi_task_mmlu_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一个专业的助手。请逐步思考，然后在最后一行仅输出一个大写字母（A、B、C 或 D）作为最终答案。
+      instruction: >
+        请仔细推理并在最后一行只输出一个大写字母（A、B、C 或 D）。
+    template: |
+      {{ system_prompt }}
+
+      问题：
+      {{ sample.question }}
+
+      选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+# Define the datasets to be used
+datasets:
+  - dataset_id: mmlu_business_ethics
+    hub: huggingface
+    hub_params:
+      hub_id: lighteval/mmlu
+      subset: business_ethics
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: multi_choice_standardizer
+      preprocess_kwargs:
+        question_field: question
+        choices_field: choices
+        answer_field: answer
+        answer_index_base: 0
+
+  - dataset_id: mmlu_computer_security
+    hub: huggingface
+    hub_params:
+      hub_id: lighteval/mmlu
+      subset: computer_security
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: multi_choice_standardizer
+      preprocess_kwargs:
+        question_field: question
+        choices_field: choices
+        answer_field: answer
+        answer_index_base: 0
+
+  - dataset_id: mmlu_international_law
+    hub: huggingface
+    hub_params:
+      hub_id: lighteval/mmlu
+      subset: international_law
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: multi_choice_standardizer
+      preprocess_kwargs:
+        question_field: question
+        choices_field: choices
+        answer_field: answer
+        answer_index_base: 0
+
+backends:
+  - backend_id: qwen3_openai_http
+    type: openai_http
+    config:
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen/qwen3-vl-30b
+      default_params:
+        max_new_tokens: 512
+        temperature: 0.7
+
+role_adapters:
+  - adapter_id: dut_qwen3
+    role_type: dut_model
+    backend_id: qwen3_openai_http
+    prompt_id: multi_task_mmlu_infer_prompt
+    prompt_params:
+      language: zh
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: multi_choice_acc
+    implementation: multi_choice_accuracy
+
+# Define the tasks, each linking a dataset to the evaluation steps
+tasks:
+  - task_id: mmlu_business_ethics_eval
+    dataset_id: mmlu_business_ethics
+    max_samples: 10 # Keep sample count low for quick testing
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/multi_task_events.jsonl
+
+  - task_id: mmlu_computer_security_eval
+    dataset_id: mmlu_computer_security
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/multi_task_events.jsonl
+
+  - task_id: mmlu_international_law_eval
+    dataset_id: mmlu_international_law
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/multi_task_events.jsonl

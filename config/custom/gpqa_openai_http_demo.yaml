@@ -1,0 +1,94 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+# GPQA + OpenAI Http Backend 示例配置
+metadata:
+  name: gpqa_openai_http_demo
+  description: 使用 Qwen3 OpenAI Chat 后端评测 GPQA测试集，示范外置 Prompt 与结构化预处理。
+
+custom:
+  # Pipeline 级默认步骤（Task 若未显式声明 steps，将继承这一串步骤）
+  steps:
+    - step: inference    # 仅声明 step 类型，adapter_id 依赖唯一 DUT 角色自动推断
+    - step: auto_eval
+
+prompts:
+  - prompt_id: gpqa_infer_prompt
+    renderer: jinja
+    params:
+      system_prompt: >
+        你是一位精通生物学、物理学和化学的专家级科学顾问。
+        接下来的问题具有研究生级别的难度，请调用你的专业知识进行解答。
+      instruction: >
+        请仔细分析上述问题，从选项中选出唯一正确的答案。
+        请直接输出正确选项对应的大写字母（例如 'A'），不要包含任何解释或其他文字。
+    template: |
+      {{ system_prompt }}
+
+      ### 题目：
+      {{ sample.question }}
+
+      ### 选项：
+      {% for label, text in (sample.metadata.option_map or {}).items() %}
+      {{ label }}. {{ text }}
+      {% endfor %}
+
+      {{ instruction }}
+
+      ### 答案：
+
+datasets:
+  - dataset_id: gpqa_train
+    # 使用 HuggingFace Hub 上的 gpqa
+    hub: huggingface
+    hub_params:
+      hub_id: Idavidrein/gpqa
+      # 使用 data_files 参数直接指向 CSV 文件
+      data_files:
+        - repo_id: Idavidrein/gpqa
+          path: gpqa_extended.csv
+      builder_name: csv
+      split: train
+    loader: hf_hub
+    params:
+      # GPQA预处理器
+      preprocess: gpqa_struct_only
+
+backends:
+  - backend_id: qwen_openai_http
+    type: openai_http
+    config:
+      # 本地或远端 OpenAI Chat Completion 兼容服务地址
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen2.5-0.5b-instruct  # 本机建议使用小模型，方便快速迭代
+      default_params:
+        max_new_tokens: 64  # GPQA 答案极短，64 足够
+        temperature: 0.2    # 轻微随机性，提升稳定性
+      async_max_concurrency: 4  # 本地开发机适度并发，避免打满 CPU/网络
+
+role_adapters:
+  - adapter_id: dut_qwen
+    role_type: dut_model
+    backend_id: qwen_openai_http
+    # 绑定外置 Prompt 资产，所有 GPQA 推理都通过该模板构造提示词
+    prompt_id: gpqa_infer_prompt
+    prompt_params:
+      language: zh  # 预留变量，模板侧可按需使用
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: gpqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: gpqa_validation_eval
+    dataset_id: gpqa_train
+    max_samples: 546 
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            # 通过环境变量 GAGE_EVAL_SAVE_DIR 控制输出目录
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/gpqa_extended_events.jsonl

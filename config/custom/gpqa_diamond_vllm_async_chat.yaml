@@ -1,0 +1,63 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: gpqa_diamond_vllm_async
+  description: 使用 vllm_backend 运行 GPQA diamond 子集评测，沿用结构化 Prompt。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: gpqa_diamond_local
+    hub: huggingface
+    hub_params:
+      hub_id: Idavidrein/gpqa
+      subset: gpqa_diamond
+      split: train
+    loader: hf_hub
+    params:
+      preprocess: gpqa_diamond_multi_choice
+      preprocess_kwargs:
+        gpqa_prompt_type: zero_shot
+        #gpqa_prompt_type: 5_shot
+backends:
+  - backend_id: gpqa_vllm_backend
+    type: vllm
+    config:
+      model_path: ${GPQA_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${GPQA_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true      
+      tensor_parallel_size: 1
+      max_tokens: 128
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+
+role_adapters:
+  - adapter_id: dut_gpqa_vllm_qwen
+    role_type: dut_model
+    backend_id: gpqa_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: gpqa_acc
+    implementation: multi_choice_accuracy
+
+tasks:
+  - task_id: gpqa_diamond_eval
+    dataset_id: gpqa_diamond_local
+    max_samples: 546
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/gpqa_diamond_vllm_events.jsonl

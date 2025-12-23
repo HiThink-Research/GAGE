@@ -1,0 +1,86 @@
+【Role】你是 gage-eval 新框架的资深评测架构师与 Benchmark 开发专家。
+
+【Context（先阅读参考，质量优先，思考充分再输出）】
+1. 数据集名称: {{ dataset_name }}
+2. Inspect 元信息 (meta.json):
+{{ meta_json }}
+3. 样本快照 (JSON, 已截断用于 Prompt 体积控制):
+{{ sample_json }}
+4. Schema 摘要 (JSON):
+{{ schema_json }}
+5. 标准 Sample 结构设计（预处理器输出需对齐）：`src/gage_eval/assets/datasets/sample.py`
+```
+{{ sample_format_doc }}
+```
+6. Metric 抽象基类（指标设计需遵守）：`src/gage_eval/metrics/base.py`
+```
+{{ metrics_base_doc }}
+```
+7. 预处理器基类关键步骤（`src/gage_eval/assets/datasets/preprocessors/base.py`，transform→normalize_sample/merge_multimodal/ensure_chat_template_flags）：
+   - `to_sample` 只做字段映射与元数据填充；inputs/messages/choices/metadata 等规范化由基类完成，避免重复/绕过。
+   - multi-modal 数据需放在 `inputs.multi_modal_data`，不要混入 messages。
+8. 新框架关键实现参考（BasePreprocessor / PipelineConfig / Registry 范例）:
+{{ reference_preprocessor_code }}
+{{ reference_config_yaml }}
+9. 输出语言: {{ language }}（`zh`/`en`，默认 `zh`）
+
+【Design Doc Template (MUST FOLLOW)】
+你必须按下面提供的模板生成 `design.md`：
+1) 章节标题与顺序必须与模板一致（可在小节内补充必要内容，但不要新增/删除主章节）。
+2) 文末必须且仅能出现一个 fenced YAML 代码块，标记为 `support_config`。
+3) 禁止执行任何 shell 命令/读取本地文件/联网搜索；所有必要信息已经在本 Prompt 中提供。
+
+````markdown
+{{ design_doc_template }}
+````
+
+【Task】
+请严格按 `templates/design_doc.md.j2` 的章节结构生成 `design.md`，并内嵌唯一的 `yaml support_config` 配置块，作为 implement 阶段唯一真相源。
+
+【Document Formatting Requirements (STRICT)】
+1. 可读性与一致性：
+   - 文档必须清晰、层次分明、术语一致；内容需对齐新框架的实际代码/目录/Registry/Pipeline 语义，避免臆造不存在的机制。
+   - 严禁输出“已完成/已生成”的总结性描述；只按模板产出设计文档本体。
+2. Mermaid 兼容性（Typora Mermaid 11.9.0）：
+   - 所有 Mermaid 图使用 `flowchart TD` / `sequenceDiagram` / `stateDiagram-v2` 等标准语法。
+   - Mermaid 节点 id **不要包含空格**，推荐使用驼峰或下划线（例如 `Inspect --> SampleJson`）。
+   - 避免使用 `A`/`B`/`C` 等单字母节点，直接使用语义化节点名（例如 `SampleJson --> DesignMd`）。
+   - 如需解释含义，请在图外用文字说明；不要在节点/边标签中使用括号、方括号等特殊符号。
+   - 语法保持简洁，避免 11.9.0 不支持的新特性。
+3. 小节编号：
+   - 允许按需细分到三级小节（如 `4.9.1`、`4.9.2`），但不要无意义过度拆分。
+4. 图表与代码引用：
+   - 尽可能多使用 Mermaid 示意图、表格来说明数据流/配置/字段映射/执行顺序。
+   - 当解释关键逻辑（如 preprocess/registry/metrics 解析）时，可贴新框架源码片段，并在代码中添加与 {{ language }} 一致的注释说明其作用（不要修改源码，只引用）。
+
+【support_config Block Requirements】
+- 文档中必须包含且仅包含一个 fenced YAML 代码块，标记为 `support_config`：
+  ```yaml support_config
+  ...
+  ```
+- 该块需包含 implement 所需的最小关键字段：`dataset_id`、`preprocess_name`、字段路径映射、模态声明、doc_to_* 选择、metrics 列表、tests.run_commands 等。
+- `preprocess_name` 必须是将被注册和引用的 registry id，命名为小写下划线，不要额外加 `_preprocessor` 后缀；配置中的 preprocess/文件名/注册名需与此保持一致。
+- `metrics[*].implementation` 优先使用 registry id（便于 Support 自动生成）；如使用 class_path，必须确保对应模块可导入且类已存在，不要填虚拟路径。
+- registry/路径规范：`preprocess_name`、`metrics[*].implementation` 等 registry id 使用下划线小写且与生成文件名一致；`doc_to_*`/`loader`/`implementation` 必须是可导入路径或已注册 id，不要臆造。
+- 若需覆盖输出语言，可在该块里显式声明 `language: zh|en`（否则沿用 Context 的 language）。
+
+【Landing Plan Requirements】
+在文档最后的「落地计划」章节，请输出一个表格形式的实现计划，必须满足：
+1. 表格含「序号」「完成状态」列。
+2. 每个开发任务独立、可测试、可单独验收。
+3. 测试方案：在主工程 `tests/` 目录下编写 pytest 测试（遵循 `TESTING.md` 的目录分层/markers/fixtures/编码规范），并在 `tests.run_commands` 中给出对应的 pytest 命令；建议纳入最小冒烟命令（如 `PYTHONPATH=src python run.py --config ... --max-samples 0` 与 `pytest -m "not network"`）。
+4. 旧有冗余逻辑（如 design_spec/备份/状态文件/用户级配置）在计划中直接清理删除，不需要标记废弃。
+5. 最后一项任务必须为多组集成测试，覆盖本次 Support 模块的全部变更逻辑。
+
+【Path & Ownership Constraints (IMPORTANT)】
+- Support 是辅助工具模块：`design/implement` 逻辑位于 `src/gage_eval/support/`，测试位于 `src/gage_eval/support/tests/`。
+- **implement 生成的业务资产必须写入主框架目录**（不是写到 support 目录）：
+  - 预处理器逻辑：`src/gage_eval/assets/datasets/preprocessors/<dataset_slug>_preprocessor.py`
+  - 预处理器注册包装：`src/gage_eval/assets/datasets/preprocessors/custom.py`
+  - PipelineConfig：`config/custom/<dataset_slug>_openai.yaml`、`config/custom/<dataset_slug>_vllm.yaml`
+  - 指标实现（若新增）：`src/gage_eval/metrics/builtin/<implementation>.py`（`implementation` 为 registry 名）
+- 「落地计划」表格中的交付物路径必须遵守以上约定，并与文末 `support_config` 对齐。
+
+【Output Constraints】
+- 只输出 Markdown 文档本体，不要输出任何额外对话。
+- 所有自然语言描述、表头、注释等使用 {{ language }} 输出（除代码标识符/路径外）。

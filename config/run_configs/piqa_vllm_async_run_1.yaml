@@ -1,0 +1,28 @@
+api_version: gage/v1alpha1
+kind: RunConfig
+metadata:
+  name: piqa_vllm_async_run
+base_task: custom/piqa_vllm_async
+template_version: V1
+
+runtime:
+  datasets:
+    piqa_validation_local:
+      loader: jsonl
+      params:
+        path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/hub/cmp/ths/piqa_100.jsonl
+  backends:
+    piqa_vllm_backend:
+      type: vllm
+      config:
+        model_path: /mnt/model/qwen2_5_05B
+        tokenizer_path: /mnt/model/qwen2_5_05B
+        tensor_parallel_size: 1
+        max_tokens: 96
+        sampling_params:
+          temperature: 0.0
+  tasks:
+    piqa_validation_eval:
+      max_samples: 200
+  global:
+    output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/piqa_vllm_async_events.jsonl

@@ -126,6 +126,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
 .venv
 env/
 venv/
@@ -188,4 +189,28 @@ data_server_mt.py
 predict_async_mt.py
 eval_UTA_Analysis2.py
 utils/out.jsonl
-*.yaml
+demo_hf_backend.py
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+runs/
+scripts/oneclick/.generated/
+scripts/oneclick/.env.example
+.venv311/
+docs/
+AGENTS.md
+
+# local datasets and models (local assets only)
+/local-datasets/
+/models/
+
+.gage_cache/
+
+# python artifacts
+__pycache__/
+*.pyc
+*.pyo

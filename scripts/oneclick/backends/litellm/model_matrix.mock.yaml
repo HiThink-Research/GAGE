@@ -1,0 +1,31 @@
+models:
+  - name: openai_mock
+    provider: openai
+    model_name: gpt-4o-mini
+    api_base: http://127.0.0.1:18080/v1
+    api_key_env: LITELLM_API_KEY
+    max_new_tokens: 16
+  - name: anthropic_mock
+    provider: anthropic
+    model_name: claude-3-5-sonnet-20240620
+    api_base: http://127.0.0.1:18081
+    api_key_env: LITELLM_API_KEY
+    max_new_tokens: 16
+  - name: google_mock
+    provider: openai  # mock 场景走 openai 兼容协议，便于 litellm provider 推断
+    model_name: gpt-4o-mini
+    api_base: http://127.0.0.1:18082/v1
+    api_key_env: LITELLM_API_KEY
+    max_new_tokens: 16
+  - name: grok_mock
+    provider: openai  # mock 走 openai 兼容协议，便于 litellm 识别
+    model_name: gpt-4o-mini
+    api_base: http://127.0.0.1:18083/v1  # 专用 grok mock（openai 兼容协议）
+    api_key_env: LITELLM_API_KEY
+    max_new_tokens: 16
+  - name: kimi_mock
+    provider: openai  # mock 走 openai 兼容协议，便于 litellm 识别
+    model_name: gpt-4o-mini
+    api_base: http://127.0.0.1:18084/v1  # 专用 kimi mock（openai 兼容协议）
+    api_key_env: LITELLM_API_KEY
+    max_new_tokens: 16

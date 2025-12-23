@@ -1,0 +1,65 @@
+api_version: gage/v1alpha1
+kind: BuiltinTemplate
+metadata:
+  name: demo_echo
+  version: V1
+  digest: sha256:7e4d0df9da80860e4df0a305fe324c33ba0d47fc00031ca0c83179bbb1d83afd
+  source_tasks:
+  - demo_echo_task
+  monolithic: false
+definition:
+  metadata:
+    name: demo_echo
+    description: 最小可运行的 echo 套件，使用 dummy backend 回显 prompt，方便新手 init/run 冒烟。
+  custom:
+    steps:
+    - step: inference
+  datasets:
+  - dataset_id: demo_echo_dataset
+    loader: jsonl
+    params:
+      path: config/builtin_templates/demo_echo/data/demo_echo.jsonl
+  backends:
+  - backend_id: demo_echo_dummy
+    type: dummy
+    config:
+      responses: []
+      echo_prompt: true
+      cycle: true
+  role_adapters:
+  - adapter_id: demo_echo_dut
+    role_type: dut_model
+    backend_id: demo_echo_dummy
+    capabilities:
+    - chat_completion
+  metrics: []
+  tasks:
+  - task_id: demo_echo_task
+    dataset_id: demo_echo_dataset
+    steps:
+    - step: inference
+      adapter_id: demo_echo_dut
+    reporting:
+      sinks:
+      - type: console
+parameters:
+- name: runtime.datasets.demo_echo_dataset
+  type: obj
+  default:
+    loader: jsonl
+    params:
+      path: config/builtin_templates/demo_echo/data/demo_echo.jsonl
+  description: 演示数据路径，可替换为自定义 JSONL。
+- name: runtime.backends.demo_echo_dummy
+  type: obj
+  default:
+    type: dummy
+    config:
+      responses: []
+      echo_prompt: true
+      cycle: true
+  description: Dummy 后端配置，可改为固定 responses。
+- name: runtime.tasks.demo_echo_task.max_samples
+  type: int
+  default: 2
+  description: 任务级最大样本数
