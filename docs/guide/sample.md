@@ -2,399 +2,9 @@
 
 本文用于对齐现有框架的样本结构与新标准化 Sample 设计，服务于数据接入、推理、裁判、统计与报告的统一。
 
-## 1 现状参考
+## 1 新标准化 Sample 设计
 
-### 1.1 新框架 gage-eval-main 现状
-
-#### 1.1.1 标准化 Sample 实现要点
-
-新框架在 `gage-eval-main/src/gage_eval/assets/datasets/` 内部以标准化 Sample 作为运行时统一结构，特征如下：
-
-- 核心字段由 `sample.py` 提供 dataclass 定义，运行时以字典为主，允许扩展字段。
-- `validation.py` 内的默认校验模型提供最小字段校验，且 `extra=allow`，便于兼容扩展字段。
-- `utils/normalization.py` 负责把 `prompt/text/question` 兜底转换为 `messages`，并把 `visual/audio` 注入消息内容。
-- OpenAI 风格消息已被后端作为主输入路径（`openai_http_backend._resolve_messages`）。
-
-**核心字段现状表**（节选，来自 `gage-eval-main/src/gage_eval/assets/datasets/sample.py`）
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| id | string | 样本唯一 ID | 
-| _dataset_id | string | 运行时注入的数据集 ID | 
-| messages | list | OpenAI 风格消息 | 
-| choices | list | 选项列表，兼容多选题 | 
-| metadata | object | 数据集或任务元信息 | 
-| data_tag | object | 分桶统计标签 | 
-| label | any | 参考答案或标签 | 
-| inputs | object | 原始 prompt 或多模态补充 | 
-| predict_result | list | 推理结果列表 | 
-| eval_result | object | 裁判与指标结果 | 
-
-**源码节选：Sample 关键字段（带中文注释）**
-
-```python
-@dataclass
-class Sample:
-    id: str  # 样本唯一ID
-    _dataset_id: str  # 运行时注入的数据集ID
-    messages: List[Message]  # OpenAI风格消息
-    choices: List[Choice] = field(default_factory=list)  # 选项列表
-    metadata: Dict[str, Any] = field(default_factory=dict)  # 任务元信息
-    data_tag: Dict[str, Any] = field(default_factory=dict)  # 分桶统计标签
-    label: Optional[Any] = None  # 参考答案
-    inputs: Inputs = field(default_factory=Inputs)  # 原始输入或补充信息
-    predict_result: List[PredictResult] = field(default_factory=list)  # 推理结果
-    eval_result: Dict[str, Any] = field(default_factory=dict)  # 评估结果
-```
-
-**源码节选：消息归一化逻辑（带中文注释）**
-
-```python
-def normalize_messages(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
-    # 优先使用已有 messages
-    messages = sample.get("messages")
-    normalized: List[Dict[str, Any]] = []
-    if isinstance(messages, list):
-        normalized = [_normalize_message(msg) for msg in messages]
-    else:
-        # 无 messages 时从 prompt/text/question 生成
-        prompt = sample.get("prompt") or sample.get("text") or sample.get("question")
-        if prompt:
-            normalized = [
-                {"role": "user", "content": [{"type": "text", "text": str(prompt)}]}
-            ]
-    return _inject_modal_fragments(sample, normalized)
-```
-
-#### 1.1.2 新框架现有样本示例
-
-**示例 A：文本问答**（来自测试样本风格）
-
-```json
-{
-  "id": "log-0001",
-  "messages": [
-    {"role": "system", "content": [{"type": "text", "text": "你是一个验证日志采样的助手。"}]},
-    {"role": "user", "content": [{"type": "text", "text": "回答 A"}]}
-  ],
-  "label": "A"
-}
-```
-
-**示例 B：多模态图像问答**（OpenAI 风格 image_url）
-
-```json
-{
-  "id": "mmmu-0001",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "Question: ..."},
-        {"type": "image_url", "image_url": {"url": "images/1.jpg"}}
-      ]
-    }
-  ],
-  "choices": [
-    {"index": 0, "message": {"role": "assistant", "content": [{"type": "text", "text": "D"}]}}
-  ]
-}
-```
-
-**示例 C：音频多轮**（ASR/翻译类）
-
-```json
-{
-  "id": "asr-0001",
-  "messages": [
-    {"role": "user", "content": [{"type": "audio_url", "audio_url": {"url": "/path/to/audio.wav"}}]},
-    {"role": "assistant", "content": [{"type": "text", "text": "请翻译成中文"}]}
-  ]
-}
-```
-
-### 1.2 llm-eval 老框架现状
-
-老框架采用 `messages + choices` 作为主要样本结构，并允许任务附加字段（如 `swe_bench_json`、`data_tag`、`label` 等）。样本往往直接对齐 OpenAI 多模态消息格式。
-
-#### 1.2.1 通用格式示例
-
-```json
-{
-  "id": "example_0",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "..."}
-      ]
-    }
-  ],
-  "choices": [
-    {
-      "index": 0,
-      "message": {"role": "assistant", "content": [{"type": "text", "text": "答案"}]}
-    }
-  ]
-}
-```
-
-#### 1.2.2 多模态 VQA 示例
-
-```json
-{
-  "id": "textvqa-0001",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"type": "image_url", "image_url": {"url": "images/34602.jpg"}},
-        {"type": "text", "text": "what is the brand of this camera?"}
-      ]
-    }
-  ],
-  "choices": [
-    {"index": 0, "message": {"role": "assistant", "content": [{"type": "text", "text": "dakota"}]}}
-  ]
-}
-```
-
-#### 1.2.3 代码与执行类示例
-
-**代码生成**（LiveCodeBench 风格）
-
-```json
-{
-  "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "given question_title <...>"}]}
-  ],
-  "choices": [
-    {"index": 0, "message": {"role": "assistant", "content": [{"type": "text", "text": ""}]}}
-  ],
-  "label": "[{\"input\": \"...\", \"output\": \"...\"}]"
-}
-```
-
-**补丁修复**（SWE-bench 风格）
-
-```json
-{
-  "messages": [
-    {"role": "user", "content": [{"type": "text", "text": "Please output only the patch..."}]}
-  ],
-  "choices": [
-    {"index": 0, "message": {"role": "assistant", "content": [{"type": "text", "text": ""}]}}
-  ],
-  "swe_bench_json": [
-    {"instance_id": "astropy__astropy-12907", "model_patch": ""}
-  ]
-}
-```
-
-#### 1.2.4 多轮对话与音频示例
-
-```json
-{
-  "messages": [
-    {"role": "user", "content": [{"type": "audio_url", "audio_url": {"url": "/mnt/data/xxx.wav"}}]},
-    {"role": "assistant", "content": [{"type": "text", "text": "帮我翻译成中文"}]}
-  ]
-}
-```
-
-### 1.3 多个开源框架现状
-
-#### 1.3.1 OpenAI Evals
-
-OpenAI Evals 的样本通常为 `input + ideal`，`input` 既可以是字符串，也可以是消息列表。
-
-**示例 A：文本问答**
-
-```json
-{
-  "input": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is 2 + 2?"}
-  ],
-  "ideal": "4"
-}
-```
-
-**示例 B：多选题**（选项直接写进 prompt）
-
-```json
-{
-  "input": [
-    {"role": "system", "content": "Answer with only the letter."},
-    {"role": "user", "content": "Q: ...\nA. ...\nB. ...\nAnswer:"}
-  ],
-  "ideal": "B"
-}
-```
-
-**示例 C：多轮对话**
-
-```json
-{
-  "input": [
-    {"role": "system", "content": "You are a travel planner."},
-    {"role": "user", "content": "Plan a 2-day trip to Hangzhou."},
-    {"role": "assistant", "content": "Any budget range?"},
-    {"role": "user", "content": "Mid-range."}
-  ],
-  "ideal": "Day 1: ... Day 2: ..."
-}
-```
-
-**示例 D：结构化输出**
-
-```json
-{
-  "input": "Extract entities and return JSON with keys person and org.",
-  "ideal": "{\"person\": \"张三\", \"org\": \"某公司\"}"
-}
-```
-
-**示例 E：多参考答案**
-
-```json
-{
-  "input": "Name the capital of the United States.",
-  "ideal": ["Washington, D.C.", "Washington DC"]
-}
-```
-
-#### 1.3.2 Lighteval 与 LMMS Eval
-
-此类框架以数据集记录为主，样本字段通过 `doc_to_text/doc_to_visual/doc_to_choice/doc_to_target` 转换为模型输入与参考答案。
-
-**字段映射示意**
-
-| 数据集字段 | 映射函数 | 作用 | 
-| --- | --- | --- |
-| image | doc_to_visual | 提供视觉输入 | 
-| question | doc_to_text | 构造文本问题 | 
-| choices | doc_to_choice | 多选题选项列表 | 
-| answer | doc_to_target | 正确答案 | 
-
-注：音频、视频等多模态字段在不同任务中可能对应 `doc_to_audio/doc_to_visual` 等函数。
-
-字段名因数据集略有差异，以下为常见场景示例。
-
-**示例 A：文本多选**
-
-```json
-{
-  "question": "Which planet is the largest?",
-  "choices": ["Mars", "Jupiter", "Venus", "Mercury"],
-  "answer": "B"
-}
-```
-
-**示例 B：图像问答**
-
-```json
-{
-  "question": "What is the main object in image?",
-  "choices": ["teddy bear", "cat", "car", "tree"],
-  "answer": "A",
-  "image": "path/to/image.jpg"
-}
-```
-
-**示例 C：视频理解**
-
-```json
-{
-  "question": "What is the person doing?",
-  "answer": "running",
-  "video": "path/to/video.mp4"
-}
-```
-
-**示例 D：音频转写**
-
-```json
-{
-  "question": "Transcribe the audio.",
-  "answer": "...",
-  "audio": "path/to/audio.wav"
-}
-```
-
-**数据流示意图**
-
-```mermaid
-flowchart TD
-  DatasetDoc[DatasetDoc] --> DocToText[DocToText]
-  DatasetDoc --> DocToVisual[DocToVisual]
-  DatasetDoc --> DocToChoice[DocToChoice]
-  DocToText --> ModelInput[ModelInput]
-  DocToVisual --> ModelInput
-  DocToChoice --> MetricsInput[MetricsInput]
-```
-
-#### 1.3.3 EvalScope
-
-EvalScope 以 `TaskConfig` 连接任务与数据集，样本结构随任务变化，但常见模式仍是 `question + choices + answer`。
-
-**示例 A：多选题**
-
-```json
-{
-  "question": "Which option is correct?",
-  "choices": ["A", "B", "C", "D"],
-  "answer": "C",
-  "category": "mmlu_business_ethics"
-}
-```
-
-**示例 B：代码执行**
-
-```json
-{
-  "prompt": "Implement a function to reverse a string.",
-  "answer": "<python_code>",
-  "files": {"tests.py": "s3://datasets/code/tests.py"},
-  "setup": "pip install pytest"
-}
-```
-
-#### 1.3.4 Agent 任务样本
-
-OpenAI Evals 的多步网页任务样本以意图与评测目标为主，样本中通常不包含轨迹。
-
-```json
-{
-  "task_id": 2,
-  "intent": "What is the name of the user who has the most popular post?",
-  "start_url": "http://homepage.com",
-  "eval": {
-    "eval_types": ["string_match"],
-    "reference_answers": {"exact_match": "jsonathan"}
-  }
-}
-```
-
-**示例 B：结构化目标**
-
-```json
-{
-  "task_id": 7,
-  "intent": "Find the cheapest flight from SFO to SEA on 2023-12-22.",
-  "start_url": "http://flight-search.com",
-  "eval": {
-    "eval_types": ["json_match"],
-    "reference_answers": {
-      "json_match": {"airline": "Delta", "price": 129}
-    }
-  }
-}
-```
-
-## 2 新标准化 Sample 设计
-
-### 2.1 设计目标与原则
+### 1.1 设计目标与原则
 
 - **OpenAI 风格优先**：`messages` 作为主输入，覆盖文本、多模态与多轮对话。
 - **任务类型显式**：用 `task_type` 标注题型，便于模板与指标自动选择。
@@ -409,7 +19,7 @@ OpenAI Evals 的多步网页任务样本以意图与评测目标为主，样本�
 - **评估配置下沉**：新增 `eval_config` 支持样本级裁判与指标控制。
 - **弃用旧字段**：不再保留 `model_prompt_tmpl/model_prompt_placeholder`。
 
-### 2.2 标准结构总览
+### 1.2 标准结构总览
 
 **标准化 Sample 生命周期**
 
@@ -452,9 +62,9 @@ flowchart TD
 | predict_result | list | 否 | 运行期推理结果 | 
 | eval_result | object | 否 | 运行期评估结果 | 
 
-### 2.3 字段设计细节
+### 1.3 字段设计细节
 
-#### 2.3.1 messages 与 content 规范
+#### 1.3.1 messages 与 content 规范
 
 `messages` 结构遵循 OpenAI 多模态规范，`content` 为片段列表。
 
@@ -470,7 +80,7 @@ flowchart TD
 - `messages` 为主入口；若仅提供 `prompt/text/question`，预处理器需生成 `messages`。
 - 多模态资源可使用相对路径，预处理阶段负责拼接与编码。
 
-#### 2.3.2 task_type
+#### 1.3.2 task_type
 
 `task_type` 用于显式标注题型与任务类型，便于 prompt 渲染器与指标自动选择策略。
 
@@ -497,7 +107,7 @@ flowchart TD
 
 兼容字段：若历史数据使用 `question_type`，预处理阶段应映射为 `task_type`。
 
-#### 2.3.3 options 与 references
+#### 1.3.3 options 与 references
 
 **options 规则**
 - `options` 为列表，元素包含 `id` 与 `content`。
@@ -528,7 +138,7 @@ flowchart TD
 - 多模态生成可使用 `image_url/audio_url/video_url/file_url` 片段。
 - `label` 保持字符串类型，多模态生成建议填资源路径或 ID。
 
-#### 2.3.4 few_shot_examples
+#### 1.3.4 few_shot_examples
 
 - `few_shot_examples` 为样本自带 Few-Shot，保证可复现。
 - 每个元素为精简 Sample，建议仅保留 `messages/options/references/label/tools/tool_choice`。
@@ -556,13 +166,13 @@ flowchart LR
   PromptRender --> Inference[Inference]
 ```
 
-#### 2.3.5 golden_trajectories
+#### 1.3.5 golden_trajectories
 
 - `golden_trajectories` 为过程参考，列表元素为一条完整轨迹。
 - 轨迹内部消息结构与 `messages` 一致，并允许包含 `tool_calls` 与 `tool` 消息。
 - 默认评估只对比 `references`，过程评估需显式启用对应指标。
 
-#### 2.3.6 sandbox
+#### 1.3.6 sandbox
 
 `sandbox` 描述样本级执行环境，适合代码执行与 Agent 任务的运行准备。
 
@@ -587,18 +197,18 @@ flowchart TD
   Executor --> Run[RunStep]
 ```
 
-#### 2.3.7 metadata 与 data_tag
+#### 1.3.7 metadata 与 data_tag
 
 - `metadata` 用于携带任务级配置与执行信息，例如 `metadata.execution`。
 - `data_tag` 用于统计分桶，如领域、难度、图片类别等。
 
-#### 2.3.8 tools 与 tool_choice
+#### 1.3.8 tools 与 tool_choice
 
 - `tools` 为 OpenAI function schema 列表。
 - `tool_choice` 与 OpenAI 接口一致，可为字符串或对象。
 - 工具调用轨迹建议写入 `golden_trajectories`。
 
-#### 2.3.9 raw_assets 与只读补充
+#### 1.3.9 raw_assets 与只读补充
 
 `raw_assets` 仅用于存放原始素材或超大二进制对象，禁止直接生成 prompt：
 
@@ -615,7 +225,7 @@ flowchart TD
 - 仅允许 VLM/Audio 等后端从 `raw_assets` 读取无法嵌入 JSON 的大对象。
 - 兼容路径：`raw_assets` 可映射到现有运行时字段 `inputs`。
 
-#### 2.3.10 eval_config
+#### 1.3.10 eval_config
 
 `eval_config` 用于样本级评估控制，典型字段如下：
 
@@ -626,7 +236,7 @@ flowchart TD
 
 当前默认流水线不会自动消费 `eval_config`，需由评测步骤显式读取后生效。
 
-#### 2.3.11 unconditioned_input
+#### 1.3.11 unconditioned_input
 
 `unconditioned_input` 用于去偏置评估，例如 PMI 校正，多用于多选题场景。
 
@@ -653,7 +263,7 @@ flowchart LR
   Score --> PMIScore[PMIScore]
 ```
 
-### 2.4 运行期结果字段
+### 1.4 运行期结果字段
 
 - `predict_result`：模型输出列表，结构与 `messages` 对齐。
 - `eval_result`：裁判或指标输出。
@@ -696,7 +306,7 @@ flowchart LR
 }
 ```
 
-### 2.5 与现有实现的映射
+### 1.5 与现有实现的映射
 
 | 新标准字段 | 现有运行时字段 | 说明 | 
 | --- | --- | --- |
@@ -734,9 +344,9 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
     predict_result.append(entry)
 ```
 
-### 2.6 场景示例 case
+### 1.6 场景示例 case
 
-#### 2.6.1 文本问答
+#### 1.6.1 文本问答
 
 ```json
 {
@@ -761,7 +371,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.2 多选题
+#### 1.6.2 多选题
 
 ```json
 {
@@ -785,7 +395,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.3 多轮对话
+#### 1.6.3 多轮对话
 
 ```json
 {
@@ -802,7 +412,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.4 图像问答
+#### 1.6.4 图像问答
 
 ```json
 {
@@ -825,7 +435,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.5 音频翻译
+#### 1.6.5 音频翻译
 
 ```json
 {
@@ -843,7 +453,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.6 视频理解
+#### 1.6.6 视频理解
 
 ```json
 {
@@ -866,7 +476,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.7 文档理解
+#### 1.6.7 文档理解
 
 ```json
 {
@@ -888,7 +498,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.8 代码生成与执行
+#### 1.6.8 代码生成与执行
 
 ```json
 {
@@ -917,7 +527,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.9 文生图
+#### 1.6.9 文生图
 
 ```json
 {
@@ -935,7 +545,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.10 图生图
+#### 1.6.10 图生图
 
 ```json
 {
@@ -959,7 +569,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.11 文生音频
+#### 1.6.11 文生音频
 
 ```json
 {
@@ -977,7 +587,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.12 文生视频
+#### 1.6.12 文生视频
 
 ```json
 {
@@ -995,7 +605,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-#### 2.6.13 Agent 工具调用与黄金轨迹
+#### 1.6.13 Agent 工具调用与黄金轨迹
 
 ```json
 {
@@ -1048,7 +658,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 }
 ```
 
-### 2.7 迁移与落地建议
+### 1.7 迁移与落地建议
 
 - 数据接入阶段将 `options` 映射为 `metadata.option_map` 与 `choices`，保证现有指标可运行。
 - 默认以 `references` 作为指标输入字段，`label` 仅作为兼容别名。

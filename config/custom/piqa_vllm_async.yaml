@@ -2,7 +2,7 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 metadata:
   name: piqa_vllm_async
-  description: 使用 vllm_backend（本地 AsyncLLMEngine）加载 Qwen2.5-0.5B，文本类基准，参考 piqa_local_vllm_async。
+  description: 使用 vllm_backend（本地 AsyncLLMEngine）加载 Qwen2.5-0.5B，文本类基准。
 
 custom:
   steps:
@@ -29,7 +29,7 @@ backends:
       max_model_len: 2048
       gpu_memory_utilization: 0.9
       batch_timeout_ms: 30
-      async_max_concurrency: 32  # 与 piqa_local_vllm_async 保持一致
+      async_max_concurrency: 32 
 
 role_adapters:
   - adapter_id: dut_qwen25_vllm
