@@ -49,11 +49,11 @@ def collect_content_fragments(sample: Dict[str, Any], *, content_field: str, con
 
 
 def encode_pil_to_data_url(image: Any, *, format: Optional[str] = None, cache_dir: Optional[str] = None) -> str:
-    """将 PIL.Image 转为 data URL，避免远端无法访问本地对象。"""
+    """Encode a PIL image into a data URL for remote-friendly consumption."""
 
     if image is None:
         raise ValueError("encode_pil_to_data_url requires a PIL Image instance")
-    try:  # 延迟导入，Pillow 为可选依赖
+    try:  # Lazy import because Pillow is an optional dependency.
         from PIL import Image
     except Exception as exc:  # pragma: no cover - optional dependency
         raise RuntimeError("Pillow is required to encode PIL images to data URL") from exc
@@ -64,7 +64,7 @@ def encode_pil_to_data_url(image: Any, *, format: Optional[str] = None, cache_di
     try:
         image.save(buffer, format=fmt)
     except Exception:
-        # 兜底：转换为 RGB 再保存 PNG
+        # Fallback: convert to RGB and save as PNG.
         rgb_image = image.convert("RGB") if hasattr(image, "convert") else image
         buffer = BytesIO()
         rgb_image.save(buffer, format="PNG")
@@ -86,13 +86,13 @@ def encode_pil_to_data_url(image: Any, *, format: Optional[str] = None, cache_di
 
 
 def pil_to_image_fragment(image: Any, *, format: Optional[str] = None, cache_dir: Optional[str] = None) -> Dict[str, Any]:
-    """将 PIL.Image 封装为 image_url 片段，便于直接塞入 messages。"""
+    """Wrap a PIL image as an `image_url` fragment suitable for `messages`."""
 
     url = encode_pil_to_data_url(image, format=format, cache_dir=cache_dir)
     return {"type": "image_url", "image_url": {"url": url}}
 
 # ---------------------------------------------------------------------------
-# 轻量媒体处理与嵌入
+# Lightweight media embedding helpers
 # ---------------------------------------------------------------------------
 
 
@@ -104,7 +104,7 @@ def embed_local_image_as_data_url(
     cache_dir: Optional[str] = None,
     content_root: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Convert本地 image_path 为 data URL，避免远端 OpenAI 接口无法访问本地文件。"""
+    """Convert a local image path to a data URL for remote OpenAI-compatible backends."""
 
     path_value = _extract_nested(sample, image_field)
     if not path_value:
@@ -118,14 +118,14 @@ def embed_local_image_as_data_url(
     root_path = Path(root_dir).expanduser() if root_dir else None
     resolved_path = Path(path_value)
     if not resolved_path.is_absolute():
-        # 1) 尝试按当前工作目录直接解析
+        # STEP 1: Try resolving relative paths from the current working directory.
         try_candidates = []
         try:
             try_candidates.append(resolved_path.expanduser().resolve())
         except Exception:
             try_candidates.append(resolved_path.expanduser())
 
-        # 2) 若路径前缀已包含 root 父目录名，避免二次拼接 root
+        # STEP 2: Avoid double-joining when the path already includes the root parent.
         if root_path:
             parts = list(resolved_path.parts)
             root_parent = root_path.parent
@@ -133,11 +133,11 @@ def embed_local_image_as_data_url(
                 candidate_rel = Path(*parts[1:])
                 try_candidates.append(root_parent.joinpath(candidate_rel).expanduser().resolve())
 
-        # 3) 常规 root 拼接
+        # STEP 3: Join against the inferred content root (common case for dataset-relative paths).
         if root_path:
             try_candidates.append(root_path.joinpath(resolved_path).expanduser().resolve())
 
-        # 4) 兜底：直接 expanduser
+        # STEP 4: Last resort: keep it as an expanded user path without resolving.
         try_candidates.append(resolved_path.expanduser())
 
         resolved_path = next((c for c in try_candidates if isinstance(c, Path) and c.exists()), try_candidates[-1])
@@ -158,7 +158,7 @@ def embed_local_image_as_data_url(
 
 
 def encode_pil_to_data_url(pil_image, format: str = "PNG", **save_kwargs: Any) -> str:
-    """将 PIL Image 编码为 data URL，供远端 HTTP 接口消费。"""
+    """Encode a PIL image as a data URL for remote HTTP backends."""
 
     try:
         from PIL import Image  # type: ignore
@@ -248,12 +248,12 @@ def embed_local_message_images(
     cache_dir: Optional[str] = None,
     content_root: Optional[str] = None,
 ) -> Optional[list[Dict[str, Any]]]:
-    """Convert所有消息中的本地 image_url 路径。
+    """Convert local `image_url` paths inside message content.
 
-    MMMU 等任务的题干往往在同一条消息中穿插多张图片。该辅助函数
-    逐个检测 content 列表中的 ``image_url`` 项并复用
-    :func:`embed_local_image_as_data_url` 将本地路径转换为 data URL，
-    使远端推理后端无需直接访问文件系统。
+    Tasks like MMMU may include multiple images inside a single message. This helper
+    walks the `content` fragments, finds `image_url` entries, and reuses
+    `embed_local_image_as_data_url` to convert local filesystem paths into data URLs
+    so remote inference backends do not need filesystem access.
     """
 
     root = _derive_root(sample, content_root)
@@ -262,7 +262,7 @@ def embed_local_message_images(
             resolved = Path(root).expanduser().resolve()
             meta = sample.get("metadata") or {}
             meta["content_root"] = str(resolved)
-            # 兼容性保留
+            # Compatibility: keep legacy `image_root` for older configs.
             if not meta.get("image_root"):
                 meta["image_root"] = str(resolved)
             sample["metadata"] = meta
@@ -303,7 +303,7 @@ def ensure_image_fragments(
     strict: bool = False,
     cache_dir: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
-    """优先使用 PIL，再回退本地/相对路径，返回 image_url 片段列表。"""
+    """Return `image_url` fragments by preferring PIL objects and falling back to local paths."""
 
     fragments: list[Dict[str, Any]] = []
     pil_obj = sample.get(pil_field)
@@ -345,10 +345,10 @@ def ensure_image_fragments(
 def _derive_root(sample: Dict[str, Any], explicit_root: Optional[str]) -> Optional[str]:
     """Infer a filesystem root for local media.
 
-    优先级：
-    1) 显式传入的 content_root
-    2) sample.metadata.content_root (or image_root for compat)
-    3) 数据集路径的父目录（_dataset_metadata.path）
+    Precedence:
+    1) Explicit `content_root`
+    2) `sample.metadata.content_root` (or `image_root` for compatibility)
+    3) Parent directory of the dataset path (`_dataset_metadata.path`)
     """
 
     if explicit_root:
@@ -381,7 +381,7 @@ def resolve_media_path(path_value: Any, root: Optional[str] = None) -> Optional[
 
 
 def _cached_data_url(resolved_path: Path, *, mime_type: str, cache_dir: Optional[str]) -> str:
-    """Encode文件并缓存 data URL，重复调用避免多次 base64 编码。"""
+    """Encode a file into a data URL and cache it to avoid repeated base64 work."""
 
     cache_root = Path(cache_dir or os.environ.get("GAGE_VISUAL_CACHE_DIR", ".gage_cache/visual")).expanduser().resolve()
     content = resolved_path.read_bytes()
@@ -399,21 +399,21 @@ def _cached_data_url(resolved_path: Path, *, mime_type: str, cache_dir: Optional
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(data_url, encoding="utf-8")
     except Exception:
-        # 缓存失败不影响主流程
+        # Cache write failures should not affect the main flow.
         pass
     return data_url
 
 
 # ---------------------------------------------------------------------------
-# 多模态收集与合并（从 manager 迁移）
+# Multimodal collection and merge (migrated from manager).
 # ---------------------------------------------------------------------------
 
 def merge_multimodal_inputs(sample: Dict[str, Any]) -> None:
-    """归并 multi_modal_data，并保持与 messages 同步。
+    """Merge `multi_modal_data` and keep it consistent with `messages`.
 
-    - 兼容 legacy inputs（str/list），统一包装为 dict。
-    - 合并 messages/doc_to_* 中的媒体引用，写入 inputs.multi_modal_data。
-    - 同步 _media_meta.images，去重并可选嵌入本地媒体。
+    - Accept legacy `inputs` shapes (str/list) and normalize to a dict.
+    - Collect media references from messages/doc_to_* and write them to `inputs.multi_modal_data`.
+    - Sync `_media_meta.images`, deduplicate, and optionally embed local media.
     """
 
     raw_inputs = sample.get("inputs")
@@ -421,7 +421,7 @@ def merge_multimodal_inputs(sample: Dict[str, Any]) -> None:
     if isinstance(raw_inputs, dict):
         inputs = dict(raw_inputs)
     elif isinstance(raw_inputs, list):
-        # 兼容 preprocess 返回的 messages 列表
+        # Compatibility: preprocess may return a raw messages list.
         if not sample.get("messages"):
             sample["messages"] = raw_inputs
         inputs = {}
@@ -637,7 +637,7 @@ def _extract_files(sample: Dict[str, Any]) -> list[str]:
 
 
 def _sync_multimodal_with_messages(sample: Dict[str, Any]) -> None:
-    """仅保留 messages 中引用的媒体，清理未引用资源。"""
+    """Keep only media referenced by `messages` and drop unreferenced entries."""
 
     inputs = sample.get("inputs")
     if not isinstance(inputs, dict):
@@ -707,7 +707,7 @@ def _sync_multimodal_with_messages(sample: Dict[str, Any]) -> None:
 
 
 def _maybe_embed_local_media(sample: Dict[str, Any]) -> None:
-    """按需将本地媒体转 data URL。"""
+    """Embed local media as data URLs when explicitly enabled."""
 
     meta = sample.get("_dataset_metadata") or {}
     env_flag = os.environ.get("GAGE_EVAL_EMBED_LOCAL_MEDIA", "").lower() in {"1", "true", "yes", "on"}
@@ -739,7 +739,7 @@ def _maybe_embed_local_media(sample: Dict[str, Any]) -> None:
 
 
 def _embed_path_to_data_url(path: str) -> str:
-    """读取本地文件并编码为 data URL，带 LRU 缓存避免重复 IO/编码。"""
+    """Read a local file and encode it as a data URL (LRU cached)."""
 
     resolved = Path(path)
     mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
@@ -749,7 +749,7 @@ def _embed_path_to_data_url(path: str) -> str:
 
 
 def _embed_media_list(media, base_path: Optional[str], max_workers: int) -> list[Any]:
-    """将媒体引用列表转为 Data URL，支持可选线程池并保持顺序。"""
+    """Convert a media list into data URLs with optional threading while preserving order."""
 
     items = media if isinstance(media, list) else [media]
 
@@ -801,7 +801,7 @@ def _expand_env(value: str) -> str:
 
 
 def _env_int(key: str) -> Optional[int]:
-    """从环境变量读取 int，无法解析时返回 None。"""
+    """Read an integer env var and return None when missing or invalid."""
 
     raw = os.environ.get(key)
     if raw is None:

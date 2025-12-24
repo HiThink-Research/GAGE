@@ -13,7 +13,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "http",
-    desc="通用 HTTP 文本生成后端",
+    desc="Generic HTTP text-generation backend",
     tags=("llm", "remote"),
     modalities=("text",),
 )

@@ -11,7 +11,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "flag_embedding",
-    desc="FlagEmbedding 文本向量后端",
+    desc="FlagEmbedding text embedding backend",
     tags=("embedding", "local"),
     modalities=("text",),
 )

@@ -16,7 +16,7 @@ from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 @registry.asset(
     "backends",
     "tgi",
-    desc="HuggingFace TGI 服务推理后端",
+    desc="HuggingFace TGI service backend",
     tags=("llm", "remote"),
     modalities=("text",),
 )

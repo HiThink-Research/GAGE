@@ -84,7 +84,7 @@ class TaskPlanner:
         )
 
     def attach_task_plan_spec(self, plan_spec: "TaskPlanSpec") -> None:
-        """Bind a precomputed TaskPlanSpec so layout无需重复解析."""
+        """Binds a precomputed TaskPlanSpec to avoid re-parsing the step layout."""
 
         self._plan_spec = plan_spec
         self.configure_custom_steps(plan_spec.steps)

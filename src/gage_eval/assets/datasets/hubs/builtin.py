@@ -12,7 +12,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "dataset_hubs",
     "inline",
-    desc="直接引用本地/相对路径的数据源",
+    desc="Inline dataset hub (local/relative paths)",
     tags=("local",),
 )
 class InlineDatasetHub(DatasetHub):
@@ -28,7 +28,7 @@ class InlineDatasetHub(DatasetHub):
 @registry.asset(
     "dataset_hubs",
     "huggingface",
-    desc="HuggingFace/ModelScope 远程数据源",
+    desc="Remote dataset hub (HuggingFace Hub / ModelScope)",
     tags=("remote", "hf"),
 )
 class HuggingFaceDatasetHub(DatasetHub):
@@ -76,7 +76,7 @@ class HuggingFaceDatasetHub(DatasetHub):
 @registry.asset(
     "dataset_hubs",
     "modelscope",
-    desc="ModelScope 远程数据源",
+    desc="Remote dataset hub (ModelScope)",
     tags=("remote", "modelscope"),
 )
 class ModelScopeDatasetHub(HuggingFaceDatasetHub):
@@ -92,6 +92,6 @@ registry.register(
     "dataset_hubs",
     "ms_hub",
     ModelScopeDatasetHub,
-    desc="ModelScope 远程数据源（ms_hub 别名）",
+    desc="Remote dataset hub (ModelScope; ms_hub alias)",
     tags=("remote", "modelscope"),
 )

@@ -11,7 +11,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "whisper_asr",
-    desc="faster-whisper 语音识别后端",
+    desc="faster-whisper ASR backend",
     tags=("asr", "local"),
     modalities=("audio",),
 )

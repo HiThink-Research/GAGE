@@ -30,7 +30,7 @@ class RoleAdapter:
         self.adapter_id = adapter_id
         self.role_type = role_type
         self.capabilities = tuple(capabilities)
-        # 通用配置显式持有，避免外部动态 setattr
+        # NOTE: Keep common configs explicitly to avoid dynamic `setattr` from callers.
         self.resource_requirement = resource_requirement or {}
         self.sandbox_config = sandbox_config or {}
 
@@ -68,17 +68,21 @@ class RoleAdapter:
     # Producer/consumer split hooks
     # ------------------------------------------------------------------
     def prepare_request(self, payload: Dict[str, Any], state: RoleAdapterState) -> Any:
-        """CPU 密集型准备逻辑：prompt 渲染、采样参数组装等。
+        """Prepares a backend request (CPU-bound work).
 
-        默认实现直接回传 payload，保证向后兼容。
+        Examples include prompt rendering and sampling parameter assembly.
+
+        The default implementation returns the payload as-is for backward
+        compatibility.
         """
 
         return payload
 
     def execute_batch(self, requests: List[Any]) -> List[Any]:
-        """批量执行后端请求。
+        """Executes a batch of backend requests.
 
-        默认实现串行调用 invoke，实现类可覆盖为真正的合批调用。
+        The default implementation calls `invoke()` serially. Subclasses may
+        override this method to implement true batching.
         """
 
         results: List[Any] = []
@@ -88,6 +92,10 @@ class RoleAdapter:
         return results
 
     def parse_response(self, response: Any, state: RoleAdapterState) -> Dict[str, Any]:
-        """回传解析，可结合 state 做上下文拼装。默认原样返回。"""
+        """Parses a raw backend response into a standardized payload.
+
+        Subclasses may use `state` to re-attach context. The default
+        implementation returns the response as-is.
+        """
 
         return response

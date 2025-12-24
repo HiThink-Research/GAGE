@@ -15,7 +15,7 @@ from gage_eval.registry import registry
 class _BindingPre(BasePreprocessor):
     def to_sample(self, record, **kwargs):
         sample = dict(record)
-        # 保证 messages 存在，便于合并多模态
+        # Ensure messages exist so multimodal merging has a stable anchor point.
         sample.setdefault("messages", [{"role": "user", "content": [{"type": "text", "text": "hi"}]}])
         return sample
 

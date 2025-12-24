@@ -32,7 +32,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "openai_http",
-    desc="OpenAI Chat Completion 兼容后端",
+    desc="OpenAI Chat Completions compatible backend",
     tags=("llm", "remote", "api"),
     modalities=("text",),
 )
@@ -40,7 +40,7 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
     """Backend that talks to any OpenAI Chat Completion compatible endpoint."""
 
     def load_model(self, config: Dict[str, Any]) -> str:
-        # 远端 HTTP 执行模式
+        # NOTE: Remote HTTP execution mode.
         self.execution_mode = "http"
         if OpenAI is None:
             raise RuntimeError("OpenAICompatibleHTTPBackend requires the 'openai' package")
@@ -81,7 +81,9 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
             if enable_async_cfg is not None
             else (env_enable_async.lower() in {"1", "true", "yes", "on"} if env_enable_async else False)
         )
-        # 默认走同步客户端，避免在 run_sync + 线程模型下反复创建事件循环带来的额外开销；需要时可在配置或环境中显式开启异步。
+        # NOTE: Default to the synchronous client to avoid repeated event-loop creation
+        # overhead under `run_sync` + thread execution. Enable async explicitly via
+        # config or env vars when needed.
         if enable_async and AsyncOpenAI is not None:
             try:
                 self._async_client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key, **client_kwargs)

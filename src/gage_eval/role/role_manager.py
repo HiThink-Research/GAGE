@@ -66,8 +66,9 @@ class RoleManager:
                     adapter_id,
                 )
             else:
-                # HTTP / 远程后端：直接依赖 RoleAdapter + Backend 自身的并发与限流策略，
-                # 不再构建 InferenceRuntime/BatchingScheduler。
+                # NOTE: HTTP/remote backends rely on RoleAdapter + Backend internal
+                # concurrency and rate-limiting. We do not build an
+                # InferenceRuntime/BatchingScheduler for this path.
                 logger.info(
                     "Registering adapter '{}' in http/remote path (no InferenceRuntime, lightweight concurrency)",
                     adapter_id,
@@ -149,7 +150,9 @@ class RoleManager:
             role_pool.shutdown()
 
     def snapshot(self) -> Dict[str, Dict[str, float]]:
-        # 旧实现依赖 InferenceRuntime 采集队列/并发指标；Runtime 已下线，这里先返回空 dict。
+        # NOTE: The legacy implementation relied on InferenceRuntime to collect
+        # queue/concurrency stats. The runtime has been removed, so we return an
+        # empty dict for now.
         return {}
 
     # ------------------------------------------------------------------

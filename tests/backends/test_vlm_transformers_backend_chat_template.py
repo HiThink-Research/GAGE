@@ -27,7 +27,7 @@ def make_backend():
         backend = VLMTransformersBackend(cfg)
     finally:
         VLMTransformersBackend.load_model = orig_load
-    # 默认 processor 占位，避免 AttributeError
+    # NOTE: Provide a placeholder processor to avoid AttributeError in tests.
     backend.processor = type("P", (), {})()
     return backend
 

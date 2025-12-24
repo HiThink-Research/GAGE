@@ -30,7 +30,7 @@ def _auto_eval_sample_id(*args, **kwargs) -> Optional[str]:
 @registry.asset(
     "pipeline_steps",
     "auto_eval",
-    desc="自动指标计算阶段",
+    desc="Pipeline step that computes automatic metrics",
     tags=("metrics",),
     step_kind="sample",
 )

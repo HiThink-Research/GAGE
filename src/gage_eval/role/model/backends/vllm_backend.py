@@ -58,7 +58,7 @@ except Exception:  # pragma: no cover
 @registry.asset(
     "backends",
     "vllm",
-    desc="vLLM 本地推理后端（AsyncLLMEngine，文本/多模态）",
+    desc="vLLM local inference backend (AsyncLLMEngine; text/multimodal)",
     tags=("llm", "local", "serving"),
     modalities=("text", "vision", "audio"),
 )
@@ -100,7 +100,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
 
     def load_model(self, config: Dict[str, Any]):
-        """加载模型 + processor，并应用兼容性补丁（奖励/MoE/rope scaling/低显存等）。"""
+        """Load the model/processor and apply compatibility patches (reward/MoE/rope scaling/low-memory)."""
 
         trust_remote_code = bool(config.get("trust_remote_code", True))
         model_id = config.get("model_path") or config.get("model")
@@ -162,7 +162,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         return prepared
 
     def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """同步包装，支持 sample_n 多路采样与 output_type 路由."""
+        """Run a single request synchronously with `sample_n` and `output_type` routing."""
 
         logger.info(
             "vllm_backend handling request_id={} output_type={} sample_n={}",
@@ -210,17 +210,18 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             if self._strict_mm:
                 raise RuntimeError("multi_modal_data disabled for this vLLM version")
             logger.warning("vllm_backend multi_modal_data disabled; falling back to prompt-only")
-        # 注意：这里 _load_multimodal_payload 内部已经使用了线程池，是线程安全的同步调用
+        # NOTE: `_load_multimodal_payload` already uses a thread pool internally; this is a thread-safe sync call.
         mm_raw = self._prepare_multi_modal_data(prepared) if mm_requested and self._mm_supported else None
         mm_loaded = self._load_multimodal_payload(mm_raw) if mm_raw else None
 
-        # 定义异步任务，将在后台 loop 中运行
+        # Define an async task to be executed on the background event loop thread.
         async def _async_generate():
-            # 构造 prompt，优先 processor 渲染
+            # Render the prompt, preferring the processor chat template when available.
             rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"))
             final_prompt_text = rendered_mm if rendered_mm else prompt
 
-            # vLLM v1（>=0.8.0）接口支持单个 PromptInputs dict 作为位置参数；旧接口只接受 keyword prompt/inputs
+            # vLLM v1 (>=0.8.0) accepts a single PromptInputs dict as a positional argument; older APIs only accept
+            # keyword `prompt`/`inputs`.
             use_v1_prompt = bool(_VLLM_PROMPT_V1)
             prompt_input: Any
             mm_payload = None
@@ -232,7 +233,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                         raise RuntimeError("multi_modal_data disabled for this vLLM version")
                     logger.warning("vllm_backend multi_modal_data disabled; falling back to prompt-only")
             if mm_payload:
-                # 确保 prompt 中包含足够的 <image> 占位，防止 vLLM 提示更新不匹配
+                # Ensure the prompt contains enough `<image>` placeholders to match the multimodal payload.
                 image_field = mm_payload.get("image") if isinstance(mm_payload, dict) else None
                 if isinstance(image_field, (list, tuple)):
                     image_count = len(image_field)
@@ -247,7 +248,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
 
             extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
             if isinstance(extra_inputs, dict):
-                # 如有 input_ids/prompt_token_ids，则构造 dict 以走 v1 PromptInputs，兼容 llm-eval 行为
+                # If `input_ids`/`prompt_token_ids` exist, build a dict PromptInputs payload to match llm-eval behavior.
                 needs_dict = mm_loaded or use_v1_prompt or "input_ids" in extra_inputs or "prompt_token_ids" in extra_inputs
                 if needs_dict and not isinstance(prompt_input, dict):
                     prompt_input = {"prompt": final_prompt_text}
@@ -277,7 +278,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                     for k, v in mapped_extra.items():
                         generate_kwargs.setdefault(k, v)
 
-                # 防御性修正：确保 prompt_token_ids 是列表，防止 int 导致 len() 报错
+                # Defensive: ensure `prompt_token_ids` is a list to avoid `len()` on an int.
                 if "prompt_token_ids" in generate_kwargs:
                     p_ids = generate_kwargs["prompt_token_ids"]
                     if isinstance(p_ids, int):
@@ -288,7 +289,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             try:
                 result = self.model.generate(*generate_args, **generate_kwargs)
             except TypeError as exc:
-                # 旧版 AsyncLLMEngine.generate 不支持 multi_modal_data/inputs 关键字或 v1 位置参数
+                # Legacy AsyncLLMEngine.generate does not support `multi_modal_data`/`inputs` kwargs or v1 positional args.
                 if mm_loaded or generate_args:
                     if mm_loaded:
                         self._mm_supported = False
@@ -312,7 +313,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 )
                 return {"outputs": [{"text": str(prompt)}]}
 
-            # 异步收集结果
+            # Collect results from async generators/coroutines.
             if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
                 final_item = None
                 async for item in result:
@@ -322,7 +323,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 return await result
             return result
 
-        # 提交到后台线程执行并等待结果
+        # Submit to the background event loop thread and wait for completion.
         try:
             abort_fn = getattr(self.model, "abort", None)
             return run_coroutine_threadsafe_with_timeout(
@@ -339,7 +340,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             return {"outputs": [{"text": str(prompt)}]}
 
     # ------------------------------------------------------------------ #
-    # 模型加载与补丁                                                         #
+    # Model loading and compatibility patches                              #
     # ------------------------------------------------------------------ #
     def _load_auto_config(self, model_id: str, trust_remote_code: bool):
         try:  # pragma: no cover - heavy dependency
@@ -373,9 +374,9 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             return SimpleNamespace(feature_extractor=SimpleNamespace(sampling_rate=16000))
 
     def _apply_model_patches(self, cfg: Any, args: SimpleNamespace):
-        """仿照 llm-eval：Reward/MoE/rope scaling/低显存缓存等补丁。"""
+        """Apply lightweight compatibility patches inspired by llm-eval."""
 
-        # RewardModel 架构修正
+        # RewardModel architecture normalization.
         archs = getattr(cfg, "architectures", []) or []
         model_type = getattr(cfg, "model_type", "") or getattr(getattr(cfg, "text_config", cfg), "model_type", "")
         if "RewardModel" in archs:
@@ -385,7 +386,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 archs.append("Qwen2ForRewardModel")
             cfg.architectures = archs
 
-        # rope scaling 补丁
+        # Rope scaling patch.
         rope_scaling = getattr(cfg, "rope_scaling", {}) or {}
         factor = 1.0 if rope_scaling.get("rope_type") == "llama3" else rope_scaling.get("factor", 1.0)
         max_model_length = int(
@@ -402,12 +403,12 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 pass
         cfg.text_config = text_config
 
-        # MoE 专家并行
+        # MoE expert parallelism.
         if getattr(cfg, "moe_intermediate_size", None) is not None:
             if getattr(args, "tensor_parallel_size", 1) > 1:
                 setattr(args, "enable_expert_parallel", True)
 
-        # 低显存 cache block 估算
+        # Low-memory cache block estimation.
         if getattr(args, "low_vram", False):
             max_length = args.max_length or max_model_length or 8192
             block_size = args.block_size or 32
@@ -532,7 +533,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             return None
 
     # ------------------------------------------------------------------ #
-    # 适配/渲染/采样辅助                                                      #
+    # Adapters, rendering, and sampling helpers                            #
     # ------------------------------------------------------------------ #
     def _convert_output(self, result: Any, output_type: str) -> Any:
         if output_type in {"text", "beam"}:
@@ -558,7 +559,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         )
 
     def _maybe_tokenize_messages(self, prepared: Dict[str, Any], prompt: str) -> Tuple[str, Any]:
-        """使用 backend tokenizer 生成 prompt_token_ids（若预处理器未提供）。"""
+        """Generate `prompt_token_ids` via the backend tokenizer when preprocessors did not provide them."""
 
         force_tokenize = bool(prepared.get("force_tokenize_prompt") or self._force_tokenize_prompt)
         new_prompt, new_inputs, meta = maybe_tokenize_messages(

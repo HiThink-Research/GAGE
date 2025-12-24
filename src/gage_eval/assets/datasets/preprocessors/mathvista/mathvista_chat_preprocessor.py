@@ -25,7 +25,7 @@ _CHOICE_ALPHABET: Tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
 class MathVistaChatPreprocessor(BasePreprocessor):
-    """MathVista 多模态预处理器：题干 + 图片 + 可选多选项."""
+    """Preprocess MathVista records into a chat-style multimodal Sample."""
 
     def to_sample(
         self,
@@ -42,6 +42,7 @@ class MathVistaChatPreprocessor(BasePreprocessor):
         **kwargs: Any,
     ) -> Dict[str, Any]:
         try:
+            # STEP 1: Load auxiliary text (caption/OCR) and build a prompt.
             caption_data = {}
             if use_caption:
                 current_dir_path = os.path.dirname(os.path.abspath(__file__))
@@ -66,7 +67,7 @@ class MathVistaChatPreprocessor(BasePreprocessor):
             choices = normalize_options(sample.get("choices") or [])
             answer = sample.get("answer")
             if answer in (None, ""):
-                # 回退常见字段：label/metadata.answer/final_answer/answer_text
+                # NOTE: Fall back to common answer fields used by different dataset variants.
                 answer = (
                     sample.get("label")
                     or (sample.get("metadata") or {}).get("answer")
@@ -75,11 +76,11 @@ class MathVistaChatPreprocessor(BasePreprocessor):
                 )
             if answer is not None:
                 sample["answer"] = answer
-            # answer_type 尝试回填
+            # Try to infer `answer_type` when missing (useful for numeric QA).
             answer_type = sample.get("answer_type") or (sample.get("metadata") or {}).get("answer_type")
             if answer_type is None and answer not in (None, ""):
                 try:
-                    # 简单推断类型
+                    # Best-effort heuristic: treat integers as a special case.
                     float_val = float(str(answer).strip())
                     answer_type = "integer" if float_val.is_integer() else "float"
                 except Exception:
@@ -95,17 +96,18 @@ class MathVistaChatPreprocessor(BasePreprocessor):
             logging.error("failed, {}", e)
             exit(0)
 
+        # STEP 2: Resolve image fragments (prefer PIL -> data URL).
         img_frag = None
         pil_obj = sample.get("decoded_image")
         if pil_obj is not None:
             try:
-                # step2.1: PIL 对象编码为 data URL，方便 HTTP 后端直接消费
+                # Encode the PIL object as a data URL so HTTP backends can consume it.
                 if pre_encode_images:
                     url = encode_pil_to_data_url(pil_obj)
                     img_frag = {"type": "image_url", "image_url": {"url": url}}
                     sample.setdefault("metadata", {})["image_url"] = url
                 else:
-                    # 无路径时无法延后，仍回退为 data URL
+                    # If there is no on-disk path, we cannot defer encoding safely.
                     url = encode_pil_to_data_url(pil_obj)
                     img_frag = {"type": "image_url", "image_url": {"url": url}}
                     sample.setdefault("metadata", {})["image_url"] = url
@@ -113,7 +115,8 @@ class MathVistaChatPreprocessor(BasePreprocessor):
                 if strict_image:
                     raise
         if img_frag is None and sample.get("image"):
-            # step2.2: 回退图片路径 -> data URL（支持相对路径）；如设置 pre_encode_images=False，则仅解析路径
+            # Fallback: local path -> data URL (supports relative paths). If `pre_encode_images=False`,
+            # keep the resolved path and let the backend decide whether to embed/encode.
             if pre_encode_images:
                 embed_local_image_as_data_url(sample, image_field="image", content_root=content_root, strict=False)
                 if isinstance(sample.get("image"), str):
@@ -130,13 +133,10 @@ class MathVistaChatPreprocessor(BasePreprocessor):
             meta["content_root"] = content_root
             sample["metadata"] = meta
 
-        # step3: 消息拼装（文本 + 图像片段）
-        # step3.1: 基础文本片段
+        # STEP 3: Build `messages` (prompt text + optional image fragments).
         content: List[Dict[str, Any]] = [{"type": "text", "text": str(prompt).strip()}]
-        # step3.2: 追加图像片段（若存在）
         if img_frag:
             content.append(img_frag)
-        # step3.3: 组织 system/user 消息
         messages: List[Dict[str, Any]] = []
         if system_prompt:
             messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt.strip()}]})
@@ -144,7 +144,7 @@ class MathVistaChatPreprocessor(BasePreprocessor):
 
         sample["messages"] = messages
 
-        # step4: 选项/答案归一化
+        # STEP 4: Normalize multiple-choice options (if present).
         if choices:
             if len(choices) > len(_CHOICE_ALPHABET):
                 raise ValueError("MathVista multiple-choice supports up to 26 options")
@@ -161,11 +161,9 @@ class MathVistaChatPreprocessor(BasePreprocessor):
             meta["option_map"] = {l: opt for l, opt in option_pairs}
             meta["correct_choice"] = resolve_correct_choice(answer, option_pairs, answer_index_base=0)
 
-        # step5: inputs/多模态对齐 + 标记
+        # STEP 5: Sync multimodal inputs and set render flags.
         # sample["inputs"] = sample.get("inputs") or {"prompt": sample["prompt"]}
-        # step5.1: merge_multimodal_inputs 归并消息/inputs 的媒体引用并去重
         merge_multimodal_inputs(sample)
-        # step5.2: set_render_flags 统一设置渲染标记/缓存后缀
         set_render_flags(
             sample,
             mode="preprocess",
@@ -178,7 +176,6 @@ class MathVistaChatPreprocessor(BasePreprocessor):
 
 
 __all__ = ["MathVistaChatPreprocessor"]
-
 
 
 

@@ -115,7 +115,7 @@ def ensure_list_of_strings(value: Any, ignore_none: bool = True) -> list[str]:
 
 
 def levenshtein_distance(s1: str, s2: str) -> int:
-    """轻量级 Levenshtein 距离实现，用于文本相似度计算。"""
+    """Computes Levenshtein distance for lightweight text similarity checks."""
 
     if len(s1) < len(s2):
         s1, s2 = s2, s1

@@ -26,7 +26,7 @@ class ValidationMode(str, Enum):
 
 
 class DefaultEnvelopeModel(BaseModel):
-    """Minimal schema covering Sample Envelope 核心字段。"""
+    """Minimal schema covering the core fields of the Sample envelope."""
 
     id: str
     messages: list
@@ -172,7 +172,7 @@ def validate_sample_schema(sample: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_validator(config: Optional[Dict[str, Any]]) -> Optional[SampleValidator]:
-    """Create a SampleValidator from DatasetSpec.schema 或默认 Envelope 校验。"""
+    """Creates a SampleValidator from DatasetSpec.schema or the default envelope model."""
 
     if config is None:
         return SampleValidator(envelope_model=DefaultEnvelopeModel, mode=ValidationMode.WARN)

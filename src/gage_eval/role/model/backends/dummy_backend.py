@@ -12,7 +12,7 @@ from gage_eval.role.model.config.dummy import DummyBackendConfig
 @registry.asset(
     "backends",
     "dummy",
-    desc="返回固定文本的 Dummy 后端（测试用）",
+    desc="Deterministic dummy backend (tests)",
     tags=("test", "dummy"),
     modalities=("text",),
     config_schema_ref="gage_eval.role.model.config.dummy:DummyBackendConfig",

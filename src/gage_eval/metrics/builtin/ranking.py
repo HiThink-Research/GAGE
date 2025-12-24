@@ -29,12 +29,12 @@ def _extract_candidates(candidates_raw: Any, candidate_field: str | None) -> lis
 @registry.asset(
     "metrics",
     "ranking",
-    desc="MRR / Hit@K 排序命中指标",
+    desc="MRR / Hit@K ranking metric",
     tags=("ranking", "retrieval"),
     default_aggregation="mean",
 )
 class RankingMetric(SimpleMetric):
-    """计算排名命中率，支持 MRR 与 Hit@K。"""
+    """Computes ranking metrics such as MRR and Hit@K."""
 
     value_key = "hit"
 
@@ -66,4 +66,3 @@ class RankingMetric(SimpleMetric):
         if metric_type == "hit@k":
             return hit_at_k, metadata
         return mrr, metadata
-

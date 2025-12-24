@@ -52,7 +52,7 @@ class PipelineEndToEndTests(unittest.TestCase):
         self.assertEqual(len(iterated), 1)
         emitted = iterated[0]
         self.assertEqual(emitted["inputs"]["multi_modal_data"]["image"], ["img.png"])
-        # DataManager 仅透传，不再改写已有字段
+        # NOTE: DataManager only passes through here; it should not rewrite existing fields.
         self.assertEqual(emitted["_dataset_id"], "ds_pipe")
         self.assertEqual(emitted["_dataset_metadata"]["path"], "/tmp/data.jsonl")
 

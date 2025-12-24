@@ -15,7 +15,7 @@ from gage_eval.role.model.backends.base_backend import EngineBackend
 @registry.asset(
     "backends",
     "custom_script",
-    desc="从外部 Python 文件加载自定义 EngineBackend",
+    desc="Load a custom EngineBackend from an external Python file",
     tags=("custom",),
 )
 class CustomScriptBackend(EngineBackend):

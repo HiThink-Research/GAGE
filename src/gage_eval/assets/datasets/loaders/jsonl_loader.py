@@ -24,7 +24,7 @@ _STREAMING_THRESHOLD_MB = 512
 @registry.asset(
     "dataset_loaders",
     "jsonl",
-    desc="本地 JSONL 文件加载器",
+    desc="Local JSONL file dataset loader",
     tags=("local", "file"),
     supports_streaming=True,
 )

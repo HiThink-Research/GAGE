@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""汇总 run_all_models(_mock) / run_piqa_litellm_local 产出的 summary.json。"""
+"""Collects `summary.json` files produced by one-click LiteLLM runs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 
 def _collect_summaries(root: Path) -> List[Dict[str, Any]]:
-    """扫描 root 下的 summary.json，返回汇总列表。"""
+    """Scans `root` for `summary.json` files and returns an index list."""
 
     items: List[Dict[str, Any]] = []
     for path in root.glob("**/summary.json"):
@@ -21,7 +21,7 @@ def _collect_summaries(root: Path) -> List[Dict[str, Any]]:
 
         rel = path.relative_to(root)
         parts = rel.parts
-        # 形如 <model>/<run_id>/summary.json，或 <run_id>/summary.json
+        # Expected layouts: <model>/<run_id>/summary.json or <run_id>/summary.json.
         model = parts[0] if len(parts) >= 3 else (parts[0] if len(parts) >= 2 else "default")
         run_id = parts[-2] if len(parts) >= 2 else path.parent.name
 
@@ -41,7 +41,7 @@ def _collect_summaries(root: Path) -> List[Dict[str, Any]]:
             }
         )
 
-    # 按模型名/修改时间排序，便于阅读
+    # Sort by model name / run id for readability.
     items.sort(key=lambda x: (x["model"], x["run_id"]))
     return items
 
@@ -64,7 +64,7 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"root": str(root), "count": len(items), "items": items}, ensure_ascii=False, indent=2))
 
-    # 控制台预览
+    # Console preview.
     print(f"[summary] collected {len(items)} summaries under {root}")
     for item in items:
         label = item["model"]

@@ -14,7 +14,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "pipeline_steps",
     "judge",
-    desc="执行裁判角色的阶段",
+    desc="Pipeline step that runs the judge role",
     tags=("judge",),
     step_kind="sample",
 )

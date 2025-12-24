@@ -122,7 +122,8 @@ def apply_preprocess(
 ) -> Iterable[Dict[str, Any]]:
     config = observability_config or get_observability_config()
     ctx = build_preprocess_context(spec, data_path=data_path)
-    # 无显式 preprocess 时使用 DefaultPreprocessor（llm-eval 兜底 + 兜底模板）
+    # NOTE: If no explicit preprocess is configured, fall back to DefaultPreprocessor
+    # (llm-eval compatible defaults + fallback prompt templating).
     if not ctx:
         return _apply_default_preprocessor(
             records,

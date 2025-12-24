@@ -59,7 +59,7 @@ class SGLangBackendTests(unittest.TestCase):
         call = fake_session.post_calls[0]
         self.assertEqual(call["url"], "http://0.0.0.0:31000/generate")
         self.assertEqual(call["json"]["prompt"], "ping")
-        # stop 字段被放在请求顶层，sampling_params 中保留非空参数
+        # The `stop` field is placed at the top level, and sampling_params keeps only non-empty params.
         self.assertEqual(call["json"]["stop"], ["<eos>"])
         self.assertEqual(call["json"]["sampling_params"]["max_new_tokens"], 16)
         self.assertEqual(call["json"]["sampling_params"]["temperature"], 0.3)
@@ -87,7 +87,7 @@ class SGLangBackendTests(unittest.TestCase):
         self.assertEqual(result["top_logprobs"], [[42, -0.1], [7, -0.2]])
         call = fake_session.post_calls[0]
         self.assertEqual(call["json"]["logprob_token_ids"], [42, 7])
-        # stop 未配置时不应出现在请求里
+        # When stop is not configured, it should not appear in the request payload.
         self.assertNotIn("stop", call["json"])
 
 

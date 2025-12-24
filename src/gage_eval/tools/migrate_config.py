@@ -1,7 +1,8 @@
 """CLI tool that migrates legacy PipelineConfig YAMLs to the new backends/backend_id layout.
 
-该工具聚焦「结构迁移」：将 RoleAdapter 内联 backend 提取到顶层 backends 列表，并用 backend_id
-替换原有 inline 配置。不会修改任何数值型字段（如 concurrency、max_batch_size），以避免引入隐式行为变化。
+This tool focuses on structural migration: extract inline backends from RoleAdapters into the top-level `backends`
+list and replace inline configs with `backend_id` references. It intentionally does not modify numeric fields
+(e.g., concurrency, max_batch_size) to avoid introducing implicit behavior changes.
 """
 
 from __future__ import annotations
@@ -39,18 +40,18 @@ def _ensure_list(obj: Any) -> List[Dict[str, Any]]:
 def migrate_config_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Return a new payload where inline backends are extracted to top-level backends.
 
-    迁移规则：
-    - 收集所有 `role_adapters[].backend`，构造顶层 backends 列表；
-    - 为每个唯一 backend 生成稳定的 `backend_id`（若已有则复用 adapter_id）；
-    - 将 `role_adapters[].backend` 替换为 `backend_id` 引用；
-    - 保留原有字段顺序与数值型配置，不做语义调整。
+    Migration rules:
+    - Collect all `role_adapters[].backend` entries and build a top-level `backends` list.
+    - Generate a stable `backend_id` per unique backend (reuse `adapter_id` when possible).
+    - Replace `role_adapters[].backend` with a `backend_id` reference.
+    - Preserve field order and numeric config values; do not change semantics.
     """
 
     data = deepcopy(payload)
     role_adapters = _ensure_list(data.get("role_adapters"))
     existing_backends = _ensure_list(data.get("backends"))
 
-    # 建立一个稳定的去重 key：基于 backend type + config 的规范化 JSON 表示。
+    # Build a stable dedup key: backend type + normalized JSON config.
     backend_index: Dict[str, str] = {}
     backend_specs: Dict[str, Dict[str, Any]] = {}
 
@@ -68,7 +69,7 @@ def migrate_config_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         inline_backend = adapter.get("backend")
         backend_id = adapter.get("backend_id")
         if not inline_backend or backend_id:
-            # 已经使用 backend_id 或没有 inline backend，直接跳过。
+            # Skip adapters that already use backend_id or do not have an inline backend.
             continue
         if not isinstance(inline_backend, dict):
             raise ValueError(
@@ -84,7 +85,7 @@ def migrate_config_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         if key in backend_index:
             new_backend_id = backend_index[key]
         else:
-            # 优先复用 adapter_id 作为 backend_id，便于人类阅读；如已被占用则追加后缀。
+            # Prefer using adapter_id as backend_id for readability; append a suffix if already taken.
             base_id = adapter.get("adapter_id") or backend_type
             new_backend_id = base_id
             suffix = 1
@@ -99,7 +100,7 @@ def migrate_config_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "config": inline_backend.get("config", {}) or {},
             }
             existing_backends.append(backend_specs[new_backend_id])
-        # 替换 adapter 上的 backend 为 backend_id 引用。
+        # Replace the inline backend with a backend_id reference on the adapter.
         adapter["backend_id"] = new_backend_id
         adapter.pop("backend", None)
 

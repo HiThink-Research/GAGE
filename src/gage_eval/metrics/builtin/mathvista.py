@@ -11,7 +11,7 @@ from gage_eval.registry import registry
 
 
 def _extract_choice_letter(prediction: str) -> Optional[str]:
-    """从模型输出中提取最后一个明显的选项字母."""
+    """Extract the last obvious multiple-choice letter from a model prediction."""
 
     patterns = [
         r"\\boxed\{\s*([A-Ea-e])\s*\}",
@@ -21,7 +21,7 @@ def _extract_choice_letter(prediction: str) -> Optional[str]:
     candidates: list[str] = []
     for pat in patterns:
         candidates.extend(re.findall(pat, prediction))
-    # 展平 tuple
+    # Flatten tuple matches returned by regex groups.
     flat: list[str] = []
     for cand in candidates:
         if isinstance(cand, tuple):
@@ -39,16 +39,16 @@ def _resolve_expected_label(
 ) -> Optional[str]:
     if answer is None:
         return None
-    # 直接字母
+    # Direct letter answers (e.g., "A", "b").
     if isinstance(answer, str) and len(answer.strip()) == 1 and answer.strip().isalpha():
         return answer.strip().upper()
-    # 索引
+    # Index-based answers (some datasets use 0/1-based indices).
     if isinstance(answer, int):
         labels = list(option_map.keys())
         idx = answer - answer_index_base
         if 0 <= idx < len(labels):
             return str(labels[idx]).upper()
-    # 文本匹配
+    # Text-match fallback: match normalized option content.
     answer_norm = normalize_text_advanced(str(answer), strip=True, collapse_whitespace=True)
     for label, text in option_map.items():
         if normalize_text_advanced(str(text), strip=True, collapse_whitespace=True) == answer_norm:
@@ -57,11 +57,11 @@ def _resolve_expected_label(
 
 
 def _extract_numeric_answer(prediction: str, answer_type: str) -> Optional[str]:
-    """尝试从文本中提取数值答案 (integer/float)"""
+    """Extract a numeric answer from free-form text (integer/float)."""
     if not prediction:
         return None
 
-    # 1. 尝试直接转换
+    # STEP 1: Try direct conversion (best effort).
     try:
         if answer_type == "integer":
             return str(int(float(prediction)))
@@ -70,9 +70,9 @@ def _extract_numeric_answer(prediction: str, answer_type: str) -> Optional[str]:
     except (ValueError, TypeError):
         pass
 
-    # 2. 尝试提取最后一个数字
-    # 匹配: 可选负号 + 数字 + 可选小数部分
-    # 注意: 这种简单的正则可能无法处理千分位逗号等复杂格式，但在 MathVista 语境下通常足够
+    # STEP 2: Extract the last numeric token with a simple regex.
+    # Pattern: optional sign + digits + optional decimal part.
+    # NOTE: This intentionally ignores more complex formats (e.g., thousand separators).
     numbers = re.findall(r"-?\d+(?:\.\d+)?", prediction)
     if not numbers:
         return None
@@ -90,7 +90,7 @@ def _extract_numeric_answer(prediction: str, answer_type: str) -> Optional[str]:
 @registry.asset(
     "metrics",
     "mathvista_accuracy",
-    desc="MathVista 混合题型准确率（多选题优先按选项字母匹配，其余按规范化文本匹配）。",
+    desc="MathVista mixed-type accuracy (MCQ letter-first, else normalized text match)",
     tags=("vision", "mathvista"),
     default_aggregation="mean",
 )
@@ -98,17 +98,17 @@ class MathVistaAccuracyMetric(SimpleMetric):
     value_key = "acc"
 
     def compute(self, context: MetricContext) -> MetricResult:
-        # 配置字段
+        # STEP 1: Resolve config fields.
         prediction_field = self.args.get("prediction_field", "model_output.answer")
         option_map_field = self.args.get("option_map_field", "sample.metadata.option_map")
         correct_choice_field = self.args.get("correct_choice_field", "sample.metadata.correct_choice")
         choices_field = self.args.get("choices_field", "sample.choices")
         answer_field = self.args.get("answer_field", "sample.answer")
         label_field = self.args.get("label_field", "sample.answer")
-        # 新增 answer_type 字段读取
+        # Optional: datasets may provide an explicit numeric answer type.
         answer_type_field = self.args.get("answer_type_field", "sample.answer_type")
 
-        # 读取数据
+        # STEP 2: Load inputs and normalize the prediction.
         prediction_raw = extract_field(context, prediction_field, default="")
         prediction = normalize_text_advanced(str(prediction_raw), strip=True, collapse_whitespace=True) or ""
         option_map = extract_field(context, option_map_field, default={}) or {}
@@ -126,7 +126,7 @@ class MathVistaAccuracyMetric(SimpleMetric):
         is_multi_choice = bool(option_map) or bool(choices)
 
         if is_multi_choice:
-            # 建立 label -> text 映射
+            # STEP 3: Score multiple-choice questions via label matching.
             if not option_map and choices:
                 option_map = {c.get("label"): extract_field(c, "message.content.0.text") for c in choices if c}
             option_map = {str(k).upper(): v for k, v in option_map.items() if k is not None}
@@ -138,7 +138,7 @@ class MathVistaAccuracyMetric(SimpleMetric):
                 if extracted:
                     pred_label = extracted.upper()
                 else:
-                    # 尝试文本匹配
+                    # Fallback: match normalized option content.
                     pred_norm = normalize_text_advanced(prediction, strip=True, collapse_whitespace=True)
                     for label, text in option_map.items():
                         if normalize_text_advanced(str(text), strip=True, collapse_whitespace=True) == pred_norm:
@@ -154,17 +154,17 @@ class MathVistaAccuracyMetric(SimpleMetric):
             }
             return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-        # 非多选：如果是数值型，尝试数值提取匹配
+        # STEP 4: For open-ended numeric questions, extract and compare numbers.
         if answer_type in ("integer", "float") and prediction:
             extracted_num = _extract_numeric_answer(prediction, answer_type)
-            # 同样尝试提取 reference
+            # Extract numeric reference as well.
             ref_raw = extract_field(context, label_field, default="")
-            # 如果 reference 本身就是标准数字，通常不需要正则，但为了保险也走一遍
+            # NOTE: Even if the reference is a clean number, normalize it for safety.
             ref_str = str(ref_raw)
             ref_num = _extract_numeric_answer(ref_str, answer_type)
             
             if extracted_num is not None and ref_num is not None:
-                # 数值匹配 (字符串相等比较即可，因为 _extract_numeric_answer 已经做了规范化)
+                # Numeric match: string equality is sufficient after normalization.
                 matched = (extracted_num == ref_num)
                 score = 1.0 if matched else 0.0
                 return MetricResult(
@@ -177,7 +177,7 @@ class MathVistaAccuracyMetric(SimpleMetric):
                     }
                 )
 
-        # 非多选且非数值（或提取失败）：回退到按规范化文本精确匹配
+        # STEP 5: Fallback to normalized exact match for non-multiple-choice, non-numeric cases.
         references_raw = extract_field(context, label_field, default="")
         references = [
             normalize_text_advanced(text, strip=True, collapse_whitespace=True)
@@ -193,7 +193,7 @@ class MathVistaAccuracyMetric(SimpleMetric):
 @registry.asset(
     "metrics",
     "mathvista_chat_accuracy",
-    desc="MathVista 混合题型准确率（多选题优先按选项字母匹配，其余按规范化文本匹配）。",
+    desc="MathVista chat accuracy (MCQ letter-first, else normalized text match)",
     tags=("vision", "mathvista"),
     default_aggregation="mean",
 )
@@ -201,18 +201,18 @@ class MathVistaChataccuracyMetric(SimpleMetric):
     value_key = "acc"
 
     def compute(self, context: MetricContext) -> MetricResult:
-        # 配置字段
+        # STEP 1: Resolve config fields.
         prediction_field = self.args.get("prediction_field", "model_output.answer")
         option_map_field = self.args.get("option_map_field", "sample.metadata.option_map")
         correct_choice_field = self.args.get("correct_choice_field", "sample.metadata.correct_choice")
         choices_field = self.args.get("choices_field", "sample.choices")
         answer_field = self.args.get("answer_field", "sample.answer")
         label_field = self.args.get("label_field", "sample.answer")
-        # 新增 answer_type 字段读取
+        # Optional: datasets may provide an explicit numeric answer type.
         answer_type_field = self.args.get("answer_type_field", "sample.answer_type")
         question_type_field  = self.args.get("question_type_field", "sample.question_type")
         shot_type_field  = self.args.get("shot_type_field", "sample.shot_type")
-        # 读取数据
+        # STEP 2: Load inputs and normalize prediction.
         answer_type = extract_field(context, answer_type_field)
         shot_type = extract_field(context, shot_type_field)
         question_type = extract_field(context, question_type_field)
@@ -237,7 +237,7 @@ class MathVistaChataccuracyMetric(SimpleMetric):
         is_multi_choice = question_type == 'multi_choice'
 
         if is_multi_choice:
-            # 建立 label -> text 映射
+            # STEP 3: Score multiple-choice questions via label matching.
             if not option_map and choices:
                 option_map = {c.get("label"): extract_field(c, "message.content.0.text") for c in choices if c}
             option_map = {str(k).upper(): v for k, v in option_map.items() if k is not None}
@@ -249,7 +249,7 @@ class MathVistaChataccuracyMetric(SimpleMetric):
                 if extracted:
                     pred_label = extracted.upper()
                 else:
-                    # 尝试文本匹配
+                    # Fallback: match normalized option content.
                     pred_norm = normalize_text_advanced(prediction, strip=True, collapse_whitespace=True)
                     for label, text in option_map.items():
                         if normalize_text_advanced(str(text), strip=True, collapse_whitespace=True) == pred_norm:
@@ -265,17 +265,17 @@ class MathVistaChataccuracyMetric(SimpleMetric):
             }
             return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-        # 非多选：如果是数值型，尝试数值提取匹配
+        # STEP 4: For open-ended numeric questions, extract and compare numbers.
         if answer_type in ("integer", "float") and prediction:
             extracted_num = _extract_numeric_answer(prediction, answer_type)
-            # 同样尝试提取 reference
+            # Extract numeric reference as well.
             ref_raw = extract_field(context, label_field, default="")
-            # 如果 reference 本身就是标准数字，通常不需要正则，但为了保险也走一遍
+            # NOTE: Even if the reference is a clean number, normalize it for safety.
             ref_str = str(ref_raw)
             ref_num = _extract_numeric_answer(ref_str, answer_type)
             
             if extracted_num is not None and ref_num is not None:
-                # 数值匹配 (字符串相等比较即可，因为 _extract_numeric_answer 已经做了规范化)
+                # Numeric match: string equality is sufficient after normalization.
                 matched = (extracted_num == ref_num)
                 score = 1.0 if matched else 0.0
                 return MetricResult(
@@ -288,7 +288,7 @@ class MathVistaChataccuracyMetric(SimpleMetric):
                     }
                 )
 
-        # 非多选且非数值（或提取失败）：回退到按规范化文本精确匹配
+        # STEP 5: Fallback to normalized exact match for non-multiple-choice, non-numeric cases.
         references_raw = extract_field(context, label_field, default="")
         references = [
             normalize_text_advanced(text, strip=True, collapse_whitespace=True)

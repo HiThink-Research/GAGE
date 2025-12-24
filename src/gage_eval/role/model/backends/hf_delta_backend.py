@@ -14,7 +14,7 @@ from gage_eval.role.model.backends.hf_backend import HFBackend
 @registry.asset(
     "backends",
     "hf_delta",
-    desc="HuggingFace Transformers delta 权重量化后端",
+    desc="HuggingFace Transformers backend that applies delta checkpoints",
     tags=("llm", "local", "delta"),
 )
 class HFDeltaBackend(HFBackend):

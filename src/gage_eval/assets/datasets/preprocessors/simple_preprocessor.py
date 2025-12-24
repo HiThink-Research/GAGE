@@ -9,7 +9,7 @@ from gage_eval.assets.datasets.utils.legacy import convert_llmeval_record
 
 
 class SimplePreprocessor(BasePreprocessor):
-    """低代码模式：to_legacy -> llm-eval 兼容转换。"""
+    """Low-code mode: `to_legacy` -> llm-eval compatible conversion."""
 
     name = "simple"
 

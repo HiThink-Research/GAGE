@@ -31,7 +31,19 @@ class DatasetPreprocessor:
 
 
 class BasePreprocessor(DatasetPreprocessor):
-    """预处理模板方法：统一 roles/on_error/inputs/doc_to/merge/校验。"""
+    """Template-method preprocessor for standardizing dataset records.
+
+    This base class centralizes the shared preprocessing pipeline so that
+    dataset-specific preprocessors can focus on `to_sample()` only.
+
+    Responsibilities covered here include:
+    - optional message role stripping
+    - structuring a raw record into the Sample schema via `to_sample()`
+    - normalizing `inputs` into a dict form
+    - applying optional `doc_to_*` hooks
+    - merging multimodal references and de-duplicating them
+    - enforcing schema validation and canonical normalization
+    """
 
     def __init__(
         self,
@@ -72,25 +84,25 @@ class BasePreprocessor(DatasetPreprocessor):
         to_sample_kwargs = {k: v for k, v in kwargs.items() if k not in _DOC_TO_KEYS and k != "trace"}
         try:
             raw_inputs = sample.get("inputs")
-            # step1: 可选角色清洗
+            # STEP 1: Optionally strip specific message roles for clean evaluation inputs.
             if self.roles_to_remove:
                 _strip_roles(sample, roles_to_remove=self.roles_to_remove)
-            # step2: 结构化记录（子类实现）
+            # STEP 2: Let the dataset-specific preprocessor structure the record.
             structured = self.to_sample(sample, **to_sample_kwargs)
             if structured is not None and structured is not sample:
                 sample.clear()
                 sample.update(structured)
-            # step3: inputs 归一化（string/list → dict）
+            # STEP 3: Normalize `inputs` into a stable dict shape.
             self._normalize_inputs(sample, raw_inputs=raw_inputs)
-            # step4: 容器类型兜底
+            # STEP 4: Validate the sample schema early to fail fast.
             validate_sample_schema(sample)
-            # step5: 执行 doc_to_* 钩子
+            # STEP 5: Apply doc-to-* hooks (text/visual/audio) if provided.
             self._apply_doc_to(sample, **doc_to_hooks)
-            # step6: 合并多模态引用 + 去重
+            # STEP 6: Merge multimodal inputs and de-duplicate referenced assets.
             merge_multimodal_inputs(sample)
-            # step7: 补渲染标记
+            # STEP 7: Ensure flags required by chat-template renderers exist.
             ensure_chat_template_flags(sample)
-            # step8: 标准化 id/messages/choices
+            # STEP 8: Canonicalize id/messages/choices and attach dataset metadata.
             dataset_id = sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown"
             dataset_meta = sample.get("_dataset_metadata") or kwargs.get("dataset_metadata") or {}
             normalize_sample(sample, dataset_id=dataset_id, dataset_metadata=dataset_meta)

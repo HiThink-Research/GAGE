@@ -13,7 +13,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "pipeline_steps",
     "support",
-    desc="执行 Helper/Toolchain 等辅助角色的阶段",
+    desc="Pipeline step that runs helper/toolchain roles",
     tags=("support",),
     step_kind="sample",
 )

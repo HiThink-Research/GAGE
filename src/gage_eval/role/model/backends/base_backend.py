@@ -16,7 +16,7 @@ class Backend:
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = dict(config)
-        # 执行模式：native 表示本地引擎，http 表示远程 API
+        # NOTE: Execution mode: `native` means local engine, `http` means remote API.
         self.execution_mode: str = self.config.get("execution_mode", "native")
 
     async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:  # pragma: no cover - abstract

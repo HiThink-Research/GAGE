@@ -11,7 +11,7 @@ app = Flask(__name__)
 @app.route('/chat/completions', methods=['POST'])
 def chat_completions():
     payload = request.get_json(force=True, silent=True) or {}
-    # 记录请求体，便于确认调用协议
+    # NOTE: Log the raw request payload to validate the calling protocol.
     print(f"[MOCK-OPENAI] {request.path} payload={payload}", flush=True)
     if MOCK_TARGET:
         headers = {'Authorization': f'Bearer {API_KEY}', 'Content-Type': 'application/json'}
