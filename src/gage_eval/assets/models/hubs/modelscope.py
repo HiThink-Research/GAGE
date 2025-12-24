@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover
 @registry.asset(
     "model_hubs",
     "modelscope",
-    desc="ModelScope 模型仓库",
+    desc="ModelScope model hub",
     tags=("remote", "modelscope"),
 )
 class ModelScopeModelHub(ModelHub):

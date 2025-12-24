@@ -25,31 +25,46 @@ from gage_eval.assets.datasets.utils.rendering import set_render_flags
 
 _CHOICE_ALPHABET: Tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+
 class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
-    """GPQA 多选题预处理器。                                                                     
-                                                                                                 
-    处理逻辑：                                                                                   
-    1. 提取 Question, Correct Answer 及 Incorrect Answer 1-3。                                   
-    2. 合并并随机打乱选项。                                                                      
-    3. 确定正确答案的索引。                                                                      
-    4. 传递给基类进行标准 prompt 渲染。                                                          
+    """Preprocesses GPQA (Diamond) multiple-choice records into the Sample schema.
+
+    The implementation follows a straightforward pipeline:
+    1) Load and render the prompt for the given `gpqa_prompt_type`.
+    2) Collect the four options and resolve the correct option index.
+    3) Build `messages` / `inputs` and attach standardized `choices`.
+    4) Populate metadata for downstream metrics and debugging.
     """
 
     def to_sample(self, record: Dict[str, Any], gpqa_prompt_type, **kwargs: Any) -> Dict[str, Any]:
+        """Converts a raw GPQA record into a standardized multiple-choice Sample.
+
+        Args:
+            record: Raw dataset record (typically a dict emitted by the loader).
+            gpqa_prompt_type: Prompt rendering mode passed through to the GPQA utilities.
+            **kwargs: Reserved for forward compatibility.
+
+        Returns:
+            A dict compatible with the gage-eval Sample schema.
+        """
+
+        sample: Dict[str, Any] = dict(record)
         try:
-            sample = dict(record)
+            # STEP 1: Render a single user prompt and collect the option set.
             correct_answer = record.get("Correct Answer")
             examples = load_examples([sample])
             prompts, examples = create_prompts(examples, gpqa_prompt_type)
-            assert len(prompts) == 1, "len(prompts) != 1" 
+            assert len(prompts) == 1, "len(prompts) != 1"
             assert len(examples) == 1, "len(examples) != 1"
-            user_prompt =  prompts[0]
+            user_prompt = prompts[0]
             example = examples[0]
             options = [example.choice1, example.choice2, example.choice3, example.choice4]
+
+            # STEP 2: Resolve the correct answer index and validate option constraints.
             answer_index = options.index(correct_answer)
             sample["question"] = user_prompt
             sample["choices"] = options
-            # 整数索引传入
+            # NOTE: Keep the integer index so downstream helpers can resolve the label reliably.
             sample["answer"] = answer_index
             options = normalize_options(options)
             if len(options) < 2:
@@ -60,7 +75,9 @@ class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
             correct_choice = resolve_correct_choice(answer_index, option_pairs, answer_index_base=0)
             if correct_choice is None:
                 raise ValueError("Unable to resolve correct choice from answer field")                    
-            messages: List[Dict[str, Any]] = []            
+
+            # STEP 3: Build canonical chat messages and render flags.
+            messages: list[Dict[str, Any]] = []
             messages.append(
                 {
                     "role": "user",
@@ -70,6 +87,8 @@ class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
             sample["messages"] = messages
             sample["prompt"] = user_prompt
             set_render_flags(sample, mode="preprocess", source="manual", rendered_by="preprocess", cache_suffix="-converted")
+
+            # STEP 4: Materialize standardized choice blocks and metadata.
             sample["choices"] = [
                 {
                     "index": idx,

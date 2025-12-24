@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 @registry.asset(
     "dataset_loaders",
     "hf_hub",
-    desc="HuggingFace / ModelScope 远程数据加载器",
+    desc="Remote dataset loader for HuggingFace Hub / ModelScope",
     tags=("remote", "huggingface"),
     supports_streaming=True,
 )
@@ -44,7 +44,7 @@ registry.register(
     "dataset_loaders",
     "modelscope",
     HuggingFaceDatasetLoader,
-    desc="ModelScope 远程数据加载器",
+    desc="Remote dataset loader for ModelScope",
     tags=("remote", "modelscope"),
     supports_streaming=False,
 )
@@ -53,7 +53,7 @@ registry.register(
     "dataset_loaders",
     "ms_hub",
     HuggingFaceDatasetLoader,
-    desc="ModelScope 远程数据加载器（ms_hub 别名）",
+    desc="Remote dataset loader for ModelScope (ms_hub alias)",
     tags=("remote", "modelscope"),
     supports_streaming=False,
 )
@@ -93,7 +93,7 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
     subset_for_metadata = subset
     streaming = streaming_override if streaming_override is not None else _should_stream_hf(loader_params, source)
     if data_files:
-        streaming = False  # 本地文件模式不走 streaming
+        streaming = False  # Local file mode does not support streaming.
     cache_path = None
 
     logger.info(
@@ -200,7 +200,7 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
 
 
 def _ensure_hf_list_feature_alias() -> None:
-    """兼容旧版 HF 数据集使用的 `_type: List` 特征标记。"""
+    """Adds a compatibility alias for legacy HF datasets (`_type: List`)."""
 
     try:
         from datasets.features.features import _FEATURE_TYPES, Sequence  # type: ignore

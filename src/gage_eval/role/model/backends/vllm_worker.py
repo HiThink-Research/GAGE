@@ -1,11 +1,15 @@
-"""Minimal process-isolated vLLM worker for native backend.
+"""Minimal process-isolated vLLM worker for the native backend.
 
-主进程与子进程通过 multiprocessing.Pipe 通信，避免线程安全与崩溃拖垮主进程。
-协议：
-- 请求: (req_id: int, payload: dict)
-- 响应: (req_id: int, result: dict or error str)
+The parent process communicates with the worker process via `multiprocessing.Pipe`
+to reduce the blast radius of crashes and avoid thread-safety pitfalls.
 
-约束：仅支持同步 generate 单条调用，作为 P1 最小可用隔离版。
+Protocol:
+- Request: `(req_id: int, payload: dict)`
+- Response: `(req_id: int, result: dict)` (or a dict with an `"error"` key)
+
+Limitations:
+- Only supports synchronous single-prompt generation. This is a minimal viable
+  isolation mode intended for robustness rather than maximum throughput.
 """
 
 from __future__ import annotations
@@ -18,7 +22,14 @@ from typing import Any, Dict, Tuple
 from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 
 
-def _worker_loop(conn, config: Dict[str, Any]):
+def _worker_loop(conn, config: Dict[str, Any]) -> None:
+    """Runs the isolated vLLM worker loop.
+
+    Args:
+        conn: A `multiprocessing.Connection` created from `mp.Pipe()`.
+        config: Backend config dict containing `model_path` and optional vLLM args.
+    """
+
     def _cleanup(llm=None):
         try:
             if llm and hasattr(llm, "shutdown"):
@@ -31,12 +42,14 @@ def _worker_loop(conn, config: Dict[str, Any]):
         except Exception:
             pass
 
+    # STEP 1: Import heavy dependencies inside the worker process.
     try:
         from vllm import LLM, SamplingParams  # type: ignore
     except Exception as exc:
         conn.send((-1, {"error": f"import vllm failed: {exc}"}))
         return
     try:
+        # STEP 2: Parse config and initialize the vLLM engine.
         model_path = config.get("model_path")
         if not model_path:
             raise ValueError("model_path is required for vLLM worker")
@@ -57,6 +70,8 @@ def _worker_loop(conn, config: Dict[str, Any]):
         llm = LLM(model=model_path, **model_kwargs)
         install_signal_cleanup(lambda: _cleanup(llm))
         conn.send((0, {"status": "ready"}))
+
+        # STEP 3: Serve requests until the parent sends a sentinel (None).
         while True:
             msg = conn.recv()
             if msg is None:
@@ -78,10 +93,13 @@ def _worker_loop(conn, config: Dict[str, Any]):
     except Exception:
         conn.send((-1, {"error": traceback.format_exc()}))
     finally:
+        # STEP 4: Best-effort cleanup to release GPU memory and close the pipe.
         _cleanup(locals().get("llm"))
 
 
 class VLLMIsolatedWorker:
+    """Wrapper for a process-isolated vLLM engine."""
+
     def __init__(self, config: Dict[str, Any]) -> None:
         parent_conn, child_conn = mp.Pipe()
         self._conn = parent_conn
@@ -93,6 +111,8 @@ class VLLMIsolatedWorker:
             raise RuntimeError(f"Failed to start vLLM worker: {payload}")
 
     def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Generates a completion for a single request payload."""
+
         req_id = os.getpid()  # lightweight req id
         self._conn.send((req_id, payload))
         rid, resp = self._conn.recv()
@@ -101,6 +121,8 @@ class VLLMIsolatedWorker:
         return resp
 
     def shutdown(self) -> None:
+        """Stops the worker process and releases resources."""
+
         try:
             self._conn.send(None)
         except Exception:

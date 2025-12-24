@@ -11,7 +11,11 @@ _MESSAGE_EXTRAS = ("tool_calls", "tool_use", "model_output", "name", "path")
 
 
 def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[str, Any]]) -> None:
-    """Append a DUT 输出到 sample['predict_result']，保留原始字段并补齐 message。"""
+    """Appends a DUT output entry to `sample["predict_result"]`.
+
+    The original fields are preserved, and a canonical `message` field is added
+    if missing.
+    """
 
     if not isinstance(model_output, dict) or not model_output:
         return
@@ -28,7 +32,7 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
 
 
 def update_eval_result(sample: Dict[str, Any], judge_output: Optional[Dict[str, Any]]) -> None:
-    """Merge裁判输出到 sample['eval_result']。"""
+    """Merges judge output into `sample["eval_result"]`."""
 
     if not isinstance(judge_output, dict) or not judge_output:
         return
@@ -40,12 +44,13 @@ def update_eval_result(sample: Dict[str, Any], judge_output: Optional[Dict[str, 
 
 
 def snapshot_sample(sample: Dict[str, Any]) -> Dict[str, Any]:
-    """深拷贝样本，确保写盘时不受后续修改影响。"""
+    """Creates a deep snapshot of a sample for safe persistence."""
 
     try:
         return json.loads(json.dumps(sample, ensure_ascii=False))
     except (TypeError, ValueError):
-        # Fallback to deepcopy（允许存在非 JSON 兼容字段，写盘时再处理）。
+        # Fall back to deepcopy. This allows non-JSON-serializable fields and lets
+        # the writer handle serialization later.
         return copy.deepcopy(sample)
 
 

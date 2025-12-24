@@ -1,4 +1,4 @@
-"""内置 Metric 集合。"""
+"""Built-in metric collection."""
 
 from gage_eval.metrics.builtin.multi_choice import MultiChoiceAccuracyMetric
 from gage_eval.metrics.builtin.docvqa_anls import DocVQAANLSMetric

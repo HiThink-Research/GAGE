@@ -11,7 +11,7 @@ from gage_eval.role.adapters.model_role_adapter import ModelRoleAdapter
 @registry.asset(
     "roles",
     "judge_model",
-    desc="裁判/判分 LLM 角色适配器",
+    desc="Judge/scoring LLM role adapter",
     tags=("role", "judge"),
     role_type="judge_model",
 )

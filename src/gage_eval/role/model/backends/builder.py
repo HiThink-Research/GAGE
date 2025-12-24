@@ -31,30 +31,31 @@ from gage_eval.role.model.config import (
 )
 
 
-# Typed + passthrough: 部分后端提供 BackendConfig 模型以声明常用字段和默认值，
-# 但仍允许 config 中携带额外字段透传给 Backend 实现。
+# Typed + passthrough: some backends provide a `BackendConfig` model to declare
+# common fields and defaults, while still allowing extra config keys to be
+# passed through to the backend implementation.
 _BACKEND_CONFIG_SCHEMAS: Dict[str, Type[BackendConfigBase]] = {
-    # 文本类 / 远端 HTTP
+    # Text / remote HTTP
     "openai_http": OpenAIHTTPBackendConfig,
     "http": HTTPBackendConfig,
     "hf": HFBackendConfig,
-    # 多模态 / 本地推理
+    # Multimodal / local inference
     "vllm": VLLMBackendConfig,
     "vlm_transformers": VLMTransformersBackendConfig,
-    # 检索 / 向量
+    # Retrieval / embeddings
     "faiss": FaissBackendConfig,
     "flag_embedding": FlagEmbeddingBackendConfig,
-    # 语音
+    # Speech
     "whisper_asr": WhisperASRBackendConfig,
-    # 代理类 HTTP 适配器
+    # Proxy-style HTTP adapters
     "litellm": LiteLLMBackendConfig,
     "sglang": SGLangBackendConfig,
     "tgi": TGIBackendConfig,
-    # 分布式 / 服务器less
+    # Distributed / serverless
     "nanotron": NanotronBackendConfig,
     "hf_serverless": HFServerlessBackendConfig,
     "hf_inference_endpoint": HFInferenceEndpointBackendConfig,
-    # 其他
+    # Misc
     "dummy": DummyBackendConfig,
     "claude_http": ClaudeBackendConfig,
     "gemini_http": GeminiBackendConfig,
@@ -86,6 +87,24 @@ def register_backend(
 
 
 def build_backend(spec: Dict[str, Any]) -> EngineBackend:
+    """Builds a backend instance from a registry-backed backend spec.
+
+    Args:
+        spec: Backend spec. Either a string backend kind (shorthand), or a dict
+            with keys:
+            - `type`: Backend kind registered under `backends`.
+            - `config`: Backend-specific config payload.
+
+    Returns:
+        A constructed backend instance.
+
+    Raises:
+        ValueError: If the spec is missing required fields, or the config schema
+            validation fails.
+        KeyError: If the backend kind is not registered.
+    """
+
+    # STEP 1: Normalize the spec into a typed dict form.
     if isinstance(spec, str):
         spec = {"type": spec, "config": {}}
     backend_type = spec.get("type")
@@ -95,28 +114,33 @@ def build_backend(spec: Dict[str, Any]) -> EngineBackend:
         backend_cls = registry.get("backends", backend_type)
     except KeyError as exc:
         raise KeyError(f"Backend '{backend_type}' is not registered") from exc
+
+    # STEP 2: Prepare config payload (including model-id resolution).
     config = dict(spec.get("config", {}))
     model_id = config.pop("model_id", None)
     if model_id:
         handle = resolve_model_handle(model_id)
         config.setdefault("model_path", handle.local_path)
         config.setdefault("model_metadata", handle.metadata)
-    # 若存在对应的 BackendConfig，则先做一次轻量 Schema 解析：
-    # - 已声明字段享受类型校验与默认值；
-    # - 未声明字段作为 extra 保留，最终仍透传给 Backend。
+
+    # STEP 3: Apply optional schema validation/normalization (typed + passthrough).
+    # Some backends provide a `BackendConfig` model to validate common fields and
+    # fill defaults. Unknown fields are kept as extras and still passed through
+    # to the backend implementation.
     cfg_model_cls = _BACKEND_CONFIG_SCHEMAS.get(backend_type)
     if cfg_model_cls is not None:
         try:
             cfg_model = cfg_model_cls(**config)
-            # 兼容 Pydantic v1/v2 的导出接口
+            # NOTE: Support both Pydantic v1 and v2 export APIs.
             if hasattr(cfg_model, "model_dump"):
                 typed_config = cfg_model.model_dump()
             else:  # pragma: no cover - v1 fallback
                 typed_config = cfg_model.dict()
-        except Exception as exc:  # pragma: no cover - 防御性，透出更友好的错误信息
+        except Exception as exc:  # pragma: no cover - defensive: emit actionable errors
             raise ValueError(f"Invalid config for backend '{backend_type}': {exc}") from exc
     else:
         typed_config = config
 
+    # STEP 4: Instantiate the backend class.
     logger.debug("Building backend instance type='{}'", backend_type)
     return backend_cls(typed_config)

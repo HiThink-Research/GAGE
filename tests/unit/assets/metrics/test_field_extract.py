@@ -27,9 +27,9 @@ def test_extract_field_with_metric_context_roots_and_fallback():
     ctx = make_context({"label": "Paris", "arr": [{"v": 3}]})
     # explicit root
     assert extract_field(ctx, "sample.arr.0.v") == 3
-    # fallback to sample when根未指定
+    # fall back to sample when the root is not specified
     assert extract_field(ctx, "arr.0.v") == 3
     # model_output root
     assert extract_field(ctx, "model_output.answer") == "yes"
-    # missing path returns默认
+    # missing path returns default
     assert extract_field(ctx, "sample.arr.2.v", default=None) is None

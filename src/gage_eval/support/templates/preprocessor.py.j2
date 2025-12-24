@@ -13,7 +13,7 @@ from gage_eval.assets.datasets.utils.mapping import extract_field
 
 
 class {{ preprocessor_class_name }}(BasePreprocessor):
-    """{{ dataset_name }} 预处理器（自动生成，可按需微调）。"""
+    """{{ dataset_name }} preprocessor (auto-generated; customize if needed)."""
 
     name = "{{ preprocess_name }}"
     modalities = {{ modalities | default("['text']") }}
@@ -27,9 +27,10 @@ class {{ preprocessor_class_name }}(BasePreprocessor):
         dataset_id = merged.pop("dataset_id", None) or record.get("_dataset_id") or "{{ dataset_id }}"
         dataset_meta = merged.pop("dataset_metadata", None) or record.get("_dataset_metadata")
 
-        # 按 design.md 中 `yaml support_config` 的字段映射构造 sample；规范化由 BasePreprocessor 完成。
+        # NOTE: Build a Sample dict according to the field mapping in `design.md`
+        # (yaml `support_config`). Canonical normalization is handled by BasePreprocessor.
         sample: Dict[str, Any] = {
-            "_dataset_id": dataset_id,  # 显式补齐，便于 debug/trace
+            "_dataset_id": dataset_id,  # explicit for debug/trace
             "_dataset_metadata": dataset_meta,
             "modalities": list({{ modalities | default("['text']") }}),
             "metadata": {},
@@ -38,7 +39,7 @@ class {{ preprocessor_class_name }}(BasePreprocessor):
 
 {{ (to_sample_body | default("# (support) fill field mapping here")) | indent(8, true) }}
 
-        # 确保 label/answers 填充与默认指标路径对齐。
+        # NOTE: Keep label/answers aligned with the default metric field paths.
         if sample.get("answers") and not sample.get("label"):
             sample["label"] = sample["answers"][0]
         return sample

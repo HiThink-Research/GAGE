@@ -18,7 +18,7 @@ from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 @registry.asset(
     "backends",
     "nanotron",
-    desc="Nanotron 张量/流水线并行推理后端",
+    desc="Nanotron tensor/pipeline-parallel inference backend",
     tags=("vlm", "local", "distributed"),
     modalities=("text",),
     config_schema_ref="gage_eval.role.model.config.nanotron:NanotronBackendConfig",

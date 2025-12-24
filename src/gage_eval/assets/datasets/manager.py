@@ -76,7 +76,8 @@ class DataManager:
         validator = source.validator
         for index, record in enumerate(source.records):
             if not isinstance(record, dict):
-                # 尝试解包单元素 list/tuple -> dict，避免 streaming 返回的包装结构
+                # NOTE: Some streaming sources wrap the dict inside a single-element
+                # list/tuple. Unwrap it to keep the downstream contract stable.
                 if isinstance(record, (list, tuple)) and len(record) == 1 and isinstance(record[0], dict):
                     candidate = dict(record[0])
                 else:

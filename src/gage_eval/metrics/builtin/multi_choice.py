@@ -81,7 +81,7 @@ def _extract_prediction_letter(raw_answer: Any, allowed_letters: Sequence[str]) 
 @registry.asset(
     "metrics",
     "multi_choice_accuracy",
-    desc="多选题准确率（对齐 llm-eval 多选逻辑）",
+    desc="Multiple-choice accuracy (llm-eval compatible)",
     tags=("text", "multiple-choice"),
     default_aggregation="mean",
 )

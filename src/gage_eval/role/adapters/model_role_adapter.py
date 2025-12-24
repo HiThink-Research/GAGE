@@ -111,13 +111,22 @@ class ModelRoleAdapter(RoleAdapter):
     # RoleAdapter API
     # ------------------------------------------------------------------
     def prepare_request(self, payload: Dict[str, Any], state: RoleAdapterState) -> Any:
-        """Producer侧预处理：渲染 prompt + 采样参数，缓存原始 payload 供后续解析。"""
+        """Prepares a backend request and caches the original payload.
+
+        This is the "producer" stage used by schedulers/batching:
+        - Render prompt and sampling params (if applicable).
+        - Cache the original payload so `parse_response()` can reconstruct context.
+        """
 
         state.metadata["payload"] = payload
         return self.prepare_backend_request(payload)
 
     def execute_batch(self, requests: List[Any]) -> List[Any]:
-        """默认串行执行 backend，可检测批接口 generate_batch 以减少调用次数。"""
+        """Executes backend requests, using `generate_batch` if available.
+
+        The default implementation falls back to serial invocation when the backend
+        does not provide a batching API.
+        """
 
         backend_call = getattr(self.backend, "invoke", None)
         async_backend_call = getattr(self.backend, "ainvoke", None)
@@ -153,7 +162,7 @@ class ModelRoleAdapter(RoleAdapter):
         return parsed
 
     def parse_response(self, response: Any, state: RoleAdapterState) -> Dict[str, Any]:
-        """调度器回写：结合 prepare 阶段缓存的原始 payload 做解析。"""
+        """Parses a backend response, using cached payload from `prepare_request()`."""
 
         original = state.metadata.get("payload") if isinstance(state, RoleAdapterState) else {}
         if isinstance(response, dict):
