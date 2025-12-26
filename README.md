@@ -1,6 +1,6 @@
 <div align="center">
 
-# 📐 Gage: General AI evaluation and Gauge Engine
+# 📐 GAGE: General AI evaluation and Gauge Engine
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/) 
 [![Code Style](https://img.shields.io/badge/code%20style-google-blueviolet)](https://google.github.io/styleguide/pyguide.html)
