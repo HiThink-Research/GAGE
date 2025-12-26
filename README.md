@@ -7,8 +7,6 @@
 [![License](https://img.shields.io/badge/license-TBD-lightgrey)]()
 [![Status](https://img.shields.io/badge/Status-Alpha-orange)]()
 
-**High-Performance, Modular LLM Evaluation Framework**
-
 **English** · [中文](README_zh.md)
 
 [Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
