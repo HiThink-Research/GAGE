@@ -83,61 +83,31 @@ class BasePreprocessor(DatasetPreprocessor):
         doc_to_hooks = {k: kwargs.get(k) for k in _DOC_TO_KEYS}
         to_sample_kwargs = {k: v for k, v in kwargs.items() if k not in _DOC_TO_KEYS and k != "trace"}
         try:
-            raw_inputs = sample.get("inputs")
             # STEP 1: Optionally strip specific message roles for clean evaluation inputs.
             if self.roles_to_remove:
                 _strip_roles(sample, roles_to_remove=self.roles_to_remove)
             # STEP 2: Let the dataset-specific preprocessor structure the record.
-            structured = self.to_sample(sample, **to_sample_kwargs)
-            if structured is not None and structured is not sample:
-                sample.clear()
-                sample.update(structured)
-            # STEP 3: Normalize `inputs` into a stable dict shape.
-            self._normalize_inputs(sample, raw_inputs=raw_inputs)
-            # STEP 4: Validate the sample schema early to fail fast.
-            validate_sample_schema(sample)
-            # STEP 5: Apply doc-to-* hooks (text/visual/audio) if provided.
-            self._apply_doc_to(sample, **doc_to_hooks)
-            # STEP 6: Merge multimodal inputs and de-duplicate referenced assets.
-            merge_multimodal_inputs(sample)
-            # STEP 7: Ensure flags required by chat-template renderers exist.
-            ensure_chat_template_flags(sample)
-            # STEP 8: Canonicalize id/messages/choices and attach dataset metadata.
+            structured_sample = self.to_sample(sample, **to_sample_kwargs)
+            # STEP 3: Validate the sample schema early to fail fast.
+            validate_sample_schema(structured_sample)
+            # STEP 4: Merge multimodal inputs and de-duplicate referenced assets.
+            # merge_multimodal_inputs(sample)
+
             dataset_id = sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown"
             dataset_meta = sample.get("_dataset_metadata") or kwargs.get("dataset_metadata") or {}
-            normalize_sample(sample, dataset_id=dataset_id, dataset_metadata=dataset_meta)
-            if is_debug:
-                _maybe_log_diff(pre_snapshot, sample, sample_id_hint)
             if emit_trace:
-                msgs = sample.get("messages") or []
-                mm = (
-                    sample.get("inputs", {}).get("multi_modal_data", {})
-                    if isinstance(sample.get("inputs"), dict)
-                    else {}
-                )
+                msgs = structured_sample.messages or []
                 trace.emit(
                     "preprocess_structured",
                     {
                         "msg_count": len(msgs) if isinstance(msgs, list) else 0,
-                        "has_inputs": isinstance(sample.get("inputs"), dict),
-                        "choices_len": len(sample.get("choices") or []),
-                    },
-                    sample_id=sample_id_hint,
-                )
-                trace.emit(
-                    "preprocess_multimodal",
-                    {
-                        "images": len(mm.get("image", [])) if isinstance(mm.get("image"), list) else 0,
-                        "audios": len(mm.get("audio", [])) if isinstance(mm.get("audio"), list) else 0,
-                        "videos": len(mm.get("video", [])) if isinstance(mm.get("video"), list) else 0,
-                        "files": len(mm.get("file", [])) if isinstance(mm.get("file"), list) else 0,
                     },
                     sample_id=sample_id_hint,
                 )
                 cost_ms = (time.perf_counter() - start_time) * 1000 if start_time else 0.0
                 trace.emit(
                     "preprocess_done",
-                    {"id": sample.get("id") or sample_id_hint, "output_keys": list(sample.keys()), "cost_ms": cost_ms},
+                    {"id": sample.get("id") or sample_id_hint, "cost_ms": cost_ms},
                     sample_id=sample_id_hint,
                 )
             if is_debug and random.random() < debug_sample_rate:
@@ -147,10 +117,10 @@ class BasePreprocessor(DatasetPreprocessor):
                         "sample_id": sample.get("id") or sample_id_hint,
                         "stage": "done",
                         "pre": pre_snapshot,
-                        "post": _snapshot(sample),
+                        "post": _snapshot(structured_sample),
                     },
                 )
-            return sample.get("inputs")
+            return structured_sample
         except Exception as exc:
             if emit_trace:
                 trace.emit(
@@ -179,22 +149,6 @@ class BasePreprocessor(DatasetPreprocessor):
             meta["preprocess_error"] = str(exc)
             sample["metadata"] = meta
             return None
-
-    def _normalize_inputs(self, sample: Dict[str, Any], *, raw_inputs: Any) -> None:
-        """Ensure inputs is a dict and fallback to prompt when needed."""
-
-        if "inputs" not in sample and raw_inputs is not None:
-            sample["inputs"] = raw_inputs
-        raw = sample.get("inputs")
-        if self.ensure_inputs_dict:
-            if isinstance(raw, str):
-                sample["inputs"] = {"prompt": raw}
-            elif isinstance(raw, list):
-                sample["inputs"] = {}
-            elif not isinstance(raw, dict):
-                sample["inputs"] = {}
-        if not isinstance(sample.get("inputs"), dict) and isinstance(sample.get("prompt"), str):
-            sample["inputs"] = {"prompt": sample["prompt"]}
 
     def _apply_doc_to(
         self,

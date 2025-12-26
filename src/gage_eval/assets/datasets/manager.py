@@ -10,14 +10,19 @@ from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.assets.datasets.validation import SampleValidator, build_validator
 from gage_eval.assets.datasets.utils.multimodal import merge_multimodal_inputs
-
+from gage_eval.assets.datasets.sample import (
+    Sample,
+    Message,
+    MessageContent
+)
+from dataclasses import dataclass, fields, asdict, is_dataclass
 
 @dataclass
 class DataSource:
     """Represents a reusable dataset along with optional doc_to hooks."""
 
     dataset_id: str
-    records: Iterable[Dict[str, Any]]
+    records: Iterable[Sample]
     doc_to_text: Optional[Callable[[Dict[str, Any]], str]] = None
     doc_to_visual: Optional[Callable[[Dict[str, Any]], Any]] = None
     doc_to_audio: Optional[Callable[[Dict[str, Any]], Any]] = None
@@ -75,36 +80,28 @@ class DataManager:
         source = self.get(dataset_id)
         validator = source.validator
         for index, record in enumerate(source.records):
-            if not isinstance(record, dict):
-                # NOTE: Some streaming sources wrap the dict inside a single-element
-                # list/tuple. Unwrap it to keep the downstream contract stable.
-                if isinstance(record, (list, tuple)) and len(record) == 1 and isinstance(record[0], dict):
-                    candidate = dict(record[0])
-                else:
-                    logger.warning(
+            if not isinstance(record, Sample):
+                logger.warning(
                         "Skipping non-dict record dataset='%s' index=%s type=%s",
                         dataset_id,
                         index,
                         type(record).__name__,
-                    )
-                    continue
-            else:
-                candidate = dict(record)
+                )
+                continue
+            normalized = record
             if validator:
-                validated = validator.validate_raw(candidate, dataset_id=dataset_id, index=index, trace=trace)
+                validated = validator.validate_raw(record, dataset_id=dataset_id, index=index, trace=trace)
                 if validated is None:
                     continue
-                candidate = validated
-            normalized = dict(candidate)
-            normalized.setdefault("_dataset_metadata", source.metadata or {})
+                normalized = validated
             if trace:
                 trace.emit(
                     "data_sample_emitted",
                     {
                         "dataset_id": dataset_id,
                         "index": index,
-                        "keys": list(normalized.keys()),
+                        "keys": list(asdict(normalized).keys() if is_dataclass(normalized) else normalized.keys()),
                     },
                 )
-            logger.debug("Emitted normalized sample idx={} keys={}", index, list(normalized.keys()))
+            logger.debug("Emitted normalized sample idx={} keys={}", index, list(asdict(normalized).keys() if is_dataclass(normalized) else normalized.keys()))
             yield normalized
