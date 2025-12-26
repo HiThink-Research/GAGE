@@ -16,6 +16,7 @@ _AUTO_DISCOVERY_PACKAGES = {
     "judge_impls": ("gage_eval.role.judge",),
     "dataset_hubs": ("gage_eval.assets.datasets.hubs",),
     "dataset_loaders": ("gage_eval.assets.datasets.loaders",),
+    "bundles": ("gage_eval.assets.datasets.bundles.builtin",),
     "dataset_preprocessors": ("gage_eval.assets.datasets.preprocessors.builtin",),
     "metrics": ("gage_eval.metrics.builtin",),
     "prompts": ("gage_eval.assets.prompts.catalog",),

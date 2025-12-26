@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -15,32 +15,23 @@ except ImportError:  # pragma: no cover - v1 fallback
     ConfigDict = None
 
 from gage_eval.observability.trace import ObservabilityTrace
+from dataclasses import dataclass, asdict, is_dataclass
+from gage_eval.assets.datasets.sample import (
+    Sample,
+)
 
 logger = logging.getLogger(__name__)
-
 
 class ValidationMode(str, Enum):
     OFF = "off"
     WARN = "warn"
     STRICT = "strict"
 
-
 class DefaultEnvelopeModel(BaseModel):
     """Minimal schema covering the core fields of the Sample envelope."""
-
+    schema_version: str
     id: str
     messages: list
-    choices: list
-    predict_result: list = Field(default_factory=list)
-    eval_result: Dict[str, Any] = Field(default_factory=dict)
-    data_tag: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    label: Optional[Any] = None
-    inputs: Dict[str, Any] = Field(default_factory=dict)
-    sampling_params: Dict[str, Any] = Field(default_factory=dict)
-    generation_params: Dict[str, Any] = Field(default_factory=dict)
-    model_prompt_tmpl: str = ""
-    model_prompt_placeholder: List[Any] = Field(default_factory=list)
 
     if ConfigDict is not None:  # pragma: no branch - runtime evaluated once
         model_config = ConfigDict(extra="allow", protected_namespaces=())  # type: ignore[assignment]
@@ -48,7 +39,6 @@ class DefaultEnvelopeModel(BaseModel):
         class Config:
             extra = "allow"
             protected_namespaces = ()
-
 
 class SampleValidator:
     """Validates raw dataset records and/or standardized samples."""
@@ -69,32 +59,34 @@ class SampleValidator:
     # ------------------------------------------------------------------
     def validate_raw(
         self,
-        record: Dict[str, Any],
+        record: Union[Dict[str, Any], Sample],
         *,
         dataset_id: str,
         index: int,
         trace: Optional[ObservabilityTrace] = None,
     ) -> Optional[Dict[str, Any]]:
+        record_dict = asdict(record) if is_dataclass(record) else record
         if not self._raw_model:
-            return record
+            return record_dict
         try:
-            instance = self._model_validate(self._raw_model, record)
+            instance = self._model_validate(self._raw_model, record_dict)
             return self._model_dump(instance)
         except ValidationError as exc:
             return self._handle_failure("raw_record", exc, dataset_id=dataset_id, index=index, trace=trace)
 
     def validate_envelope(
         self,
-        sample: Dict[str, Any],
+        sample: Union[Dict[str, Any], Sample],
         *,
         dataset_id: str,
         sample_id: Optional[str],
         trace: Optional[ObservabilityTrace] = None,
     ) -> Optional[Dict[str, Any]]:
+        sample_dict = asdict(record) if is_dataclass(sample) else sample
         if not self._envelope_model or self._mode == ValidationMode.OFF:
-            return sample
+            return sample_dict
         try:
-            instance = self._model_validate(self._envelope_model, sample)
+            instance = self._model_validate(self._envelope_model, sample_dict)
             return self._model_dump(instance)
         except ValidationError as exc:
             return self._handle_failure(
@@ -150,24 +142,32 @@ class SampleValidator:
             return instance.model_dump()  # type: ignore[attr-defined]
         return instance.dict()  # type: ignore[return-value]
 
+def _validate_list_field(sample, attr):
+    """ Ensure each list filed of a Sample object"""
+    if not hasattr(sample, attr):
+        raise ValueError(f"sample should have a not null messages {attr}.")
+    attr_val = getattr(sample, attr)
+    if attr_val is None or not isinstance(attr_val, list):
+        raise ValueError(f"sample.{attr} should be a list.")
+    if len(attr_val) == 0:
+        raise ValueError(f"sample.{attr} should not be empty.")
 
-def validate_sample_schema(sample: Dict[str, Any]) -> Dict[str, Any]:
+def _validate_str_field(sample, attr):
+    """ Ensure each str filed of a Sample object"""
+    if not hasattr(sample, attr):
+        raise ValueError(f"sample should have a not null messages {attr}.")
+    attr_val = getattr(sample, attr)
+    if attr_val is None or not isinstance(attr_val, str):
+        raise ValueError(f"sample.{attr} should be a list.")
+    if attr_val == "":
+        raise ValueError(f"sample.{attr} should not be empty.")
+
+def validate_sample_schema(sample: Sample) -> Sample:
     """Ensure core fields are of expected container types."""
-
-    if not isinstance(sample.get("messages"), list):
-        sample["messages"] = [] if sample.get("messages") is not None else []
-    if not isinstance(sample.get("choices"), list):
-        sample["choices"] = []
-    if not isinstance(sample.get("metadata"), dict):
-        sample["metadata"] = {}
-    if not isinstance(sample.get("data_tag"), dict):
-        sample["data_tag"] = {}
-    if not isinstance(sample.get("eval_result"), dict):
-        sample["eval_result"] = {}
-    inputs = sample.get("inputs")
-    if not isinstance(inputs, dict):
-        prompt_val = sample.get("prompt") if isinstance(sample.get("prompt"), str) else None
-        sample["inputs"] = {"prompt": prompt_val} if prompt_val else {}
+    for attr in ["messages"]:
+        _validate_list_field(sample, attr)
+    for attr in ["schema_version", "id" ]:
+        _validate_str_field(sample, attr)
     return sample
 
 

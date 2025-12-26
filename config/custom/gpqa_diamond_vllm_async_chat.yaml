@@ -54,7 +54,7 @@ metrics:
 tasks:
   - task_id: gpqa_diamond_eval
     dataset_id: gpqa_diamond_local
-    max_samples: 546
+    max_samples: 5
     reporting:
       sinks:
         - type: console
