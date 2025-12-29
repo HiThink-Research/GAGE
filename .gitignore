@@ -202,7 +202,7 @@ scripts/oneclick/.generated/
 scripts/oneclick/.env.example
 .venv311/
 docs/
-AGENTS.md
+# AGENTS.md
 
 # local datasets and models (local assets only)
 /local-datasets/
