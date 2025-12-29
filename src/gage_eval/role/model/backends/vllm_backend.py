@@ -14,15 +14,11 @@ from loguru import logger
 
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
-from gage_eval.role.model.backends.shared_utils import (
-    build_engine_args,
-    build_sampling_params,
+from gage_eval.role.common.backend_utils import (
     build_sampling_params_base,
     check_tokenizer_conflict,
     collect_multimodal_sources,
     convert_text_like_output,
-    detect_vllm_version,
-    ensure_spawn_start_method,
     finalize_backend_result,
     graceful_loop_shutdown,
     has_multimodal_inputs,
@@ -34,12 +30,18 @@ from gage_eval.role.model.backends.shared_utils import (
     render_prompt_with_template,
     render_with_processor,
     resolve_request_id,
-    resolve_sampling_class,
-    resolve_vllm_mm_support,
     run_coroutine_threadsafe_with_timeout,
     simple_render_messages,
 )
-from gage_eval.role.model.backends.vllm_request import normalize_request_payload
+from gage_eval.role.model.backends.vllm.vllm_request import (
+    build_engine_args,
+    build_sampling_params,
+    detect_vllm_version,
+    ensure_spawn_start_method,
+    normalize_request_payload,
+    resolve_sampling_class,
+    resolve_vllm_mm_support,
+)
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
 from gage_eval.utils.cleanup import install_signal_cleanup
