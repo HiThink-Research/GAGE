@@ -7,6 +7,8 @@ from typing import Any, Iterable, Mapping, Optional
 
 from loguru import logger
 
+from gage_eval.evaluation.sample_envelope import resolve_judge_output, resolve_model_output
+
 _MISSING = object()
 
 
@@ -57,9 +59,14 @@ def extract_field(context: Any, descriptor: Optional[str], default: Any = None, 
 
     parts = descriptor.split(".")
     root_key = parts[0]
-    if root_key in roots and roots[root_key] is not None:
+    tail = ".".join(parts[1:]) if len(parts) > 1 else None
+
+    if root_key == "model_output":
+        base = resolve_model_output(sample, roots.get("model_output"))
+    elif root_key == "judge_output":
+        base = resolve_judge_output(sample, roots.get("judge_output"))
+    elif root_key in roots and roots[root_key] is not None:
         base = roots[root_key]
-        tail = ".".join(parts[1:]) if len(parts) > 1 else None
     else:
         base = sample
         tail = descriptor
