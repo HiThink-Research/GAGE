@@ -1,5 +1,24 @@
+arena_impls:
+- desc: Local Gomoku environment (15x15, five-in-row)
+  extra: {}
+  impl: gage_eval.role.arena.games.gomoku.env:GomokuArenaEnvironment
+  kind: arena_impls
+  name: gomoku_local_v1
+  tags:
+  - gomoku
+  - arena
+  version: v1
+- desc: Local Tic-Tac-Toe environment (3x3, three-in-row)
+  extra: {}
+  impl: gage_eval.role.arena.games.tictactoe.env:TicTacToeArenaEnvironment
+  kind: arena_impls
+  name: tictactoe_v1
+  tags:
+  - tictactoe
+  - arena
+  version: v1
 backends:
-- desc: 从外部 Python 文件加载自定义 EngineBackend
+- desc: Load a custom EngineBackend from an external Python file
   extra: {}
   impl: gage_eval.role.model.backends.custom_backend:CustomScriptBackend
   kind: backends
@@ -7,7 +26,7 @@ backends:
   tags:
   - custom
   version: v1
-- desc: 返回固定文本的 Dummy 后端（测试用）
+- desc: Deterministic dummy backend (tests)
   extra:
     config_schema_ref: gage_eval.role.model.config.dummy:DummyBackendConfig
     modalities:
@@ -19,7 +38,7 @@ backends:
   - test
   - dummy
   version: v1
-- desc: Faiss 向量检索后端
+- desc: Faiss vector retrieval backend
   extra:
     modalities:
     - embedding
@@ -30,7 +49,7 @@ backends:
   - retrieval
   - local
   version: v1
-- desc: FlagEmbedding 文本向量后端
+- desc: FlagEmbedding text embedding backend
   extra:
     modalities:
     - text
@@ -41,7 +60,7 @@ backends:
   - embedding
   - local
   version: v1
-- desc: HuggingFace Transformers 本地推理后端
+- desc: HuggingFace Transformers local inference backend
   extra:
     modalities:
     - text
@@ -55,7 +74,7 @@ backends:
   - local
   - multimodal
   version: v1
-- desc: HuggingFace Transformers delta 权重量化后端
+- desc: HuggingFace Transformers backend that applies delta checkpoints
   extra: {}
   impl: gage_eval.role.model.backends.hf_delta_backend:HFDeltaBackend
   kind: backends
@@ -91,7 +110,7 @@ backends:
   - remote
   - hf
   version: v1
-- desc: HuggingFace Transformers + LoRA/PEFT 适配器合并后端
+- desc: HuggingFace Transformers backend with merged LoRA/PEFT adapters
   extra: {}
   impl: gage_eval.role.model.backends.hf_lora_backend:HFLoRABackend
   kind: backends
@@ -101,7 +120,7 @@ backends:
   - local
   - peft
   version: v1
-- desc: 通用 HTTP 文本生成后端
+- desc: Generic HTTP text-generation backend
   extra:
     modalities:
     - text
@@ -112,7 +131,7 @@ backends:
   - llm
   - remote
   version: v1
-- desc: 通过 LiteLLM 统一接入各类推理服务
+- desc: LiteLLM backend for unified provider access (Grok/Kimi base URLs + param normalization)
   extra:
     modalities:
     - text
@@ -124,8 +143,9 @@ backends:
   - remote
   - api
   version: v1
-- desc: 多 provider HTTP 推理后端（基于 HuggingFace Inference Providers）
+- desc: Multi-provider HTTP inference backend (HuggingFace Inference Providers)
   extra:
+    config_schema_ref: gage_eval.role.model.config.inference_providers:InferenceProvidersBackendConfig
     modalities:
     - text
   impl: gage_eval.role.model.backends.multi_provider_http_backend:MultiProviderHTTPBackend
@@ -136,7 +156,7 @@ backends:
   - remote
   - provider
   version: v1
-- desc: Nanotron 张量/流水线并行推理后端
+- desc: Nanotron tensor/pipeline-parallel inference backend
   extra:
     config_schema_ref: gage_eval.role.model.config.nanotron:NanotronBackendConfig
     modalities:
@@ -149,7 +169,7 @@ backends:
   - local
   - distributed
   version: v1
-- desc: OpenAI Chat Completion 兼容后端
+- desc: OpenAI Chat Completions compatible backend
   extra:
     modalities:
     - text
@@ -161,7 +181,7 @@ backends:
   - remote
   - api
   version: v1
-- desc: SGLang 推理服务后端
+- desc: SGLang inference service backend
   extra:
     modalities:
     - text
@@ -172,7 +192,7 @@ backends:
   - llm
   - remote
   version: v1
-- desc: HuggingFace TGI 服务推理后端
+- desc: HuggingFace TGI service backend
   extra:
     modalities:
     - text
@@ -183,7 +203,7 @@ backends:
   - llm
   - remote
   version: v1
-- desc: Anthropic Claude 多模态 HTTP 后端
+- desc: Anthropic Claude multimodal HTTP backend
   extra:
     config_schema_ref: gage_eval.role.model.config.vendor_http:ClaudeBackendConfig
     modalities:
@@ -197,7 +217,7 @@ backends:
   - remote
   - anthropic
   version: v1
-- desc: Google Gemini 多模态 HTTP 后端
+- desc: Google Gemini multimodal HTTP backend
   extra:
     config_schema_ref: gage_eval.role.model.config.vendor_http:GeminiBackendConfig
     modalities:
@@ -212,7 +232,7 @@ backends:
   - remote
   - gemini
   version: v1
-- desc: OpenAI Batch Chat Completion 后端
+- desc: OpenAI Batch Chat Completions backend
   extra:
     config_schema_ref: gage_eval.role.model.config.vendor_http:OpenAIBatchBackendConfig
     modalities:
@@ -225,10 +245,12 @@ backends:
   - remote
   - openai
   version: v1
-- desc: vLLM 本地推理后端（tensor parallel 支持）
+- desc: vLLM local inference backend (AsyncLLMEngine; text/multimodal)
   extra:
     modalities:
     - text
+    - vision
+    - audio
   impl: gage_eval.role.model.backends.vllm_backend:VLLMBackend
   kind: backends
   name: vllm
@@ -237,7 +259,7 @@ backends:
   - local
   - serving
   version: v1
-- desc: HuggingFace Vision-Language Transformers 本地推理后端
+- desc: HuggingFace vision-language Transformers local inference backend
   extra:
     config_schema_ref: gage_eval.role.model.config.vlm_transformers:VLMTransformersBackendConfig
     modalities:
@@ -252,7 +274,7 @@ backends:
   - local
   - multimodal
   version: v1
-- desc: faster-whisper 语音识别后端
+- desc: faster-whisper ASR backend
   extra:
     modalities:
     - audio
@@ -263,8 +285,36 @@ backends:
   - asr
   - local
   version: v1
+context_impls:
+- desc: Gomoku rules and board context provider
+  extra: {}
+  impl: gage_eval.role.context.gomoku_context:GomokuContext
+  kind: context_impls
+  name: gomoku_context
+  tags:
+  - gomoku
+  - context
+  version: v1
+- desc: Tic-Tac-Toe rules and board context provider
+  extra: {}
+  impl: gage_eval.role.context.tictactoe_context:TicTacToeContext
+  kind: context_impls
+  name: tictactoe_context
+  tags:
+  - tictactoe
+  - context
+  version: v1
+- desc: SWE-bench Pro repo context provider
+  extra: {}
+  impl: gage_eval.role.context.swebench_repo:SwebenchRepoContext
+  kind: context_impls
+  name: swebench_repo
+  tags:
+  - swebench
+  - context
+  version: v1
 dataset_hubs:
-- desc: 直接引用本地/相对路径的数据源
+- desc: Inline dataset hub (local/relative paths)
   extra: {}
   impl: gage_eval.assets.datasets.hubs.builtin:InlineDatasetHub
   kind: dataset_hubs
@@ -272,7 +322,7 @@ dataset_hubs:
   tags:
   - local
   version: v1
-- desc: HuggingFace/ModelScope 远程数据源
+- desc: Remote dataset hub (HuggingFace Hub / ModelScope)
   extra: {}
   impl: gage_eval.assets.datasets.hubs.builtin:HuggingFaceDatasetHub
   kind: dataset_hubs
@@ -281,8 +331,36 @@ dataset_hubs:
   - remote
   - hf
   version: v1
+- desc: Remote dataset hub (ModelScope)
+  extra: {}
+  impl: gage_eval.assets.datasets.hubs.builtin:ModelScopeDatasetHub
+  kind: dataset_hubs
+  name: modelscope
+  tags:
+  - remote
+  - modelscope
+  version: v1
+- desc: Remote dataset hub (ModelScope; ms_hub alias)
+  extra: {}
+  impl: gage_eval.assets.datasets.hubs.builtin:ModelScopeDatasetHub
+  kind: dataset_hubs
+  name: ms_hub
+  tags:
+  - remote
+  - modelscope
+  version: v1
 dataset_loaders:
-- desc: HuggingFace / ModelScope 远程数据加载器
+- desc: Local CSV file dataset loader
+  extra:
+    supports_streaming: true
+  impl: gage_eval.assets.datasets.loaders.csv_loader:CSVDatasetLoader
+  kind: dataset_loaders
+  name: csv
+  tags:
+  - local
+  - file
+  version: v1
+- desc: Remote dataset loader for HuggingFace Hub / ModelScope
   extra:
     supports_streaming: true
   impl: gage_eval.assets.datasets.loaders.hf_hub_loader:HuggingFaceDatasetLoader
@@ -292,7 +370,7 @@ dataset_loaders:
   - remote
   - huggingface
   version: v1
-- desc: ModelScope 远程数据加载器
+- desc: Remote dataset loader for ModelScope
   extra:
     supports_streaming: false
   impl: gage_eval.assets.datasets.loaders.hf_hub_loader:HuggingFaceDatasetLoader
@@ -302,7 +380,17 @@ dataset_loaders:
   - remote
   - modelscope
   version: v1
-- desc: 本地 JSONL 文件加载器
+- desc: Remote dataset loader for ModelScope (ms_hub alias)
+  extra:
+    supports_streaming: false
+  impl: gage_eval.assets.datasets.loaders.hf_hub_loader:HuggingFaceDatasetLoader
+  kind: dataset_loaders
+  name: ms_hub
+  tags:
+  - remote
+  - modelscope
+  version: v1
+- desc: Local JSONL file dataset loader
   extra:
     supports_streaming: true
   impl: gage_eval.assets.datasets.loaders.jsonl_loader:JSONLDatasetLoader
@@ -312,47 +400,19 @@ dataset_loaders:
   - local
   - file
   version: v1
+- desc: Local Parquet file dataset loader
+  extra:
+    supports_streaming: false
+  impl: gage_eval.assets.datasets.loaders.parquet_loader:ParquetDatasetLoader
+  kind: dataset_loaders
+  name: parquet
+  tags:
+  - local
+  - file
+  version: v1
 dataset_preprocessors:
-- desc: 通用对话模板预处理器
-  extra:
-    module: gage_eval.assets.datasets.preprocessors.preprocess
-  impl: gage_eval.assets.datasets.preprocessors.builtin:ChatPromptPreprocessor
-  kind: dataset_preprocessors
-  name: chat_prompt
-  tags:
-  - prompt
-  - chat
-  version: v1
-- desc: COSY2 推理模版预处理器
-  extra:
-    module: gage_eval.assets.datasets.preprocessors.preprocess_cosy2
-  impl: gage_eval.assets.datasets.preprocessors.builtin:Cosy2Preprocessor
-  kind: dataset_preprocessors
-  name: cosy2
-  tags:
-  - prompt
-  version: v1
-- desc: No-think prompt 预处理器
-  extra:
-    module: gage_eval.assets.datasets.preprocessors.preprocess_no_think
-  impl: gage_eval.assets.datasets.preprocessors.builtin:NoThinkPreprocessor
-  kind: dataset_preprocessors
-  name: no_think
-  tags:
-  - prompt
-  version: v1
-- desc: RULER long-form prompt 预处理器
-  extra:
-    module: gage_eval.assets.datasets.preprocessors.preprocess_ruler
-  impl: gage_eval.assets.datasets.preprocessors.builtin:RulerPreprocessor
-  kind: dataset_preprocessors
-  name: ruler
-  tags:
-  - prompt
-  version: v1
-- desc: 多选题场景的标准化预处理器
-  extra:
-    module: gage_eval.assets.datasets.preprocessors.preprocess_multi_choice
+- desc: Multiple-choice standardizer preprocessor (new)
+  extra: {}
   impl: gage_eval.assets.datasets.preprocessors.builtin:MultiChoicePreprocessor
   kind: dataset_preprocessors
   name: multi_choice_standardizer
@@ -360,9 +420,8 @@ dataset_preprocessors:
   - prompt
   - multiple-choice
   version: v1
-- desc: DocVQA 文档问答多模态预处理器
-  extra:
-    module: gage_eval.assets.datasets.preprocessors.preprocess_docvqa
+- desc: DocVQA multimodal preprocessor (new)
+  extra: {}
   impl: gage_eval.assets.datasets.preprocessors.builtin:DocVQAPreprocessor
   kind: dataset_preprocessors
   name: docvqa_image_standardizer
@@ -371,9 +430,160 @@ dataset_preprocessors:
   - vision
   - docvqa
   version: v1
+- desc: Grid game preprocessor (board metadata + sample envelope)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:GridGamePreprocessor
+  kind: dataset_preprocessors
+  name: grid_game_preprocessor
+  tags:
+  - grid
+  - game
+  version: v1
+- desc: PIQA multiple-choice prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:PiqaPreprocessor
+  kind: dataset_preprocessors
+  name: piqa_multi_choice
+  tags:
+  - prompt
+  - piqa
+  - multiple-choice
+  version: v1
+- desc: PIQA structured preprocessor (choices/metadata only; no prompt concatenation)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:PiqaStructOnlyPreprocessor
+  kind: dataset_preprocessors
+  name: piqa_struct_only
+  tags:
+  - piqa
+  - multiple-choice
+  - struct_only
+  version: v1
+- desc: GPQA commonsense multiple-choice prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:GpqaPreprocessor
+  kind: dataset_preprocessors
+  name: gpqa_multi_choice
+  tags:
+  - prompt
+  - gpqa
+  - multiple-choice
+  version: v1
+- desc: GPQA commonsense structured preprocessor (choices/metadata only; no prompt
+    concatenation)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:GpqaStructOnlyPreprocessor
+  kind: dataset_preprocessors
+  name: gpqa_struct_only
+  tags:
+  - gpqa
+  - multiple-choice
+  - struct_only
+  version: v1
+- desc: MMMU multimodal inputs builder (messages -> inputs.multi_modal_data)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MMMUMultimodalPreprocessor
+  kind: dataset_preprocessors
+  name: mmmu_multimodal_inputs
+  tags:
+  - prompt
+  - vision
+  - mmmu
+  version: v1
+- desc: MathVista multimodal preprocessor (prompt + image + optional choices)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MathVistaPreprocessor
+  kind: dataset_preprocessors
+  name: mathvista_preprocessor
+  tags:
+  - prompt
+  - vision
+  - mathvista
+  version: v1
+- desc: MathVista structured multimodal preprocessor (multimodal/choices/metadata
+    only; no prompt concatenation)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MathVistaStructOnlyPreprocessor
+  kind: dataset_preprocessors
+  name: mathvista_struct_only
+  tags:
+  - mathvista
+  - vision
+  - struct_only
+  version: v1
+- desc: GPQA diamond subset multiple-choice prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:GpqaDiamondPreprocessor
+  kind: dataset_preprocessors
+  name: gpqa_diamond_multi_choice
+  tags:
+  - prompt
+  - gpqa
+  - gpqa_diamond
+  - multiple-choice
+  version: v1
+- desc: MathVista multimodal preprocessor (prompt + image + optional choices)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MathVistaChatPreprocessor
+  kind: dataset_preprocessors
+  name: mathvista_chat_preprocessor
+  tags:
+  - prompt
+  - vision
+  - mathvista
+  version: v1
 doc_converters: []
+judge_impls:
+- desc: Gomoku referee that replays moves and validates results
+  extra: {}
+  impl: gage_eval.role.judge.gomoku_referee:GomokuReferee
+  kind: judge_impls
+  name: gomoku_referee
+  tags:
+  - gomoku
+  - judge
+  version: v1
+- desc: SWE-bench Pro docker judge implementation
+  extra: {}
+  impl: gage_eval.role.judge.swebench_docker:SwebenchDocker
+  kind: judge_impls
+  name: swebench_docker
+  tags:
+  - swebench
+  - docker
+  version: v1
 metrics:
-- desc: 多选题准确率（对齐 llm-eval 多选逻辑）
+- desc: Win rate for a target player
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.gomoku:GomokuWinRateMetric
+  kind: metrics
+  name: gomoku_win_rate
+  tags:
+  - gomoku
+  - game
+  version: v1
+- desc: Illegal move rate for a game
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.gomoku:GomokuIllegalRateMetric
+  kind: metrics
+  name: gomoku_illegal_rate
+  tags:
+  - gomoku
+  - game
+  version: v1
+- desc: Average number of turns per game
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.gomoku:GomokuAverageTurnsMetric
+  kind: metrics
+  name: gomoku_avg_turns
+  tags:
+  - gomoku
+  - game
+  version: v1
+- desc: Multiple-choice accuracy (llm-eval compatible)
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.multi_choice:MultiChoiceAccuracyMetric
@@ -394,7 +604,57 @@ metrics:
   - vqa
   - docvqa
   version: v1
-- desc: 严格文本匹配指标
+- desc: MMMU multimodal exact-match metric (llm-eval compatible)
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.mmmu:MMMUAccuracyMetric
+  kind: metrics
+  name: mmmu_accuracy
+  tags:
+  - vision
+  - mmmu
+  version: v1
+- desc: Compute NLL/PPL from loss or token logprobs
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.likelihood:LikelihoodMetric
+  kind: metrics
+  name: likelihood
+  tags:
+  - likelihood
+  - ppl
+  version: v1
+- desc: MRR / Hit@K ranking metric
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.ranking:RankingMetric
+  kind: metrics
+  name: ranking
+  tags:
+  - ranking
+  - retrieval
+  version: v1
+- desc: MathVista mixed-type accuracy (MCQ letter-first, else normalized text match)
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.mathvista:MathVistaAccuracyMetric
+  kind: metrics
+  name: mathvista_accuracy
+  tags:
+  - vision
+  - mathvista
+  version: v1
+- desc: MathVista chat accuracy (MCQ letter-first, else normalized text match)
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.mathvista:MathVistaChataccuracyMetric
+  kind: metrics
+  name: mathvista_chat_accuracy
+  tags:
+  - vision
+  - mathvista
+  version: v1
+- desc: Strict text match metric
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:ExactMatchMetric
@@ -403,7 +663,7 @@ metrics:
   tags:
   - text
   version: v1
-- desc: 预测结果包含参考答案
+- desc: Prediction contains reference text
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:ContainsMatchMetric
@@ -412,7 +672,7 @@ metrics:
   tags:
   - text
   version: v1
-- desc: 带容差的数值匹配
+- desc: Numeric match with tolerance
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:NumericMatchMetric
@@ -421,7 +681,7 @@ metrics:
   tags:
   - numeric
   version: v1
-- desc: 基于正则表达式的匹配
+- desc: Regex match metric
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:RegexMatchMetric
@@ -431,7 +691,7 @@ metrics:
   - text
   - regex
   version: v1
-- desc: 根据裁判分数阈值计算通过率
+- desc: Pass rate based on judge score threshold
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:JudgeThresholdMetric
@@ -440,7 +700,7 @@ metrics:
   tags:
   - judge
   version: v1
-- desc: 统计文本长度（字符或词）
+- desc: Text length metric (chars or words)
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:TextLengthMetric
@@ -450,7 +710,7 @@ metrics:
   - text
   - analysis
   version: v1
-- desc: 读取模型输出中的延迟信息
+- desc: Extract latency from model output
   extra:
     default_aggregation: mean
   impl: gage_eval.metrics.builtin.text:LatencyMetric
@@ -459,8 +719,27 @@ metrics:
   tags:
   - latency
   version: v1
+- desc: SWE-bench Pro Pass@1 (resolve rate)
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.swebench:SwebenchResolveRateMetric
+  kind: metrics
+  name: swebench_resolve_rate
+  tags:
+  - swebench
+  version: v1
+- desc: SWE-bench Pro failure reason distribution
+  extra:
+    default_aggregation: categorical_count
+  impl: gage_eval.metrics.builtin.swebench:SwebenchFailureReasonMetric
+  kind: metrics
+  name: swebench_failure_reason
+  tags:
+  - swebench
+  - analysis
+  version: v1
 model_hubs:
-- desc: 本地文件系统模型
+- desc: Local filesystem model hub
   extra: {}
   impl: gage_eval.assets.models.hubs.local:LocalModelHub
   kind: model_hubs
@@ -468,7 +747,7 @@ model_hubs:
   tags:
   - local
   version: v1
-- desc: HuggingFace 模型仓库
+- desc: HuggingFace model hub
   extra: {}
   impl: gage_eval.assets.models.hubs.huggingface:HuggingFaceModelHub
   kind: model_hubs
@@ -477,7 +756,7 @@ model_hubs:
   - remote
   - hf
   version: v1
-- desc: ModelScope 模型仓库
+- desc: ModelScope model hub
   extra: {}
   impl: gage_eval.assets.models.hubs.modelscope:ModelScopeModelHub
   kind: model_hubs
@@ -487,7 +766,7 @@ model_hubs:
   - modelscope
   version: v1
 observability_plugins:
-- desc: 默认文件/HTTP 观测插件
+- desc: Default file/HTTP observability plugin
   extra: {}
   impl: gage_eval.observability.plugins.default:DefaultObservabilityPlugin
   kind: observability_plugins
@@ -496,17 +775,36 @@ observability_plugins:
   - file
   - http
   version: v1
-pipeline_steps:
-- desc: 汇总评测结果并输出报告的阶段
-  extra:
-    step_kind: global
-  impl: gage_eval.pipeline.steps.report:ReportStep
-  kind: pipeline_steps
-  name: report
+parser_impls:
+- desc: Gomoku move parser (configurable coordinate scheme)
+  extra: {}
+  impl: gage_eval.role.arena.parsers.gomoku_parser:GomokuParser
+  kind: parser_impls
+  name: gomoku_v1
   tags:
-  - report
+  - gomoku
+  - parser
   version: v1
-- desc: 自动指标计算阶段
+- desc: Grid game move parser (configurable coordinate scheme)
+  extra: {}
+  impl: gage_eval.role.arena.parsers.gomoku_parser:GridParser
+  kind: parser_impls
+  name: grid_parser_v1
+  tags:
+  - grid
+  - parser
+  version: v1
+pipeline_steps:
+- desc: Pipeline step that runs arena game loops
+  extra:
+    step_kind: sample
+  impl: gage_eval.pipeline.steps.arena:ArenaStep
+  kind: pipeline_steps
+  name: arena
+  tags:
+  - arena
+  version: v1
+- desc: Pipeline step that computes automatic metrics
   extra:
     step_kind: sample
   impl: gage_eval.pipeline.steps.auto_eval:AutoEvalStep
@@ -515,7 +813,7 @@ pipeline_steps:
   tags:
   - metrics
   version: v1
-- desc: 执行 DUT 模型推理的阶段
+- desc: Pipeline step that runs DUT model inference
   extra:
     step_kind: sample
   impl: gage_eval.pipeline.steps.inference:InferenceStep
@@ -524,7 +822,7 @@ pipeline_steps:
   tags:
   - dut
   version: v1
-- desc: 执行裁判角色的阶段
+- desc: Pipeline step that runs the judge role
   extra:
     step_kind: sample
   impl: gage_eval.pipeline.steps.judge:JudgeStep
@@ -533,7 +831,16 @@ pipeline_steps:
   tags:
   - judge
   version: v1
-- desc: 执行 Helper/Toolchain 等辅助角色的阶段
+- desc: Global step that aggregates evaluation results and writes reports
+  extra:
+    step_kind: global
+  impl: gage_eval.pipeline.steps.report:ReportStep
+  kind: pipeline_steps
+  name: report
+  tags:
+  - report
+  version: v1
+- desc: Pipeline step that runs helper/toolchain roles
   extra:
     step_kind: sample
   impl: gage_eval.pipeline.steps.support:SupportStep
@@ -543,7 +850,7 @@ pipeline_steps:
   - support
   version: v1
 prompts:
-- desc: 通用 DUT 文本生成 Prompt
+- desc: General DUT text-generation prompt
   extra:
     has_template: true
     renderer: jinja
@@ -557,7 +864,7 @@ prompts:
   - dut
   - general
   version: v1
-- desc: 通用 Judge 评分 Prompt
+- desc: General judge scoring prompt
   extra:
     has_template: true
     renderer: jinja
@@ -573,8 +880,27 @@ prompts:
   - judge
   - general
   version: v1
+renderer_impls:
+- desc: Gomoku board renderer (HTML/CSS grid)
+  extra: {}
+  impl: gage_eval.role.arena.games.gomoku.board_renderer:GomokuBoardRenderer
+  kind: renderer_impls
+  name: gomoku_board_v1
+  tags:
+  - gomoku
+  - renderer
+  version: v1
+- desc: Tic-Tac-Toe board renderer (HTML/CSS grid)
+  extra: {}
+  impl: gage_eval.role.arena.games.tictactoe.renderer:TicTacToeBoardRenderer
+  kind: renderer_impls
+  name: tictactoe_board_v1
+  tags:
+  - tictactoe
+  - renderer
+  version: v1
 reporting_sinks:
-- desc: 将事件保存在内存中（测试用途）
+- desc: In-memory event recorder (tests)
   extra: {}
   impl: gage_eval.reporting.recorders:InMemoryRecorder
   kind: reporting_sinks
@@ -582,7 +908,7 @@ reporting_sinks:
   tags:
   - memory
   version: v1
-- desc: 将事件写入本地 JSONL 文件
+- desc: Local JSONL event recorder
   extra: {}
   impl: gage_eval.reporting.recorders:FileRecorder
   kind: reporting_sinks
@@ -591,7 +917,7 @@ reporting_sinks:
   - file
   - local
   version: v1
-- desc: 推送事件到 HTTP 端点，支持回退
+- desc: HTTP event recorder with fallback support
   extra: {}
   impl: gage_eval.reporting.recorders:HTTPRecorder
   kind: reporting_sinks
@@ -601,7 +927,7 @@ reporting_sinks:
   - remote
   version: v1
 roles:
-- desc: 面向被测模型（DUT）的标准角色适配器
+- desc: Standard role adapter for DUT models
   extra:
     role_type: dut_model
   impl: gage_eval.role.adapters.dut_model:DUTModelAdapter
@@ -611,7 +937,7 @@ roles:
   - role
   - dut
   version: v1
-- desc: 具备工具调用能力的 DUT Agent 适配器
+- desc: DUT agent adapter with tool-calling capabilities
   extra:
     role_type: dut_agent
   impl: gage_eval.role.adapters.dut_agent:DUTAgentAdapter
@@ -621,7 +947,7 @@ roles:
   - role
   - agent
   version: v1
-- desc: 裁判/判分 LLM 角色适配器
+- desc: Judge/scoring LLM role adapter
   extra:
     role_type: judge_model
   impl: gage_eval.role.adapters.judge_model:JudgeModelAdapter
@@ -631,7 +957,17 @@ roles:
   - role
   - judge
   version: v1
-- desc: 用于提示增强 / 工具调度的辅助角色适配器
+- desc: Judge extension role adapter
+  extra:
+    role_type: judge_extend
+  impl: gage_eval.role.adapters.judge_extend:JudgeExtendAdapter
+  kind: roles
+  name: judge_extend
+  tags:
+  - role
+  - judge
+  version: v1
+- desc: Helper role adapter for prompt augmentation / tool orchestration
   extra:
     role_type: helper_model
   impl: gage_eval.role.adapters.helper_model:HelperModelAdapter
@@ -641,7 +977,7 @@ roles:
   - role
   - helper
   version: v1
-- desc: RAG/知识增强上下文提供角色
+- desc: RAG/knowledge-augmented context provider role
   extra:
     role_type: context_provider
   impl: gage_eval.role.adapters.context_provider:ContextProviderAdapter
@@ -651,7 +987,7 @@ roles:
   - role
   - context
   version: v1
-- desc: 封装外部工具/MCP 的统一角色
+- desc: Unified role adapter for external tools/MCP
   extra:
     role_type: toolchain
   impl: gage_eval.role.adapters.toolchain:ToolchainAdapter
@@ -661,7 +997,7 @@ roles:
   - role
   - tool
   version: v1
-- desc: 多模态预处理/后处理角色
+- desc: Multimodal pre/post-processing role adapter
   extra:
     role_type: modal_processor
   impl: gage_eval.role.adapters.modal_processor:ModalProcessorAdapter
@@ -671,4 +1007,25 @@ roles:
   - role
   - modal
   version: v1
+- desc: Arena role adapter for interactive games
+  extra:
+    role_type: arena
+  impl: gage_eval.role.adapters.arena:ArenaRoleAdapter
+  kind: roles
+  name: arena
+  tags:
+  - role
+  - arena
+  version: v1
+- desc: Human input adapter for arena games
+  extra:
+    role_type: human
+  impl: gage_eval.role.adapters.human:HumanAdapter
+  kind: roles
+  name: human
+  tags:
+  - role
+  - human
+  version: v1
+summary_generators: []
 templates: []

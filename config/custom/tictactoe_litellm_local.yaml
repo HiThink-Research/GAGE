@@ -1,0 +1,117 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: tictactoe_litellm_local
+  description: Local Tic-Tac-Toe arena with LiteLLM backend (LLM vs LLM).
+
+custom:
+  steps:
+    - step: support
+      adapter_id: tictactoe_context_provider
+    - step: arena
+      adapter_id: tictactoe_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: tictactoe_local_litellm
+    loader: jsonl
+    params:
+      path: tests/data/Test_TicTacToe.jsonl
+      preprocess: grid_game_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: tictactoe_litellm
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-5.2
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+  - backend_id: tictactoe_litellm2
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: tictactoe_context_provider
+    role_type: context_provider
+    params:
+      implementation: tictactoe_context
+
+  - adapter_id: tictactoe_player_x_litellm
+    role_type: dut_model
+    backend_id: tictactoe_litellm
+    capabilities:
+      - chat_completion
+
+  - adapter_id: tictactoe_player_o_litellm
+    role_type: dut_model
+    backend_id: tictactoe_litellm2
+    capabilities:
+      - chat_completion
+
+  - adapter_id: tictactoe_arena
+    role_type: arena
+    params:
+      environment:
+        impl: tictactoe_v1
+        board_size: 3
+        coord_scheme: ROW_COL
+      rules:
+        win_len: 3
+        illegal_policy:
+          retry: 1
+          on_fail: loss
+      scheduler:
+        type: turn
+        max_turns: 9
+      parser:
+        impl: grid_parser_v1
+        board_size: 3
+        coord_scheme: ROW_COL
+      visualizer:
+        enabled: true
+        title: GAGE Tic-Tac-Toe Arena
+        port: ${TICTACTOE_GRADIO_PORT:-7862}
+        launch_browser: true
+        refresh_s: 0.1
+        wait_for_finish: true
+        coord_scheme: ROW_COL
+        renderer:
+          impl: tictactoe_board_v1
+      players:
+        - name: X
+          type: backend
+          ref: tictactoe_player_x_litellm
+          max_retries: 1
+          fallback_policy: first_legal
+        - name: O
+          type: backend
+          ref: tictactoe_player_o_litellm
+          max_retries: 1
+          fallback_policy: first_legal
+
+tasks:
+  - task_id: tictactoe_litellm_local
+    dataset_id: tictactoe_local_litellm
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tictactoe_litellm_events.jsonl
