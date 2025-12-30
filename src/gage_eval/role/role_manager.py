@@ -137,6 +137,11 @@ class RoleManager:
 
         return _HistoryLease(lease)
 
+    def get_adapter(self, adapter_id: str):
+        """Return a registered adapter by id if available."""
+
+        return self._adapters.get(adapter_id)
+
     def per_sample_session(self, context) -> Iterator["PerSampleSession"]:
         return PerSampleSession(context, self)
 
@@ -218,6 +223,9 @@ class PerSampleSession:
 
     def execute_inference(self) -> None:
         self.context.execute_inference()
+
+    def execute_arena(self) -> None:
+        self.context.execute_arena()
 
     def execute_judge(self) -> None:
         self.context.execute_judge()

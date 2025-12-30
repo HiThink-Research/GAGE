@@ -32,7 +32,11 @@ class ContextProviderAdapter(RoleAdapter):
             raise ValueError("ContextProviderAdapter requires non-empty implementation")
         self._implementation = implementation
         self._implementation_params = dict(implementation_params or {})
-        impl_cls = registry.get("context_impls", implementation)
+        try:
+            impl_cls = registry.get("context_impls", implementation)
+        except KeyError:
+            registry.auto_discover("context_impls", "gage_eval.role.context")
+            impl_cls = registry.get("context_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "aprovide", None) or getattr(self._impl, "provide", None)
         if provider is None:

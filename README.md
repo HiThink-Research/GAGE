@@ -11,7 +11,11 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 - 示例配置：`config/custom/`、`config/builtin_templates/`
 - 辅助开发：[`docs/guide/support_cli.md`](docs/guide/support_cli.md)（support 模块使用指南）
 
+<<<<<<< Updated upstream
 ## 1. 项目概览
+=======
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
+>>>>>>> Stashed changes
 
 ### 1.1 你可以用它做什么
 

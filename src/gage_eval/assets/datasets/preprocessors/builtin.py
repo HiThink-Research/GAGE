@@ -10,6 +10,9 @@ from gage_eval.assets.datasets.preprocessors.mathvista_preprocessor import (
     MathVistaPreprocessor as NewMathVista,
     MathVistaStructOnlyPreprocessor as NewMathVistaStructOnly,
 )
+from gage_eval.assets.datasets.preprocessors.grid_game_preprocessor import (
+    GridGamePreprocessor as NewGridGame,
+)
 from gage_eval.assets.datasets.preprocessors.mmmu_preprocessor import MMMUMultimodalPreprocessor as NewMMMU
 from gage_eval.assets.datasets.preprocessors.piqa_preprocessor import (
     PiqaPreprocessor as NewPiqa,
@@ -46,6 +49,18 @@ class MultiChoicePreprocessor(NewMultiChoice):
     tags=("prompt", "vision", "docvqa"),
 )
 class DocVQAPreprocessor(NewDocVQA):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "grid_game_preprocessor",
+    desc="Grid game preprocessor (board metadata + sample envelope)",
+    tags=("grid", "game"),
+)
+class GridGamePreprocessor(NewGridGame):
+    """Standardize grid game records into the Sample schema."""
+
     pass
 
 

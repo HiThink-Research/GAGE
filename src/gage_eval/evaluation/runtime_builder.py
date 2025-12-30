@@ -399,7 +399,10 @@ class TaskOrchestratorRuntime:
                 pre_write_hook=pre_write_hook,
             )
         finally:
-            self._trace.flush()
+            try:
+                self._role_manager.shutdown()
+            finally:
+                self._trace.flush()
 
     def attach_report_step(self, step: ReportStep) -> None:
         self._report_step = step
