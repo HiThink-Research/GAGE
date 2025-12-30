@@ -160,8 +160,38 @@ def flatten_numeric_list(values: Any) -> list[float]:
     except (TypeError, ValueError):
         return []
 
+def get_text_content_of_first_predict_result(sample_dict):
+    try:
+        ret = sample_dict['predict_result'][0]['message']['content'][0]['text']
+        return ret
+    except Exception as e:
+        logger.warning(f'[warning]{e}')        
+        return None
+
+def get_sample_options(sample_dict):
+    try:
+        sample_dict.get("options")
+    except Exception as e:
+        logger.warning(f'[warning]{e}')        
+        return None
+
+def get_sample_label(sample_dict):
+    return sample_dict.get('label')
+
+def get_first_reference(sample_dict):
+    try:
+        references= sample_dict.get('references')
+        if len(references) >= 1:
+            return references[0]
+    except Exception as e:
+        logger.warning(f'[warning]{e}')
+        return None
 
 __all__ = [
+    "get_text_content_of_first_predict_result",
+    "get_sample_label",
+    "get_sample_options",
+    "get_first_reference",
     "extract_field",
     "walk_path",
     "normalize_text_advanced",
