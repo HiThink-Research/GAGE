@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict
 
 from loguru import logger
-from gage_eval.registry import ensure_async, run_sync
+from gage_eval.registry.utils import ensure_async, run_sync
 
 
 class Backend:

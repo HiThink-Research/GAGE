@@ -13,9 +13,11 @@ from gage_eval.assets.datasets.utils.multimodal import merge_multimodal_inputs
 from gage_eval.assets.datasets.sample import (
     Sample,
     Message,
-    MessageContent
+    MessageContent,
+    sample_from_dict,
 )
 from dataclasses import dataclass, fields, asdict, is_dataclass
+
 
 @dataclass
 class DataSource:
@@ -81,13 +83,25 @@ class DataManager:
         validator = source.validator
         for index, record in enumerate(source.records):
             if not isinstance(record, Sample):
-                logger.warning(
-                        "Skipping non-dict record dataset='%s' index=%s type=%s",
-                        dataset_id,
-                        index,
-                        type(record).__name__,
-                )
-                continue
+                if isinstance(record, dict):
+                    try:
+                        record = sample_from_dict(record)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to convert dict record to Sample dataset='{}' index={}: {}",
+                            dataset_id,
+                            index,
+                            exc,
+                        )
+                        continue
+                else:
+                    logger.warning(
+                            "Skipping non-dict record dataset='%s' index=%s type=%s",
+                            dataset_id,
+                            index,
+                            type(record).__name__,
+                    )
+                    continue
             normalized = record
             if validator:
                 validated = validator.validate_raw(record, dataset_id=dataset_id, index=index, trace=trace)

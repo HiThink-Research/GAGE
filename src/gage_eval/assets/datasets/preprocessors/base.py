@@ -14,6 +14,7 @@ from gage_eval.assets.datasets.utils.multimodal import merge_multimodal_inputs
 from gage_eval.assets.datasets.utils.normalization import normalize_sample, ensure_chat_template_flags
 from gage_eval.assets.datasets.validation import validate_sample_schema
 from gage_eval.observability.config import get_observability_config
+from gage_eval.assets.datasets.sample import Sample, Message, MessageContent, sample_from_dict
 
 _DOC_TO_KEYS = ("doc_to_text", "doc_to_visual", "doc_to_audio")
 
@@ -32,10 +33,10 @@ class DatasetPreprocessor:
 
 class BasePreprocessor(DatasetPreprocessor):
     """Template-method preprocessor for standardizing dataset records.
-
+    
     This base class centralizes the shared preprocessing pipeline so that
     dataset-specific preprocessors can focus on `to_sample()` only.
-
+    
     Responsibilities covered here include:
     - optional message role stripping
     - structuring a raw record into the Sample schema via `to_sample()`
@@ -88,6 +89,11 @@ class BasePreprocessor(DatasetPreprocessor):
                 _strip_roles(sample, roles_to_remove=self.roles_to_remove)
             # STEP 2: Let the dataset-specific preprocessor structure the record.
             structured_sample = self.to_sample(sample, **to_sample_kwargs)
+
+            # Auto-convert dict to Sample if needed
+            if isinstance(structured_sample, dict):
+                structured_sample = sample_from_dict(structured_sample)
+
             # STEP 3: Validate the sample schema early to fail fast.
             validate_sample_schema(structured_sample)
             # STEP 4: Merge multimodal inputs and de-duplicate referenced assets.
