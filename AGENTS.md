@@ -235,7 +235,6 @@ runs/<run_id>/
 | `user/<name>/<topic>` | `user/alice/swebench_trace` | Personal branches (not guaranteed to persist) | `feat/<topic>` |
 
 Additional guidance: `feat/<topic>` is the default base branch; small changes may branch directly from `main`.
-
 ## Environment Variables (Quick Reference)
 
 - Boolean env vars accept `1/true/yes/on` (case-insensitive).

@@ -2,4 +2,7 @@
 
 from __future__ import annotations
 
-__all__ = []
+from gage_eval.role.context.gomoku_context import GomokuContext
+from gage_eval.role.context.tictactoe_context import TicTacToeContext
+
+__all__ = ["GomokuContext", "TicTacToeContext"]
