@@ -104,4 +104,5 @@ class DataManager:
                     },
                 )
             logger.debug("Emitted normalized sample idx={} keys={}", index, list(asdict(normalized).keys() if is_dataclass(normalized) else normalized.keys()))
-            yield normalized
+            # Convert Sample dataclass to dict so backends can access fields via .get()
+            yield asdict(normalized) if is_dataclass(normalized) else normalized

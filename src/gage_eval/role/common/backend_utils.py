@@ -9,6 +9,7 @@ import inspect
 import io
 import re
 import uuid
+import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -18,6 +19,8 @@ from loguru import logger
 from gage_eval.role.model.runtime import ChatTemplateMixin
 from gage_eval.utils.cleanup import torch_gpu_cleanup
 from gage_eval.utils.messages import normalize_messages_for_template, stringify_message_content
+
+
 from gage_eval.utils.multimodal import load_multimodal_data
 
 __all__ = [
@@ -146,17 +149,27 @@ def run_coroutine_threadsafe_with_timeout(
 
 
 def normalize_image_placeholders(prompt: str, image_count: int) -> str:
-    """Ensure prompt contains enough <image> placeholders to match image_count."""
+    """Ensure prompt contains exactly image_count <image> placeholders."""
 
     marker = "<image>"
     if not prompt:
-        prompt = ""
+        return ""
     normalized = re.sub(r"<image\s*\d*>", marker, prompt, flags=re.IGNORECASE)
-    current = normalized.lower().count(marker)
+    if marker not in normalized:
+        # Avoid injecting generic placeholders into model-specific templates (e.g., <|image_pad|>).
+        return normalized
+    parts = normalized.split(marker)
+    current = len(parts) - 1
+    if image_count <= 0:
+        return normalized.replace(marker, "").strip()
     missing = max(0, image_count - current)
     if missing > 0:
         prefix = " ".join([marker] * missing)
         normalized = (prefix + " " + normalized).strip()
+        parts = normalized.split(marker)
+        current = len(parts) - 1
+    if current > image_count:
+        normalized = marker.join(parts[: image_count + 1]) + "".join(parts[image_count + 1 :])
     return normalized
 
 
@@ -259,6 +272,8 @@ def has_multimodal_inputs(prepared: Dict[str, Any]) -> bool:
                     "audio",
                     "audio_url",
                     "input_audio",
+                    "video",
+                    "video_url",
                 }:
                     return True
     return False
@@ -656,7 +671,8 @@ def simple_render_messages(messages: List[Dict[str, Any]]) -> str:
 
 
 def render_with_processor(
-    processor: Any, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None
+    processor: Any, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None,
+    *, skip_normalize: bool = False
 ) -> Optional[str]:
     """Render messages with processor.apply_chat_template, fallback to prompt on failure."""
 
@@ -664,9 +680,12 @@ def render_with_processor(
     if not apply_template:
         return None
     try:
-        norm_messages = normalize_messages_for_template(messages)
+        # NOTE: For multimodal, skip normalize to preserve image_url structure for processor
+        # Also sanitize messages to ensure compatibility with HF templates (convert OpenAI image_url to image)
+        proc_messages = _sanitize_multimodal_messages(messages) if skip_normalize else normalize_messages_for_template(messages)
+        
         rendered = apply_template(
-            norm_messages,
+            proc_messages,
             add_generation_prompt=True,
             tokenize=False,
             **(chat_template_kwargs or {}),
@@ -677,3 +696,126 @@ def render_with_processor(
     except Exception as exc:
         logger.debug("processor chat_template failed: {}", exc)
         return None
+
+def _sanitize_multimodal_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Sanitize messages for HF Processor chat templates.
+    Most local models (Qwen2-VL, LLaVA, etc.) operate on HF standards which use 'image'/'video' type,
+    whereas GAGE/OpenAI use 'image_url'/'video_url'. This function bridges the gap.
+    
+    1. Convert 'image_url' -> 'image', 'video_url' -> 'video', 'audio_url' -> 'audio'.
+    2. Flatten nested url dictionaries to simple strings.
+    3. Remove keys with None values (sanitize).
+    4. Pass through unknown types as-is.
+    """
+    sanitized = []
+    for msg in messages:
+        new_msg = {"role": msg.get("role")}
+        content = msg.get("content")
+        
+        if isinstance(content, list):
+            new_content = []
+            for item in content:
+                if not isinstance(item, dict):
+                    new_content.append(item)
+                    continue
+                
+                itype = item.get("type")
+
+                # Handle text item
+                if itype == "text":
+                    new_item = {"type": "text", "text": item.get("text", "")}
+                    new_content.append(new_item)
+                
+                # Handle image types
+                elif itype in ["image", "image_url"]:
+                    url = item.get("url")
+                    if not url and "image_url" in item:
+                        val = item["image_url"]
+                        url = val.get("url") if isinstance(val, dict) else val
+                    if not url:
+                        url = item.get("image")
+                        
+                    if url:
+                        new_content.append({"type": "image", "image": url})
+
+                # Handle audio types
+                elif itype in ["audio", "audio_url", "input_audio"]:
+                    url = item.get("url")
+                    if not url and "audio_url" in item:
+                        val = item["audio_url"]
+                        url = val.get("url") if isinstance(val, dict) else val
+                    if not url:
+                        url = item.get("audio") or item.get("input_audio")
+                        
+                    if url:
+                        new_content.append({"type": "audio", "audio": url})
+
+                # Handle video types
+                elif itype in ["video", "video_url"]:
+                    url = item.get("url")
+                    if not url and "video_url" in item:
+                        val = item["video_url"]
+                        url = val.get("url") if isinstance(val, dict) else val
+                    if not url:
+                        url = item.get("video")
+                        
+                    if url:
+                        new_content.append({"type": "video", "video": url})
+
+                # Fallback: keep other items as-is
+                else:
+                    new_content.append(item)
+            
+            new_msg["content"] = new_content
+        else:
+            new_msg["content"] = content
+            
+        sanitized.append(new_msg)
+    return sanitized
+
+
+def propagate_metadata_flags(prepared: Dict[str, Any], payload: Dict[str, Any]) -> None:
+    """
+    Ensure metadata-based flags (chat_template_mode, rendered_by) are propagated from payload.
+    This handles cases where normalization misses nested metadata (e.g. sample.metadata).
+    """
+    meta = prepared.get("sample", {}).get("metadata") or payload.get("metadata") or {}
+    if isinstance(meta, dict):
+        if "chat_template_mode" in meta and "chat_template_mode" not in prepared:
+            prepared["chat_template_mode"] = meta["chat_template_mode"]
+        if "rendered_by" in meta and "rendered_by" not in prepared:
+            prepared["rendered_by"] = meta["rendered_by"]
+
+
+def load_hf_tokenizer(config: Dict[str, Any]) -> Any:
+    """Best-effort load of HuggingFace tokenizer from config."""
+    tok_name = config.get("tokenizer_name") or config.get("tokenizer_path") or config.get("model_path")
+    if not tok_name:
+        return None
+    try:
+        from transformers import AutoTokenizer
+        return AutoTokenizer.from_pretrained(
+            tok_name, trust_remote_code=bool(config.get("trust_remote_code", True))
+        )
+    except Exception as exc:
+        logger.warning("Failed to load tokenizer '{}': {}", tok_name, exc)
+        return None
+
+
+def load_hf_processor(model_id: str, trust_remote_code: bool = True) -> Any:
+    """Best-effort load of HuggingFace processor from model_id."""
+    if not model_id:
+        return None
+    try:
+        from transformers import AutoProcessor
+        return AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    except Exception as exc:
+        logger.debug("Failed to load processor for '{}': {}", model_id, exc)
+        return None
+
+
+def log_debug_mm_prompt(prompt: str, request_id: str = None) -> None:
+    """Log full multimodal prompt if GAGE_EVAL_DEBUG_MM_PROMPT is set."""
+    if os.environ.get("GAGE_EVAL_DEBUG_MM_PROMPT"):
+        logger.debug("Debug MM Prompt [{}]: {}", request_id or "N/A", prompt)

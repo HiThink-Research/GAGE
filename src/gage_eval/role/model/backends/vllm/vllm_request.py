@@ -113,7 +113,19 @@ def _resolve_request_id(payload: Dict[str, Any], sample: Dict[str, Any], request
 
 def _collect_chat_meta(payload: Dict[str, Any], sample: Dict[str, Any]) -> Dict[str, Any]:
     chat_meta: Dict[str, Any] = {}
-    for source in (payload.get("chat_meta"), sample.get("chat_meta") if isinstance(sample, dict) else None):
+    # Collect render flags from payload or sample.metadata/data_tag (Sample no longer carries chat_meta).
+    render_keys = ("chat_template_mode", "template_source", "rendered_by", "cache_suffix")
+    meta = sample.get("metadata") or sample.get("data_tag") or {} if isinstance(sample, dict) else {}
+    for key in render_keys:
+        if key in payload:
+            chat_meta[key] = payload[key]
+        elif isinstance(meta, dict) and key in meta:
+            chat_meta[key] = meta[key]
+        elif isinstance(sample, dict) and key in sample:
+            chat_meta[key] = sample[key]
+    # Merge chat_meta from payload or nested metadata if present.
+    meta_chat = meta.get("chat_meta") if isinstance(meta, dict) else None
+    for source in (payload.get("chat_meta"), meta_chat):
         if isinstance(source, dict):
             chat_meta.update(source)
     return chat_meta
