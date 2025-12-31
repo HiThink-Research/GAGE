@@ -23,6 +23,13 @@ from gage_eval.assets.datasets.utils.mapping import (
 )
 from gage_eval.assets.datasets.utils.rendering import set_render_flags
 
+from gage_eval.assets.datasets.sample import (
+    SCHEMA_VERSION,
+    Sample,
+    Message,
+    MessageContent
+)
+
 _CHOICE_ALPHABET: Tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
@@ -36,7 +43,7 @@ class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
     4) Populate metadata for downstream metrics and debugging.
     """
 
-    def to_sample(self, record: Dict[str, Any], gpqa_prompt_type, **kwargs: Any) -> Dict[str, Any]:
+    def to_sample(self, record: Dict[str, Any], gpqa_prompt_type, schema_version = SCHEMA_VERSION, **kwargs: Any) -> Dict[str, Any]:
         """Converts a raw GPQA record into a standardized multiple-choice Sample.
 
         Args:
@@ -47,7 +54,6 @@ class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
         Returns:
             A dict compatible with the gage-eval Sample schema.
         """
-
         sample: Dict[str, Any] = dict(record)
         try:
             # STEP 1: Render a single user prompt and collect the option set.
@@ -58,14 +64,12 @@ class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
             assert len(examples) == 1, "len(examples) != 1"
             user_prompt = prompts[0]
             example = examples[0]
-            options = [example.choice1, example.choice2, example.choice3, example.choice4]
 
             # STEP 2: Resolve the correct answer index and validate option constraints.
+            options = [example.choice1, example.choice2, example.choice3, example.choice4]
             answer_index = options.index(correct_answer)
-            sample["question"] = user_prompt
-            sample["choices"] = options
-            # NOTE: Keep the integer index so downstream helpers can resolve the label reliably.
-            sample["answer"] = answer_index
+            message_content = MessageContent(type="text", text=user_prompt)
+
             options = normalize_options(options)
             if len(options) < 2:
                 raise ValueError("Multiple-choice sample must provide at least two options")
@@ -74,46 +78,22 @@ class GpqaDiamondPreprocessor(MultiChoicePreprocessor):
                 raise ValueError("Multiple-choice preprocessor supports up to 26 options")                            
             correct_choice = resolve_correct_choice(answer_index, option_pairs, answer_index_base=0)
             if correct_choice is None:
-                raise ValueError("Unable to resolve correct choice from answer field")                    
+                raise ValueError("Unable to resolve correct choice from answer field")
 
-            # STEP 3: Build canonical chat messages and render flags.
-            messages: list[Dict[str, Any]] = []
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": user_prompt}],
-                }   
+            # STEP 3: Build canonical chat messages
+            message = Message(role='user', content=[message_content])
+            sample_id = str(hash('\n'.join([user_prompt, correct_choice])))
+            ret_sample = Sample(
+                id = sample_id,
+                schema_version = schema_version,
+                messages = [message],
+                options = options,
+                references = [correct_choice],
+                label=correct_choice
             )
-            sample["messages"] = messages
-            sample["prompt"] = user_prompt
-            set_render_flags(sample, mode="preprocess", source="manual", rendered_by="preprocess", cache_suffix="-converted")
-
-            # STEP 4: Materialize standardized choice blocks and metadata.
-            sample["choices"] = [
-                {
-                    "index": idx,
-                    "label": label,
-                    "message": {"role": "assistant", "content": [{"type": "text", "text": option_text}]},
-                }
-                for idx, (label, option_text) in enumerate(option_pairs)
-            ]
-            metadata = dict(sample.get("metadata") or {})
-            metadata.update(
-                {
-                    "option_map": {label: option_text for label, option_text in option_pairs},
-                    "correct_choice": correct_choice,
-                    "question_field": "question",
-                    "choices_field": "choices",
-                    "answer_field": "answer",
-                }
-            )
-            sample["metadata"] = metadata
-            sample["inputs"] = sample.get("inputs") or {"prompt": user_prompt}
         except Exception as e:
-            logger.warning("gpqa_diamond_preprocessor failed: {}", e)
-        return sample
-        
-
+            logger.error("gpqa_diamond_preprocessor failed: {}", e)
+        return ret_sample
 
 
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
 
+from typing import Any, Dict, List, Optional, Union
+
+SCHEMA_VERSION = "0.0.1"
 
 @dataclass
 class MessageContent:
@@ -19,24 +21,10 @@ class MessageContent:
     video: Optional[Any] = None
     file: Optional[Any] = None
 
-
 @dataclass
 class Message:
     role: str
     content: List[MessageContent] = field(default_factory=list)
-    tool_calls: Optional[Any] = None
-    tool_use: Optional[Any] = None
-    model_output: Optional[Any] = None
-    path: Optional[Any] = None
-    name: Optional[str] = None
-
-
-@dataclass
-class Choice:
-    index: int
-    message: Message
-    label: Optional[str] = None
-
 
 @dataclass
 class PredictResult:
@@ -46,50 +34,29 @@ class PredictResult:
     usage: Optional[Dict[str, Any]] = None
     latency_ms: Optional[float] = None
 
-
-@dataclass
-class Inputs:
-    prompt: Optional[str] = None
-    input_ids: Optional[List[int]] = None
-    multi_modal_data: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class AuditInfo:
-    task_id: Optional[str] = None
-    version_id: Optional[str] = None
-    query_id: Optional[str] = None
-    self_or_open_ai: Optional[str] = None
-    check_user: Optional[str] = None
-    check_time: Optional[str] = None
-    create_at: Optional[str] = None
-    create_by: Optional[str] = None
-    review_user: Optional[str] = None
-    review_time: Optional[str] = None
-
-
 @dataclass
 class Sample:
+    schema_version: str
     id: str
-    _dataset_id: str
     messages: List[Message]
-    choices: List[Choice] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    data_tag: Dict[str, Any] = field(default_factory=dict)
-    label: Optional[Any] = None
-    inputs: Inputs = field(default_factory=Inputs)
-    _dataset_metadata: Dict[str, Any] = field(default_factory=dict)
-    _media_meta: Dict[str, Any] = field(default_factory=dict)
-    _tokenizer_path: Optional[str] = None
-    chat_template_mode: Optional[str] = None
-    rendered_by: Optional[str] = None
-    template_source: Optional[str] = None
-    cache_suffix: Optional[str] = None
-    sampling_params: Dict[str, Any] = field(default_factory=dict)
-    generation_params: Dict[str, Any] = field(default_factory=dict)
+    task_type: Optional[Any] = None
+    options: Optional[List[str]] = None
+    references: List[Any] = field(default_factory=list)
+    label: Optional[str] = None
+    few_shot_examples: Optional[List[Any]] = None
+    golden_trajectories: Optional[List[Any]] = None
+    sandbox: Optional[Dict[str, Any]] = None    
+    metadata: Optional[Dict[str, Any]] = None
+    data_tag: Optional[Dict[str, Any]] = None
+    raw_assets: Optional[Dict[str, Any]] = None
+    tools: Optional[List[Any]] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    sampling_params: Optional[Dict[str, Any]] = None
+    generation_params: Optional[Dict[str, Any]] = None
+    eval_config: Optional[Dict[str, Any]] = None
+    unconditioned_input: Optional[Union[str, list[Any]]] = None
     predict_result: List[PredictResult] = field(default_factory=list)
     eval_result: Dict[str, Any] = field(default_factory=dict)
-    audit_info: AuditInfo = field(default_factory=AuditInfo)
 
 
 def sample_from_dict(payload: Dict[str, Any]) -> Sample:

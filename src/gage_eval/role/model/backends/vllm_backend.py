@@ -14,32 +14,38 @@ from loguru import logger
 
 from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
-from gage_eval.role.model.backends.shared_utils import (
-    build_engine_args,
-    build_sampling_params,
+from gage_eval.role.common.backend_utils import (
     build_sampling_params_base,
     check_tokenizer_conflict,
     collect_multimodal_sources,
     convert_text_like_output,
-    detect_vllm_version,
-    ensure_spawn_start_method,
     finalize_backend_result,
     graceful_loop_shutdown,
     has_multimodal_inputs,
+    load_hf_processor,
+    load_hf_tokenizer,
     load_images,
     load_multimodal_payload,
+    log_debug_mm_prompt,
     maybe_tokenize_messages,
     normalize_image_placeholders,
     normalize_messages_safe,
+    propagate_metadata_flags,
     render_prompt_with_template,
     render_with_processor,
     resolve_request_id,
-    resolve_sampling_class,
-    resolve_vllm_mm_support,
     run_coroutine_threadsafe_with_timeout,
     simple_render_messages,
 )
-from gage_eval.role.model.backends.vllm_request import normalize_request_payload
+from gage_eval.role.model.backends.vllm.vllm_request import (
+    build_engine_args,
+    build_sampling_params,
+    detect_vllm_version,
+    ensure_spawn_start_method,
+    normalize_request_payload,
+    resolve_sampling_class,
+    resolve_vllm_mm_support,
+)
 from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin, ChatTemplatePolicy
 from gage_eval.utils.chat_templates import get_fallback_template
 from gage_eval.utils.cleanup import install_signal_cleanup
@@ -136,9 +142,20 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         }
         prepared.update(ctx.chat_meta)
 
+        # Ensure metadata-based flags are propagated
+        propagate_metadata_flags(prepared, payload)
+
         check_tokenizer_conflict(prepared, self._cfg_tokenizer_path)
-        prompt = self._render_prompt(prepared)
-        prompt, inputs_val = self._maybe_tokenize_messages(prepared, prompt)
+        # NOTE: For multimodal requests, skip tokenizer-based rendering in prepare_inputs.
+        # The processor in _async_generate will handle proper vision token insertion.
+        mm_detected = has_multimodal_inputs(prepared)
+        if mm_detected:
+            # Keep raw prompt from messages; processor will format it later
+            prompt = prepared.get("prompt") or ""
+            inputs_val = prepared.get("inputs") or {}
+        else:
+            prompt = self._render_prompt(prepared)
+            prompt, inputs_val = self._maybe_tokenize_messages(prepared, prompt)
         prepared["prompt"] = prompt
         prepared["inputs"] = inputs_val
 
@@ -216,9 +233,20 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
 
         # Define an async task to be executed on the background event loop thread.
         async def _async_generate():
-            # Render the prompt, preferring the processor chat template when available.
-            rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"))
-            final_prompt_text = rendered_mm if rendered_mm else prompt
+            # Render the prompt with processor for multimodal requests.
+            # For multimodal, prepare_inputs skipped tokenizer rendering to avoid double vision tokens.
+            # So we MUST render here with processor to get proper Qwen vision tokens.
+            if mm_requested:
+                rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"), preserve_multimodal=True)
+                final_prompt_text = rendered_mm if rendered_mm else prompt
+            else:
+                # Non-multimodal: check render flags
+                pre_rendered = prepared.get("chat_template_mode") == "preprocess" or prepared.get("rendered_by") == "preprocess"
+                if pre_rendered:
+                    final_prompt_text = prompt
+                else:
+                    rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"))
+                    final_prompt_text = rendered_mm if rendered_mm else prompt
 
             # vLLM v1 (>=0.8.0) accepts a single PromptInputs dict as a positional argument; older APIs only accept
             # keyword `prompt`/`inputs`.
@@ -246,7 +274,11 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             else:
                 prompt_input = final_prompt_text
 
+            log_debug_mm_prompt(final_prompt_text, request_id)
+
             extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
+            if mm_requested and isinstance(extra_inputs, dict):
+                extra_inputs = {k: v for k, v in extra_inputs.items() if k not in {"prompt_token_ids", "input_ids"}}
             if isinstance(extra_inputs, dict):
                 # If `input_ids`/`prompt_token_ids` exist, build a dict PromptInputs payload to match llm-eval behavior.
                 needs_dict = mm_loaded or use_v1_prompt or "input_ids" in extra_inputs or "prompt_token_ids" in extra_inputs
@@ -365,13 +397,11 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             )
 
     def _load_auto_processor(self, model_id: str, trust_remote_code: bool):
-        try:  # pragma: no cover - heavy dependency
-            from transformers import AutoProcessor
-
-            return AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-        except Exception as exc:
-            logger.warning("vllm_backend: using dummy processor for {} ({})", model_id, exc)
-            return SimpleNamespace(feature_extractor=SimpleNamespace(sampling_rate=16000))
+        proc = load_hf_processor(model_id, trust_remote_code)
+        if proc:
+            return proc
+        logger.warning("vllm_backend: using dummy processor for {}", model_id)
+        return SimpleNamespace(feature_extractor=SimpleNamespace(sampling_rate=16000))
 
     def _apply_model_patches(self, cfg: Any, args: SimpleNamespace):
         """Apply lightweight compatibility patches inspired by llm-eval."""
@@ -519,18 +549,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         return limits
 
     def _init_tokenizer(self, config: Dict[str, Any]):
-        tok_name = config.get("tokenizer_name") or config.get("tokenizer_path") or config.get("model_path")
-        if not tok_name:
-            return None
-        try:  # pragma: no cover - optional dependency
-            from transformers import AutoTokenizer
-
-            return AutoTokenizer.from_pretrained(
-                tok_name, trust_remote_code=bool(config.get("trust_remote_code", True))
-            )
-        except Exception as exc:
-            logger.warning("vllm_backend failed to load tokenizer '{}': {}", tok_name, exc)
-            return None
+        return load_hf_tokenizer(config)
 
     # ------------------------------------------------------------------ #
     # Adapters, rendering, and sampling helpers                            #
@@ -578,9 +597,13 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         return simple_render_messages(messages)
 
     def _render_with_processor(
-        self, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None
+        self, messages: List[Dict[str, Any]], prompt: str, chat_template_kwargs: Optional[Dict[str, Any]] = None,
+        *, preserve_multimodal: bool = False
     ) -> Optional[str]:
-        rendered = render_with_processor(self._processor, normalize_messages_safe(messages), prompt, chat_template_kwargs)
+        # NOTE: For multimodal, don't normalize messages - processor needs raw image_url structure
+        # to insert proper vision tokens like <|vision_start|><|image_pad|><|vision_end|>
+        proc_messages = messages if preserve_multimodal else normalize_messages_safe(messages)
+        rendered = render_with_processor(self._processor, proc_messages, prompt, chat_template_kwargs, skip_normalize=preserve_multimodal)
         if rendered is not None:
             return rendered
         tok = getattr(self, "_tokenizer", None)
@@ -588,7 +611,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         if tok_apply:
             try:
                 rendered_tok = tok_apply(
-                    normalize_messages_safe(messages),
+                    proc_messages,
                     add_generation_prompt=True,
                     tokenize=False,
                     **(chat_template_kwargs or {}),

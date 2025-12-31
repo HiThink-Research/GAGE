@@ -8,21 +8,25 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED, ALL_COMPLETED
 from queue import Queue, Full
-from typing import Callable, Iterable, Iterator, List, Optional, Sequence, Tuple, Set
+from typing import Callable, Iterable, Iterator, List, Optional, Sequence, Tuple, Set, Union
 
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
-
+from gage_eval.assets.datasets.sample import (
+    Sample,
+    Message,
+    MessageContent
+)
 
 class SampleLoop:
     """Iterate over samples and invoke TaskPlanner/RoleManager per sample."""
 
     def __init__(
         self,
-        samples: Iterable[dict],
+        samples: Iterable[Union[dict, Sample]],
         *,
         shuffle: Optional[bool] = None,
         shuffle_seed: Optional[int] = None,

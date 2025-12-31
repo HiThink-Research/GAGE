@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 
 _MESSAGE_EXTRAS = ("tool_calls", "tool_use", "model_output", "name", "path")
@@ -31,6 +31,52 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
     predict_result.append(entry)
 
 
+def latest_predict_result(sample: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return the latest predict_result entry if available.
+
+    Args:
+        sample: Sample mapping that may contain predict_result.
+
+    Returns:
+        The most recent predict_result dict, or None when unavailable.
+    """
+
+    if not isinstance(sample, Mapping):
+        return None
+    predict_result = sample.get("predict_result")
+    if isinstance(predict_result, list) and predict_result:
+        latest = predict_result[-1]
+        if isinstance(latest, Mapping):
+            return dict(latest)
+    return None
+
+
+def resolve_model_output(
+    sample: Optional[Mapping[str, Any]],
+    model_output: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve model_output with predict_result and legacy fallbacks.
+
+    Args:
+        sample: Sample mapping that may contain predict_result or model_output.
+        model_output: Explicit model_output payload when provided.
+
+    Returns:
+        A dict-shaped model_output, preferring explicit payload then predict_result.
+    """
+
+    if isinstance(model_output, Mapping) and model_output:
+        return dict(model_output)
+    latest = latest_predict_result(sample)
+    if latest:
+        return latest
+    if isinstance(sample, Mapping):
+        legacy = sample.get("model_output")
+        if isinstance(legacy, Mapping) and legacy:
+            return dict(legacy)
+    return {}
+
+
 def update_eval_result(sample: Dict[str, Any], judge_output: Optional[Dict[str, Any]]) -> None:
     """Merges judge output into `sample["eval_result"]`."""
 
@@ -41,6 +87,32 @@ def update_eval_result(sample: Dict[str, Any], judge_output: Optional[Dict[str, 
         eval_result = sample["eval_result"] = {}
     for key, value in judge_output.items():
         eval_result[key] = copy.deepcopy(value)
+
+
+def resolve_judge_output(
+    sample: Optional[Mapping[str, Any]],
+    judge_output: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve judge_output with eval_result and legacy fallbacks.
+
+    Args:
+        sample: Sample mapping that may contain eval_result or judge_output.
+        judge_output: Explicit judge_output payload when provided.
+
+    Returns:
+        A dict-shaped judge_output, preferring explicit payload then eval_result.
+    """
+
+    if isinstance(judge_output, Mapping) and judge_output:
+        return dict(judge_output)
+    if isinstance(sample, Mapping):
+        eval_result = sample.get("eval_result")
+        if isinstance(eval_result, Mapping) and eval_result:
+            return dict(eval_result)
+        legacy = sample.get("judge_output")
+        if isinstance(legacy, Mapping) and legacy:
+            return dict(legacy)
+    return {}
 
 
 def snapshot_sample(sample: Dict[str, Any]) -> Dict[str, Any]:

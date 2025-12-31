@@ -7,6 +7,8 @@ from typing import Any, Iterable, Mapping, Optional
 
 from loguru import logger
 
+from gage_eval.evaluation.sample_envelope import resolve_judge_output, resolve_model_output
+
 _MISSING = object()
 
 
@@ -57,9 +59,14 @@ def extract_field(context: Any, descriptor: Optional[str], default: Any = None, 
 
     parts = descriptor.split(".")
     root_key = parts[0]
-    if root_key in roots and roots[root_key] is not None:
+    tail = ".".join(parts[1:]) if len(parts) > 1 else None
+
+    if root_key == "model_output":
+        base = resolve_model_output(sample, roots.get("model_output"))
+    elif root_key == "judge_output":
+        base = resolve_judge_output(sample, roots.get("judge_output"))
+    elif root_key in roots and roots[root_key] is not None:
         base = roots[root_key]
-        tail = ".".join(parts[1:]) if len(parts) > 1 else None
     else:
         base = sample
         tail = descriptor
@@ -153,8 +160,38 @@ def flatten_numeric_list(values: Any) -> list[float]:
     except (TypeError, ValueError):
         return []
 
+def get_text_content_of_first_predict_result(sample_dict):
+    try:
+        ret = sample_dict['predict_result'][0]['message']['content'][0]['text']
+        return ret
+    except Exception as e:
+        logger.warning(f'[warning]{e}')        
+        return None
+
+def get_sample_options(sample_dict):
+    try:
+        sample_dict.get("options")
+    except Exception as e:
+        logger.warning(f'[warning]{e}')        
+        return None
+
+def get_sample_label(sample_dict):
+    return sample_dict.get('label')
+
+def get_first_reference(sample_dict):
+    try:
+        references= sample_dict.get('references')
+        if len(references) >= 1:
+            return references[0]
+    except Exception as e:
+        logger.warning(f'[warning]{e}')
+        return None
 
 __all__ = [
+    "get_text_content_of_first_predict_result",
+    "get_sample_label",
+    "get_sample_options",
+    "get_first_reference",
     "extract_field",
     "walk_path",
     "normalize_text_advanced",
