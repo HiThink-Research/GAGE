@@ -11,7 +11,7 @@ gage-eval is an extensible evaluation framework for large language models. It is
 - Project home: [`README.md`](../../README.md) / [`README_zh.md`](../../README_zh.md)
 - Testing: [`TESTING.md`](../../TESTING.md)
 - Example configs: [`config/custom/`](../../config/custom/), [`config/builtin_templates/`](../../config/builtin_templates/), [`config/run_configs/`](../../config/run_configs/)
-- Support module: [`support_cli.md`](support_cli.md)
+- Support module (experimental, will be replaced by gage-client): [`support_cli.md`](support_cli.md)
 - Sample schema: [`sample.md`](sample.md)
 - Game Arena: [`game_arena.md`](game_arena.md)
 
@@ -524,9 +524,30 @@ Practical tips:
 - **Prefer `messages`**: most backends consume chat messages; `multi_modal_data` is a media reference table
 - **Keep reproducibility**: use `doc_to_visual` to convert local files into data urls
 
-#### 3.4.3 Roadmap
+#### 3.4.3 Protocol implementation status
 
-Sample standardization is still evolving. See [`sample.md`](sample.md) for the latest contract.
+The standardized Sample protocol is already implemented in the codebase:
+
+- The canonical envelope helpers live in `src/gage_eval/evaluation/sample_envelope.py` (`append_predict_result`, `update_eval_result`, `resolve_model_output`).
+- The dataclass representation and adapters are in `src/gage_eval/assets/datasets/sample.py`.
+- Validation is enforced by `SampleValidator` in `src/gage_eval/assets/datasets/validation.py` and is configurable via `datasets[].schema`.
+
+### 3.5 Game Arena runtime lane
+
+Game Arena is implemented as a first-class `arena` step, sharing the same Sample envelope and output flow as standard runs.
+
+Key wiring points:
+
+- **RoleAdapter**: `role_type: arena` in `role_adapters`, implemented by `src/gage_eval/role/adapters/arena.py`.
+- **Runtime objects**: environment, parser, players, scheduler, and visualizer are resolved via registries under `src/gage_eval/role/arena/`.
+- **Outputs**: the arena loop writes to `model_output` and `predict_result`, then `auto_eval` computes metrics (e.g., win rate, illegal move rate).
+
+Common configs to start with:
+
+- `config/custom/gomoku_human_vs_llm.yaml`
+- `config/custom/tictactoe_human_vs_llm.yaml`
+
+For the full spec and UI wiring, see `docs/guide/game_arena.md`.
 
 ## 4. Config details
 

@@ -9,8 +9,6 @@
 
 **English** · [中文](README_zh.md)
 
-[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
-
 [Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
 
 </div>
@@ -31,13 +29,21 @@
 
 - 📡 **Enterprise Observability**: More than logs. GAGE provides real-time metrics and visibility into each evaluation stage, making it easy to monitor runs and quickly identify performance bottlenecks or failures.
 
-## 🏗️ Architecture
+## 🧭 Design Overview
 
 > Core Design Philosophy: Everything is a Step, Everything is configurable.
 
+### Architecture Design
+
 ![End-to-end flow](docs/assets/process-arch.png)
 
+### Orchestration Design
+
 ![Step view](docs/assets/step-chain.png)
+
+### GameArena Design
+
+![GameArena overview](docs/assets/game-arena.png)
 
 ## 🚀 Quick Start
 
@@ -78,10 +84,13 @@ runs/<run_id>/
 | :--- | :--- | :--- |
 | **Basic QA** | `config/custom/piqa_qwen3.yaml` | Text multiple-choice (PIQA) |
 | **LLM Judge** | `config/custom/single_task_local_judge_qwen.yaml` | Use local LLM for grading |
-| **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (requires Docker) |
+| **Game Arena** | `config/custom/gomoku_human_vs_llm.yaml` | Gomoku Human vs LLM match |
+| **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (requires Docker, experimental) |
 
 ## 🗺️ Roadmap
 
+- 🤖 **Agent Evaluation**: Add native agent benchmarking support with tool-use traces, trajectory scoring, and safety checks.
+- 🎮 **GameArena Expansion**: Grow the game catalog and add richer rulesets, schedulers, and evaluation metrics.
 - 🛠️ **Gage-Client**: A dedicated client tool focused on streamlined configuration management, failure diagnostics, and benchmark onboarding.
 - 🌐 **Distributed Inference**: Introduce `RoleType Controller` architecture to support multi-node task sharding and load balancing for massive runs.
 - 🚀 **Benchmark Expansion**: Continuous growth of the evaluation suite across diverse domains with out-of-the-box configs and guidance.

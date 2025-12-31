@@ -12,7 +12,7 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 - 项目首页（中文）：[`README_zh.md`](../../README_zh.md)
 - 测试体系：[`TESTING.md`](../../TESTING.md)
 - 示例配置：[`config/custom/`](../../config/custom/) 、[`config/builtin_templates/`](../../config/builtin_templates/)
-- 扩展开发：[`support_cli_zh.md`](support_cli_zh.md)（support 模块指南）
+- 扩展开发：[`support_cli_zh.md`](support_cli_zh.md)（support 模块指南，实验性，后续由 gage-client 取代）
 - Sample 契约：[`sample_zh.md`](sample_zh.md)（标准化 Sample 设计）
 - Game Arena：[`game_arena_zh.md`](game_arena_zh.md)（对战评测模块）
 
@@ -546,11 +546,32 @@ flowchart LR
 - **以 `messages` 为主**：多数后端以 chat messages 作为输入；`multi_modal_data` 更适合作为“媒体引用汇总表”
 - **保持可复现**：本地图片建议通过 doc_to_visual 转成 data url，避免远端后端无法访问本地路径
 
-#### 3.4.3 近期规划
+#### 3.4.3 协议落地说明
 
-Sample 标准化仍在演进中：近期会给出新的 Sample 标准化设计与更统一的字段契约，用于覆盖更多任务类型并减少配置碎片化。
+标准化 Sample 协议已在代码中落地，核心位置如下：
 
-更多 Sample 字段约定与演进方向见：[`sample_zh.md`](sample_zh.md)
+- 样本封装与结果写回：`src/gage_eval/evaluation/sample_envelope.py`（`append_predict_result`、`update_eval_result`、`resolve_model_output`）。
+- Sample 数据类与转换：`src/gage_eval/assets/datasets/sample.py`。
+- 样本校验与模式控制：`src/gage_eval/assets/datasets/validation.py`，并通过 `datasets[].schema` 配置。
+
+更多 Sample 字段约定与使用说明见：[`sample_zh.md`](sample_zh.md)
+
+### 3.5 Game Arena 运行链路
+
+Game Arena 作为一等公民的 `arena` step 接入，沿用统一 Sample 契约与产物链路。
+
+关键落点：
+
+- **RoleAdapter**：`role_type: arena`，实现位于 `src/gage_eval/role/adapters/arena.py`。
+- **运行时组件**：environment、parser、players、scheduler、visualizer 由 `src/gage_eval/role/arena/` 下的 registry 解析。
+- **产物输出**：对局结果写入 `model_output` 与 `predict_result`，随后由 `auto_eval` 汇总胜率与非法步等指标。
+
+起步示例配置：
+
+- `config/custom/gomoku_human_vs_llm.yaml`
+- `config/custom/tictactoe_human_vs_llm.yaml`
+
+完整规范与交互说明见 `docs/guide/game_arena_zh.md`。
 
 ## 4. 配置详解
 
