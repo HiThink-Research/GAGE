@@ -201,7 +201,7 @@ runs/
 scripts/oneclick/.generated/
 scripts/oneclick/.env.example
 .venv311/
-docs/
+# docs/
 # AGENTS.md
 
 # local datasets and models (local assets only)
