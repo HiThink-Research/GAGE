@@ -23,7 +23,7 @@ def test_missing_field_ignore_returns_default():
 
 def test_missing_field_warn_logs(capsys):
     ctx = _ctx("warn")
-    # WARN policy does not raise; it returns the default value.
+    # warn 策略不抛错，返回默认值
     assert extract_field(ctx, "sample.not_exist", default=None) is None
 
 

@@ -73,7 +73,7 @@ def _run_pipeline(config_path: Path, extra_env: dict, output_dir: Path):
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     if result.returncode != 0:
         raise AssertionError(f"run.py failed: {result.stderr}")
-    # NOTE: run.py creates a run_id subdirectory under GAGE_EVAL_SAVE_DIR.
+    # run.py 会在 GAGE_EVAL_SAVE_DIR 下创建 run_id 子目录
     run_dirs = list(output_dir.iterdir())
     assert run_dirs, f"no run_dir created under {output_dir}"
     summary_path = run_dirs[0] / "summary.json"

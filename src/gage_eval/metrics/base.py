@@ -1,4 +1,4 @@
-"""Define core metric abstractions: context, results, and base classes."""
+"""Metric核心抽象：上下文、结果与基类定义。"""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from loguru import logger
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.metrics.utils import extract_field, normalize_text_advanced, ensure_list_of_strings, levenshtein_distance
 
-if TYPE_CHECKING:  # Avoid circular imports.
+if TYPE_CHECKING:  # 避免循环导入
     from gage_eval.observability.trace import ObservabilityTrace
 
 
 @dataclass(frozen=True)
 class MetricContext:
-    """Carry runtime context passed into metric implementations."""
+    """传入 Metric 的运行期上下文。"""
 
     sample_id: str
     sample: Mapping[str, Any]
@@ -25,14 +25,14 @@ class MetricContext:
     trace: "ObservabilityTrace"
 
     def get(self, descriptor: Optional[str], default: Any = None) -> Any:
-        """Return a nested field value using the framework's descriptor syntax."""
+        """统一字段获取接口，支持 sample/model_output/judge_output 与列表索引。"""
 
         return extract_field(self, descriptor, default=default)
 
 
 @dataclass(frozen=True)
 class MetricResult:
-    """Represent the per-sample metric output."""
+    """每个样本的 Metric 输出。"""
 
     sample_id: str
     values: Dict[str, float]
@@ -50,7 +50,7 @@ class MetricResult:
 
 @dataclass(frozen=True)
 class AggregatedMetric:
-    """Represent an aggregated metric result across samples."""
+    """聚合后的 Metric 结果。"""
 
     metric_id: str
     aggregation: str
@@ -71,7 +71,7 @@ class AggregatedMetric:
 
 
 class BaseMetric:
-    """Define the abstract base class for all metrics."""
+    """所有 Metric 的抽象基类。"""
 
     def __init__(self, spec: MetricSpec) -> None:
         self.spec = spec
@@ -80,10 +80,10 @@ class BaseMetric:
         logger.debug("Metric '{}' initialized", spec.metric_id)
 
     def setup(self) -> None:
-        """Run optional initialization (useful for loading heavy resources)."""
+        """可选的初始化钩子，适合加载模型等重资源。"""
 
     def teardown(self) -> None:
-        """Run optional cleanup for metric resources."""
+        """可选的清理钩子。"""
         logger.debug("Metric '{}' teardown invoked", self.spec.metric_id)
 
     def compute(self, context: MetricContext) -> MetricResult:  # pragma: no cover
@@ -91,7 +91,7 @@ class BaseMetric:
 
 
 class SimpleMetric(BaseMetric):
-    """Provide a convenience base class for single-float metrics."""
+    """仅返回单一浮点值的 Metric 便捷基类。"""
 
     value_key: str = "score"
 
@@ -99,7 +99,7 @@ class SimpleMetric(BaseMetric):
         raise NotImplementedError
 
     def compute_metadata(self, context: MetricContext) -> Optional[Dict[str, Any]]:
-        """Return optional metadata; defaults to None."""
+        """可选的元数据钩子，默认无附加信息。"""
 
         return None
 
@@ -123,7 +123,7 @@ class SimpleMetric(BaseMetric):
 
 
 class ComparisonMetric(SimpleMetric):
-    """Provide a convenience base class for prediction-vs-reference comparisons."""
+    """针对预测-参考对比场景的便捷基类，支持路径配置。"""
 
     default_prediction_field: str = "model_output.answer"
     default_reference_field: str = "sample.label"
@@ -156,7 +156,7 @@ class ComparisonMetric(SimpleMetric):
 
 
 class SequenceDistanceMetric(ComparisonMetric):
-    """Compute a similarity score using a pluggable distance function (defaults to Levenshtein)."""
+    """基于可插拔距离函数的相似度 Metric，默认使用 Levenshtein。"""
 
     distance_fn: Callable[[str, str], int] = staticmethod(levenshtein_distance)
 
@@ -175,7 +175,7 @@ class SequenceDistanceMetric(ComparisonMetric):
             score = max(1.0 - distance / denom, 0.0)
         elif strategy == "raw":
             score = float(distance)
-        else:  # Default: ANLS-style normalization.
+        else:  # anls 默认
             denom = max(len(prediction), len(reference)) or 1
             score = max(1.0 - distance / denom, 0.0)
         return score, strategy
@@ -192,7 +192,7 @@ class SequenceDistanceMetric(ComparisonMetric):
 
 
 class MultiReferenceTextMetric(ComparisonMetric):
-    """Score a prediction against multiple text references and keep the best match."""
+    """针对多参考文本匹配的基类，取最佳得分并记录参考信息。"""
 
     default_reference_field = "sample.references"
 
@@ -251,7 +251,7 @@ class MultiReferenceTextMetric(ComparisonMetric):
 
 
 class NumericThresholdMetric(ComparisonMetric):
-    """Compare numeric predictions with tolerance/threshold modes."""
+    """带容差/阈值的数值匹配基类，支持多种比较模式。"""
 
     def _to_number(self, value: Any) -> Optional[float]:
         try:

@@ -14,6 +14,6 @@ def test_metric_context_get_uses_unified_extractor():
 
     assert ctx.get("sample.nested.list.1") == 20
     assert ctx.get("model_output.answer.value") == "B"
-    # fall back to the sample root
+    # fallback到 sample 根
     assert ctx.get("nested.list.0") == 10
     assert ctx.get("missing.path", default="fallback") == "fallback"

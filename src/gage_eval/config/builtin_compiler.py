@@ -61,8 +61,7 @@ def _substitute(
                 task_ids=task_ids,
                 path_stack=path_stack,
             )
-        # NOTE: Partial interpolation keeps the string type and replaces placeholders
-        # with `str(value)`.
+        # 部分插值：保持字符串类型，将占位符替换为 str(value)
         def _replace(m: re.Match[str]) -> str:
             placeholder = m.group(1)
             value = _resolve_runtime_path(

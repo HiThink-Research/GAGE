@@ -175,8 +175,7 @@ def _expand_env(value):
             return value
         var, default = match.group(1), match.group(2)
         resolved = os.getenv(var, default if default is not None else "")
-        # NOTE: Attempt to cast pure numeric strings to int/float to avoid type
-        # errors in downstream comparisons (for example: max_samples).
+        # 尝试把纯数字转换为 int/float，避免 max_samples 比较时报类型错误
         if isinstance(resolved, str) and resolved.strip():
             try:
                 return int(resolved)
@@ -195,7 +194,7 @@ class _LiteralDumper(yaml.SafeDumper):
     Anchors (&id001/*id001) are disabled to keep generated configs simple.
     """
 
-    # NOTE: Disable YAML anchors to avoid &id001/*id001 in generated configs.
+    # 禁用 YAML 引用锚点，避免在 RunConfig/PipelineConfig 中出现 &id001/*id001。
     def ignore_aliases(self, data):
         return True
 
@@ -248,18 +247,18 @@ def _inject_runtime_hints(yaml_text: str, run_cfg: dict) -> str:
     backend_ids = list((runtime.get("backends") or {}).keys())
     task_ids = list((runtime.get("tasks") or {}).keys())
     if dataset_ids:
-        params.append(f"runtime.datasets.{dataset_ids[0]}: {{...}}  # override the whole dataset block")
+        params.append(f"runtime.datasets.{dataset_ids[0]}: {{...}}  # 可整体替换为本地数据集配置")
     if backend_ids:
-        params.append(f"runtime.backends.{backend_ids[0]}: {{...}}  # switch endpoint/model/params")
+        params.append(f"runtime.backends.{backend_ids[0]}: {{...}}  # 切换模型服务/参数")
     if task_ids:
-        params.append(f"runtime.tasks.{task_ids[0]}.max_samples: 50  # limit samples for this run")
+        params.append(f"runtime.tasks.{task_ids[0]}.max_samples: 50  # 控制本次运行样本数")
     if not params:
         return yaml_text
     lines = yaml_text.splitlines()
     output: list[str] = []
     for line in lines:
         if line.startswith("runtime:"):
-            output.append("# runtime override examples (edit keys below as needed):")
+            output.append("# runtime 覆盖示例（按需修改下方键值）：")
             for hint in params:
                 output.append(f"#   {hint}")
         output.append(line)
@@ -394,7 +393,7 @@ def _apply_runtime_overrides(definition: dict, runtime_params: dict) -> dict:
         if not isinstance(overrides, dict) or not overrides:
             continue
 
-        # NOTE: Backward compatibility: runtime.datasets.<id>.hub_limit only overrides hub_params.limit.
+        # 兼容老语义：runtime.datasets.<id>.hub_limit 仍然只覆盖 limit。
         hub_limit = None
         if isinstance(overrides.get("hub_params"), dict):
             hub_limit = overrides["hub_params"].get("limit")
@@ -406,7 +405,7 @@ def _apply_runtime_overrides(definition: dict, runtime_params: dict) -> dict:
             ds["hub_params"] = hub_params
             ds.pop("hub_args", None)
 
-        # NOTE: New semantics: allow a full dataset config object in RunConfig and merge by keys.
+        # 新语义：允许在 RunConfig 中提供完整的数据集配置对象，按键合并到 dataset 节点下。
         for key, value in overrides.items():
             if key in ("hub_params", "hub_args", "params"):
                 base = ds.get(key) or {}
@@ -417,7 +416,7 @@ def _apply_runtime_overrides(definition: dict, runtime_params: dict) -> dict:
                 else:
                     ds[key] = copy.deepcopy(value)
             elif key in ("hub_limit",):
-                # hub_limit -> hub_params.limit mapping handled above; skip here.
+                # 已在上方处理 hub_limit -> hub_params.limit 映射，这里跳过。
                 continue
             else:
                 if value is not None:
@@ -432,13 +431,13 @@ def _apply_runtime_overrides(definition: dict, runtime_params: dict) -> dict:
         if not isinstance(overrides, dict) or not overrides:
             continue
 
-        # NOTE: Allow overriding backend.type.
+        # 支持覆盖 backend.type
         if "type" in overrides and overrides["type"] is not None:
             backend["type"] = overrides["type"]
 
         cfg = backend.setdefault("config", {})
 
-        # NOTE: New semantics: if runtime.backends.<id> provides a config object, deep-merge it into backend.config.
+        # 新语义：如果 runtime.backends.<id> 下提供了 config 对象，则对 config 做深度合并。
         override_cfg = overrides.get("config") or {}
         if isinstance(override_cfg, dict):
             for key, value in override_cfg.items():
@@ -449,7 +448,7 @@ def _apply_runtime_overrides(definition: dict, runtime_params: dict) -> dict:
                 else:
                     cfg[key] = copy.deepcopy(value)
 
-        # NOTE: Backward compatibility: still support base_url/model/async_max_concurrency/pool_size at top level.
+        # 兼容老语义：仍然支持在 overrides 顶层直接写 base_url/model/async_max_concurrency/pool_size。
         for key in ("base_url", "model", "async_max_concurrency"):
             if key in overrides and overrides[key] is not None:
                 cfg[key] = overrides[key]
@@ -646,7 +645,7 @@ def _summarize_template_comment(template: dict) -> str:
     definition = template.get("definition") or {}
     lines = [
         "# =================================================================",
-        "# Read-only template snapshot (editing this block does not affect the template definition)",
+        "# 只读模板快照（修改本段不影响模板定义）",
         f"# Template: {meta.get('name', '<unknown>')} version={meta.get('version', '<unknown>')} monolithic={meta.get('monolithic', False)}",
         "# -----------------------------------------------------------------",
     ]
@@ -682,9 +681,7 @@ def _summarize_template_comment(template: dict) -> str:
             if doc_to_visual:
                 lines.append(f"#     doc_to_visual: {doc_to_visual}")
             if not hint_added:
-                lines.append(
-                    "#     Tip: override runtime.datasets.<id> to set hub_params.limit/local_path, etc. for local test data."
-                )
+                lines.append("#     提示：可在 runtime.datasets.<id> 覆盖 hub_params.limit/local_path 等路径配置以指向本地测试集。")
                 hint_added = True
     backends = definition.get("backends") or []
     if backends:
@@ -716,7 +713,7 @@ def _summarize_template_comment(template: dict) -> str:
             lines.append(f"#     adapter_id: {step.get('adapter_id') or '<auto>'}")
     prompts = definition.get("prompts") or []
     if prompts:
-        # Build a prompt_id -> adapter_id list mapping.
+        # 建立 prompt_id -> 使用它的 adapter_id 列表映射。
         prompt_usage: dict[str, list[str]] = {}
         for adapter_id, role in roles.items():
             prompt_id = role.get("prompt_id")
@@ -724,10 +721,10 @@ def _summarize_template_comment(template: dict) -> str:
                 continue
             prompt_usage.setdefault(str(prompt_id), []).append(str(adapter_id))
 
-        lines.append("# Prompts (read-only snapshot; edit via PipelineConfig):")
+        lines.append("# Prompts（只读配置，修改请通过 PipelineConfig）：")
         lines.append(
-            "#   Tip: Prompts are part of evaluation logic. To edit them, use "
-            "run.py --init <name> --init-mode pipeline-config to generate a PipelineConfig, then edit the prompts section."
+            "#   提示：Prompts 属于评测逻辑的一部分，如需调整，请使用 "
+            "run.py --init <name> --init-mode pipeline-config 生成 PipelineConfig 后在 prompts 段编辑。"
         )
         for prompt in prompts:
             prompt_id = prompt.get("prompt_id") or "<unknown>"
@@ -872,11 +869,7 @@ def _ensure_default_concurrency(args: argparse.Namespace) -> None:
 
 
 def _preflight_checks() -> None:
-    """Runs best-effort environment health checks.
-
-    The goal is to reduce avoidable startup failures caused by dirty GPU memory
-    or stale background processes.
-    """
+    """Best-effort环境健康度检查，避免脏显存/残留进程导致启动失败。"""
 
     try:
         import pynvml  # type: ignore
@@ -897,7 +890,7 @@ def _preflight_checks() -> None:
                     )
         pynvml.nvmlShutdown()
     except Exception:
-        # NOTE: Ignore if NVML is unavailable.
+        # 如果没有 NVML，则忽略
         pass
 
     try:
@@ -953,11 +946,7 @@ def _install_signal_handlers():
 
 
 def _detect_hardware_profile() -> Optional[str]:
-    """Detects a best-effort hardware profile.
-
-    Returns:
-        One of: `'h100'`, `'apple'`, or `None` if no known profile is detected.
-    """
+    """Best-effort硬件画像，返回 'h100' / 'apple' / None。"""
 
     try:
         import subprocess
@@ -982,11 +971,7 @@ def _detect_hardware_profile() -> Optional[str]:
 
 
 def _apply_hardware_profile_env(profile: Optional[str]) -> None:
-    """Applies conservative runtime defaults based on hardware profile.
-
-    The environment is only modified when the user did not explicitly set the
-    corresponding knobs (for example: `GAGE_EVAL_THREADS`).
-    """
+    """基于硬件画像注入温和的并发/性能建议（仅在未显式指定时）。"""
 
     if profile == "h100":
         if not os.environ.get("GAGE_EVAL_THREADS"):
@@ -1104,8 +1089,7 @@ def main() -> None:
         builtin_name = args.builtin_name
         config_payload = load_config(Path(args.config).expanduser())
         if not builtin_name and args.distill_output:
-            # NOTE: If distill_output is provided without builtin_name, use the last
-            # path component as the template name.
+            # 若指定了 distill 输出目录但未提供名称，默认使用输出目录末级作为模板名。
             builtin_name = Path(args.distill_output).name
         try:
             analysis = analyze_tasks_for_distill(config_payload, force_merge=args.force_merge)

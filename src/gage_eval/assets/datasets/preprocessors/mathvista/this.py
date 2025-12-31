@@ -146,6 +146,8 @@ def refine_ocr(ocr):
     return ocr
 
 def create_one_query(problem, examples, shot_num, shot_type, use_caption, use_ocr):
+
+
     ### [1] Demo prompt
     if shot_num == 0:
         demo_prompt = ""

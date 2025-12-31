@@ -84,6 +84,5 @@ class ObservabilityTrace:
 
     @staticmethod
     def _generate_run_id() -> str:
-        # NOTE: Use a human-friendly timestamp (MMddHHMMSS) while keeping second-level
-        # precision to reduce collisions.
+        # 使用时间戳形式（MMddHHMMSS），便于人工识别；仍保留秒级精度避免冲突
         return datetime.now().strftime("%m%d%H%M%S")

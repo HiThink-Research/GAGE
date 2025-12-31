@@ -18,7 +18,7 @@ _CHOICE_ALPHABET: Tuple[str, ...] = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
 class MathVistaPreprocessor(BasePreprocessor):
-    """Preprocess MathVista records into a standardized multimodal Sample."""
+    """MathVista 多模态预处理器：题干 + 图片 + 可选多选项."""
 
     def to_sample(
         self,
@@ -30,7 +30,7 @@ class MathVistaPreprocessor(BasePreprocessor):
         pre_encode_images: bool = True,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        # STEP 1: Resolve core fields and dataset context.
+        # step1: 确定题干/答案/内容字段，并补齐路径上下文。
         sample = dict(record)
         question = sample.get("question")
         if question is None:
@@ -38,7 +38,7 @@ class MathVistaPreprocessor(BasePreprocessor):
         choices = normalize_options(sample.get("choices") or [])
         answer = sample.get("answer")
         if answer in (None, ""):
-            # NOTE: Fall back to common answer fields used by different dataset variants.
+            # 回退常见字段：label/metadata.answer/final_answer/answer_text
             answer = (
                 sample.get("label")
                 or (sample.get("metadata") or {}).get("answer")
@@ -47,11 +47,11 @@ class MathVistaPreprocessor(BasePreprocessor):
             )
             if answer is not None:
                 sample["answer"] = answer
-        # Try to infer `answer_type` when missing (useful for numeric QA).
+        # answer_type 尝试回填
         answer_type = sample.get("answer_type") or (sample.get("metadata") or {}).get("answer_type")
         if answer_type is None and answer not in (None, ""):
             try:
-                # Best-effort heuristic: treat integers as a special case.
+                # 简单推断类型
                 float_val = float(str(answer).strip())
                 answer_type = "integer" if float_val.is_integer() else "float"
             except Exception:
@@ -62,18 +62,18 @@ class MathVistaPreprocessor(BasePreprocessor):
         if content_root:
             sample.setdefault("_dataset_metadata", {})["path"] = content_root
 
-        # STEP 2: Resolve image fragments (prefer PIL -> data URL).
+        # step2: 图片处理，优先 PIL -> data URL
         img_frag = None
         pil_obj = sample.get("decoded_image")
         if pil_obj is not None:
             try:
-                # Encode the PIL object as a data URL so HTTP backends can consume it.
+                # step2.1: PIL 对象编码为 data URL，方便 HTTP 后端直接消费
                 if pre_encode_images:
                     url = encode_pil_to_data_url(pil_obj)
                     img_frag = {"type": "image_url", "image_url": {"url": url}}
                     sample.setdefault("metadata", {})["image_url"] = url
                 else:
-                    # If there is no on-disk path, we cannot defer encoding safely.
+                    # 无路径时无法延后，仍回退为 data URL
                     url = encode_pil_to_data_url(pil_obj)
                     img_frag = {"type": "image_url", "image_url": {"url": url}}
                     sample.setdefault("metadata", {})["image_url"] = url
@@ -81,8 +81,7 @@ class MathVistaPreprocessor(BasePreprocessor):
                 if strict_image:
                     raise
         if img_frag is None and sample.get("image"):
-            # Fallback: local path -> data URL (supports relative paths). If `pre_encode_images=False`,
-            # keep the resolved path and let the backend decide whether to embed/encode.
+            # step2.2: 回退图片路径 -> data URL（支持相对路径）；如设置 pre_encode_images=False，则仅解析路径
             if pre_encode_images:
                 embed_local_image_as_data_url(sample, image_field="image", content_root=content_root, strict=False)
                 if isinstance(sample.get("image"), str):
@@ -99,13 +98,16 @@ class MathVistaPreprocessor(BasePreprocessor):
             meta["content_root"] = content_root
             sample["metadata"] = meta
 
-        # STEP 3: Build `messages` (text + optional image fragments).
+        # step3: 消息拼装（文本 + 图像片段）
+        # step3.1: 基础文本片段
         content: List[Dict[str, Any]] = [{"type": "text", "text": str(question).strip()}]
+        # step3.2: 追加图像片段（若存在）
         if img_frag:
             content.append(img_frag)
-            # Ensure the prompt contains the `<image>` placeholder for multimodal backends.
+            # 保证 prompt 中包含 <image> 占位，避免后端多模态校验失败
             question_with_image = f"<image>\\n{question}" if "<image>" not in str(question) else str(question)
             sample["prompt"] = sample.get("prompt") or question_with_image
+        # step3.3: 组织 system/user 消息
         messages: List[Dict[str, Any]] = []
         if system_prompt:
             messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt.strip()}]})
@@ -113,7 +115,7 @@ class MathVistaPreprocessor(BasePreprocessor):
         sample["messages"] = messages
         sample["prompt"] = sample.get("prompt") or str(question)
 
-        # STEP 4: Normalize multiple-choice options (if present).
+        # step4: 选项/答案归一化
         if choices:
             if len(choices) > len(_CHOICE_ALPHABET):
                 raise ValueError("MathVista multiple-choice supports up to 26 options")
@@ -130,9 +132,11 @@ class MathVistaPreprocessor(BasePreprocessor):
             meta["option_map"] = {l: opt for l, opt in option_pairs}
             meta["correct_choice"] = resolve_correct_choice(answer, option_pairs, answer_index_base=0)
 
-        # STEP 5: Sync multimodal inputs and set render flags.
+        # step5: inputs/多模态对齐 + 标记
         sample["inputs"] = sample.get("inputs") or {"prompt": sample["prompt"]}
+        # step5.1: merge_multimodal_inputs 归并消息/inputs 的媒体引用并去重
         merge_multimodal_inputs(sample)
+        # step5.2: set_render_flags 统一设置渲染标记/缓存后缀
         set_render_flags(
             sample,
             mode="preprocess",
@@ -142,7 +146,7 @@ class MathVistaPreprocessor(BasePreprocessor):
             overwrite=False,
         )
 
-        # STEP 6: Optionally tokenize the prompt (produces `prompt_token_ids` for token-based backends).
+        # step6: 可选分词（对齐 llm-eval 行为：生成 prompt_token_ids，便于后端直接走 token 输入）
         tokenize_prompt = kwargs.get("tokenize_prompt") or self.kwargs.get("tokenize_prompt")
         tokenizer = kwargs.get("tokenizer") or self.kwargs.get("tokenizer")
         strict_tokenize = kwargs.get("strict_tokenize") or self.kwargs.get("strict_tokenize")
@@ -156,7 +160,7 @@ class MathVistaPreprocessor(BasePreprocessor):
                     sample["inputs"]["prompt"] = sample["prompt"]
                 if token_ids is not None:
                     sample["inputs"]["prompt_token_ids"] = token_ids
-                # Mark that a model chat template has been applied, so backends can skip re-rendering.
+                # 标记使用了模型模板，便于后端跳过二次渲染
                 set_render_flags(
                     sample,
                     mode="preprocess",
@@ -184,7 +188,7 @@ __all__ = ["MathVistaPreprocessor"]
 
 
 class MathVistaStructOnlyPreprocessor(MathVistaPreprocessor):
-    """Preprocess MathVista into structured fields only (no prompt rendering)."""
+    """MathVista 结构化预处理（不拼接 Prompt，保留 inputs/multimodal/metadata）。"""
 
     def to_sample(
         self,
@@ -204,7 +208,7 @@ class MathVistaStructOnlyPreprocessor(MathVistaPreprocessor):
             pre_encode_images=pre_encode_images,
             **kwargs,
         )
-        # Keep multimodal/choices/metadata only. Remove rendered outputs for external prompt rendering.
+        # 仅保留多模态/choices/metadata，移除渲染产物，让外置 Prompt 渲染
         sample.pop("prompt", None)
         sample["messages"] = []
         sample["inputs"] = sample.get("inputs") or {}

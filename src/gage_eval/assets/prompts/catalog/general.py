@@ -42,13 +42,13 @@ def register_general_prompts() -> None:
 
     _register_prompt(
         "dut/general@v1",
-        desc="General DUT text-generation prompt",
+        desc="通用 DUT 文本生成 Prompt",
         template=dut_template,
         tags=("dut", "general"),
     )
     _register_prompt(
         "judge/general@v1",
-        desc="General judge scoring prompt",
+        desc="通用 Judge 评分 Prompt",
         template=judge_template,
         tags=("judge", "general"),
     )

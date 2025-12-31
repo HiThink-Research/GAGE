@@ -21,11 +21,11 @@ class SwebenchResolveRateMetric(SimpleMetric):
     value_key = "resolve_rate"
 
     def compute_value(self, context: MetricContext) -> Tuple[float, Dict[str, Any]]:
-        resolved = bool(context.get("judge_output.resolved", False))
-        failure_reason = context.get("judge_output.failure_reason")
+        judge_output = context.judge_output or {}
+        resolved = bool(judge_output.get("resolved"))
         return (1.0 if resolved else 0.0), {
             "resolved": resolved,
-            "failure_reason": failure_reason,
+            "failure_reason": judge_output.get("failure_reason"),
         }
 
 
@@ -42,8 +42,9 @@ class SwebenchFailureReasonMetric(SimpleMetric):
     value_key = "count"
 
     def compute_value(self, context: MetricContext) -> Tuple[float, Dict[str, Any]]:
-        resolved = bool(context.get("judge_output.resolved", False))
-        reason = context.get("judge_output.failure_reason")
+        judge_output = context.judge_output or {}
+        resolved = bool(judge_output.get("resolved"))
+        reason = judge_output.get("failure_reason")
         if resolved:
             return 0.0, {"failure_reason": None, "resolved": True}
         if not reason:

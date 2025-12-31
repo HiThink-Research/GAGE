@@ -11,7 +11,7 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 @registry.asset(
     "roles",
     "toolchain",
-    desc="Unified role adapter for external tools/MCP",
+    desc="封装外部工具/MCP 的统一角色",
     tags=("role", "tool"),
     role_type="toolchain",
 )

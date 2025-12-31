@@ -26,8 +26,7 @@ class DocToVisualWithMessagesTests(unittest.TestCase):
         )
         dm.register_source(source)
         sample = next(dm.iter_samples("d1"))
-        # NOTE: DataManager only passes through here; it does not auto-construct
-        # inputs/multi_modal_data.
+        # DataManager 仅透传，不再自动构造 inputs/multi_modal_data
         self.assertNotIn("inputs", sample)
         self.assertEqual(sample["messages"][0]["content"][0]["image_url"]["url"], "img.png")
 

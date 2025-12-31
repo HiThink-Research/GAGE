@@ -93,9 +93,8 @@ class ModelSpec:
 class MetricSpec:
     """Defines a metric implementation and aggregation policy.
 
-    `implementation` can be either a registry name (for example: `exact_match`)
-    or a `module.submodule:ClassName` import path, which enables reusing a
-    custom Metric implementation without adding a new registry entry.
+    ``implementation`` 可以是注册表名称（如 ``exact_match``），也可以是
+    ``module.submodule:ClassName`` 路径，便于直接复用自定义 Metric。
     """
 
     metric_id: str
@@ -192,13 +191,11 @@ class PipelineConfig:
         deeper checks belong to :class:`gage_eval.config.registry.ConfigRegistry`.
         """
 
-        # STEP 1: Normalize and validate the raw payload against the schema.
         try:
             normalized = normalize_pipeline_payload(payload)
         except SchemaValidationError as exc:
             raise ValueError(str(exc)) from exc
 
-        # STEP 2: Parse the pipeline root blocks (metadata/builtin/custom).
         metadata = normalized.get("metadata", {})
         builtin = None
         if normalized.get("builtin"):
@@ -221,7 +218,6 @@ class PipelineConfig:
                 )
             custom = CustomPipelineSpec(steps=tuple(steps))
 
-        # STEP 3: Parse asset blocks (models/datasets/backends/prompts/adapters/metrics/tasks).
         models = tuple(
             ModelSpec(
                 model_id=item.get("model_id"),
@@ -312,7 +308,6 @@ class PipelineConfig:
         summary_generators = tuple(_normalize_summary_generator_entry(entry) for entry in normalized.get("summary_generators", []))
         observability = normalized.get("observability") or {}
 
-        # STEP 4: Materialize the immutable dataclass config.
         return PipelineConfig(
             metadata=metadata,
             builtin=builtin,
@@ -344,7 +339,7 @@ def _normalize_metric_entry(entry: Any) -> Dict[str, Any]:
     """Parse metric entries supporting string/KV shortcuts or full dict."""
 
     if isinstance(entry, str):
-        # Function-style sugar: exact_match(a=1,b=2)
+        # 函数式字符串：exact_match(a=1,b=2)
         parsed = _parse_fnstyle_metric(entry)
         if parsed:
             return parsed
@@ -356,7 +351,7 @@ def _normalize_metric_entry(entry: Any) -> Dict[str, Any]:
         }
 
     if isinstance(entry, dict):
-        # KV sugar: {exact_match: {case_sensitive: true}}
+        # KV 简写： {exact_match: {case_sensitive: true}}
         if len(entry) == 1 and "metric_id" not in entry and "implementation" not in entry:
             metric_id, payload = next(iter(entry.items()))
             params: Dict[str, Any] = {}
@@ -398,7 +393,7 @@ def _coerce_value(raw: str) -> Any:
         return float(raw)
     except ValueError:
         pass
-    # Strip paired quotes.
+    # 去掉成对引号
     if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
         return raw[1:-1]
     return raw

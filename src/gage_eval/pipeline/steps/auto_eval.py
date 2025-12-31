@@ -14,7 +14,7 @@ from gage_eval.observability.logger import ObservableLogger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.metrics import MetricRegistry, MetricInstance, MetricContext
-from gage_eval.evaluation.sample_envelope import resolve_judge_output, resolve_model_output, snapshot_sample
+from gage_eval.evaluation.sample_envelope import snapshot_sample
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 
@@ -30,7 +30,7 @@ def _auto_eval_sample_id(*args, **kwargs) -> Optional[str]:
 @registry.asset(
     "pipeline_steps",
     "auto_eval",
-    desc="Pipeline step that computes automatic metrics",
+    desc="自动指标计算阶段",
     tags=("metrics",),
     step_kind="sample",
 )
@@ -68,8 +68,6 @@ class AutoEvalStep(SampleStep):
         trace: ObservabilityTrace,
         task_id: Optional[str] = None,
     ) -> None:
-        resolved_model_output = resolve_model_output(sample, model_output)
-        resolved_judge_output = resolve_judge_output(sample, judge_output)
         per_metric_results: Dict[str, Dict] = {}
         logger = self._logger
         worker_count = self._determine_worker_count()
@@ -80,8 +78,8 @@ class AutoEvalStep(SampleStep):
                         instance,
                         sample_id,
                         sample,
-                        resolved_model_output,
-                        resolved_judge_output,
+                        model_output,
+                        judge_output,
                         trace,
                     )
                     per_metric_results[metric_id] = result_dict
@@ -91,21 +89,21 @@ class AutoEvalStep(SampleStep):
                         worker_count,
                         sample_id,
                         sample,
-                        resolved_model_output,
-                        resolved_judge_output,
+                        model_output,
+                        judge_output,
                         trace,
                     )
                 )
         record = {
             "task_id": task_id,
             "sample": snapshot_sample(sample),
-            "model_output": resolved_model_output,
-            "judge_output": resolved_judge_output,
+            "model_output": model_output,
+            "judge_output": judge_output,
             "metrics": per_metric_results,
         }
         cache_id = self._compose_cache_id(task_id, sample_id)
         if self._cache:
-            namespace = self._compose_cache_namespace(task_id, resolved_judge_output)
+            namespace = self._compose_cache_namespace(task_id, judge_output)
             self._cache.write_sample(cache_id, record, namespace=namespace)
             logger.debug(
                 "auto_eval",

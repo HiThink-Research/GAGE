@@ -46,7 +46,6 @@ datasets:
     loader: hf_hub
     params:
       streaming: true
-      bundle: mathvista      
       preprocess: mathvista_chat_preprocessor
       preprocess_kwargs:
         use_caption: true
@@ -89,7 +88,7 @@ metrics:
 tasks:
   - task_id: mathvista_testmini_eval
     dataset_id: mathvista_testmini
-    max_samples: 10
+    max_samples: 100
     reporting:
       sinks:
         - type: console

@@ -10,7 +10,7 @@ def test_simple_preprocessor_legacy_prompt_to_standard_sample():
         "prompt": "legacy prompt",
     }
     inputs = pre.transform(legacy)
-    # transform returns inputs while mutating the original dict into a Sample-like structure.
+    # transform 返回 inputs，原字典被规范化成 Sample 结构
     assert inputs["prompt"] == "legacy prompt"
     assert legacy["messages"][0]["content"][0]["text"] == "legacy question"
     assert legacy["choices"][0]["message"]["content"][0]["text"] == "A. blue"

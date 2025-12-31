@@ -68,7 +68,7 @@ def convert_llmeval_record(
         sample["template_source"] = "llm-eval"
         sample["cache_suffix"] = "-converted"
 
-    # Audit info aggregation.
+    # audit info集中
     audit = {}
     for key in _AUDIT_KEYS:
         if key in sample:
@@ -76,7 +76,7 @@ def convert_llmeval_record(
     if audit:
         sample["audit_info"] = audit
 
-    # Path resolution and multimodal merging.
+    # 路径/多模态合并
     if content_field:
         fragments = collect_content_fragments(sample, content_field=content_field, content_root=content_root)
         if fragments:

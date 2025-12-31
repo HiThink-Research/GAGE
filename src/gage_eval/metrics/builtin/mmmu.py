@@ -22,17 +22,15 @@ def _match_prediction(prediction: str, target: str) -> bool:
     if not tgt:
         return False
 
-    # NOTE: Prefer extracting the final single-letter choice to avoid false
-    # positives from strings like "Option C:".
+    # 优先提取模型最后输出的单字母选项，避免“Option C:”等描述被误判为命中
     if _is_choice_letter(tgt):
         extracted = _extract_choice_letter(pred)
         if extracted:
             return extracted.upper() == tgt.upper()
-        # If no explicit choice letter is found, avoid substring matching and
-        # fall back to strict comparison.
+        # 若未提取到明确字母，则不要用子串匹配，直接按严格比较
         return pred.upper() == tgt.upper()
 
-    # NOTE: For non-letter targets, keep the relaxed matching behavior.
+    # 对非字母标签，保留宽松匹配（原有逻辑）
     if pred == tgt:
         return True
     if tgt in pred:
@@ -43,12 +41,12 @@ def _match_prediction(prediction: str, target: str) -> bool:
 
 
 def _extract_choice_letter(prediction: str) -> Optional[str]:
-    """Extracts the last explicit multiple-choice letter from a model output.
+    """从模型输出中提取最后一个明显的选项字母。
 
-    Supported patterns:
+    支持模式：
     - \\boxed{B}
     - <answer> B
-    - standalone single-letter A-E (take the last occurrence)
+    - 独立的单字符 A-E（取最后一次出现）
     """
 
     import re
@@ -73,7 +71,7 @@ def _extract_choice_letter(prediction: str) -> Optional[str]:
 @registry.asset(
     "metrics",
     "mmmu_accuracy",
-    desc="MMMU multimodal exact-match metric (llm-eval compatible)",
+    desc="MMMU 多模态任务的精确匹配指标（兼容 llm-eval 脚本）。",
     tags=("vision", "mmmu"),
     default_aggregation="mean",
 )

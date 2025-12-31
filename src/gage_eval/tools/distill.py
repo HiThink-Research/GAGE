@@ -76,7 +76,7 @@ def analyze_tasks_for_distill(payload: dict, *, force_merge: bool = False) -> Di
         "Builtin templates must stay atomic; split the config or re-run with --force-merge "
         "to create a monolithic template."
     )
-    # NOTE: Attach structured context so callers can reuse the analysis result.
+    # 提供上下文便于上层复用
     error.context = DistillTaskAnalysis(mode="REJECTED", task_ids=tuple(task_ids), is_monolithic=False)  # type: ignore[attr-defined]
     raise error
 
@@ -275,7 +275,7 @@ def calculate_definition_digest(definition: Mapping[str, object]) -> str:
 class _LiteralDumper(yaml.SafeDumper):
     """YAML dumper that uses literal style for multi-line strings and disables anchors."""
 
-    # NOTE: Disable YAML anchors (&id001/*id001) to keep generated templates readable.
+    # 禁用 YAML 引用（&id001/*id001），避免模板中出现难读的锚点。
     def ignore_aliases(self, data):
         return True
 

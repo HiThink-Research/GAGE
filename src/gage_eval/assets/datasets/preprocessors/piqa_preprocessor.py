@@ -8,15 +8,11 @@ from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import Mu
 
 
 class PiqaPreprocessor(MultiChoicePreprocessor):
-    """Preprocesses PIQA multiple-choice records into the Sample schema.
-
-    Prompt rendering can be customized via `kwargs` passed to the base class.
-    """
+    """PIQA 多选题提示词封装，可通过 kwargs 调整提示。"""
 
     def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
         sample = dict(record)
-        # NOTE: Support both raw PIQA fields (goal/sol1/sol2/label) and already
-        # structured fields (question/choices/answer).
+        # 兼容原始 PIQA 字段（goal/sol1/sol2/label）与已预结构化的 question/choices/answer
         question = record.get("question") or record.get("goal")
         options = record.get("choices")
         if not options:
@@ -37,16 +33,11 @@ class PiqaPreprocessor(MultiChoicePreprocessor):
 
 
 class PiqaStructOnlyPreprocessor(PiqaPreprocessor):
-    """PIQA struct-only preprocessing (no prompt rendering).
-
-    This variant keeps `choices`/`metadata` but removes rendered prompts so that
-    downstream steps can supply their own prompting strategy.
-    """
+    """PIQA 结构化预处理（不渲染 prompt，仅保留 choices/metadata）。"""
 
     def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
         sample = super().to_sample(record, **kwargs)
-        # NOTE: Keep minimal fields to satisfy envelope validation while removing
-        # render flags and prompt inputs.
+        # 保留 messages/choices 以满足 Envelope 校验，仅移除渲染标记与 prompt 输入
         sample.pop("prompt", None)
         sample["messages"] = []
         sample["inputs"] = {}

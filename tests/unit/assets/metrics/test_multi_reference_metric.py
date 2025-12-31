@@ -4,7 +4,7 @@ from gage_eval.observability.trace import ObservabilityTrace
 
 
 class DummyMultiRefMetric(MultiReferenceTextMetric):
-    """Test-only multi-reference metric using default equality matching."""
+    """使用默认等值匹配的多参考基类。"""
     pass
 
 

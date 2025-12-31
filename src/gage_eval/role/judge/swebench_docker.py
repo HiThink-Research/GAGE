@@ -12,7 +12,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from loguru import logger
 
 from gage_eval.registry import registry
-from gage_eval.evaluation.sample_envelope import resolve_model_output
 from gage_eval.role.judge.base import JudgeImplementation
 from gage_eval.utils.swebench import get_dockerhub_image_uri, resolve_docker_platform
 
@@ -54,7 +53,7 @@ class SwebenchDocker(JudgeImplementation):
     def invoke(self, payload: Dict[str, Any], state: Any = None) -> Dict[str, Any]:
         params = payload.get("params") or {}
         sample = payload.get("sample") or {}
-        model_output = resolve_model_output(sample, payload.get("model_output"))
+        model_output = payload.get("model_output") or {}
 
         patch = _resolve_patch(model_output)
         if not patch:

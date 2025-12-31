@@ -16,7 +16,7 @@ from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 @registry.asset(
     "backends",
     "sglang",
-    desc="SGLang inference service backend",
+    desc="SGLang 推理服务后端",
     tags=("llm", "remote"),
     modalities=("text",),
 )

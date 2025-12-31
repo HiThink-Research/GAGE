@@ -14,7 +14,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "pipeline_steps",
     "inference",
-    desc="Pipeline step that runs DUT model inference",
+    desc="执行 DUT 模型推理的阶段",
     tags=("dut",),
     step_kind="sample",
 )

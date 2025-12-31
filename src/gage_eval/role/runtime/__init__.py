@@ -1,8 +1,7 @@
 """Runtime helper exports.
 
-The legacy scheduling core (InferenceRuntime / BatchingScheduler) has been
-removed. This package only keeps the RolePool-related runtime infrastructure
-such as sharded pools and rate limiters.
+调度内核 InferenceRuntime/BatchingScheduler 已下线，保留的仅是
+RolePool 相关的基础设施（分片池与限流器）。
 """
 
 from gage_eval.role.runtime.base_pool import BasePool  # noqa: F401
