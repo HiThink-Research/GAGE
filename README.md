@@ -1,15 +1,15 @@
 <div align="center">
 
-# 📐 Gage-Eval
+# 📐 GAGE: General AI evaluation and Gauge Engine
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/) 
 [![Code Style](https://img.shields.io/badge/code%20style-google-blueviolet)](https://google.github.io/styleguide/pyguide.html)
 [![License](https://img.shields.io/badge/license-TBD-lightgrey)]()
 [![Status](https://img.shields.io/badge/Status-Alpha-orange)]()
 
-**High-Performance, Modular LLM Evaluation Framework**
-
 **English** · [中文](README_zh.md)
+
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
 
 [Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
 
@@ -17,15 +17,19 @@
 
 ---
 
-**Gage-Eval** is an evaluation framework designed for production, addressing **scalability** and **reproducibility** in complex evaluation pipelines. Powered by **Step-Chain** orchestration and **RoleAdapter** decoupling, it makes evaluation as simple as building blocks.
+**GAGE** is a unified, extensible evaluation framework designed for large language models, multimodal (omni, robot) models, audio models and diffusion models. It is a high-performance evaluation engine built for ultra-fast execution, scalability, and flexibility, providing a unified framework for AI model evaluation, agent-based benchmarking, and game arena evaluation.
 
-## ✨ Key Features
+## ✨ Why GAGE？
 
-- 🚀 **Adaptive Execution Engine**: Built-in **multi-hardware awareness** and **dynamic backpressure**. Intelligently balances throughput and memory usage to eliminate OOM risks during massive-scale runs.
-- 🧬 **Inheritable Configuration**: Exclusive **`Pipeline` -> `Run` dual-layer architecture**, emphasizing **Benchmark solidification and versioning**. Supports configuration distillation and runtime overrides, significantly reducing maintenance overhead.
-- 📡 **Enterprise Observability**: Beyond static logs. Provides **real-time HTTP telemetry** and **deep buffer visibility**. Seamlessly integrates with production monitoring to pinpoint bottlenecks instantly.
-- 🔌 **Universal Role Adapters**: Unified abstraction for **Agents, APIs, Docker sandboxes, and local models**. Built-in connection pooling makes orchestrating complex tasks (e.g., SWE-bench) effortless.
-- 🔗 **Industrial-Grade Pipeline**: Freely orchestrate (e.g., `Support -> Inference -> Judge`) flows. Process data like an **industrial assembly line** using the standardized `Sample` schema.
+- 🚀 **Fastest Evaluation Engine**: Built for speed. GAGE fully utilizes GPU and CPU resources to run evaluations as fast as possible, scaling smoothly from single-machine testing to million-sample, multi-cluster runs.
+
+- 🔗 **All-in-one Evaluation Interface**: Evaluate any dataset × any model with minimal glue code. GAGE provides a unified abstraction over datasets, models, metrics, and runtimes, allowing new benchmarks or model backends to be onboarded in minutes.
+
+- 🔌 **Extensible (Game & Agent) Sandbox**: Natively supports game-based evaluation, agent environments, GUI interaction sandboxes, and tool-augmented tasks. All environments run under the same evaluation engine, making it easy to benchmark LLMs, multimodal models, and agents in a unified way.
+
+- 🧩 **Inheritance-Driven Extensibility**: Easily extend existing benchmarks by inheriting and overriding only what you need. Add new datasets, metrics, or evaluation logic without touching the core framework or rewriting boilerplate code.
+
+- 📡 **Enterprise Observability**: More than logs. GAGE provides real-time metrics and visibility into each evaluation stage, making it easy to monitor runs and quickly identify performance bottlenecks or failures.
 
 ## 🏗️ Architecture
 

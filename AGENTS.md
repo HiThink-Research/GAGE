@@ -223,6 +223,18 @@ runs/<run_id>/
 - This snapshot may not include `.git`; if history is available, match existing subject style. Otherwise use Conventional Commits, e.g. `feat(config): add swebench smoke config`.
 - PRs: describe intent + risk, link the config(s) used, include how to reproduce (`python run.py ...`), and add/adjust tests for new behavior.
 
+### Branch Types and Naming Examples
+
+| Branch Type | Example | Description | Base Branch |
+| --- | --- | --- | --- |
+| `main` | `main` | Stable trunk | N/A |
+| `feat/<topic>` | `feat/swebench_timeout` | New features or large changes requiring collaboration | `main` |
+| `fix/<topic>` | `fix/cache_buffer_deadlock` | Bug fixes or regressions | `main` |
+| `docs/<topic>` | `docs/support_cli_update` | Documentation-only changes | `main` |
+| `chore/<topic>` | `chore/registry_manifest_tooling` | Tooling and maintenance scripts | `main` |
+| `user/<name>/<topic>` | `user/alice/swebench_trace` | Personal branches (not guaranteed to persist) | `feat/<topic>` |
+
+Additional guidance: `feat/<topic>` is the default base branch; small changes may branch directly from `main`.
 ## Environment Variables (Quick Reference)
 
 - Boolean env vars accept `1/true/yes/on` (case-insensitive).

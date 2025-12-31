@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, Optional
 
 
 class TokenizerManager:
-    """线程安全的有界 LRU 缓存，用于 tokenizer/processor 复用。"""
+    """Thread-safe bounded LRU cache for reusing tokenizers/processors."""
 
     def __init__(self, max_size: int = 32):
         env_max = os.environ.get("GAGE_EVAL_TOKENIZER_CACHE_MAX")

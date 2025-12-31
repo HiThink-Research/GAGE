@@ -11,7 +11,7 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 @registry.asset(
     "roles",
     "context_provider",
-    desc="RAG/知识增强上下文提供角色",
+    desc="RAG/knowledge-augmented context provider role",
     tags=("role", "context"),
     role_type="context_provider",
 )

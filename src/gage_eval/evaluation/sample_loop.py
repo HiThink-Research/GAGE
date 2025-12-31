@@ -8,21 +8,25 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED, ALL_COMPLETED
 from queue import Queue, Full
-from typing import Callable, Iterable, Iterator, List, Optional, Sequence, Tuple, Set
+from typing import Callable, Iterable, Iterator, List, Optional, Sequence, Tuple, Set, Union
 
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
-
+from gage_eval.assets.datasets.sample import (
+    Sample,
+    Message,
+    MessageContent
+)
 
 class SampleLoop:
     """Iterate over samples and invoke TaskPlanner/RoleManager per sample."""
 
     def __init__(
         self,
-        samples: Iterable[dict],
+        samples: Iterable[Union[dict, Sample]],
         *,
         shuffle: Optional[bool] = None,
         shuffle_seed: Optional[int] = None,
@@ -316,7 +320,8 @@ class SampleLoop:
             try:
                 future.result()
             except Exception as exc:
-                # 确保 worker 异常不会被静默吞掉，便于上层感知并触发 stop_event 逻辑。
+                # NOTE: Do not swallow worker exceptions. Surface failures to the caller so
+                # the upper-level loop can trigger stop_event and fail fast.
                 logger.exception("SampleLoop worker failed (task_id={}): {}", self._task_id, exc)
                 raise
         self._emit_buffer_state(trace, sample_queue, len(futures))
@@ -332,7 +337,11 @@ class SampleLoop:
         producer: threading.Thread,
         producer_errors: List[BaseException],
     ) -> None:
-        """Fire-and-forget 模式：使用信号量控制 max_inflight，不再维护 futures 集合。"""
+        """Runs in fire-and-forget mode with a semaphore-based max_inflight cap.
+
+        This mode does not track futures; instead it uses a semaphore to limit the
+        number of in-flight tasks.
+        """
 
         logger.info(
             "SampleLoop running in fire-and-forget mode (workers={}, max_inflight={}, buffer_capacity={})",
@@ -363,7 +372,8 @@ class SampleLoop:
 
                     executor.submit(_run_one)
 
-                # 等待所有 in-flight 任务完成：当可以连续获取 max_inflight 次时，说明没有任务持有信号量
+                # Wait for all in-flight tasks to finish: if we can acquire the semaphore
+                # `max_inflight` times consecutively, no task is holding a permit.
                 for _ in range(self._max_inflight):
                     sem.acquire()
         finally:
@@ -376,7 +386,7 @@ class SampleLoop:
         if producer_errors:
             raise producer_errors[0]
         if worker_errors:
-            # 抛出第一个 worker 错误，细节已在日志中记录
+            # Raise the first worker error; details are already logged.
             raise worker_errors[0]
 
     def _emit_buffer_state(self, trace: ObservabilityTrace, sample_queue: Queue, inflight: int) -> None:

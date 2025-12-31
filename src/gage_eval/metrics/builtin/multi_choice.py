@@ -6,7 +6,12 @@ import re
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
-from gage_eval.metrics.utils import extract_field, normalize_text_advanced
+from gage_eval.metrics.utils import (
+    extract_field, normalize_text_advanced,
+    get_text_content_of_first_predict_result,
+    get_sample_label,
+    get_first_reference,
+)
 from gage_eval.registry import registry
 
 _BOXED_PATTERN = re.compile(r"\\boxed\s*\{([^}]*)\}", re.IGNORECASE)
@@ -61,7 +66,6 @@ def _match_option_text(value: Any, option_map: Mapping[str, str]) -> Optional[st
             return label
     return None
 
-
 def _extract_prediction_letter(raw_answer: Any, allowed_letters: Sequence[str]) -> Optional[str]:
     if raw_answer is None:
         return None
@@ -81,7 +85,7 @@ def _extract_prediction_letter(raw_answer: Any, allowed_letters: Sequence[str]) 
 @registry.asset(
     "metrics",
     "multi_choice_accuracy",
-    desc="多选题准确率（对齐 llm-eval 多选逻辑）",
+    desc="Multiple-choice accuracy (llm-eval compatible)",
     tags=("text", "multiple-choice"),
     default_aggregation="mean",
 )
@@ -100,21 +104,14 @@ class MultiChoiceAccuracyMetric(SimpleMetric):
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
     def _evaluate(self, context: MetricContext) -> Tuple[float, Optional[str], Optional[str]]:
-        label_field = self.args.get("label_field", "sample.metadata.correct_choice")
-        prediction_field = self.args.get("prediction_field", "model_output.answer")
-        option_map_field = self.args.get("option_map_field", "sample.metadata.option_map")
-        allow_text_match = bool(self.args.get("allow_text_match", True))
+        sample_dict = extract_field(context, 'sample')
+        expected_raw = get_first_reference(sample_dict)
+        allowed_letters = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        expected = _normalize_choice_label(expected_raw, allowed_letters)        
 
-        option_map = _normalize_option_map(extract_field(context, option_map_field, default={}))
-        allowed_letters = tuple(option_map.keys()) or tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        expected_raw = extract_field(context, label_field)
-        expected = _normalize_choice_label(expected_raw, allowed_letters) or _match_option_text(
-            expected_raw, option_map
-        )
-        prediction_raw = extract_field(context, prediction_field, default="")
+        prediction_raw = get_text_content_of_first_predict_result(sample_dict)
+
         prediction = _extract_prediction_letter(prediction_raw, allowed_letters)
-        if allow_text_match and not prediction:
-            prediction = _match_option_text(prediction_raw, option_map)
 
         if not expected or not prediction:
             return 0.0, prediction, expected

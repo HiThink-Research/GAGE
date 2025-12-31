@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - accelerate optional
 @registry.asset(
     "backends",
     "vlm_transformers",
-    desc="HuggingFace Vision-Language Transformers 本地推理后端",
+    desc="HuggingFace vision-language Transformers local inference backend",
     tags=("vlm", "local", "multimodal"),
     modalities=("text", "vision", "audio"),
     config_schema_ref="gage_eval.role.model.config.vlm_transformers:VLMTransformersBackendConfig",
@@ -52,7 +52,7 @@ class VLMTransformersBackend(EngineBackend):
             or config.get("model_path")
             or config.get("model_name_or_path")
         )
-        # 本地 Native 执行模式
+        # NOTE: Force local execution mode for native inference.
         config = dict(config)
         config.setdefault("execution_mode", "native")
         super().__init__(config)
@@ -88,7 +88,7 @@ class VLMTransformersBackend(EngineBackend):
 
         attn_impl = cfg.attn_implementation
         if attn_impl is None and self._torch.cuda.is_available():
-            # H100 推荐默认开启 FlashAttention 2
+            # NOTE: Prefer FlashAttention2 by default on high-end CUDA GPUs (for example H100).
             attn_impl = "flash_attention_2"
 
         model_kwargs = {
@@ -161,15 +161,16 @@ class VLMTransformersBackend(EngineBackend):
     # Execution                                                          #
     # ------------------------------------------------------------------ #
     def generate_batch(self, requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """尝试批处理多模态请求，失败则回退串行。"""
+        """Generates a batch of multimodal requests with a serial fallback."""
 
+        # STEP 1: Validate requests and enforce tokenizer constraints.
         if not requests:
             return []
 
         for req in requests:
             self._check_tokenizer_conflict(req)
 
-        # 若采样参数不一致，直接串行避免错配。
+        # STEP 2: Ensure all requests share the same sampling params for safe batching.
         sampling_params_list = [
             req.get("sampling_params") or (req.get("sample") or {}).get("sampling_params") or {} for req in requests
         ]
@@ -177,6 +178,7 @@ class VLMTransformersBackend(EngineBackend):
         if any(params != first_sampling for params in sampling_params_list[1:]):
             return [self.generate(req) for req in requests]
 
+        # STEP 3: Build batched prompts and multimodal inputs.
         prompts: List[str] = []
         images_batch: List[Any] = []
         audios_batch: List[Any] = []
@@ -483,7 +485,8 @@ class VLMTransformersBackend(EngineBackend):
             prompt = rendered
         if not prompt:
             prompt = fallback_prompt
-        # 避免空提示导致 image tokens > text tokens 的报错，至少提供占位提示
+        # NOTE: Avoid errors where image tokens exceed text tokens due to empty prompts.
+        # Provide a minimal placeholder prompt when the request is multimodal.
         if (messages or (isinstance(raw_inputs, dict) and (raw_inputs.get("multi_modal_data")))) and not prompt:
             prompt = "Please describe the image and answer the question."
         if message_images:
@@ -541,7 +544,8 @@ class VLMTransformersBackend(EngineBackend):
         if isinstance(raw_inputs, dict):
             return self._prepare_multimodal_inputs(prompt, raw_inputs, messages, message_images)
         if messages:
-            # 消息中含图片但 inputs 为空时，仍需构造多模态输入
+            # NOTE: If messages contain images but `inputs` is empty, we still need
+            # to build multimodal inputs for the processor.
             return self._prepare_multimodal_inputs(prompt, {}, messages, message_images)
         if isinstance(raw_inputs, list):
             return self._prepare_token_inputs(raw_inputs)

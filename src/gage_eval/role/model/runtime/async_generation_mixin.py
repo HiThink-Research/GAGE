@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from gage_eval.registry import ensure_async
+from gage_eval.registry.utils import ensure_async
 
 
 class AsyncGenerationMixin:

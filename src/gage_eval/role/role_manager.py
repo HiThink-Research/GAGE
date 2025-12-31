@@ -10,7 +10,6 @@ from typing import Dict, Iterator, Optional
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.auto_pool import AutoPoolPlanner
-from gage_eval.role.role_pool import RolePool
 from gage_eval.role.role_instance import ConversationHistory, Role
 from gage_eval.role.resource_profile import ResourceProfile
 from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
@@ -66,8 +65,9 @@ class RoleManager:
                     adapter_id,
                 )
             else:
-                # HTTP / 远程后端：直接依赖 RoleAdapter + Backend 自身的并发与限流策略，
-                # 不再构建 InferenceRuntime/BatchingScheduler。
+                # NOTE: HTTP/remote backends rely on RoleAdapter + Backend internal
+                # concurrency and rate-limiting. We do not build an
+                # InferenceRuntime/BatchingScheduler for this path.
                 logger.info(
                     "Registering adapter '{}' in http/remote path (no InferenceRuntime, lightweight concurrency)",
                     adapter_id,
@@ -76,9 +76,10 @@ class RoleManager:
         pool_capacity = adapter.resource_requirement.get("pool_size")
         if not pool_capacity:
             pool_capacity = max_workers
-        if len(shard_plans) <= 1:
             plan = shard_plans[0]
             pool_capacity = plan.size or pool_capacity
+            from gage_eval.role.role_pool import RolePool
+
             self._role_pools[adapter_id] = RolePool(
                 adapter_id=adapter_id,
                 builder=lambda adapter_id=adapter_id, adapter=adapter, runtime=runtime: Role(adapter_id, adapter, runtime),
@@ -88,6 +89,8 @@ class RoleManager:
             shards = []
             for plan in shard_plans:
                 rate_limiter = _build_rate_limiter(plan.rate_limit)
+                from gage_eval.role.role_pool import RolePool
+
                 shard_pool = RolePool(
                     adapter_id=f"{adapter_id}:{plan.shard_id}",
                     builder=lambda adapter_id=adapter_id, adapter=adapter, runtime=runtime: Role(adapter_id, adapter, runtime),
@@ -154,7 +157,9 @@ class RoleManager:
             role_pool.shutdown()
 
     def snapshot(self) -> Dict[str, Dict[str, float]]:
-        # 旧实现依赖 InferenceRuntime 采集队列/并发指标；Runtime 已下线，这里先返回空 dict。
+        # NOTE: The legacy implementation relied on InferenceRuntime to collect
+        # queue/concurrency stats. The runtime has been removed, so we return an
+        # empty dict for now.
         return {}
 
     # ------------------------------------------------------------------

@@ -21,6 +21,7 @@ DEFAULT_KINDS: Dict[str, str] = {
     "renderer_impls": "对局渲染器实现（棋盘/UI 渲染）",
     "dataset_hubs": "数据集源（HF、ModelScope、本地等）",
     "dataset_loaders": "数据集加载器",
+    "bundles": "Resource Provider",
     "dataset_preprocessors": "数据集预处理器",
     "doc_converters": "Doc -> 样本转换器",
     "prompts": "Prompt 模版资产",

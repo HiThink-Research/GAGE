@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict
 
 from gage_eval.role.model.backends.base_backend import Backend
 from gage_eval.role.model.runtime import HttpRetryMixin
+from gage_eval.registry.utils import ensure_async
 
 from .builder import build_backend  # re-export
 
@@ -33,7 +34,6 @@ class _AsyncBackendProxy(Backend):
         backend_call = getattr(self._backend, "ainvoke", None)
         if backend_call:
             return await backend_call(payload)
-        from gage_eval.registry import ensure_async
 
         return await ensure_async(self._backend)(payload)
 
@@ -50,7 +50,6 @@ class _HttpRetryBackendProxy(Backend, HttpRetryMixin):
             backend_call = getattr(self._backend, "ainvoke", None)
             if backend_call:
                 return await backend_call(request)
-            from gage_eval.registry import ensure_async
 
             return await ensure_async(self._backend)(request)
 
