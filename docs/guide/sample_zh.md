@@ -236,7 +236,7 @@ flowchart TD
 | metrics | list | 评估指标列表 | 
 | judge_prompt | string | 样本级裁判提示 | 
 
-当前默认流水线不会自动消费 `eval_config`，需由评测步骤显式读取后生效。
+当前实现中，`arena` 会读取 `eval_config` 中的对局控制参数（如 `retry_illegal`、`max_turns`），其他 Step 可按需扩展读取。
 
 #### 1.3.11 unconditioned_input
 
@@ -315,7 +315,7 @@ flowchart LR
 | schema_version | 额外字段 | 默认校验模型允许扩展 | 
 | task_type | metadata.task_type | 默认不消费，可供渲染器与统计使用 | 
 | messages | messages | OpenAI 后端直接读取 | 
-| options | metadata.option_map + choices | 预处理时构建选项与顺序 | 
+| options | metadata.option_map + choices | 预处理时构建选项与顺序，`choices` 为兼容字段 | 
 | references | references | 作为扩展字段保留 | 
 | label | label | 与旧指标兼容 | 
 | few_shot_examples | messages | 预处理拼接 Few-Shot 后再渲染 `messages` | 
@@ -324,7 +324,7 @@ flowchart LR
 | tools | tools | OpenAI 后端直接读取 | 
 | tool_choice | tool_choice | OpenAI 后端直接读取 | 
 | raw_assets | inputs | 兼容映射为运行时 `inputs` | 
-| eval_config | eval_config | 默认不消费，仅保留 | 
+| eval_config | eval_config | `arena` 已消费部分字段，其余由扩展步骤自行读取 | 
 | unconditioned_input | metadata.unconditioned_input | 默认不消费，指标需显式读取 | 
 | predict_result | predict_result | `append_predict_result` 追加 | 
 | eval_result | eval_result | `update_eval_result` 合并 | 
@@ -674,3 +674,33 @@ sequenceDiagram
   Tool-->>Model: tool_result
   Model-->>User: final_answer
 ```
+
+## 2 代码落地与使用说明
+
+### 2.1 生成标准化 Sample
+
+- 预处理器可输出 dict 或 `Sample` 数据类；`DataManager` 会做验证并统一为 dict 供运行时消费。
+- 默认校验要求包含 `schema_version`、`id`、`messages`（见 `src/gage_eval/assets/datasets/validation.py`）。
+- 可使用 `normalize_sample`、`merge_multimodal_inputs` 进行消息与多模态归一化。
+
+最小校验配置示例：
+
+```yaml
+datasets:
+  - dataset_id: demo
+    loader: jsonl
+    params:
+      path: /path/to/data.jsonl
+    schema:
+      mode: warn
+```
+
+### 2.2 运行期结果写回
+
+- `inference` 与 `arena` 会通过 `append_predict_result` 写入 `predict_result`。
+- `judge` 会通过 `update_eval_result` 合并裁判结果，指标侧通过 `resolve_model_output`/`resolve_judge_output` 统一读取。
+
+### 2.3 多选题兼容策略
+
+- 当前运行时优先规范化 `choices`；若已有 `options`，建议在预处理时同步构建 `choices` 与 `metadata.option_map`。
+- `label` 与 `metadata.correct_choice` 是多选指标和裁判的常用入口字段。

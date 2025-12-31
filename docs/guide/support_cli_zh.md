@@ -5,6 +5,7 @@
 `src/gage_eval/support/` 是面向 Benchmark 作者的“开发辅助模块”，用于把“接入一个新 Benchmark”拆成可复用的流水线：`inspect -> design -> implement`。
 
 > 重要说明：
+> - support 模块目前为实验性能力，后续将由 **gage-client** 取代
 > - 评测运行入口仍以 `gage-eval-main/run.py` 为准
 > - support 模块主要用于“生成资产与校验接线”，不替代评测运行本身
 

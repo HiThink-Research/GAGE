@@ -222,6 +222,8 @@ flowchart TD
 
 `eval_config` enables sample-level overrides for judging and metrics (e.g., different judge settings, extra constraints).
 
+In the current implementation, `arena` reads `eval_config` for per-sample game controls (such as `retry_illegal` and `max_turns`) in `src/gage_eval/role/adapters/arena.py`.
+
 #### 1.3.11 `unconditioned_input`
 
 - `unconditioned_input` is used by debiasing methods such as PMI.
@@ -240,10 +242,10 @@ The standardized Sample is designed to be compatible with the current gage-eval 
 
 Typical mappings:
 
-- legacy `question/prompt/text` -> `messages`
-- legacy `choices` -> `options` + `metadata.option_map`
-- legacy `answer/label` -> `references` + `label`
-- multimodal legacy fields -> `messages[*].content[*]` segments (plus optional `raw_assets`)
+- legacy `question/prompt/text` -> `messages` via `normalize_messages`
+- legacy `choices/options` -> normalized `choices` + `metadata.option_map` via `normalize_options`/`map_question_option_answer`
+- legacy `answer/label` -> `label` and `metadata.correct_choice` (optional `references`)
+- multimodal legacy fields -> `messages[*].content[*]` segments + `inputs.multi_modal_data`
 
 ### 1.6 Example cases
 
@@ -530,3 +532,32 @@ Below are example Sample JSON snippets for common task types.
 }
 ```
 
+## 2. Usage in gage-eval
+
+### 2.1 Producing standardized Samples
+
+- Preprocessors can emit a dict or a `Sample` dataclass. `DataManager` will validate and normalize before yielding dicts to the runtime.
+- The default envelope validator requires `schema_version`, `id`, and `messages` (`src/gage_eval/assets/datasets/validation.py`).
+- Use `normalize_sample` and `merge_multimodal_inputs` to standardize messages and media fields.
+
+Minimal validation config example:
+
+```yaml
+datasets:
+  - dataset_id: demo
+    loader: jsonl
+    params:
+      path: /path/to/data.jsonl
+    schema:
+      mode: warn
+```
+
+### 2.2 Writing runtime outputs
+
+- Inference and arena steps append outputs via `append_predict_result` (`src/gage_eval/evaluation/sample_envelope.py`).
+- Judge outputs are merged via `update_eval_result`, and downstream metrics resolve them through `resolve_model_output`/`resolve_judge_output`.
+
+### 2.3 Multiple-choice compatibility
+
+- Current runtime utilities normalize `choices`; if you maintain `options`, map them into `choices` and `metadata.option_map` during preprocessing.
+- `label` and `metadata.correct_choice` are commonly used by multiple-choice metrics and judge adapters.

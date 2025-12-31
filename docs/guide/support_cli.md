@@ -5,6 +5,7 @@ English | [中文](support_cli_zh.md)
 `src/gage_eval/support/` is a developer helper module for benchmark authors. It turns “onboard a new benchmark” into a reusable pipeline: `inspect -> design -> implement`.
 
 > Notes:
+> - The support module is experimental and will be replaced by **gage-client**.
 > - The evaluation entrypoint is still `gage-eval-main/run.py`.
 > - The support module focuses on generating assets and validating wiring; it does not replace evaluation runs.
 
@@ -242,4 +243,3 @@ flowchart LR
 | Git workspace check | `src/gage_eval/support/utils.py` | checks `git status` before writing unless `--force` |
 | Test-command allowlist | `src/gage_eval/support/utils.py` | non-allowlisted commands require confirmation; rejects dangerous injection tokens |
 | Write-path restriction | `src/gage_eval/support/pipeline.py` | refuses writes outside `project_root` |
-
