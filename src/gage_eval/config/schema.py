@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Sequence
 
-ALLOWED_STEPS = {"support", "inference", "judge", "auto_eval", "report", "hook"}
+ALLOWED_STEPS = {"support", "inference", "arena", "judge", "auto_eval", "report", "hook"}
 
 
 class SchemaValidationError(ValueError):

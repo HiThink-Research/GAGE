@@ -185,6 +185,10 @@ class SampleLoop:
                         if plan.inference_role:
                             session.execute_inference()
                         continue
+                    if step_type == "arena":
+                        if plan.arena_role:
+                            session.execute_arena()
+                        continue
                     if step_type == "judge":
                         if plan.judge_role:
                             session.execute_judge()
@@ -199,6 +203,8 @@ class SampleLoop:
                     session.execute_support()
                 if plan.inference_role:
                     session.execute_inference()
+                if plan.arena_role:
+                    session.execute_arena()
                 if plan.judge_role:
                     session.execute_judge()
                 if plan.auto_eval_enabled:

@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Type
 from loguru import logger
 from gage_eval.assets.models.store import resolve_model_handle
 from gage_eval.role.model.backends.base_backend import EngineBackend
-from gage_eval.registry import registry
 from gage_eval.role.model.config import (
     BackendConfigBase,
     HFBackendConfig,
@@ -74,6 +73,8 @@ def register_backend(
 ) -> None:
     """Compatibility helper for imperative backend registration."""
 
+    from gage_eval.registry import registry
+
     registry.register(
         "backends",
         kind,
@@ -110,6 +111,9 @@ def build_backend(spec: Dict[str, Any]) -> EngineBackend:
     backend_type = spec.get("type")
     if not backend_type:
         raise ValueError("Backend spec must declare 'type'")
+    
+    from gage_eval.registry import registry
+    
     try:
         backend_cls = registry.get("backends", backend_type)
     except KeyError as exc:

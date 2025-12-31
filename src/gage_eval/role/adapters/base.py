@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Sequence, Optional, List
 
-from gage_eval.registry import run_sync
+from gage_eval.registry.utils import run_sync
 
 
 @dataclass

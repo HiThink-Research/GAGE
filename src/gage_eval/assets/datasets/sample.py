@@ -80,11 +80,10 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         return Message(role=msg.get("role", "user"), content=normalized_content, **extras)
 
     messages = [build_message(m) for m in payload.get("messages", []) if isinstance(m, dict)]
-    choices = [
-        Choice(index=c.get("index", i), message=build_message(c.get("message", {})), label=c.get("label"))
-        for i, c in enumerate(payload.get("choices", []))
-        if isinstance(c, dict)
-    ]
+    messages = [build_message(m) for m in payload.get("messages", []) if isinstance(m, dict)]
+    
+    # NOTE: 'choices', 'inputs', 'audit_info' are ignored as strict Sample schema does not support them.
+
     preds = [
         PredictResult(
             index=pr.get("index", i),
@@ -96,36 +95,18 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         for i, pr in enumerate(payload.get("predict_result", []))
         if isinstance(pr, dict)
     ]
-    inputs_raw = payload.get("inputs") or {}
-    inputs = Inputs(
-        prompt=inputs_raw.get("prompt"),
-        input_ids=inputs_raw.get("input_ids"),
-        multi_modal_data=inputs_raw.get("multi_modal_data") or {},
-    )
-    audit_raw = payload.get("audit_info") or {}
-    audit = AuditInfo(**{k: audit_raw.get(k) for k in AuditInfo.__dataclass_fields__})
-
+    
     return Sample(
+        schema_version=SCHEMA_VERSION,
         id=str(payload.get("id")),
-        _dataset_id=str(payload.get("_dataset_id", "")),
         messages=messages,
-        choices=choices,
         metadata=payload.get("metadata") or {},
         data_tag=payload.get("data_tag") or {},
         label=payload.get("label"),
-        inputs=inputs,
-        _dataset_metadata=payload.get("_dataset_metadata") or {},
-        _media_meta=payload.get("_media_meta") or {},
-        _tokenizer_path=payload.get("_tokenizer_path"),
-        chat_template_mode=payload.get("chat_template_mode"),
-        rendered_by=payload.get("rendered_by"),
-        template_source=payload.get("template_source"),
-        cache_suffix=payload.get("cache_suffix"),
         sampling_params=payload.get("sampling_params") or {},
         generation_params=payload.get("generation_params") or {},
         predict_result=preds,
         eval_result=payload.get("eval_result") or {},
-        audit_info=audit,
     )
 
 
