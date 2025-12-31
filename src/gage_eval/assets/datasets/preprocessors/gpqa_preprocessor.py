@@ -15,19 +15,19 @@ from gage_eval.assets.datasets.utils.rendering import (
 
 
 class GpqaPreprocessor(MultiChoicePreprocessor):
-    """Preprocess GPQA multiple-choice records.
-
-    Steps:
-        1) Extract the question and answer options.
-        2) Shuffle options to remove position bias.
-        3) Compute the correct answer index.
-        4) Delegate to `MultiChoicePreprocessor` for standardized Sample rendering.
+    """GPQA 多选题预处理器。                                                                     
+                                                                                                 
+    处理逻辑：                                                                                   
+    1. 提取 Question, Correct Answer 及 Incorrect Answer 1-3。                                   
+    2. 合并并随机打乱选项。                                                                      
+    3. 确定正确答案的索引。                                                                      
+    4. 传递给基类进行标准 prompt 渲染。                                                          
     """
 
     def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
         sample = dict(record)
 
-        # STEP 1: Extract fields.
+        # step1: 提取字段
         question = record.get("Question")
         correct_answer = record.get("Correct Answer")
         incorrect_answers = [
@@ -36,29 +36,29 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
             record.get("Incorrect Answer 3"),
         ]
 
-        # NOTE: Keep best-effort behavior for partially missing records.
+        # 完整性检查
         if question is None or correct_answer is None:
             pass
 
-        # STEP 2: Build the option list.
+        # step2: 构建选项列表
         options = [correct_answer] + [opt for opt in incorrect_answers if opt is not None]
 
-        # STEP 3: Shuffle options.
+        # step3: 随机打乱选项
         random.shuffle(options)
 
-        # STEP 4: Determine the correct option index.
+        # step4：获取正确选项索引
         try:
             answer_index = options.index(correct_answer)
         except ValueError:
             answer_index = 0
 
-        # STEP 5: Adapt fields for `MultiChoicePreprocessor`.
+        # step5：更新sample字典，适配父类MultiChoicePreprocessor
         sample["question"] = question
         sample["choices"] = options
-        # NOTE: Pass the answer as an integer index.
+        # 整数索引传入
         sample["answer"] = answer_index
 
-        # STEP 6: Delegate to the base preprocessor for normalization/rendering.
+        # step6： 调用父类
         sample = super().to_sample(
             sample,
             question_field="question",
@@ -67,7 +67,7 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
             answer_index_base=0,
             **kwargs,
         )
-        # NOTE: Try to reuse the tokenizer chat template and emit `input_ids` when possible (llm-eval compatible).
+        # 尝试复用 tokenizer 的 chat_template 渲染文本并生成 input_ids（对齐 llm-eval 行为）
         messages = sample.get("messages")
         if (
             self._tokenizer is not None
@@ -82,7 +82,7 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
                 if hasattr(self._tokenizer, "encode"):
                     sample["inputs"]["input_ids"] = self._tokenizer.encode(prompt)
             except Exception:
-                # NOTE: Keep prompt-only on encoding failures to avoid breaking preprocessing.
+                # encoding 失败则只保留 prompt，避免中断预处理
                 pass
             set_render_flags(
                 sample,
@@ -95,13 +95,12 @@ class GpqaPreprocessor(MultiChoicePreprocessor):
                 sample["_tokenizer_path"] = self._tokenizer_path
         return sample
 
-
 class GpqaStructOnlyPreprocessor(GpqaPreprocessor):
-    """Preprocess GPQA into structured fields only (no prompt rendering)."""
+    """GPQA 结构化预处理（不渲染 prompt，仅保留 choices/metadata）。"""
 
     def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
         sample = super().to_sample(record, **kwargs)
-        # Keep messages/choices for envelope validation; drop rendered outputs and prompt inputs.
+        # 保留 messages/choices 以满足 Envelope 校验，仅移除渲染标记与 prompt 输入
         sample.pop("prompt", None)
         sample["messages"] = []
         sample["inputs"] = {}

@@ -7,13 +7,7 @@ from gage_eval.assets.datasets.utils.mapping import extract_field
 
 
 class DocVQAPreprocessor(BasePreprocessor):
-    """Example preprocessor demonstrating a complete Sample mapping.
-
-    This reference implementation shows how to populate:
-    - `metadata` for grouping/auditing
-    - `answers` / `label` for metric compatibility
-    - `messages` for chat-style backends
-    """
+    """示例预处理器：演示 metadata/answers/messages 的完整写法。"""
 
     name = "docvqa_demo"
 
@@ -25,7 +19,7 @@ class DocVQAPreprocessor(BasePreprocessor):
         question = extract_field(record, "question")
         answer = extract_field(record, "answers.0") or extract_field(record, "answer")
         if question is None or not str(question).strip():
-            raise ValueError("Missing or empty 'question' field")
+            raise ValueError("question 字段缺失或为空")
 
         sample: Dict[str, Any] = {
             "_dataset_id": dataset_id,
@@ -35,7 +29,7 @@ class DocVQAPreprocessor(BasePreprocessor):
             "messages": [
                 {
                     "role": "system",
-                    "content": [{"type": "text", "text": "You are a document QA assistant. Provide the final answer."}],
+                    "content": [{"type": "text", "text": "你是文档问答助手，请给出最终答案。"}],
                 },
                 {
                     "role": "user",
@@ -44,7 +38,7 @@ class DocVQAPreprocessor(BasePreprocessor):
             ],
         }
 
-        # NOTE: Preserve metadata for grouping and auditing.
+        # metadata 透传，用于分组统计/审计
         meta = dict(record.get("metadata") or {})
         for key in ("doc_id", "page", "split", "unique_id"):
             if record.get(key) is not None:

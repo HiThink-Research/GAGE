@@ -196,10 +196,8 @@ class RegistryManager:
             except Exception as exc:  # pragma: no cover - optional dependency path
                 recovered = False
                 message = str(exc)
-                # NOTE: Some modules may fail during auto-discovery with a
-                # "partially initialized module" error (a common cause is a circular
-                # import between `pipeline.steps.*` and `role_pool`). Attempt a
-                # best-effort recovery before warning to reduce noise.
+                # 某些模块在 auto-discover 期间会命中“partially initialized”错误（典型场景：
+                # pipeline.steps.* 与 role_pool 交叉导入）。在警告前尝试一次补救，以避免无谓噪音。
                 if "partially initialized module 'gage_eval.role.role_pool'" in message:
                     try:
                         importlib.import_module("gage_eval.role.role_pool")

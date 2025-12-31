@@ -12,7 +12,7 @@ from gage_eval.role.model.runtime import TextGenerationMixin
 @registry.asset(
     "roles",
     "dut_model",
-    desc="Standard role adapter for DUT models",
+    desc="面向被测模型（DUT）的标准角色适配器",
     tags=("role", "dut"),
     role_type="dut_model",
 ) 

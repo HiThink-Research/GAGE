@@ -11,7 +11,7 @@ from gage_eval.role.adapters.model_role_adapter import ModelRoleAdapter
 @registry.asset(
     "roles",
     "helper_model",
-    desc="Helper role adapter for prompt augmentation / tool orchestration",
+    desc="用于提示增强 / 工具调度的辅助角色适配器",
     tags=("role", "helper"),
     role_type="helper_model",
 )

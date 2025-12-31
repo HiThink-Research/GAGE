@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Sequence, Optional, List
 
-from gage_eval.registry.utils import run_sync
+from gage_eval.registry import run_sync
 
 
 @dataclass
@@ -30,7 +30,7 @@ class RoleAdapter:
         self.adapter_id = adapter_id
         self.role_type = role_type
         self.capabilities = tuple(capabilities)
-        # NOTE: Keep common configs explicitly to avoid dynamic `setattr` from callers.
+        # 通用配置显式持有，避免外部动态 setattr
         self.resource_requirement = resource_requirement or {}
         self.sandbox_config = sandbox_config or {}
 
@@ -68,21 +68,17 @@ class RoleAdapter:
     # Producer/consumer split hooks
     # ------------------------------------------------------------------
     def prepare_request(self, payload: Dict[str, Any], state: RoleAdapterState) -> Any:
-        """Prepares a backend request (CPU-bound work).
+        """CPU 密集型准备逻辑：prompt 渲染、采样参数组装等。
 
-        Examples include prompt rendering and sampling parameter assembly.
-
-        The default implementation returns the payload as-is for backward
-        compatibility.
+        默认实现直接回传 payload，保证向后兼容。
         """
 
         return payload
 
     def execute_batch(self, requests: List[Any]) -> List[Any]:
-        """Executes a batch of backend requests.
+        """批量执行后端请求。
 
-        The default implementation calls `invoke()` serially. Subclasses may
-        override this method to implement true batching.
+        默认实现串行调用 invoke，实现类可覆盖为真正的合批调用。
         """
 
         results: List[Any] = []
@@ -92,10 +88,6 @@ class RoleAdapter:
         return results
 
     def parse_response(self, response: Any, state: RoleAdapterState) -> Dict[str, Any]:
-        """Parses a raw backend response into a standardized payload.
-
-        Subclasses may use `state` to re-attach context. The default
-        implementation returns the response as-is.
-        """
+        """回传解析，可结合 state 做上下文拼装。默认原样返回。"""
 
         return response

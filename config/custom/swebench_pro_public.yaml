@@ -29,12 +29,11 @@ datasets:
 
 backends:
   - backend_id: swebench_openai_http
-    type: litellm
+    type: openai_http
     config:
-      provider: openai
-      api_base: http://127.0.0.1:8000/v1
+      base_url: http://127.0.0.1:8000/v1
       model: qwen/qwen3-coder-30b
-      generation_parameters:
+      default_params:
         max_new_tokens: 2048
         temperature: 0.2
       async_max_concurrency: 2

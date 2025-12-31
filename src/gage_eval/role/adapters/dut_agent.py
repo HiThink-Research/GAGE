@@ -11,7 +11,7 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 @registry.asset(
     "roles",
     "dut_agent",
-    desc="DUT agent adapter with tool-calling capabilities",
+    desc="具备工具调用能力的 DUT Agent 适配器",
     tags=("role", "agent"),
     role_type="dut_agent",
 )

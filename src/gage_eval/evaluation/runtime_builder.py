@@ -6,13 +6,10 @@ from dataclasses import dataclass
 import os
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 import time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from gage_eval.config.registry import ConfigRegistry
 
 from loguru import logger
 from gage_eval.config.pipeline_config import PipelineConfig
+from gage_eval.config.registry import ConfigRegistry
 from gage_eval.assets.datasets.manager import DataManager, DataSource
 from gage_eval.assets.datasets.validation import SampleValidator
 from gage_eval.evaluation.cache import EvalCache
@@ -73,7 +70,7 @@ def _record_config_metadata(config: PipelineConfig, cache_store: EvalCache) -> N
 
 def build_runtime(
     config: PipelineConfig,
-    registry: "ConfigRegistry",
+    registry: ConfigRegistry,
     resource_profile: ResourceProfile,
     *,
     dataset_id: Optional[str] = None,
@@ -136,7 +133,7 @@ def build_runtime(
 
 def _build_single_runtime(
     config: PipelineConfig,
-    registry: "ConfigRegistry",
+    registry: ConfigRegistry,
     factory: PipelineFactory,
     data_manager: DataManager,
     datasets: Dict[str, DataSource],
@@ -191,7 +188,7 @@ def _build_single_runtime(
 
 def _build_task_orchestrator_runtime(
     config: PipelineConfig,
-    registry: "ConfigRegistry",
+    registry: ConfigRegistry,
     data_manager: DataManager,
     datasets: Dict[str, DataSource],
     role_manager: RoleManager,
@@ -278,7 +275,7 @@ def _select_dataset_id(
 
 def _materialize_role_adapters(
     config: PipelineConfig,
-    registry: "ConfigRegistry",
+    registry: ConfigRegistry,
     role_manager: RoleManager,
 ) -> None:
     backend_instances = registry.materialize_backends(config)
@@ -402,10 +399,7 @@ class TaskOrchestratorRuntime:
                 pre_write_hook=pre_write_hook,
             )
         finally:
-            try:
-                self._role_manager.shutdown()
-            finally:
-                self._trace.flush()
+            self._trace.flush()
 
     def attach_report_step(self, step: ReportStep) -> None:
         self._report_step = step

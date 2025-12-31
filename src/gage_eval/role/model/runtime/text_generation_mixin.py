@@ -11,9 +11,8 @@ class TextGenerationMixin:
     def prepare_backend_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         sample = payload.get("sample", {})
         rendered = self.render_prompt(payload)
-        payload_messages = payload.get("messages")
-        sample_messages = sample.get("messages")
-        messages = rendered.messages or payload_messages or sample_messages or []
+        sample_messages = sample.get("messages") or payload.get("messages") or []
+        messages = rendered.messages or sample_messages
         prompt = rendered.prompt or sample.get("prompt") or sample.get("text") or ""
         if not prompt and messages:
             # Leave prompt empty but preserve messages so backend can render chat prompts.

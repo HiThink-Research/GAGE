@@ -24,7 +24,7 @@ _STREAMING_THRESHOLD_MB = 512
 @registry.asset(
     "dataset_loaders",
     "jsonl",
-    desc="Local JSONL file dataset loader",
+    desc="本地 JSONL 文件加载器",
     tags=("local", "file"),
     supports_streaming=True,
 )
@@ -96,11 +96,7 @@ def _read_jsonl(path: Path, limit: Optional[int] = None) -> Iterable[Dict[str, A
     with path.open("r", encoding="utf-8") as handle:
         for index, line in enumerate(handle):
             if line.strip():
-                try:
-                    data.append(json.loads(line))
-                except Exception:
-                    # Ignore malformed lines if any (or rely on upper layer handling)
-                    pass
+                data.append(json.loads(line))
             if limit is not None and index + 1 >= limit:
                 break
     return data

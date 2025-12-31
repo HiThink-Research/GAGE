@@ -60,7 +60,7 @@ class TGIBackendTests(unittest.TestCase):
         self.assertEqual(fake_session.post_calls[0]["url"], "http://0.0.0.0:9000/generate")
         params = fake_session.post_calls[0]["json"]["parameters"]
         self.assertEqual(params["max_new_tokens"], 4)
-        # sampling_params.temperature overrides the default temperature.
+        # sampling_params.temperature 覆盖默认 temperature
         self.assertEqual(params["temperature"], 0.1)
         self.assertEqual(params["top_p"], 0.9)
         self.assertEqual(params["repetition_penalty"], 1.05)

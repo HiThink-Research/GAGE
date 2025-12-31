@@ -15,7 +15,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "faiss",
-    desc="Faiss vector retrieval backend",
+    desc="Faiss 向量检索后端",
     tags=("retrieval", "local"),
     modalities=("embedding",),
 )

@@ -74,7 +74,7 @@ def _build_task_plan(
             f"Task '{task.task_id}' must declare steps explicitly or via custom pipeline"
         )
 
-    # NOTE: Auto-fill missing `adapter_id` for common cases (currently focused on inference steps).
+    # 对缺失 adapter_id 的步骤做智能补全（目前聚焦 inference 步骤）。
     resolved_steps = _infer_step_bindings(steps, role_map, task_id=task.task_id)
 
     role_bindings: Dict[str, RoleAdapterSpec] = {}
@@ -116,28 +116,26 @@ def _infer_step_bindings(
 ) -> Sequence[CustomPipelineStep]:
     """Infer adapter bindings for steps that omit adapter_id.
 
-    The current implementation targets the most common case: if there is exactly
-    one DUT role adapter, the `inference` step may omit `adapter_id` and will be
-    automatically bound to that DUT adapter.
+    当前实现聚焦在最常见的场景：当仅存在唯一的 DUT 角色时，
+    允许在 inference 步骤中省略 adapter_id，由此自动绑定该角色。
     """
 
-    # STEP 1: If all steps specify adapter_id explicitly, keep them unchanged.
+    # 显式 adapter_id 永远优先，不做任何修改。
     if all(step.adapter_id for step in steps):
         return steps
 
     resolved: List[CustomPipelineStep] = []
-    # STEP 2: Resolve the unique DUT role adapter (role_type='dut_model') if possible.
+    # 查找唯一的 DUT 角色（role_type='dut_model'）
     dut_adapters = [spec for spec in role_map.values() if spec.role_type == "dut_model"]
     inferred_dut_id: Optional[str] = None
     if len(dut_adapters) == 1:
         inferred_dut_id = dut_adapters[0].adapter_id
 
-    # STEP 3: Walk steps and infer bindings only for `inference` when safe.
     for step in steps:
         if step.adapter_id:
             resolved.append(step)
             continue
-        # Only infer for `inference`; keep other step types unchanged.
+        # 仅对 inference 步骤尝试自动推断，其他类型维持原样。
         if step.step_type == "inference":
             if inferred_dut_id is None:
                 if not dut_adapters:
@@ -160,5 +158,4 @@ def _infer_step_bindings(
         else:
             resolved.append(step)
 
-    # STEP 4: Return the resolved step list.
     return tuple(resolved)

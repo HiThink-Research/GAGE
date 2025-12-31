@@ -13,7 +13,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "model_hubs",
     "huggingface",
-    desc="HuggingFace model hub",
+    desc="HuggingFace 模型仓库",
     tags=("remote", "hf"),
 )
 class HuggingFaceModelHub(ModelHub):

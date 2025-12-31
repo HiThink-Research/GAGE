@@ -12,7 +12,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "model_hubs",
     "local",
-    desc="Local filesystem model hub",
+    desc="本地文件系统模型",
     tags=("local",),
 )
 class LocalModelHub(ModelHub):

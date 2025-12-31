@@ -28,7 +28,7 @@ from gage_eval.role.model.config.vendor_http import (
 @registry.asset(
     "backends",
     "claude_http",
-    desc="Anthropic Claude multimodal HTTP backend",
+    desc="Anthropic Claude 多模态 HTTP 后端",
     tags=("llm", "remote", "anthropic"),
     modalities=("text", "vision"),
     config_schema_ref="gage_eval.role.model.config.vendor_http:ClaudeBackendConfig",
@@ -92,7 +92,7 @@ class ClaudeHTTPBackend(EngineBackend):
 @registry.asset(
     "backends",
     "gemini_http",
-    desc="Google Gemini multimodal HTTP backend",
+    desc="Google Gemini 多模态 HTTP 后端",
     tags=("llm", "remote", "gemini"),
     modalities=("text", "vision", "audio"),
     config_schema_ref="gage_eval.role.model.config.vendor_http:GeminiBackendConfig",
@@ -153,7 +153,7 @@ class GeminiHTTPBackend(EngineBackend):
 @registry.asset(
     "backends",
     "openai_batch",
-    desc="OpenAI Batch Chat Completions backend",
+    desc="OpenAI Batch Chat Completion 后端",
     tags=("llm", "remote", "openai"),
     modalities=("text",),
     config_schema_ref="gage_eval.role.model.config.vendor_http:OpenAIBatchBackendConfig",

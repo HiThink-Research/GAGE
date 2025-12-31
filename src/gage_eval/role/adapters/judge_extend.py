@@ -11,7 +11,7 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 @registry.asset(
     "roles",
     "judge_extend",
-    desc="Judge extension role adapter",
+    desc="裁判扩展坞角色适配器",
     tags=("role", "judge"),
     role_type="judge_extend",
 )

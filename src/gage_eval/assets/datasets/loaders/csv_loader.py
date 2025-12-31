@@ -53,7 +53,7 @@ def _stream_csv(path: Path, *, limit: Optional[int]) -> Iterator[Dict[str, Any]]
 @registry.asset(
     "dataset_loaders",
     "csv",
-    desc="Local CSV file dataset loader",
+    desc="本地 CSV 文件加载器",
     tags=("local", "file"),
     supports_streaming=True,
 )

@@ -55,8 +55,7 @@ class ChatTemplateMixin:
         if mode == "plain":
             return False
 
-        # NOTE: If preprocessing only applied a fallback concatenation, allow the
-        # backend to re-render with the model template.
+        # 若预处理阶段仅做了 fallback 拼接，则允许后端重新渲染
         if mode == "preprocess" or rendered_by == "preprocess":
             if template_source == "fallback":
                 return True

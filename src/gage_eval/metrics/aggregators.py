@@ -1,4 +1,4 @@
-"""Metric aggregator implementations."""
+"""聚合器实现。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from gage_eval.metrics.base import AggregatedMetric, MetricResult
 
 
 class MetricAggregator:
-    """Base class for all aggregators."""
+    """所有聚合器的基础类。"""
 
     def __init__(self, spec: MetricSpec) -> None:
         self.spec = spec
@@ -24,7 +24,7 @@ class MetricAggregator:
 
 
 class MeanAggregator(MetricAggregator):
-    """Computes the mean for each metric value key."""
+    """对每个 value key 做均值。"""
 
     def __init__(self, spec: MetricSpec) -> None:
         super().__init__(spec)
@@ -57,10 +57,7 @@ class MeanAggregator(MetricAggregator):
 
 
 class WeightedMeanAggregator(MetricAggregator):
-    """Computes a weighted mean for each value key.
-
-    The weight is read from `MetricResult.metadata["weight"]` (defaults to 1.0).
-    """
+    """尊重样本权重的均值聚合器，weight 来自 MetricResult.metadata.weight。"""
 
     def __init__(self, spec: MetricSpec) -> None:
         super().__init__(spec)
@@ -94,10 +91,7 @@ class WeightedMeanAggregator(MetricAggregator):
 
 
 class IdentityAggregator(MetricAggregator):
-    """Returns all per-sample values without aggregation.
-
-    This is mostly useful for debugging or custom aggregations at higher layers.
-    """
+    """直接返回所有样本值，主要用于调试或上层定制聚合。"""
 
     def __init__(self, spec: MetricSpec) -> None:
         super().__init__(spec)
@@ -119,7 +113,7 @@ class IdentityAggregator(MetricAggregator):
 
 
 class CategoricalCountAggregator(MetricAggregator):
-    """Counts occurrences of a categorical field in per-sample metadata."""
+    """按分类字段统计计数的聚合器。"""
 
     def __init__(self, spec: MetricSpec) -> None:
         super().__init__(spec)

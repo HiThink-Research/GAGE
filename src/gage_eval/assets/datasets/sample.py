@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional
 
-from typing import Any, Dict, List, Optional, Union
-
-SCHEMA_VERSION = "0.0.1"
 
 @dataclass
 class MessageContent:
@@ -21,10 +19,24 @@ class MessageContent:
     video: Optional[Any] = None
     file: Optional[Any] = None
 
+
 @dataclass
 class Message:
     role: str
     content: List[MessageContent] = field(default_factory=list)
+    tool_calls: Optional[Any] = None
+    tool_use: Optional[Any] = None
+    model_output: Optional[Any] = None
+    path: Optional[Any] = None
+    name: Optional[str] = None
+
+
+@dataclass
+class Choice:
+    index: int
+    message: Message
+    label: Optional[str] = None
+
 
 @dataclass
 class PredictResult:
@@ -34,29 +46,50 @@ class PredictResult:
     usage: Optional[Dict[str, Any]] = None
     latency_ms: Optional[float] = None
 
+
+@dataclass
+class Inputs:
+    prompt: Optional[str] = None
+    input_ids: Optional[List[int]] = None
+    multi_modal_data: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AuditInfo:
+    task_id: Optional[str] = None
+    version_id: Optional[str] = None
+    query_id: Optional[str] = None
+    self_or_open_ai: Optional[str] = None
+    check_user: Optional[str] = None
+    check_time: Optional[str] = None
+    create_at: Optional[str] = None
+    create_by: Optional[str] = None
+    review_user: Optional[str] = None
+    review_time: Optional[str] = None
+
+
 @dataclass
 class Sample:
-    schema_version: str
     id: str
+    _dataset_id: str
     messages: List[Message]
-    task_type: Optional[Any] = None
-    options: Optional[List[str]] = None
-    references: List[Any] = field(default_factory=list)
-    label: Optional[str] = None
-    few_shot_examples: Optional[List[Any]] = None
-    golden_trajectories: Optional[List[Any]] = None
-    sandbox: Optional[Dict[str, Any]] = None    
-    metadata: Optional[Dict[str, Any]] = None
-    data_tag: Optional[Dict[str, Any]] = None
-    raw_assets: Optional[Dict[str, Any]] = None
-    tools: Optional[List[Any]] = None
-    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    sampling_params: Optional[Dict[str, Any]] = None
-    generation_params: Optional[Dict[str, Any]] = None
-    eval_config: Optional[Dict[str, Any]] = None
-    unconditioned_input: Optional[Union[str, list[Any]]] = None
+    choices: List[Choice] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    data_tag: Dict[str, Any] = field(default_factory=dict)
+    label: Optional[Any] = None
+    inputs: Inputs = field(default_factory=Inputs)
+    _dataset_metadata: Dict[str, Any] = field(default_factory=dict)
+    _media_meta: Dict[str, Any] = field(default_factory=dict)
+    _tokenizer_path: Optional[str] = None
+    chat_template_mode: Optional[str] = None
+    rendered_by: Optional[str] = None
+    template_source: Optional[str] = None
+    cache_suffix: Optional[str] = None
+    sampling_params: Dict[str, Any] = field(default_factory=dict)
+    generation_params: Dict[str, Any] = field(default_factory=dict)
     predict_result: List[PredictResult] = field(default_factory=list)
     eval_result: Dict[str, Any] = field(default_factory=dict)
+    audit_info: AuditInfo = field(default_factory=AuditInfo)
 
 
 def sample_from_dict(payload: Dict[str, Any]) -> Sample:
@@ -80,10 +113,11 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         return Message(role=msg.get("role", "user"), content=normalized_content, **extras)
 
     messages = [build_message(m) for m in payload.get("messages", []) if isinstance(m, dict)]
-    messages = [build_message(m) for m in payload.get("messages", []) if isinstance(m, dict)]
-    
-    # NOTE: 'choices', 'inputs', 'audit_info' are ignored as strict Sample schema does not support them.
-
+    choices = [
+        Choice(index=c.get("index", i), message=build_message(c.get("message", {})), label=c.get("label"))
+        for i, c in enumerate(payload.get("choices", []))
+        if isinstance(c, dict)
+    ]
     preds = [
         PredictResult(
             index=pr.get("index", i),
@@ -95,18 +129,36 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         for i, pr in enumerate(payload.get("predict_result", []))
         if isinstance(pr, dict)
     ]
-    
+    inputs_raw = payload.get("inputs") or {}
+    inputs = Inputs(
+        prompt=inputs_raw.get("prompt"),
+        input_ids=inputs_raw.get("input_ids"),
+        multi_modal_data=inputs_raw.get("multi_modal_data") or {},
+    )
+    audit_raw = payload.get("audit_info") or {}
+    audit = AuditInfo(**{k: audit_raw.get(k) for k in AuditInfo.__dataclass_fields__})
+
     return Sample(
-        schema_version=SCHEMA_VERSION,
         id=str(payload.get("id")),
+        _dataset_id=str(payload.get("_dataset_id", "")),
         messages=messages,
+        choices=choices,
         metadata=payload.get("metadata") or {},
         data_tag=payload.get("data_tag") or {},
         label=payload.get("label"),
+        inputs=inputs,
+        _dataset_metadata=payload.get("_dataset_metadata") or {},
+        _media_meta=payload.get("_media_meta") or {},
+        _tokenizer_path=payload.get("_tokenizer_path"),
+        chat_template_mode=payload.get("chat_template_mode"),
+        rendered_by=payload.get("rendered_by"),
+        template_source=payload.get("template_source"),
+        cache_suffix=payload.get("cache_suffix"),
         sampling_params=payload.get("sampling_params") or {},
         generation_params=payload.get("generation_params") or {},
         predict_result=preds,
         eval_result=payload.get("eval_result") or {},
+        audit_info=audit,
     )
 
 

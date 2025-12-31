@@ -115,7 +115,7 @@ class RecorderBase:
 @registry.asset(
     "reporting_sinks",
     "inmemory",
-    desc="In-memory event recorder (tests)",
+    desc="将事件保存在内存中（测试用途）",
     tags=("memory",),
 )
 class InMemoryRecorder(RecorderBase):
@@ -135,7 +135,7 @@ class InMemoryRecorder(RecorderBase):
 @registry.asset(
     "reporting_sinks",
     "file",
-    desc="Local JSONL event recorder",
+    desc="将事件写入本地 JSONL 文件",
     tags=("file", "local"),
 )
 class FileRecorder(RecorderBase):
@@ -159,7 +159,7 @@ class FileRecorder(RecorderBase):
 @registry.asset(
     "reporting_sinks",
     "http",
-    desc="HTTP event recorder with fallback support",
+    desc="推送事件到 HTTP 端点，支持回退",
     tags=("http", "remote"),
 )
 class HTTPRecorder(RecorderBase):

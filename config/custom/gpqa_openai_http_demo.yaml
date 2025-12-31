@@ -56,13 +56,12 @@ datasets:
 
 backends:
   - backend_id: qwen_openai_http
-    type: litellm
+    type: openai_http
     config:
       # 本地或远端 OpenAI Chat Completion 兼容服务地址
-      provider: openai
-      api_base: http://127.0.0.1:1234/v1
+      base_url: http://127.0.0.1:1234/v1
       model: qwen2.5-0.5b-instruct  # 本机建议使用小模型，方便快速迭代
-      generation_parameters:
+      default_params:
         max_new_tokens: 64  # GPQA 答案极短，64 足够
         temperature: 0.2    # 轻微随机性，提升稳定性
       async_max_concurrency: 4  # 本地开发机适度并发，避免打满 CPU/网络

@@ -51,7 +51,7 @@ def gemini_generate(model_id):
             'content': {'role': 'model', 'parts': [{'text': text}]},
             'finishReason': 'STOP',
         }],
-        # NOTE: LiteLLM's Gemini adapter expects the `usageMetadata` field.
+        # litellm 的 Gemini 适配需要 usageMetadata 字段
         'usageMetadata': {'promptTokenCount': 1, 'candidatesTokenCount': 1, 'totalTokenCount': 2},
     })
 
@@ -60,8 +60,7 @@ def gemini_generate(model_id):
 def openai_compat():
     payload = request.get_json(force=True, silent=True) or {}
     print(f"[MOCK-GOOGLE-OAI] {request.path} payload={payload}", flush=True)
-    # NOTE: If a downstream OpenAI-compatible endpoint is configured, proxy to it;
-    # otherwise, echo locally.
+    # 如果指定了下游 OPENAI 兼容服务，则转发；否则直接回显
     if MOCK_TARGET:
         headers = {'Authorization': f'Bearer {API_KEY}', 'Content-Type': 'application/json'}
         try:

@@ -118,7 +118,7 @@ def _select_summary_entries(cache: EvalCache) -> List[Any]:
 @registry.asset(
     "pipeline_steps",
     "report",
-    desc="Global step that aggregates evaluation results and writes reports",
+    desc="汇总评测结果并输出报告的阶段",
     tags=("report",),
     step_kind="global",
 )

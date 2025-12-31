@@ -61,8 +61,7 @@ class ConfigRegistry:
         adapter_cls = self._resolve_role_class(spec)
         adapter_kwargs = dict(spec.params)
         backend_obj: Any = None
-        # NOTE: Inline backend takes precedence: when an inline backend is declared,
-        # ignore the `backend_id` reference.
+        # Inline backend 优先：若声明了 inline backend，则忽略 backend_id 绑定。
         if spec.backend is not None:
             if spec.backend_id:
                 logger.warning(

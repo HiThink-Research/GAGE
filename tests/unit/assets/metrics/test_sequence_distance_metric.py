@@ -4,7 +4,7 @@ from gage_eval.observability.trace import ObservabilityTrace
 
 
 class DummySequenceDistanceMetric(SequenceDistanceMetric):
-    """Test-only metric that reuses the base compare implementation."""
+    """直接复用基类 compare，用于单测。"""
     pass
 
 

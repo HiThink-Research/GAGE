@@ -34,8 +34,7 @@ def _validate_builtin_template(payload: dict, *, materialize_runtime: bool = Fal
     if not meta.get("version"):
         raise ValueError("BuiltinTemplate.metadata.version is required")
 
-    # NOTE: Validate digest (if present) against the definition block to catch
-    # "definition changed but digest not updated" issues early.
+    # 校验 digest（如果存在）与 definition 一致性，帮助早期发现改动未更新的问题。
     digest = meta.get("digest")
     if isinstance(digest, str) and digest.startswith("sha256:"):
         expected = digest.split("sha256:", 1)[1]

@@ -18,12 +18,12 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "litellm",
-    desc="LiteLLM backend for unified provider access (Grok/Kimi base URLs + param normalization)",
+    desc="通过 LiteLLM 统一接入各类推理服务，含 Grok/Kimi 基址与参数归一化",
     tags=("llm", "remote", "api"),
     modalities=("text",),
 )
 class LiteLLMBackend(EngineBackend):
-    """LiteLLM backend with provider inference and sampling normalization."""
+    """LiteLLM 统一接口，补充 Grok/Kimi 基址推断与采样参数归一化。"""
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.transport = "http"
@@ -84,8 +84,7 @@ class LiteLLMBackend(EngineBackend):
         if self._cfg.force_kimi_direct or self._cfg.prefer_litellm_kimi:
             logger.warning("force_kimi_direct/prefer_litellm_kimi 已废弃，LiteLLM 现统一走 litellm 调用路径")
 
-        # NOTE: Normalize `custom_llm_provider`: prefer an explicit user value, then
-        # fall back to provider inference.
+        # 归一化 custom_llm_provider，优先用户传入，其次回退 provider/infer
         self._custom_llm_provider = self._normalize_custom_provider(
             getattr(self._cfg, "custom_llm_provider", None) or self.provider
         )
@@ -143,7 +142,7 @@ class LiteLLMBackend(EngineBackend):
         return self._generate_litellm(inputs)
 
     # ------------------------------------------------------------------ #
-    # LiteLLM call path                                                 #
+    # LiteLLM 路径                                                      #
     # ------------------------------------------------------------------ #
     def _generate_litellm(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         kwargs, _ = self._build_litellm_kwargs(inputs)
@@ -300,7 +299,7 @@ class LiteLLMBackend(EngineBackend):
         for attempt in range(self._max_retries):
             try:
                 return func()
-            except Exception as exc:  # pragma: no cover - network/third-party errors
+            except Exception as exc:  # pragma: no cover - 网络/第三方异常
                 last_exc = exc
                 if attempt == self._max_retries - 1:
                     break

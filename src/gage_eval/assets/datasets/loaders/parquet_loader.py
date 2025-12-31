@@ -41,7 +41,7 @@ def _read_parquet(path: Path, *, limit: Optional[int]) -> Iterable[Dict[str, Any
 @registry.asset(
     "dataset_loaders",
     "parquet",
-    desc="Local Parquet file dataset loader",
+    desc="本地 Parquet 文件加载器",
     tags=("local", "file"),
     supports_streaming=False,
 )

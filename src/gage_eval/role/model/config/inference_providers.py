@@ -11,7 +11,7 @@ from gage_eval.role.model.config.generations import GenerationParameters
 
 
 class InferenceProvidersBackendConfig(BackendConfigBase):
-    """Config for HuggingFace Inference Providers (Together, Anyscale, etc.)."""
+    """Config for HuggingFace Inference Providers (Together、Anyscale 等)."""
 
     provider: str = Field(..., description="Inference provider 名称，例如 together/anyscale/runpod 等")
     model_name: str = Field(..., description="提供给 provider 的模型 ID")

@@ -1,10 +1,5 @@
-"""Built-in metric collection."""
+"""内置 Metric 集合。"""
 
-from gage_eval.metrics.builtin.gomoku import (
-    GomokuAverageTurnsMetric,
-    GomokuIllegalRateMetric,
-    GomokuWinRateMetric,
-)
 from gage_eval.metrics.builtin.multi_choice import MultiChoiceAccuracyMetric
 from gage_eval.metrics.builtin.docvqa_anls import DocVQAANLSMetric
 from gage_eval.metrics.builtin.mmmu import MMMUAccuracyMetric
@@ -29,9 +24,6 @@ __all__ = [
     "JudgeThresholdMetric",
     "TextLengthMetric",
     "LatencyMetric",
-    "GomokuWinRateMetric",
-    "GomokuIllegalRateMetric",
-    "GomokuAverageTurnsMetric",
     "MultiChoiceAccuracyMetric",
     "DocVQAANLSMetric",
     "MMMUAccuracyMetric",
