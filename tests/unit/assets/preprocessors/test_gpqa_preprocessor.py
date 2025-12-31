@@ -8,9 +8,9 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
 
 @pytest.mark.fast
 def test_gpqa_preprocess_deterministic_shuffle(monkeypatch):
-    """多选题：校验选项重排后 correct_choice/option_map/标记。"""
+    """Multi-choice: verifies correct_choice/option_map/render flags after shuffling."""
 
-    # 固定 shuffle 顺序：反转列表
+    # Force a deterministic shuffle: reverse the list.
     monkeypatch.setattr("gage_eval.assets.datasets.preprocessors.gpqa_preprocessor.random.shuffle", lambda x: x.reverse())
 
     pre = GpqaPreprocessor()
@@ -23,11 +23,11 @@ def test_gpqa_preprocess_deterministic_shuffle(monkeypatch):
     }
     out = pre.to_sample(sample)
 
-    # 选项应被重排并带标签
+    # Choices should be re-ordered and labeled.
     labels = [c["label"] for c in out["choices"]]
     assert labels == ["A", "B", "C", "D"]
     option_texts = [c["message"]["content"][0]["text"] for c in out["choices"]]
-    assert option_texts == ["False3", "False2", "False1", "True"]  # reverse 后 True 在末尾
+    assert option_texts == ["False3", "False2", "False1", "True"]  # after reverse, True is last
 
     meta = out["metadata"]
     assert meta["option_map"]["D"] == "True"
@@ -38,7 +38,7 @@ def test_gpqa_preprocess_deterministic_shuffle(monkeypatch):
 
 @pytest.mark.fast
 def test_gpqa_struct_only_strips_prompt():
-    """Struct-only 仅保留结构化字段，移除渲染标记。"""
+    """Struct-only keeps structured fields and removes render flags."""
 
     pre = GpqaStructOnlyPreprocessor()
     sample = {
@@ -53,16 +53,16 @@ def test_gpqa_struct_only_strips_prompt():
     assert out.get("inputs") == {}
     for key in ("chat_template_mode", "template_source", "rendered_by", "cache_suffix"):
         assert key not in out
-    # choices/metadata 应保留
+    # choices/metadata should be kept.
     assert out["choices"]
     assert out["metadata"]["correct_choice"] in {"A", "B", "C", "D"}
 
 
 @pytest.mark.fast
 def test_gpqa_preprocess_applies_tokenizer_chat_template(monkeypatch):
-    """有 tokenizer 时应使用 chat_template 渲染 prompt。"""
+    """Uses tokenizer chat_template rendering when a tokenizer is provided."""
 
-    # 固定 shuffle 顺序，便于断言内容
+    # Force deterministic shuffle for stable assertions.
     monkeypatch.setattr("gage_eval.assets.datasets.preprocessors.gpqa_preprocessor.random.shuffle", lambda x: x.reverse())
 
     class DummyTokenizer:
@@ -86,7 +86,7 @@ def test_gpqa_preprocess_applies_tokenizer_chat_template(monkeypatch):
     }
 
     out = pre.to_sample(sample)
-    # chat_template 结果应覆盖 prompt/inputs，并打 chat_template 标记
+    # The rendered prompt should populate prompt/inputs and set template flags.
     assert out["prompt"] == "templated_prompt"
     assert out["inputs"]["prompt"] == "templated_prompt"
     assert out["inputs"]["input_ids"] == [1, 2, 3]

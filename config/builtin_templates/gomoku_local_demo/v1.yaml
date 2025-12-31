@@ -1,0 +1,128 @@
+api_version: gage/v1alpha1
+kind: BuiltinTemplate
+metadata:
+  name: gomoku_local_demo
+  version: V1
+  digest: sha256:30390c0b39cf0d1998c53fd88347e434b6b2d86e16aa668e70faa00d37e79530
+  source_tasks:
+  - gomoku_demo_task
+  monolithic: false
+definition:
+  metadata:
+    name: gomoku_local_demo
+    description: Local Gomoku MVP (LLM vs LLM) with arena step.
+  custom:
+    steps:
+    - step: support
+      adapter_id: gomoku_context_provider
+    - step: arena
+      adapter_id: gomoku_arena
+  datasets:
+  - dataset_id: gomoku_matches
+    loader: jsonl
+    params:
+      path: tests/Test_Gomoku.jsonl
+      preprocess: grid_game_preprocessor
+  backends:
+  - backend_id: gomoku_black_backend
+    type: dummy
+    config:
+      responses:
+      - A1
+      - A2
+      - A3
+      - A4
+      - A5
+      cycle: true
+  - backend_id: gomoku_white_backend
+    type: dummy
+    config:
+      responses:
+      - B1
+      - B2
+      - B3
+      - B4
+      cycle: true
+  role_adapters:
+  - adapter_id: gomoku_context_provider
+    role_type: context_provider
+    params:
+      implementation: gomoku_context
+  - adapter_id: gomoku_black_backend
+    role_type: dut_model
+    backend_id: gomoku_black_backend
+    capabilities:
+    - chat_completion
+  - adapter_id: gomoku_white_backend
+    role_type: dut_model
+    backend_id: gomoku_white_backend
+    capabilities:
+    - chat_completion
+  - adapter_id: gomoku_arena
+    role_type: arena
+    params:
+      environment:
+        impl: gomoku_local_v1
+        board_size: 9
+        coord_scheme: A1
+      rules:
+        win_len: 5
+        illegal_policy:
+          retry: 1
+          on_fail: loss
+      scheduler:
+        type: turn
+        max_turns: 81
+      parser:
+        impl: grid_parser_v1
+        coord_scheme: A1
+      players:
+      - name: Black
+        type: backend
+        ref: gomoku_black_backend
+        max_retries: 1
+      - name: White
+        type: backend
+        ref: gomoku_white_backend
+        max_retries: 1
+  metrics: []
+  tasks:
+  - task_id: gomoku_demo_task
+    dataset_id: gomoku_matches
+    steps:
+    - step: support
+      adapter_id: gomoku_context_provider
+    - step: arena
+      adapter_id: gomoku_arena
+    reporting:
+      sinks:
+      - type: console
+parameters:
+- name: runtime.datasets.gomoku_matches
+  type: obj
+  default:
+    loader: jsonl
+    params:
+      path: tests/Test_Gomoku.jsonl
+      preprocess: grid_game_preprocessor
+  description: Gomoku test set path.
+- name: runtime.backends.gomoku_black_backend
+  type: obj
+  default:
+    type: dummy
+    config:
+      responses: [A1, A2, A3, A4, A5]
+      cycle: true
+  description: Dummy backend for Black player.
+- name: runtime.backends.gomoku_white_backend
+  type: obj
+  default:
+    type: dummy
+    config:
+      responses: [B1, B2, B3, B4]
+      cycle: true
+  description: Dummy backend for White player.
+- name: runtime.tasks.gomoku_demo_task.max_samples
+  type: int
+  default: 2
+  description: Maximum samples for demo.

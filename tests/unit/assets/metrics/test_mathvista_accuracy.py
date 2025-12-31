@@ -39,7 +39,7 @@ def test_mathvista_accuracy_multi_choice_text_match():
     metric = MathVistaAccuracyMetric(MetricSpec(metric_id="m1", implementation="mathvista_accuracy"))
     sample = {
         "metadata": {"option_map": {"A": "red", "B": "green"}},
-        "answer": "green",  # 文本答案
+        "answer": "green",  # textual answer
     }
     ctx = build_context(sample, {"answer": "green"})
     res = metric.compute(ctx)

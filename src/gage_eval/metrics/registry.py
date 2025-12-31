@@ -1,4 +1,4 @@
-"""Metric registry handling实现类与聚合器的装配。"""
+"""Metric registry for assembling metric implementations and aggregators."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class MetricRegistry:
 
     @staticmethod
     def _import_metric_class(implementation: str) -> Type[BaseMetric]:
-        """支持 `pkg.module:ClassName` 与 `pkg.module.ClassName` 两种写法。"""
+        """Imports a metric class from `pkg.module:ClassName` or `pkg.module.ClassName`."""
 
         if ":" in implementation:
             module_name, class_name = implementation.split(":", 1)

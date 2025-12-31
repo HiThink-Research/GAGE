@@ -6,7 +6,7 @@ from gage_eval.observability.trace import ObservabilityTrace
 
 
 def _build_pipeline_config(metrics_config):
-    # 补足 PipelineConfig 所需的最小字段
+    # Provide the minimal required fields for PipelineConfig.
     base = {
         "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
         "role_adapters": [{"adapter_id": "r1", "role_type": "dut_model"}],
@@ -102,6 +102,6 @@ def test_ranking_pipeline_with_objects_and_hit_at_k():
 
     aggregated = [inst.finalize() for inst in instances]
     rank_metric = aggregated[0]
-    # 第一条命中 rank=2 -> hit@k=1，第二条未命中 -> 0，均值 0.5
+    # First sample hits at rank=2 -> hit@k=1; second sample misses -> 0; mean=0.5.
     assert abs(rank_metric["values"]["hit"] - 0.5) < 1e-6
     assert rank_metric["count"] == 2

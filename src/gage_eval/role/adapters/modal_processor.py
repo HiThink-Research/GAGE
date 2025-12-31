@@ -11,7 +11,7 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 @registry.asset(
     "roles",
     "modal_processor",
-    desc="多模态预处理/后处理角色",
+    desc="Multimodal pre/post-processing role adapter",
     tags=("role", "modal"),
     role_type="modal_processor",
 )

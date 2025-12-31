@@ -14,7 +14,7 @@ from gage_eval.role.model.backends.hf_backend import HFBackend
 @registry.asset(
     "backends",
     "hf_lora",
-    desc="HuggingFace Transformers + LoRA/PEFT 适配器合并后端",
+    desc="HuggingFace Transformers backend with merged LoRA/PEFT adapters",
     tags=("llm", "local", "peft"),
 )
 class HFLoRABackend(HFBackend):

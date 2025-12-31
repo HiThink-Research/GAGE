@@ -13,7 +13,12 @@ from gage_eval.assets.datasets.utils.rendering import (
 
 
 class DefaultPreprocessor(SimplePreprocessor):
-    """默认预处理器：支持外部脚本或 llm-eval 样式转换并提供文本兜底渲染。"""
+    """Default preprocessor with legacy compatibility and fallback rendering.
+
+    This preprocessor supports:
+    - legacy/llm-eval style conversions via external handles
+    - fallback prompt rendering for text-only samples when needed
+    """
 
     module_path: Optional[str] = None
 

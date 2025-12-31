@@ -22,6 +22,7 @@ class TaskPlan:
 
     support_steps: Sequence[Dict[str, Any]] = field(default_factory=tuple)
     inference_role: Optional[str] = None
+    arena_role: Optional[str] = None
     judge_role: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     metric_specs: Sequence[MetricSpec] = field(default_factory=tuple)
@@ -33,15 +34,18 @@ class TaskPlan:
     def create_context(self, sample: dict, trace: ObservabilityTrace, role_manager):
         from gage_eval.pipeline.steps.support import SupportStep
         from gage_eval.pipeline.steps.inference import InferenceStep
+        from gage_eval.pipeline.steps.arena import ArenaStep
         from gage_eval.pipeline.steps.judge import JudgeStep
 
         support = SupportStep(self.support_steps)
         inference = InferenceStep(self.inference_role)
+        arena = ArenaStep(self.arena_role)
         judge = JudgeStep(self.judge_role)
         return StepExecutionContext(
             sample,
             support,
             inference,
+            arena,
             judge,
             self.auto_eval_step,
             trace,
@@ -61,6 +65,7 @@ class TaskPlanner:
         self._auto_eval_step: Optional[AutoEvalStep] = None
         self._cached_support_steps: Sequence[dict] = ()
         self._cached_inference_role: Optional[str] = None
+        self._cached_arena_role: Optional[str] = None
         self._cached_judge_role: Optional[str] = None
         self._auto_eval_requested: bool = False
         self._plan_spec: Optional["TaskPlanSpec"] = None
@@ -72,19 +77,21 @@ class TaskPlanner:
         (
             self._cached_support_steps,
             self._cached_inference_role,
+            self._cached_arena_role,
             self._cached_judge_role,
             self._auto_eval_requested,
         ) = self._derive_layout(steps)
         logger.debug(
-            "TaskPlanner configured {} custom steps (inference={}, judge={}, auto_eval={})",
+            "TaskPlanner configured {} custom steps (inference={}, arena={}, judge={}, auto_eval={})",
             len(steps),
             self._cached_inference_role,
+            self._cached_arena_role,
             self._cached_judge_role,
             self._auto_eval_requested,
         )
 
     def attach_task_plan_spec(self, plan_spec: "TaskPlanSpec") -> None:
-        """Bind a precomputed TaskPlanSpec so layout无需重复解析."""
+        """Binds a precomputed TaskPlanSpec to avoid re-parsing the step layout."""
 
         self._plan_spec = plan_spec
         self.configure_custom_steps(plan_spec.steps)
@@ -120,10 +127,11 @@ class TaskPlanner:
     ) -> TaskPlan:
         if custom_steps is not None:
             ordered_steps: Sequence[Any] = tuple(custom_steps)
-            support_steps, inference, judge, auto_eval_requested = self._derive_layout(ordered_steps)
+            support_steps, inference, arena, judge, auto_eval_requested = self._derive_layout(ordered_steps)
         else:
             support_steps = self._cached_support_steps
             inference = self._cached_inference_role
+            arena = self._cached_arena_role
             judge = self._cached_judge_role
             auto_eval_requested = self._auto_eval_requested
             ordered_steps = self._cached_step_sequence
@@ -131,14 +139,16 @@ class TaskPlanner:
         if metadata:
             final_metadata.update(metadata)
         logger.debug(
-            "Prepared TaskPlan metadata={} inference={} judge={}",
+            "Prepared TaskPlan metadata={} inference={} arena={} judge={}",
             final_metadata,
             inference,
+            arena,
             judge,
         )
         return TaskPlan(
             support_steps=support_steps,
             inference_role=inference,
+            arena_role=arena,
             judge_role=judge,
             metadata=final_metadata,
             metric_specs=self._metric_specs,
@@ -152,13 +162,16 @@ class TaskPlanner:
         return self._auto_eval_step
 
     @staticmethod
-    def _derive_layout(steps: Sequence[dict]) -> tuple[Sequence[dict], Optional[str], Optional[str], bool]:
+    def _derive_layout(
+        steps: Sequence[dict],
+    ) -> tuple[Sequence[dict], Optional[str], Optional[str], Optional[str], bool]:
         # Support steps are executed sequentially before handing off to inference/judge roles.
         support_steps = tuple(step for step in steps if step.get("step") == "support")
         inference = next((step.get("adapter_id") or step.get("role_ref") for step in steps if step.get("step") == "inference"), None)
+        arena = next((step.get("adapter_id") or step.get("role_ref") for step in steps if step.get("step") == "arena"), None)
         judge = next((step.get("adapter_id") or step.get("role_ref") for step in steps if step.get("step") == "judge"), None)
         auto_eval = any(step.get("step") == "auto_eval" for step in steps)
-        return support_steps, inference, judge, auto_eval
+        return support_steps, inference, arena, judge, auto_eval
 
 
 class StepExecutionContext:
@@ -169,6 +182,7 @@ class StepExecutionContext:
         sample: dict,
         support,
         inference,
+        arena,
         judge,
         auto_eval_step,
         trace: ObservabilityTrace,
@@ -179,6 +193,7 @@ class StepExecutionContext:
         self.sample = sample
         self.support = support
         self.inference = inference
+        self.arena = arena
         self.judge = judge
         self.auto_eval_step = auto_eval_step
         self.auto_eval_enabled = auto_eval_enabled
@@ -205,6 +220,11 @@ class StepExecutionContext:
     def execute_inference(self) -> None:
         logger.trace("Executing inference step adapter={}", getattr(self.inference, "_adapter_id", None))
         self._model_output = self.inference.execute(self.sample, self.role_manager, self.trace)
+        append_predict_result(self.sample, self._model_output)
+
+    def execute_arena(self) -> None:
+        logger.trace("Executing arena step adapter={}", getattr(self.arena, "_adapter_id", None))
+        self._model_output = self.arena.execute(self.sample, self.role_manager, self.trace)
         append_predict_result(self.sample, self._model_output)
 
     def execute_judge(self) -> None:

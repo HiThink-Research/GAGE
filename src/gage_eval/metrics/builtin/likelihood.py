@@ -13,12 +13,12 @@ from gage_eval.registry import registry
 @registry.asset(
     "metrics",
     "likelihood",
-    desc="使用 loss 或 token_logprobs 计算 NLL/PPL",
+    desc="Compute NLL/PPL from loss or token logprobs",
     tags=("likelihood", "ppl"),
     default_aggregation="mean",
 )
 class LikelihoodMetric(SimpleMetric):
-    """读取 loss 或 token_logprobs 计算 NLL / PPL。"""
+    """Computes NLL/PPL from `loss` or `token_logprobs` fields."""
 
     value_key = "nll"
 
@@ -44,7 +44,7 @@ class LikelihoodMetric(SimpleMetric):
             logprobs_raw = extract_field(context, logprob_field)
             logprobs = flatten_numeric_list(logprobs_raw)
             if logprobs:
-                # 使用负对数似然（平均 token）
+                # NOTE: Use negative log-likelihood averaged over tokens.
                 avg_logprob = sum(logprobs) / len(logprobs)
                 loss = -avg_logprob
                 source = "token_logprobs"

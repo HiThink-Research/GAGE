@@ -114,8 +114,9 @@ def _strip_auto_preview(md: str) -> str:
 def _normalize_flowchart_nodes(mermaid: str) -> str:
     """Best-effort rewrite for invalid `A Label --> B Label` flowchart lines.
 
-    Mermaid 节点 id 不能包含空格；历史模板曾用 `A Inspect --> B SampleJson` 形式，部分渲染器会报错。
-    这里将其转换为 `Inspect --> SampleJson`，只对简单直连边做重写。
+    Mermaid node ids cannot contain whitespace. Older templates used patterns like
+    `A Inspect --> B SampleJson`, which can break in some renderers. This helper rewrites
+    simple direct edges to `Inspect --> SampleJson`.
     """
 
     rewritten: list[str] = []
@@ -207,15 +208,15 @@ def _render_preprocessor_preview(cfg_block: Dict[str, Any], slug: str) -> str:
 question_field = str(merged.get("question_field") or "{question_field}")
 answers_field = str(merged.get("answers_field") or "{answers_field}")
 
-question = extract_field(record, question_field)
-answer = extract_field(record, answers_field)
-if question is None:
-    raise ValueError(f"Missing question_field: {{question_field}}")
+    question = extract_field(record, question_field)
+    answer = extract_field(record, answers_field)
+    if question is None:
+        raise ValueError(f"Missing question_field: {{question_field}}")
 
-# Prefer stable ids when available (normalize_sample 会兜底生成哈希 id)。
-stable_id = record.get("unique_id") or record.get("id") or record.get("_id")
-if stable_id:
-    sample["id"] = str(stable_id)
+    # Prefer stable ids when available (normalize_sample falls back to a hashed id).
+    stable_id = record.get("unique_id") or record.get("id") or record.get("_id")
+    if stable_id:
+        sample["id"] = str(stable_id)
 
 sample["messages"] = [
     {{
@@ -299,8 +300,8 @@ _BUILTIN_METRIC_IDS = {
 def _render_metric_stub_preview(*, metric_registry_id: str, metric_id: str) -> Tuple[Path, str]:
     """Render a minimal metric stub preview.
 
-    - metric_registry_id: registry 中用于加载的实现名（support_config.metrics[*].implementation）
-    - metric_id: 报告侧展示/聚合使用的指标标识（support_config.metrics[*].metric_id）
+    - metric_registry_id: Implementation id used by the registry (`support_config.metrics[*].implementation`)
+    - metric_id: Metric identifier used for reporting/aggregation (`support_config.metrics[*].metric_id`)
     """
 
     class_name = class_name_from_slug(metric_registry_id) + "Metric"
@@ -323,7 +324,7 @@ from gage_eval.registry import registry
     default_aggregation="mean",
 )
 class {class_name}(ComparisonMetric):
-    \"\"\"简单等价匹配（自动生成骨架，可按需增强）。\"\"\"
+    \"\"\"Implement a simple exact-match metric (auto-generated stub).\"\"\"
 
     default_reference_field = "sample.label"
     default_prediction_field = "model_output.answer"
@@ -476,7 +477,7 @@ def _iter_custom_metric_impls(cfg_block: Dict[str, Any]) -> list[str]:
         impl = str(m.get("implementation") or metric_id).strip()
         if not impl:
             continue
-        # class_path 或 module path 不需要生成文件
+        # Do not generate files for class_path/module-path implementations.
         if ":" in impl or "." in impl:
             continue
         if impl in _BUILTIN_METRIC_IDS:
@@ -561,7 +562,8 @@ def _render_landing_plan_table(cfg_block: Dict[str, Any], slug: str) -> str:
 def _rewrite_landing_plan_table(md: str, cfg_block: Dict[str, Any], slug: str) -> str:
     """Rewrite the landing plan table to match actual implement outputs.
 
-    设计文档的落地计划属于“人读”内容，但路径必须与 Support 实际写盘一致，避免误导实现。
+    The landing plan table is human-facing, but paths must match what Support actually writes
+    to disk to avoid misleading implementation work.
     """
 
     lines = md.splitlines()
@@ -598,7 +600,7 @@ def _normalize_support_config_run_commands(md: str, cfg_block: Dict[str, Any], s
     if not preprocess_name:
         return md
 
-    # Support 产物文件名统一由 slug 控制（而非 preprocess_name）。
+    # Support artifact names are controlled by `slug` (not `preprocess_name`).
     md = md.replace(
         f"config/custom/{preprocess_name}_openai.yaml",
         f"config/custom/{slug}_openai.yaml",
@@ -618,7 +620,7 @@ def _normalize_support_config_run_commands(md: str, cfg_block: Dict[str, Any], s
             return text
         if base_cmd in text:
             return text.replace(base_cmd, marker)
-        # Fallback: line-wise prefix match，补上 --max-samples 0。
+        # Fallback: line-wise prefix match and append `--max-samples 0`.
         lines = text.splitlines()
         out: list[str] = []
         for line in lines:
@@ -637,7 +639,7 @@ def _normalize_support_config_run_commands(md: str, cfg_block: Dict[str, Any], s
 def _normalize_design_doc_artifact_refs(md: str, *, slug: str, legacy_slug: str) -> str:
     """Best-effort rewrite for legacy artifact names inside design.md.
 
-    目标：design.md 中的人读内容/示例代码/路径描述要与 Support 实际写盘一致。
+    Goal: ensure human-facing text, code snippets, and path references match actual outputs.
     """
 
     legacy = str(legacy_slug or "").strip()
@@ -891,8 +893,9 @@ def _append_custom_wrapper(
 def _ensure_preprocessors_custom_import(init_path: Path) -> None:
     """Ensure preprocessors/__init__.py imports custom wrappers when present.
 
-    设计约定：Support 生成的注册包装写在 `preprocessors/custom.py`，需要在包导入时触发注册。
-    `gage_eval` 的 auto_discover 会 import `preprocessors/builtin.py`，因此在 package __init__ 中 try-import custom 即可生效。
+    Convention: Support writes registry wrappers to `preprocessors/custom.py`, so importing the package should
+    trigger registration. Since `gage_eval` auto-discovery imports `preprocessors/builtin.py`, a try-import of
+    `custom` inside the package `__init__` is sufficient.
     """
 
     init_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1154,8 +1157,8 @@ def _assert_metric_class_paths(
 ) -> None:
     """Reject metrics implementations that point to non-existent class paths.
 
-    - registry id（无冒号/点）不检查
-    - class_path 需要可导入，或在本次生成列表中出现
+    - Registry ids (no ":" or ".") are not checked here.
+    - Class paths must be importable, or planned to be generated in this run.
     """
 
     import importlib.util
@@ -1368,7 +1371,7 @@ def run_implement(
     logger.info(f"Wrote configs: {openai_path}, {vllm_path}")
     written_files.extend([openai_path.resolve(), vllm_path.resolve()])
 
-    # 去重，方便最终摘要。
+    # Deduplicate to make the final summary stable and readable.
     written_files = list(dict.fromkeys(written_files))
 
     # Refresh design.md with updated paths + auto preview (no agent call).

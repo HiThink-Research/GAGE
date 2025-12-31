@@ -12,13 +12,16 @@ from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.assets.datasets.hubs.base import DatasetHubHandle
 from gage_eval.assets.datasets.loaders.base import DatasetLoader
 from gage_eval.assets.datasets.manager import DataSource
+
 from gage_eval.assets.datasets.loaders.loader_utils import (
     apply_default_params,
+    apply_bundle,
     apply_preprocess,
+    build_bundle_context,
     build_preprocess_context,
     inject_default_params,
     resolve_doc_to_callable,
-)
+    )
 from gage_eval.observability.config import get_observability_config
 from gage_eval.registry import registry
 import logging
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 @registry.asset(
     "dataset_loaders",
     "hf_hub",
-    desc="HuggingFace / ModelScope 远程数据加载器",
+    desc="Remote dataset loader for HuggingFace Hub / ModelScope",
     tags=("remote", "huggingface"),
     supports_streaming=True,
 )
@@ -44,7 +47,7 @@ registry.register(
     "dataset_loaders",
     "modelscope",
     HuggingFaceDatasetLoader,
-    desc="ModelScope 远程数据加载器",
+    desc="Remote dataset loader for ModelScope",
     tags=("remote", "modelscope"),
     supports_streaming=False,
 )
@@ -53,7 +56,7 @@ registry.register(
     "dataset_loaders",
     "ms_hub",
     HuggingFaceDatasetLoader,
-    desc="ModelScope 远程数据加载器（ms_hub 别名）",
+    desc="Remote dataset loader for ModelScope (ms_hub alias)",
     tags=("remote", "modelscope"),
     supports_streaming=False,
 )
@@ -93,7 +96,7 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
     subset_for_metadata = subset
     streaming = streaming_override if streaming_override is not None else _should_stream_hf(loader_params, source)
     if data_files:
-        streaming = False  # 本地文件模式不走 streaming
+        streaming = False  # Local file mode does not support streaming.
     cache_path = None
 
     logger.info(
@@ -128,6 +131,15 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
         limit = loader_params.get("limit")
         if limit is not None:
             records = _limit_iterable(records, limit)
+        records = apply_bundle(
+            records,
+            spec,
+            data_path=hub_id,
+            doc_to_text=doc_to_text,
+            doc_to_visual=doc_to_visual,
+            doc_to_audio=doc_to_audio,
+            trace=trace,            
+        )
         records = apply_preprocess(
             records,
             spec,
@@ -159,6 +171,16 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
         limit = loader_params.get("limit")
         if limit is not None:
             dataset = _apply_limit(dataset, limit)
+
+        dataset = _maybe_apply_bundle(
+            dataset,
+            spec,
+            data_path=hub_id,
+            doc_to_text=doc_to_text,
+            doc_to_visual=doc_to_visual,
+            doc_to_audio=doc_to_audio,
+            trace=trace,
+        )
 
         dataset = _maybe_apply_preprocess(
             dataset,
@@ -200,7 +222,7 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
 
 
 def _ensure_hf_list_feature_alias() -> None:
-    """兼容旧版 HF 数据集使用的 `_type: List` 特征标记。"""
+    """Adds a compatibility alias for legacy HF datasets (`_type: List`)."""
 
     try:
         from datasets.features.features import _FEATURE_TYPES, Sequence  # type: ignore
@@ -331,6 +353,37 @@ def _download_dataset(
                 pass
         raise exc
 
+def _maybe_apply_bundle(
+    dataset,
+    spec: DatasetSpec,
+    *,
+    data_path: str,
+    doc_to_text=None,
+    doc_to_visual=None,
+    doc_to_audio=None,
+    trace=None,
+    observability_config=None,
+):
+    ctx = build_bundle_context(spec, data_path=data_path)
+    if not ctx:
+        return dataset
+    config = observability_config or get_observability_config()
+
+    def _map_fn(sample: Dict[str, Any]):
+        new_sample = dict(sample)
+        new_sample.setdefault("_dataset_id", spec.dataset_id)
+        new_sample.setdefault("_dataset_metadata", {"path": data_path})
+        new_sample = ctx.handle.apply(
+            new_sample,
+            dataset_id=spec.dataset_id,
+            dataset_metadata=new_sample.get("_dataset_metadata"),
+            trace=trace,
+            observability_config=config,
+            **ctx.kwargs,
+        )
+        return new_sample
+
+    return dataset.map(_map_fn)
 
 def _maybe_apply_preprocess(
     dataset,
@@ -352,7 +405,7 @@ def _maybe_apply_preprocess(
         new_sample = dict(sample)
         new_sample.setdefault("_dataset_id", spec.dataset_id)
         new_sample.setdefault("_dataset_metadata", {"path": data_path})
-        ctx.handle.apply(
+        new_sample = ctx.handle.apply(
             new_sample,
             dataset_id=spec.dataset_id,
             dataset_metadata=new_sample.get("_dataset_metadata"),
@@ -364,8 +417,8 @@ def _maybe_apply_preprocess(
             **ctx.kwargs,
         )
         return new_sample
-
-    return dataset.map(_map_fn)
+    return [_map_fn(item) for item in dataset]
+    #return dataset.map(_map_fn)
 
 
 def _inject_default_params(dataset, spec: DatasetSpec):
