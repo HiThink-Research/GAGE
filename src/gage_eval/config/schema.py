@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Sequence
 
-ALLOWED_STEPS = {"support", "inference", "judge", "auto_eval", "report", "hook"}
+ALLOWED_STEPS = {"support", "inference", "arena", "judge", "auto_eval", "report", "hook"}
 
 
 class SchemaValidationError(ValueError):
@@ -39,8 +39,9 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         errors.append("at least one dataset must be declared")
     if not role_adapters:
         errors.append("at least one role adapter must be declared")
-    # 在支持 TaskOrchestrator 模式后，若已声明 tasks，则可以不显式提供 builtin/custom。
-    # 仅当既没有 builtin/custom，又没有 tasks 时才认为配置不完整。
+    # NOTE: In the TaskOrchestrator mode, a config that declares `tasks` does not
+    # need to explicitly provide `builtin`/`custom`. We only treat the payload as
+    # incomplete when both `builtin/custom` and `tasks` are missing.
     if not (custom or builtin) and not tasks:
         errors.append("either 'builtin' or 'custom' pipeline must be provided when 'tasks' is empty")
 

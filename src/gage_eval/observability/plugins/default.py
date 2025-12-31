@@ -9,7 +9,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "observability_plugins",
     "default",
-    desc="默认文件/HTTP 观测插件",
+    desc="Default file/HTTP observability plugin",
     tags=("file", "http"),
 )
 class DefaultObservabilityPlugin:

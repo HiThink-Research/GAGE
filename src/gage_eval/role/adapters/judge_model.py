@@ -5,13 +5,14 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from gage_eval.registry import registry
+from gage_eval.evaluation.sample_envelope import resolve_model_output
 from gage_eval.role.adapters.model_role_adapter import ModelRoleAdapter
 
 
 @registry.asset(
     "roles",
     "judge_model",
-    desc="裁判/判分 LLM 角色适配器",
+    desc="Judge/scoring LLM role adapter",
     tags=("role", "judge"),
     role_type="judge_model",
 )
@@ -36,7 +37,7 @@ class JudgeModelAdapter(ModelRoleAdapter):
 
     def prepare_backend_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         sample = payload.get("sample", {})
-        model_output = payload.get("model_output", {})
+        model_output = resolve_model_output(sample, payload.get("model_output"))
         rendered = self.render_prompt(payload)
         question = rendered.prompt or sample.get("question") or sample.get("prompt") or sample.get("text") or ""
         request = {

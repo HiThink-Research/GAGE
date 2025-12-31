@@ -1,4 +1,4 @@
-"""文本/通用类型内置指标实现。"""
+"""Built-in metrics for text and generic scalar comparisons."""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from gage_eval.registry import registry
 @registry.asset(
     "metrics",
     "exact_match",
-    desc="严格文本匹配指标",
+    desc="Strict text match metric",
     tags=("text",),
     default_aggregation="mean",
 )
 class ExactMatchMetric(ComparisonMetric):
-    """严格匹配模型输出与参考答案。"""
+    """Performs strict text matching between prediction and reference."""
 
     default_reference_field = "sample.label"
     default_prediction_field = "model_output.answer"
@@ -51,12 +51,12 @@ class ExactMatchMetric(ComparisonMetric):
 @registry.asset(
     "metrics",
     "contains",
-    desc="预测结果包含参考答案",
+    desc="Prediction contains reference text",
     tags=("text",),
     default_aggregation="mean",
 )
 class ContainsMatchMetric(ComparisonMetric):
-    """prediction 是否包含 reference。"""
+    """Checks whether the prediction contains the reference text."""
 
     default_reference_field = "label"
     default_prediction_field = "model_output.answer"
@@ -73,12 +73,12 @@ class ContainsMatchMetric(ComparisonMetric):
 @registry.asset(
     "metrics",
     "numeric_match",
-    desc="带容差的数值匹配",
+    desc="Numeric match with tolerance",
     tags=("numeric",),
     default_aggregation="mean",
 )
 class NumericMatchMetric(NumericThresholdMetric):
-    """针对数值答案的匹配，可配置容差。"""
+    """Matches numeric answers with configurable tolerance."""
 
     default_reference_field = "label"
     default_prediction_field = "model_output.answer"
@@ -87,12 +87,12 @@ class NumericMatchMetric(NumericThresholdMetric):
 @registry.asset(
     "metrics",
     "regex_match",
-    desc="基于正则表达式的匹配",
+    desc="Regex match metric",
     tags=("text", "regex"),
     default_aggregation="mean",
 )
 class RegexMatchMetric(SimpleMetric):
-    """使用正则进行匹配，可选择匹配 reference 或 prediction。"""
+    """Matches using a regex pattern against a selected target field."""
 
     def setup(self) -> None:
         super().setup()
@@ -114,17 +114,17 @@ class RegexMatchMetric(SimpleMetric):
 @registry.asset(
     "metrics",
     "judge_threshold",
-    desc="根据裁判分数阈值计算通过率",
+    desc="Pass rate based on judge score threshold",
     tags=("judge",),
     default_aggregation="mean",
 )
 class JudgeThresholdMetric(NumericThresholdMetric):
-    """将裁判模型分数转换为 0/1。"""
+    """Converts a judge score into a 0/1 decision using a threshold."""
 
     default_prediction_field = "judge_output.score"
 
     def extract_reference(self, context: MetricContext) -> Any:
-        # 阈值来自配置，而非上下文字段
+        # NOTE: The threshold comes from metric args, not from the context fields.
         return self.args.get("threshold")
 
     def _get_threshold_config(self) -> dict:
@@ -146,12 +146,12 @@ class JudgeThresholdMetric(NumericThresholdMetric):
 @registry.asset(
     "metrics",
     "text_length",
-    desc="统计文本长度（字符或词）",
+    desc="Text length metric (chars or words)",
     tags=("text", "analysis"),
     default_aggregation="mean",
 )
 class TextLengthMetric(SimpleMetric):
-    """统计文本长度，支持字符或词粒度。"""
+    """Computes text length using character or word units."""
 
     value_key = "length"
 
@@ -168,12 +168,12 @@ class TextLengthMetric(SimpleMetric):
 @registry.asset(
     "metrics",
     "latency",
-    desc="读取模型输出中的延迟信息",
+    desc="Extract latency from model output",
     tags=("latency",),
     default_aggregation="mean",
 )
 class LatencyMetric(SimpleMetric):
-    """读取模型或裁判输出中的延迟信息。"""
+    """Extracts latency information from model/judge outputs."""
 
     value_key = "latency_ms"
 

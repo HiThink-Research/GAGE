@@ -117,15 +117,15 @@ class PipelineRuntime:
     ) -> None:
         if not self.report_step or sample_count <= 0:
             return
-        # 总体吞吐与总时延（按 wall clock）
+        # Overall throughput and latency (wall clock).
         if wall_runtime_s > 0:
             self.report_step.record_timing("throughput_total_samples_per_s", sample_count / wall_runtime_s)
             self.report_step.record_timing("latency_total_ms_per_sample", wall_runtime_s * 1000.0 / sample_count)
-        # 推理阶段吞吐与时延
+        # Inference-stage throughput and latency.
         if inference_s > 0:
             self.report_step.record_timing("throughput_inference_samples_per_s", sample_count / inference_s)
             self.report_step.record_timing("latency_inference_ms_per_sample", inference_s * 1000.0 / sample_count)
-        # 自动评估阶段吞吐
+        # Auto-eval stage throughput.
         if evaluation_s > 0:
             self.report_step.record_timing("throughput_auto_eval_samples_per_s", sample_count / evaluation_s)
 

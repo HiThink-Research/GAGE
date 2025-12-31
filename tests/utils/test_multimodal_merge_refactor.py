@@ -20,7 +20,7 @@ def test_merge_multimodal_inputs_dedup_and_sync():
     merge_multimodal_inputs(sample)
 
     mm = sample["inputs"]["multi_modal_data"]
-    assert mm.get("image") == ["a.png"]  # 仅保留消息引用且去重
+    assert mm.get("image") == ["a.png"]  # keep only message-referenced media and de-duplicate
     media_meta = sample.get("_media_meta") or {}
     assert media_meta.get("images") and media_meta["images"][0]["url"] == "a.png"
 

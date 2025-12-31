@@ -15,7 +15,7 @@ from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
 @registry.asset(
     "backends",
     "hf",
-    desc="HuggingFace Transformers 本地推理后端",
+    desc="HuggingFace Transformers local inference backend",
     tags=("llm", "local", "multimodal"),
     modalities=("text", "audio", "vision"),
 )

@@ -18,7 +18,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "backends",
     "multi_provider_http",
-    desc="多 provider HTTP 推理后端（基于 HuggingFace Inference Providers）",
+    desc="Multi-provider HTTP inference backend (HuggingFace Inference Providers)",
     tags=("llm", "remote", "provider"),
     modalities=("text",),
     config_schema_ref="gage_eval.role.model.config.inference_providers:InferenceProvidersBackendConfig",

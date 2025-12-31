@@ -27,7 +27,8 @@ class DocToVisualWithInputsPromptTests(unittest.TestCase):
         )
         dm.register_source(source)
         sample = next(dm.iter_samples("d1"))
-        # DataManager 仅透传，不再自动合并 doc_to_visual，确保 inputs 保持原样
+        # NOTE: DataManager only passes through here; it does not auto-merge doc_to_visual.
+        # This ensures `inputs` stays unchanged.
         self.assertIn("inputs", sample)
         self.assertEqual(sample["inputs"]["prompt"], "hi")
         self.assertNotIn("multi_modal_data", sample["inputs"])

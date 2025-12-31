@@ -27,6 +27,23 @@ class PreprocessContext:
     handle: Any
     kwargs: Dict[str, Any]
 
+@dataclass(frozen=True)
+class BundleContext:
+    """Container describing how to invoke a bundle handle."""
+
+    handle: Any
+    kwargs: Dict[str, Any]
+
+class _BundleAdapter:
+    """Adapts DatasetPreprocessor implementations to the legacy handle API."""
+
+    def __init__(self, bundle) -> None:
+        self._bundle = bundle
+        self._bundle.load()
+
+    def apply(self, sample: Dict[str, Any], **kwargs):
+        return self._bundle.provide(sample, **kwargs)
+
 
 class _PreprocessorAdapter:
     """Adapts DatasetPreprocessor implementations to the legacy handle API."""
@@ -83,10 +100,33 @@ def build_preprocess_context(spec: DatasetSpec, *, data_path: Optional[str]) -> 
         return PreprocessContext(handle=handle, kwargs=dict(kwargs))
     return None
 
+def build_bundle_context(spec: DatasetSpec, *, data_path: Optional[str]) -> Optional[BundleContext]:
+    """Create a bundle context shared by JSONL/HF loaders."""
+
+    module = spec.params.get("bundle")
+    if not module:
+        return None
+    kwargs = coerce_kwargs(spec.params.get("bundle_kwargs"))
+    if data_path is not None:
+        kwargs.setdefault("data_path", data_path)
+    handle = _resolve_registered_bundle(module, kwargs)
+    if handle:
+        return BundleContext(handle=handle, kwargs=dict(kwargs))
+    return None
+
+def _resolve_registered_bundle(name: str, kwargs: Dict[str, Any]):
+    """Resolve registered class-based bundle by registry name."""
+    if not name:
+        return None
+    try:
+        bundle_cls = registry.get("bundles", name)
+    except KeyError:
+        return None
+    bundle = bundle_cls(**kwargs)
+    return _BundleAdapter(bundle)
 
 def _resolve_registered_preprocessor(name: str, kwargs: Dict[str, Any]):
     """Resolve registered class-based preprocessor by registry name."""
-
     if not name:
         return None
     try:
@@ -109,6 +149,47 @@ def inject_default_params(record: Dict[str, Any], default_params: Optional[Dict[
     return record
 
 
+def apply_bundle(
+    records: Iterable[Dict[str, Any]],
+    spec: DatasetSpec,
+    *,
+    data_path: Optional[str],
+    doc_to_text: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    doc_to_visual: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    doc_to_audio: Optional[Callable[[Dict[str, Any]], Any]] = None,
+    trace: Optional["ObservabilityTrace"] = None,
+    observability_config: Optional["ObservabilityConfig"] = None,
+) -> Iterable[Dict[str, Any]]:
+    config = observability_config or get_observability_config()
+    ctx = build_bundle_context(spec, data_path=data_path)
+    # NOTE: If no explicit preprocess is configured, fall back to DefaultPreprocessor
+    # (llm-eval compatible defaults + fallback prompt templating).
+    if not ctx:
+        def default_generator():
+            for record in records:
+                yield record
+
+    def generator():
+        for record in records:
+            record_dict = dict(record)
+            record_dict.setdefault("_dataset_id", spec.dataset_id)
+            if data_path and "_dataset_metadata" not in record_dict:
+                record_dict["_dataset_metadata"] = {"path": data_path}
+            new_record = ctx.handle.apply(
+                record_dict,
+                dataset_id=spec.dataset_id,
+                dataset_metadata=record_dict.get("_dataset_metadata"),
+                doc_to_text=doc_to_text,
+                doc_to_visual=doc_to_visual,
+                doc_to_audio=doc_to_audio,
+                trace=trace,
+                observability_config=config,
+                **ctx.kwargs,
+            )
+            yield new_record
+
+    return generator()
+
 def apply_preprocess(
     records: Iterable[Dict[str, Any]],
     spec: DatasetSpec,
@@ -122,7 +203,8 @@ def apply_preprocess(
 ) -> Iterable[Dict[str, Any]]:
     config = observability_config or get_observability_config()
     ctx = build_preprocess_context(spec, data_path=data_path)
-    # 无显式 preprocess 时使用 DefaultPreprocessor（llm-eval 兜底 + 兜底模板）
+    # NOTE: If no explicit preprocess is configured, fall back to DefaultPreprocessor
+    # (llm-eval compatible defaults + fallback prompt templating).
     if not ctx:
         return _apply_default_preprocessor(
             records,
@@ -154,10 +236,7 @@ def apply_preprocess(
             )
             if result is None:
                 continue
-            tok_path = spec.params.get("tokenizer_path") or spec.params.get("tokenizer_name") or spec.params.get("model_path")
-            if tok_path and "_tokenizer_path" not in new_record:
-                new_record["_tokenizer_path"] = tok_path
-            yield new_record
+            yield result
 
     return generator()
 
@@ -274,3 +353,4 @@ def _validate_doc_to_signature(func: Callable[..., Any], field: str, provided_kw
         raise TypeError(
             f"doc_to field '{field}' requires keyword arguments {missing}; provide them via {field}_kwargs"
         )
+

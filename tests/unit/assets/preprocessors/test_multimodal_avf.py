@@ -27,7 +27,7 @@ def test_merge_multimodal_audio_video_file():
     merge_multimodal_inputs(sample)
 
     mm = sample["inputs"]["multi_modal_data"]
-    # 仅保留消息中引用的媒体，legacy 未被引用会被清理
+    # Keep only message-referenced media; legacy items not referenced should be pruned.
     assert mm["audio"] == ["a1.wav"]
     assert mm["video"] == ["v1.mp4"]
     assert mm["file"] == ["f1.pdf"]

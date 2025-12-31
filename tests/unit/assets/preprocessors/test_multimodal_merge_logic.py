@@ -15,7 +15,7 @@ def test_merge_multimodal_inputs_prunes_unreferenced_media():
         "inputs": {
             "prompt": "hello",
             "multi_modal_data": {
-                "image": ["a.jpg", "b.jpg"],  # b.jpg 未被引用，应被清理
+                "image": ["a.jpg", "b.jpg"],  # b.jpg is unreferenced and should be pruned
             },
         },
         "_media_meta": {"images": [{"url": "a.jpg"}, {"url": "b.jpg"}]},
@@ -25,5 +25,5 @@ def test_merge_multimodal_inputs_prunes_unreferenced_media():
 
     mm = sample["inputs"]["multi_modal_data"]
     assert mm["image"] == ["a.jpg"]
-    # _media_meta 也应同步去除未引用的媒体
+    # _media_meta should be pruned consistently as well.
     assert sample["_media_meta"]["images"] == [{"url": "a.jpg"}]
