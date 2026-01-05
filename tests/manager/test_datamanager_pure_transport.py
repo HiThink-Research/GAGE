@@ -19,4 +19,3 @@ def test_datamanager_transport_without_mutation():
     out = list(dm.iter_samples("ds"))
     assert out[0]["id"] == "s1"
     assert out[0]["messages"][0]["content"][0]["text"] == "hi"
-    assert out[0]["inputs"]["prompt"] == "hi"

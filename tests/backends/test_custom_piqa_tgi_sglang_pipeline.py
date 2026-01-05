@@ -3,7 +3,8 @@ import os
 import subprocess
 import sys
 import tempfile
-import multiprocessing as mp
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import unittest
@@ -16,16 +17,20 @@ FIXTURE = ROOT / "tests" / "fixtures" / "piqa_mini.jsonl"
 def _serve(handler_cls, port_queue):
     server = HTTPServer(("127.0.0.1", 0), handler_cls)
     host, port = server.server_address
-    port_queue.put(port)
+    server.timeout = 0.5
+    port_queue.append(port)
     try:
-        server.serve_forever()
+        while getattr(server, "_keep_running", True):
+            server.handle_request()
     finally:
         server.server_close()
 
 
 class _TGIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        _ = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        length = int(self.headers.get("Content-Length", 0))
+        if length > 0:
+            _ = self.rfile.read(length)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -38,7 +43,9 @@ class _TGIHandler(BaseHTTPRequestHandler):
 
 class _SGLangHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        _ = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        length = int(self.headers.get("Content-Length", 0))
+        if length > 0:
+            _ = self.rfile.read(length)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -50,12 +57,28 @@ class _SGLangHandler(BaseHTTPRequestHandler):
 
 
 def _start_server(handler_cls):
-    queue = mp.Queue()
-    proc = mp.Process(target=_serve, args=(handler_cls, queue))
-    proc.start()
-    port = queue.get()
-    return proc, port
+    port_queue = []
+    thread = threading.Thread(target=_serve, args=(handler_cls, port_queue))
+    thread.daemon = True
+    
+    # We need to set the flag on the thread object or similar, but the server running loop
+    # inside _serve needs access. 
+    # To keep it simple, we wrap the server object creation or pass a control object.
+    # Actually, HTTPServer doesn't straightforwardly support "stop serving" from outside 
+    # unless using `shutdown`, which blocks.
+    # Let's simplify: Just run serve_forever in a thread and daemonize it. 
+    # We don't need clean shutdown for tests, just daemon thread killing on exit.
+    
+    server = HTTPServer(("127.0.0.1", 0), handler_cls)
+    port = server.server_address[1]
+    
+    thread = threading.Thread(target=server.serve_forever)
+    thread.daemon = True
+    thread.start()
+    
+    return server, port
 
+# Note: _run_pipeline stays same
 
 def _run_pipeline(config_path: Path, extra_env: dict, output_dir: Path):
     env = os.environ.copy()
@@ -86,7 +109,7 @@ def _run_pipeline(config_path: Path, extra_env: dict, output_dir: Path):
 
 class CustomPiqaPipelineTests(unittest.TestCase):
     def test_piqa_tgi_pipeline_with_custom_config(self):
-        proc, port = _start_server(_TGIHandler)
+        server, port = _start_server(_TGIHandler)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 out_dir = Path(tmpdir) / "tgi_run"
@@ -100,11 +123,10 @@ class CustomPiqaPipelineTests(unittest.TestCase):
                 )
                 self.assertIn("metrics", summary)
         finally:
-            proc.terminate()
-            proc.join(5)
+            server.shutdown() # Blocks until request handler returns
 
     def test_piqa_sglang_pipeline_with_custom_config(self):
-        proc, port = _start_server(_SGLangHandler)
+        server, port = _start_server(_SGLangHandler)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 out_dir = Path(tmpdir) / "sglang_run"
@@ -118,8 +140,7 @@ class CustomPiqaPipelineTests(unittest.TestCase):
                 )
                 self.assertIn("metrics", summary)
         finally:
-            proc.terminate()
-            proc.join(5)
+            server.shutdown()
 
 
 if __name__ == "__main__":

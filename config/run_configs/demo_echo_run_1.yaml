@@ -35,7 +35,7 @@ runtime:
     demo_echo_dataset:
       loader: jsonl
       params:
-        path: gage-eval-main/config/builtin_templates/demo_echo/data/demo_echo.jsonl
+        path: ./config/builtin_templates/demo_echo/data/demo_echo.jsonl
   backends:
     demo_echo_dummy:
       type: dummy

@@ -1,5 +1,7 @@
 """Metric utilities exposed at the evaluation layer."""
 
+
+from gage_eval.metrics.registry import MetricRegistry, MetricInstance
 from gage_eval.metrics.base import (
     MetricContext,
     MetricResult,
@@ -10,7 +12,6 @@ from gage_eval.metrics.base import (
     MultiReferenceTextMetric,
     NumericThresholdMetric,
 )
-from gage_eval.metrics.registry import MetricRegistry, MetricInstance
 
 __all__ = [
     "MetricRegistry",
