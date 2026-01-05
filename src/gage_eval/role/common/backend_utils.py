@@ -786,6 +786,12 @@ def propagate_metadata_flags(prepared: Dict[str, Any], payload: Dict[str, Any]) 
             prepared["chat_template_mode"] = meta["chat_template_mode"]
         if "rendered_by" in meta and "rendered_by" not in prepared:
             prepared["rendered_by"] = meta["rendered_by"]
+        if "_tokenizer_path" in meta and "_tokenizer_path" not in prepared:
+            prepared["_tokenizer_path"] = meta["_tokenizer_path"]
+    
+    # Also check payload root for _tokenizer_path
+    if "_tokenizer_path" in payload and "_tokenizer_path" not in prepared:
+        prepared["_tokenizer_path"] = payload["_tokenizer_path"]
 
 
 def load_hf_tokenizer(config: Dict[str, Any]) -> Any:

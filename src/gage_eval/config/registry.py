@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from loguru import logger
 
@@ -15,9 +15,11 @@ from gage_eval.config.pipeline_config import (
     PipelineConfig,
     RoleAdapterSpec,
 )
-from gage_eval.assets.prompts.assets import PromptTemplateAsset
-from gage_eval.metrics.registry import MetricRegistry
-from gage_eval.registry import registry
+
+if TYPE_CHECKING:
+    from gage_eval.assets.prompts.assets import PromptTemplateAsset
+    from gage_eval.metrics.registry import MetricRegistry
+    from gage_eval.registry.manager import RegistryManager
 
 
 class ConfigRegistry:
@@ -44,6 +46,8 @@ class ConfigRegistry:
             if loader_name in {"hf_hub", "modelscope"}:
                 raise ValueError(f"Dataset '{spec.dataset_id}' using loader '{loader_name}' requires explicit 'hub'")
             hub_name = "inline"
+        from gage_eval.registry import registry
+        
         hub_params = dict(spec.hub_params or spec.params.get("hub_params", {}))
         hub_cls = registry.get("dataset_hubs", hub_name)
         hub = hub_cls(spec, hub_args=hub_params)
@@ -102,6 +106,8 @@ class ConfigRegistry:
             module_name, class_name = spec.class_path.rsplit(".", 1)
             module = importlib.import_module(module_name)
             return getattr(module, class_name)
+        from gage_eval.registry import registry
+        
         try:
             return registry.get("roles", spec.role_type)
         except KeyError as exc:
@@ -136,6 +142,9 @@ class ConfigRegistry:
         return instances
 
     def materialize_prompts(self, config: PipelineConfig) -> Dict[str, PromptTemplateAsset]:
+        from gage_eval.assets.prompts.assets import PromptTemplateAsset
+        from gage_eval.registry import registry
+
         prompts: Dict[str, PromptTemplateAsset] = {}
         for spec in config.prompts:
             asset = PromptTemplateAsset(
@@ -173,6 +182,8 @@ class ConfigRegistry:
         return handles
 
     def materialize_metrics(self, config: PipelineConfig) -> Dict[str, Any]:
+        from gage_eval.metrics.registry import MetricRegistry
+
         metric_registry = MetricRegistry()
         metrics: Dict[str, Any] = {}
         for spec in config.metrics:

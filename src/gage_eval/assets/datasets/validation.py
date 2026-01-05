@@ -82,7 +82,7 @@ class SampleValidator:
         sample_id: Optional[str],
         trace: Optional[ObservabilityTrace] = None,
     ) -> Optional[Dict[str, Any]]:
-        sample_dict = asdict(record) if is_dataclass(sample) else sample
+        sample_dict = asdict(sample) if is_dataclass(sample) else sample
         if not self._envelope_model or self._mode == ValidationMode.OFF:
             return sample_dict
         try:

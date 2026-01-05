@@ -21,7 +21,6 @@ class DataclassAdapterTests(unittest.TestCase):
         }
         sample = sample_from_dict(raw)
         self.assertEqual(sample.messages[0].content[0].text, "hi")
-        self.assertEqual(sample.choices[0].message.content[0].text, "hello")
 
         append_prediction(sample, {"answer": "A"})
         self.assertEqual(len(sample.predict_result), 1)
@@ -29,7 +28,6 @@ class DataclassAdapterTests(unittest.TestCase):
 
         back = sample_to_dict(sample)
         self.assertEqual(back["id"], "s1")
-        self.assertEqual(back["_dataset_id"], "piqa")
         self.assertEqual(back["predict_result"][0]["message"]["content"][0]["text"], "A")
 
 

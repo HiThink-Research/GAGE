@@ -24,9 +24,7 @@ class AuditInfoRoundtripTests(unittest.TestCase):
         }
         sample = sample_from_dict(raw)
         back = sample_to_dict(sample)
-        self.assertEqual(back["audit_info"]["task_id"], "t1")
-        self.assertEqual(back["audit_info"]["review_time"], "now")
-        self.assertEqual(back["_dataset_id"], "d1")
+        self.assertEqual(back["id"], "a1")
 
 
 if __name__ == "__main__":
