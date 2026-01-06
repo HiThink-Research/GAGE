@@ -31,6 +31,8 @@ from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor impo
 # 2.benchmark MathVista
 from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
 
+# 3. aime 2024
+from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Preprocessor as NewAIME2024Preprocessor
 
 @registry.asset(
     "dataset_preprocessors",
@@ -170,4 +172,14 @@ class GpqaDiamondPreprocessor(NewGpqaDiamond):
     tags=("prompt", "vision", "mathvista"),
 )
 class MathVistaChatPreprocessor(NewMathVistaChat):
+    pass
+
+# 3.aime2024
+@registry.asset(
+    "dataset_preprocessors",
+    "aime2024_preprocessor",
+    desc="AIME 2024 prompt wrapper",
+    tags=("prompt", "aime2024"),
+)
+class AIME2024Preprocessor(NewAIME2024Preprocessor):
     pass
