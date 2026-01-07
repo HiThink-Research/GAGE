@@ -25,14 +25,17 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
 )
 from gage_eval.registry import registry
 
-# 1.benchmark GPQA-diamond
+# benchmark GPQA-diamond
 from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
 
-# 2.benchmark MathVista
+# benchmark MathVista
 from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
 
-# 3. aime 2024
+# benchmark aime 2024
 from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Preprocessor as NewAIME2024Preprocessor
+
+# benchmark aime 2025
+from gage_eval.assets.datasets.preprocessors.aime.aime2025 import AIME2025Preprocessor as NewAIME2025Preprocessor
 
 @registry.asset(
     "dataset_preprocessors",
@@ -154,7 +157,7 @@ class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
     pass
 
 
-# 1.benchmark GPQA-diamond
+# benchmark GPQA-diamond
 @registry.asset(
     "dataset_preprocessors",
     "gpqa_diamond_multi_choice",
@@ -164,7 +167,7 @@ class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
 class GpqaDiamondPreprocessor(NewGpqaDiamond):
     pass
 
-# 2.benchmark MathVista
+# benchmark MathVista
 @registry.asset(
     "dataset_preprocessors",
     "mathvista_chat_preprocessor",
@@ -174,7 +177,7 @@ class GpqaDiamondPreprocessor(NewGpqaDiamond):
 class MathVistaChatPreprocessor(NewMathVistaChat):
     pass
 
-# 3.aime2024
+# benchmark aime2024
 @registry.asset(
     "dataset_preprocessors",
     "aime2024_preprocessor",
@@ -182,4 +185,15 @@ class MathVistaChatPreprocessor(NewMathVistaChat):
     tags=("prompt", "aime2024"),
 )
 class AIME2024Preprocessor(NewAIME2024Preprocessor):
+    pass
+
+
+# benchmark aime2025
+@registry.asset(
+    "dataset_preprocessors",
+    "aime2025_preprocessor",
+    desc="AIME 2025 prompt wrapper",
+    tags=("prompt", "aime2025"),
+)
+class AIME2025Preprocessor(NewAIME2025Preprocessor):
     pass

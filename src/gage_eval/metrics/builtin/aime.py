@@ -38,10 +38,10 @@ class AIME2024AccuracyMetric(SimpleMetric):
 
 
         # STEP 2: pretty prediction
-        #rf = RegexFilter(regex_pattern=self.regex_pattern, group_select=-1, ignore_case=True)
-        #pred = rf.apply(prediction_raw)
+        rf = RegexFilter(regex_pattern=self.regex_pattern, group_select=-1, ignore_case=True)
+        pred = rf.apply(prediction_raw)
 
-        pred = extract_numeric_answer(prediction_raw)
+        pred = extract_numeric_answer(pred)
 
         # STEP 3: compute score
         final_pred, score = match_str(pred, str(answer), location="exact", numeric=True)
