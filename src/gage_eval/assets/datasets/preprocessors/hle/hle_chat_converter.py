@@ -74,7 +74,8 @@ class HLEConverter(BasePreprocessor):
             "rationale": rationale,
             "raw_subject": raw_subject,
             "category": category,
-            "canary": canary
+            "canary": canary,
+            "question": question
         }
 
         

@@ -7,7 +7,24 @@ metadata:
 custom:
   steps:
     - step: inference
+      adapter_id: dut_hle_vllm_qwen
+    - step: support
+      adapter_id: hle_answer_cleaner
     - step: auto_eval
+
+prompts:
+  - prompt_id: hle_answer_cleaner_prompt
+    renderer: jinja
+    template: |
+      You are a strict answer cleaner.
+      Question:
+      {{ sample.metadata.question }}
+
+      Model response:
+      {{ sample.predict_result[-1].answer }}
+
+      Output only the final answer. Do not include explanation or extra text.
+      If there is no clear final answer, output "None".
 
 datasets:
   - dataset_id: hle_ds
@@ -35,6 +52,17 @@ backends:
       max_model_len: 4096
       gpu_memory_utilization: 0.9
       async_max_concurrency: 32
+  - backend_id: hle_answer_cleaner_litellm
+    type: litellm
+    config:
+      provider: openai
+      api_base: ${HLE_CLEANER_API_BASE:-https://api.openai.com/v1}
+      model: ${HLE_CLEANER_MODEL:-gpt-4.1}
+      generation_parameters:
+        max_new_tokens: 128
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
 
 role_adapters:
   - adapter_id: dut_hle_vllm_qwen
@@ -42,10 +70,17 @@ role_adapters:
     backend_id: hle_vllm_backend
     capabilities:
       - chat_completion
+  - adapter_id: hle_answer_cleaner
+    role_type: helper_model
+    backend_id: hle_answer_cleaner_litellm
+    prompt_id: hle_answer_cleaner_prompt
+    capabilities:
+      - chat_completion
 
 metrics:
   - metric_id: hle_acc
-    implementation: hle_accuracy_local
+    #implementation: hle_accuracy_local
+    implementation: hle_accuracy_openai
 
 tasks:
   - task_id: hle_eval

@@ -52,7 +52,7 @@ class HLEAccuracyLocalMetric(SimpleMetric):
         metadata = {"prediction": final_pred, "references": answer}
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-__all__ = ["AIME2024AccuracyMetric", ]
+__all__ = ["HLEAccuracyLocalMetric", ]
 
 if __name__ ==  '__main__':
     from gage_eval.config.pipeline_config import MetricSpec
