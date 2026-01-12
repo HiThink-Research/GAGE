@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import json
 import time
 import os
 from typing import Any, Dict, List, Optional, Tuple
@@ -166,6 +166,7 @@ class LiteLLMBackend(EngineBackend):
             if hasattr(usage, "model_dump"):
                 result["usage"] = usage.model_dump()
         result.setdefault("latency_ms", (time.time() - start) * 1000)
+        logger.info("LiteLLM response json: {}", self._format_response_json(raw_response))
         return result
 
     def _build_litellm_kwargs(self, inputs: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -388,3 +389,10 @@ class LiteLLMBackend(EngineBackend):
             return str(obj)
         except Exception:  # pragma: no cover - defensive
             return str(obj)
+
+    @staticmethod
+    def _format_response_json(raw_response: Any) -> str:
+        try:
+            return json.dumps(raw_response, ensure_ascii=True)
+        except TypeError:
+            return str(raw_response)

@@ -263,21 +263,25 @@ class ArenaRoleAdapter(RoleAdapter):
 
         rule_profile = rules_cfg.get("rule_profile", metadata.get("rule_profile", "freestyle"))
         win_directions = rules_cfg.get("win_directions", metadata.get("win_directions"))
+        chat_mode = env_cfg.get("chat_mode", metadata.get("chat_mode"))
 
         impl = env_cfg.get("impl", "gomoku_local_v1")
         env_cls = registry.get("arena_impls", impl)
-        return env_cls(
-            board_size=board_size,
-            win_len=win_len,
-            player_ids=resolved_player_ids or None,
-            player_names=resolved_player_names or None,
-            token_map=token_map,
-            start_player_id=resolved_start_player,
-            coord_scheme=coord_scheme,
-            rule_profile=rule_profile,
-            win_directions=win_directions,
-            illegal_policy=illegal_policy,
-        )
+        env_kwargs = {
+            "board_size": board_size,
+            "win_len": win_len,
+            "player_ids": resolved_player_ids or None,
+            "player_names": resolved_player_names or None,
+            "token_map": token_map,
+            "start_player_id": resolved_start_player,
+            "coord_scheme": coord_scheme,
+            "rule_profile": rule_profile,
+            "win_directions": win_directions,
+            "illegal_policy": illegal_policy,
+        }
+        if chat_mode is not None:
+            env_kwargs["chat_mode"] = chat_mode
+        return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
         metadata = sample.get("metadata") or {}
@@ -418,6 +422,8 @@ class ArenaRoleAdapter(RoleAdapter):
         sanitize_output = bool(self._visualizer_cfg.get("sanitize_output", True))
         max_output_chars = int(self._visualizer_cfg.get("max_output_chars", 2000))
         show_parsed_move = bool(self._visualizer_cfg.get("show_parsed_move", True))
+        show_chat = bool(self._visualizer_cfg.get("show_chat", False))
+        chat_max_entries = int(self._visualizer_cfg.get("chat_max_entries", 60))
         title = self._visualizer_cfg.get("title")
 
         visualizer = GradioVisualizer(
@@ -434,6 +440,8 @@ class ArenaRoleAdapter(RoleAdapter):
             sanitize_output=sanitize_output,
             max_output_chars=max_output_chars,
             show_parsed_move=show_parsed_move,
+            show_chat=show_chat,
+            chat_max_entries=chat_max_entries,
             title=title,
         )
         visualizer.start()
@@ -480,7 +488,9 @@ class _VisualizedEnvironment:
         return self._base.is_terminal()
 
     def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
-        return self._base.build_result(result=result, reason=reason)
+        outcome = self._base.build_result(result=result, reason=reason)
+        self._update(outcome, self._last_action)
+        return outcome
 
     def _update(self, outcome: Optional[GameResult] = None, action=None) -> None:
         try:
@@ -515,6 +525,7 @@ class _VisualizedEnvironment:
                 last_action_raw=last_action_raw,
                 last_action_move=last_action_move,
                 active_player=obs.active_player,
+                chat_log=obs.metadata.get("chat_log"),
                 final_state=outcome is not None,
             )
         except Exception:

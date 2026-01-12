@@ -13,6 +13,9 @@ from gage_eval.assets.datasets.preprocessors.mathvista_preprocessor import (
 from gage_eval.assets.datasets.preprocessors.grid_game_preprocessor import (
     GridGamePreprocessor as NewGridGame,
 )
+from gage_eval.assets.datasets.preprocessors.card_game_preprocessor import (
+    CardGamePreprocessor as NewCardGame,
+)
 from gage_eval.assets.datasets.preprocessors.mmmu_preprocessor import MMMUMultimodalPreprocessor as NewMMMU
 from gage_eval.assets.datasets.preprocessors.piqa_preprocessor import (
     PiqaPreprocessor as NewPiqa,
@@ -60,6 +63,18 @@ class DocVQAPreprocessor(NewDocVQA):
 )
 class GridGamePreprocessor(NewGridGame):
     """Standardize grid game records into the Sample schema."""
+
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "card_game_preprocessor",
+    desc="Card game preprocessor (player metadata + sample envelope)",
+    tags=("card", "game"),
+)
+class CardGamePreprocessor(NewCardGame):
+    """Standardize card game records into the Sample schema."""
 
     pass
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import json
 import threading
 import time
 from queue import Queue
@@ -38,6 +40,8 @@ class GradioVisualizer:
         sanitize_output: bool = True,
         max_output_chars: int = 2000,
         show_parsed_move: bool = True,
+        show_chat: bool = False,
+        chat_max_entries: int = 60,
         title: Optional[str] = None,
     ) -> None:
         """Initialize the visualizer settings.
@@ -48,6 +52,8 @@ class GradioVisualizer:
             launch_browser: Whether to open a browser tab on launch.
             mode: UI mode ("observer" or "interactive").
             refresh_s: Refresh interval in seconds for polling updates.
+            show_chat: Whether to render the chat panel.
+            chat_max_entries: Max chat messages to render in the panel.
         """
 
         self._board_size = int(board_size)
@@ -72,6 +78,7 @@ class GradioVisualizer:
         self._player_ids: list[str] = []
         self._player_names: dict[str, str] = {}
         self._player_labels: dict[str, str] = {}
+        self._chat_log: list[dict[str, str]] = []
 
         # Thinking timer state
         self._turn_start_time = time.time()
@@ -81,6 +88,9 @@ class GradioVisualizer:
         self._last_action_player: Optional[str] = None
         self._last_action_raw = ""
         self._last_action_move: Optional[str] = None
+        self._output_history: list[str] = []
+        self._output_history_text = ""
+        self._last_output_signature: Optional[tuple[str, str, str]] = None
         self._last_output_label = self._render_output_label()
         self._finalized = False
         self._finish_event = threading.Event()
@@ -90,6 +100,9 @@ class GradioVisualizer:
         self._sanitize_output = bool(sanitize_output)
         self._max_output_chars = max(0, int(max_output_chars))
         self._show_parsed_move = bool(show_parsed_move)
+        self._show_chat = bool(show_chat)
+        self._chat_max_entries = max(0, int(chat_max_entries))
+        self._last_chat_html = self._render_chat_panel()
         self._title = str(title) if title else "GAGE Gomoku Arena"
 
     @property
@@ -148,6 +161,7 @@ class GradioVisualizer:
         active_player: Optional[str] = None,
         coord_scheme: Optional[str] = None,
         last_action_move: Optional[str] = None,
+        chat_log: Optional[Sequence[dict[str, str]]] = None,
         final_state: bool = False,
     ) -> None:
         """Update the rendered board and status text.
@@ -162,6 +176,7 @@ class GradioVisualizer:
             active_player: Optional player_id for the current turn.
             coord_scheme: Optional coordinate scheme for rendering.
             last_action_move: Optional parsed move coordinate for the last action.
+            chat_log: Optional chat log entries to display.
             final_state: Whether this update represents a terminal state.
         """
 
@@ -192,7 +207,7 @@ class GradioVisualizer:
                 self._last_action_player = last_action_player
             
             if last_action_raw is not None:
-                raw_text = str(last_action_raw)
+                raw_text = self._format_output_text(str(last_action_raw))
                 if self._sanitize_output:
                     self._last_action_raw = self._sanitize_text(raw_text)
                 else:
@@ -202,6 +217,16 @@ class GradioVisualizer:
                 self._last_action_move = str(last_action_move).strip() or None
             
             self._last_output_label = self._render_output_label()
+            if last_action_raw is not None:
+                self._record_output_history(
+                    player_id=self._last_action_player,
+                    move=self._last_action_move,
+                    raw_text=self._last_action_raw,
+                )
+
+            if chat_log is not None:
+                self._chat_log = self._normalize_chat_log(chat_log)
+                self._last_chat_html = self._render_chat_panel()
             
             # Determine active player (thinking state).
             if final_state:
@@ -240,6 +265,9 @@ class GradioVisualizer:
                 refresh_button_id=_REFRESH_BUTTON_ID,
                 refresh_interval_ms=refresh_interval_ms,
             )
+        error_js = self._build_error_suppression_js()
+        chat_js = self._build_chat_scroll_js()
+        js = "\n".join(block for block in (js, error_js, chat_js) if block)
 
         launch_kwargs = {
             "server_port": self._port,
@@ -319,9 +347,15 @@ class GradioVisualizer:
                                 value="",
                                 lines=max(4, self._board_size + 2),
                                 interactive=False,
+                                elem_id="gomoku-raw-display",
                             )
                     with gr.Column(scale=1, elem_id="gomoku-right-panel"):
                         output_label = gr.HTML(value=self._last_output_label, elem_id="gomoku-output-label")
+                        chat_panel = gr.HTML(
+                            value=self._last_chat_html,
+                            elem_id="gomoku-chat-panel",
+                            visible=self._show_chat,
+                        )
                         output_box = gr.Textbox(
                             value="",
                             lines=50,
@@ -358,7 +392,8 @@ class GradioVisualizer:
                         self._last_raw_text,
                         self._player_bar_html,
                         self._last_output_label,
-                        self._last_action_raw,
+                        self._last_chat_html,
+                        self._output_history_text,
                         finish_update,
                     )
                 try:
@@ -373,7 +408,8 @@ class GradioVisualizer:
                     raw_text,
                     self._player_bar_html,
                     self._last_output_label,
-                    self._last_action_raw,
+                    self._last_chat_html,
+                    self._output_history_text,
                     finish_update,
                 )
 
@@ -383,6 +419,7 @@ class GradioVisualizer:
                 raw_display,
                 player_bar,
                 output_label,
+                chat_panel,
                 output_box,
                 finish_button,
             ]
@@ -454,6 +491,11 @@ class GradioVisualizer:
             self._last_action_raw = ""
             self._last_action_move = None
             self._last_output_label = self._render_output_label()
+            self._chat_log = []
+            self._last_chat_html = self._render_chat_panel()
+            self._output_history = []
+            self._output_history_text = ""
+            self._last_output_signature = None
             self._current_active_player = self._player_ids[0] if self._player_ids else None
             self._turn_start_time = time.time()
             self._player_bar_html = self._render_player_bar(
@@ -494,6 +536,7 @@ class GradioVisualizer:
                 elapsed=elapsed,
             )
             self._last_output_label = self._render_output_label()
+            self._last_chat_html = self._render_chat_panel()
 
     def _render_player_bar(self, active_player: Optional[str] = None, elapsed: float = 0.0) -> str:
         if not self._player_ids:
@@ -553,6 +596,220 @@ class GradioVisualizer:
             f'<span class="player-pill {tone}">{display_name}</span>'
             f'<span class="player-name-inline">{player_label}</span>'
             f"{move_html}"
+            "</div>"
+        )
+
+    def _build_chat_scroll_js(self) -> str:
+        if not self._show_chat:
+            return ""
+        return """
+  if (!window.__gage_chat_autoscroll__) {
+    window.__gage_chat_autoscroll__ = true;
+    const getRoot = () => {
+      const app = document.querySelector("gradio-app");
+      if (app && app.shadowRoot) {
+        return app.shadowRoot;
+      }
+      return document;
+    };
+    const findDeep = (root, selector) => {
+      if (!root || !selector) {
+        return null;
+      }
+      if (root.querySelector) {
+        const direct = root.querySelector(selector);
+        if (direct) {
+          return direct;
+        }
+      }
+      if (!root.querySelectorAll) {
+        return null;
+      }
+      const nodes = root.querySelectorAll("*");
+      for (const node of nodes) {
+        if (node && node.shadowRoot) {
+          const found = findDeep(node.shadowRoot, selector);
+          if (found) {
+            return found;
+          }
+        }
+      }
+      return null;
+    };
+    const find = (selector) => {
+      const root = getRoot();
+      return findDeep(root, selector) || findDeep(document, selector);
+    };
+    const ensureScroll = () => {
+      const panel = find("#gomoku-chat-panel");
+      if (!panel) {
+        return;
+      }
+      const body = panel.querySelector(".chat-body") || findDeep(panel, ".chat-body");
+      if (!body) {
+        return;
+      }
+      body.scrollTop = body.scrollHeight;
+    };
+    ensureScroll();
+    setInterval(ensureScroll, 400);
+  }
+"""
+
+    @staticmethod
+    def _build_error_suppression_js() -> str:
+        return """
+  if (!window.__gage_hide_errors__) {
+    window.__gage_hide_errors__ = true;
+    const getRoot = () => {
+      const app = document.querySelector("gradio-app");
+      if (app && app.shadowRoot) {
+        return app.shadowRoot;
+      }
+      return document;
+    };
+    const findDeep = (root, selector) => {
+      if (!root || !selector) {
+        return [];
+      }
+      const hits = [];
+      if (root.querySelectorAll) {
+        hits.push(...root.querySelectorAll(selector));
+      }
+      if (!root.querySelectorAll) {
+        return hits;
+      }
+      const nodes = root.querySelectorAll("*");
+      for (const node of nodes) {
+        if (node && node.shadowRoot) {
+          hits.push(...findDeep(node.shadowRoot, selector));
+        }
+      }
+      return hits;
+    };
+    const suppressErrors = () => {
+      const selectors = [
+        ".toast-wrap",
+        ".toast",
+        ".toast-container",
+        ".gradio-error",
+        ".error",
+        ".error-message",
+        ".error-box",
+        ".error-panel",
+        ".notification",
+        ".alert",
+        "[role='alert']",
+        "[aria-live='assertive']",
+        "[aria-live='polite']",
+      ];
+      const roots = [getRoot(), document];
+      for (const root of roots) {
+        if (!root) {
+          continue;
+        }
+        for (const selector of selectors) {
+          const nodes = findDeep(root, selector);
+          nodes.forEach((node) => {
+            if (node && node.style) {
+              node.style.display = "none";
+            }
+          });
+        }
+      }
+    };
+    suppressErrors();
+    setInterval(suppressErrors, 800);
+  }
+"""
+
+    def _format_output_text(self, raw_text: str) -> str:
+        stripped = raw_text.strip()
+        if not stripped or stripped[0] not in {"{", "["}:
+            return raw_text
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return raw_text
+        try:
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            return raw_text
+
+    def _record_output_history(self, *, player_id: Optional[str], move: Optional[str], raw_text: str) -> None:
+        if not raw_text:
+            return
+        signature = (player_id or "", move or "", raw_text)
+        if signature == self._last_output_signature:
+            return
+        self._last_output_signature = signature
+        index = len(self._output_history) + 1
+        entry_header = self._format_output_header(player_id, move, index)
+        if entry_header:
+            entry = f"{entry_header}\n{raw_text}"
+        else:
+            entry = raw_text
+        self._output_history.append(entry)
+        self._output_history_text = "\n\n".join(self._output_history)
+
+    def _format_output_header(self, player_id: Optional[str], move: Optional[str], index: int) -> str:
+        if not player_id:
+            label = "Unknown"
+        else:
+            label = self._player_names.get(player_id, player_id)
+        if move:
+            return f"[{index:03d}] {label} ({move})"
+        return f"[{index:03d}] {label}"
+
+    def _normalize_chat_log(self, chat_log: Sequence[dict[str, str]]) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for entry in chat_log:
+            if not isinstance(entry, dict):
+                continue
+            player_id = str(entry.get("player_id", "")).strip()
+            text = str(entry.get("text", "")).strip()
+            if not text:
+                continue
+            normalized.append({"player_id": player_id, "text": text})
+        return normalized
+
+    def _render_chat_panel(self) -> str:
+        entries = self._chat_log
+        if self._chat_max_entries > 0:
+            entries = entries[-self._chat_max_entries :]
+        header = '<div class="chat-header">Table Talk</div>'
+        if not entries:
+            return (
+                '<div class="chat-panel chat-empty">'
+                f"{header}"
+                '<div class="chat-empty-text">No chat yet</div>'
+                "</div>"
+            )
+        lines: list[str] = []
+        for entry in entries:
+            player_id = entry.get("player_id", "")
+            display_name = self._player_names.get(player_id, player_id or "Unknown")
+            tone = self._tone_for_player(player_id)
+            text = entry.get("text", "")
+            if not text:
+                continue
+            lines.append(
+                '<div class="chat-line">'
+                f'<span class="chat-speaker {tone}">{html.escape(display_name)}</span>'
+                f'<span class="chat-text">{html.escape(text)}</span>'
+                "</div>"
+            )
+        if not lines:
+            return (
+                '<div class="chat-panel chat-empty">'
+                f"{header}"
+                '<div class="chat-empty-text">No chat yet</div>'
+                "</div>"
+            )
+        return (
+            '<div class="chat-panel">'
+            f"{header}"
+            f'<div class="chat-body">{"".join(lines)}</div>'
             "</div>"
         )
 
