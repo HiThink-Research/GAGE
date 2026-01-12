@@ -307,30 +307,12 @@ backends:
 bundles:
 - desc: mathvista benchmark resource providers
   extra: {}
-  impl: gage_eval.assets.datasets.bundles.builtin:MathVistaBundleProvider
+  impl: gage_eval.assets.datasets.bundles.builtin:MathVistaBundle
   kind: bundles
   name: mathvista
   tags:
   - caption
   - ocr
-  version: v1
-- desc: MME benchmark resource providers
-  extra: {}
-  impl: gage_eval.assets.datasets.bundles.builtin:MMEBundleProvider
-  kind: bundles
-  name: mme
-  tags:
-  - vision
-  - mme
-  version: v1
-- desc: mmlu-pro benchmark resource providers
-  extra: {}
-  impl: gage_eval.assets.datasets.bundles.builtin:MMLUProBundleProvider
-  kind: bundles
-  name: mmlu_pro_hf
-  tags:
-  - mmlu-pro
-  - few-shot
   version: v1
 context_impls:
 - desc: Gomoku rules and board context provider
@@ -1176,15 +1158,6 @@ parser_impls:
   - parser
   - arena
   version: v1
-- desc: Discrete action parser (numeric or labeled actions)
-  extra: {}
-  impl: gage_eval.role.arena.parsers.pettingzoo_actions:DiscreteActionParser
-  kind: parser_impls
-  name: discrete_action_parser_v1
-  tags:
-  - parser
-  - action
-  version: v1
 pipeline_steps:
 - desc: Global step that aggregates evaluation results and writes reports
   extra:
@@ -1385,7 +1358,7 @@ renderer_impls:
   - tictactoe
   - renderer
   version: v1
-- desc: Doudizhu text renderer for arena snapshots
+- desc: Doudizhu text renderer for Gradio visualizer
   extra: {}
   impl: gage_eval.role.arena.games.doudizhu.renderers.board_renderer:DoudizhuTextRenderer
   kind: renderer_impls
@@ -1405,7 +1378,7 @@ renderer_impls:
   - renderer
   - card
   version: v1
-- desc: Showdown-style Doudizhu renderer for arena snapshots
+- desc: Showdown-style Doudizhu renderer for Gradio visualizer
   extra: {}
   impl: gage_eval.role.arena.games.doudizhu.renderers.showdown_board:DoudizhuShowdownRenderer
   kind: renderer_impls

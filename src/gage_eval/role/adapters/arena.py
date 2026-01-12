@@ -325,67 +325,8 @@ class ArenaRoleAdapter(RoleAdapter):
             "win_directions": win_directions,
             "illegal_policy": illegal_policy,
         }
-        if "pettingzoo" in str(impl).lower():
-            if env_cfg.get("env_id") is not None:
-                env_kwargs["env_id"] = env_cfg.get("env_id")
-            if env_cfg.get("env_kwargs") is not None:
-                env_kwargs["env_kwargs"] = env_cfg.get("env_kwargs")
-            if env_cfg.get("seed") is not None:
-                env_kwargs["seed"] = env_cfg.get("seed")
-            if env_cfg.get("action_labels") is not None:
-                env_kwargs["action_labels"] = env_cfg.get("action_labels")
-            if env_cfg.get("use_action_meanings") is not None:
-                env_kwargs["use_action_meanings"] = env_cfg.get("use_action_meanings")
-            if env_cfg.get("include_raw_obs") is not None:
-                env_kwargs["include_raw_obs"] = env_cfg.get("include_raw_obs")
-            if env_cfg.get("agent_map") is not None:
-                env_kwargs["agent_map"] = env_cfg.get("agent_map")
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
-        if "mahjong" in str(impl).lower():
-            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
-            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
-            if run_id:
-                env_kwargs["run_id"] = str(run_id)
-            if sample_id:
-                env_kwargs["sample_id"] = str(sample_id)
-            if env_cfg.get("chat_every_n") is not None:
-                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
-            if env_cfg.get("replay_live") is not None:
-                env_kwargs["replay_live"] = env_cfg.get("replay_live")
-            if env_cfg.get("replay_output_dir") is not None:
-                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
-            if env_cfg.get("replay_filename") is not None:
-                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
-            if chat_queue is not None:
-                env_kwargs["chat_queue"] = chat_queue
-            if resolved_player_models:
-                env_kwargs["player_models"] = resolved_player_models
-        if "doudizhu" in str(impl).lower():
-            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
-            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
-            if run_id:
-                env_kwargs["run_id"] = str(run_id)
-            if sample_id:
-                env_kwargs["sample_id"] = str(sample_id)
-            if env_cfg.get("chat_every_n") is not None:
-                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
-            if env_cfg.get("replay_live") is not None:
-                env_kwargs["replay_live"] = env_cfg.get("replay_live")
-            if env_cfg.get("replay_output_dir") is not None:
-                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
-            if env_cfg.get("replay_filename") is not None:
-                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
-            if env_cfg.get("context_include_public") is not None:
-                env_kwargs["context_include_public"] = env_cfg.get("context_include_public")
-            if env_cfg.get("context_include_ui_state") is not None:
-                env_kwargs["context_include_ui_state"] = env_cfg.get("context_include_ui_state")
-            if env_cfg.get("fast_finish_action") is not None:
-                env_kwargs["fast_finish_action"] = env_cfg.get("fast_finish_action")
-            if env_cfg.get("fast_finish_human_only") is not None:
-                env_kwargs["fast_finish_human_only"] = env_cfg.get("fast_finish_human_only")
-            if chat_queue is not None:
-                env_kwargs["chat_queue"] = chat_queue
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:

@@ -9,7 +9,7 @@ from gage_eval.role.arena.games.doudizhu.types import CardGameResult
 
 
 class CardGameRenderer(ABC):
-    """Defines the rendering interface for card game views."""
+    """Defines the rendering interface for card game visualizers."""
 
     @abstractmethod
     def render_frame(self, frame: dict[str, Any]) -> dict[str, Any] | str:

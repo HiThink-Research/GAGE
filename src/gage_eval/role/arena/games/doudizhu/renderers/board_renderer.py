@@ -1,4 +1,4 @@
-"""Text-only renderer for Doudizhu arena snapshots."""
+"""Text-only renderer for Doudizhu arena visualizer."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from gage_eval.registry import registry
 @registry.asset(
     "renderer_impls",
     "doudizhu_text_v1",
-    desc="Doudizhu text renderer for arena snapshots",
+    desc="Doudizhu text renderer for Gradio visualizer",
     tags=("doudizhu", "renderer", "card"),
 )
 class DoudizhuTextRenderer:
@@ -51,7 +51,7 @@ class DoudizhuTextRenderer:
         self._last_move = last_move
 
     def resize(self, board_size: int) -> None:
-        """Resize the renderer when requested by the caller."""
+        """Resize the renderer when the visualizer requests it."""
 
         self._board_size = int(board_size)
 

@@ -3,15 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import random
-import re
-import time
-from pathlib import Path
-from queue import Empty, Queue
-from typing import Any, Mapping, Optional, Sequence, Tuple
-
-from loguru import logger
+from typing import Any, Mapping, Optional, Sequence
 
 from gage_eval.registry import registry
 from gage_eval.role.arena.games.doudizhu.core_factory import make_core
@@ -381,17 +374,6 @@ class DoudizhuArenaEnvironment:
         win_directions: Optional[Sequence[str]] = None,
         illegal_policy: Optional[dict[str, str | int]] = None,
         chat_mode: str = "off",
-        chat_every_n: int = 1,
-        context_include_public: bool = True,
-        context_include_ui_state: bool = True,
-        run_id: Optional[str] = None,
-        sample_id: Optional[str] = None,
-        replay_output_dir: Optional[str] = None,
-        replay_filename: Optional[str] = None,
-        replay_live: bool = False,
-        chat_queue: Optional[Queue[dict[str, str] | str]] = None,
-        fast_finish_action: Optional[str] = None,
-        fast_finish_human_only: bool = True,
         **_: Any,
     ) -> None:
         """Initialize the Doudizhu arena environment.
@@ -408,17 +390,6 @@ class DoudizhuArenaEnvironment:
             win_directions: Unused placeholder for ArenaRoleAdapter compatibility.
             illegal_policy: Policy controlling illegal move retries and outcome.
             chat_mode: Chat logging mode ("off", "ai-only", "all").
-            chat_every_n: Record chat every N moves (>=1).
-            context_include_public: Whether to include public_state in AI context.
-            context_include_ui_state: Whether to include UI_STATE_JSON in AI context.
-            run_id: Optional run identifier used for replay output.
-            sample_id: Optional sample identifier used for replay output.
-            replay_output_dir: Optional override for the replay output directory.
-            replay_filename: Optional override for the replay filename.
-            replay_live: Whether to update the replay file after each move.
-            chat_queue: Optional queue for chat-only messages.
-            fast_finish_action: Optional action string to force a fast finish.
-            fast_finish_human_only: Whether to allow fast finish only for human players.
             **_: Ignored extra keyword arguments.
         """
 
@@ -440,18 +411,6 @@ class DoudizhuArenaEnvironment:
         self._max_illegal = int(self._illegal_policy.get("retry", 0))
         self._illegal_on_fail = str(self._illegal_policy.get("on_fail", "loss"))
         self._chat_mode = str(chat_mode or "off")
-        self._chat_every_n = max(1, int(chat_every_n))
-        self._context_include_public = bool(context_include_public)
-        self._context_include_ui_state = bool(context_include_ui_state)
-        self._run_id = str(run_id) if run_id else None
-        self._sample_id = str(sample_id) if sample_id else None
-        self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
-        self._replay_filename = str(replay_filename) if replay_filename else None
-        self._replay_live = bool(replay_live)
-        self._chat_queue = chat_queue
-        self._fast_finish_action = str(fast_finish_action).strip().lower() if fast_finish_action else None
-        self._fast_finish_human_only = bool(fast_finish_human_only)
-        self._replay_path: Optional[str] = None
         self._illegal_counts = {player_id: 0 for player_id in self._player_ids}
         self._move_log: list[dict[str, Any]] = []
         self._move_history: list[dict[str, Any]] = []
@@ -464,7 +423,6 @@ class DoudizhuArenaEnvironment:
         self._latest_actions: list[list[str] | str] = []
         self._landlord_id: Optional[str] = None
         self._final_result: Optional[GameResult] = None
-        self._start_time_ms: Optional[int] = None
         self.reset()
 
     def reset(self) -> None:
@@ -482,14 +440,9 @@ class DoudizhuArenaEnvironment:
         self._hand_cards_with_suit = []
         self._initial_hands = []
         self._landlord_id = None
-        self._replay_path = None
         self._final_result = None
-        self._start_time_ms = int(time.time() * 1000)
-        self._drain_chat_queue(record=False)
         self._refresh_perfect_information()
         self._initial_hands = [list(cards) for cards in self._hand_cards_with_suit]
-        if self._replay_live:
-            self._save_showdown_replay()
 
     def get_active_player(self) -> str:
         """Return the active player identifier."""
@@ -499,7 +452,6 @@ class DoudizhuArenaEnvironment:
     def observe(self, player: str) -> ArenaObservation:
         """Return an observation for the given player."""
 
-        self._drain_chat_queue()
         player_index = self._resolve_player_index(player)
         raw_obs = self._core.get_observation(player_index)
         legal_action_ids = self._core.get_legal_actions(player_index)
@@ -514,13 +466,8 @@ class DoudizhuArenaEnvironment:
             private_state,
             legal_moves,
             chat_log=self._chat_log,
-            ui_state=ui_state if self._context_include_ui_state else None,
-            include_public_state=self._context_include_public,
-            include_private_state=True,
+            ui_state=ui_state,
         )
-        view = {"text": board_text}
-        legal_actions = {"items": list(legal_moves)}
-        context = {"mode": "turn", "step": self._move_count}
         return ArenaObservation(
             board_text=board_text,
             legal_moves=legal_moves,
@@ -536,74 +483,8 @@ class DoudizhuArenaEnvironment:
                 "private_state": private_state,
                 "chat_log": list(self._chat_log),
                 "chat_mode": self._chat_mode,
-                "last_move": self._last_move,
             },
-            view=view,
-            legal_actions=legal_actions,
-            context=context,
         )
-
-    def _drain_chat_queue(self, *, record: bool = True) -> None:
-        if self._chat_queue is None:
-            return
-        added = False
-        while True:
-            try:
-                payload = self._chat_queue.get_nowait()
-            except Empty:
-                break
-            parsed = self._parse_chat_payload(payload)
-            if not parsed:
-                continue
-            player_id, chat_text = parsed
-            if record:
-                self._record_chat(player_id, chat_text, "human")
-                added = True
-        if added and self._replay_live:
-            self._save_showdown_replay()
-
-    def _parse_chat_payload(self, payload: Any) -> Optional[Tuple[str, str]]:
-        if payload is None:
-            return None
-        if isinstance(payload, str):
-            text = payload.strip()
-            if not text:
-                return None
-            if text.startswith("{"):
-                try:
-                    parsed = json.loads(text)
-                except json.JSONDecodeError:
-                    return (self._resolve_chat_player_id(None), text)
-                if isinstance(parsed, dict):
-                    chat_text = parsed.get("chat") or parsed.get("text") or parsed.get("message")
-                    player_id = parsed.get("player_id") or parsed.get("playerId") or parsed.get("player")
-                    if chat_text:
-                        return (self._resolve_chat_player_id(player_id), str(chat_text).strip())
-            return (self._resolve_chat_player_id(None), text)
-        if isinstance(payload, dict):
-            chat_text = payload.get("chat") or payload.get("text") or payload.get("message")
-            if not chat_text:
-                return None
-            player_id = payload.get("player_id") or payload.get("playerId") or payload.get("player")
-            return (self._resolve_chat_player_id(player_id), str(chat_text).strip())
-        return None
-
-    def _resolve_chat_player_id(self, player_id: Optional[object]) -> str:
-        if player_id is not None:
-            if isinstance(player_id, int):
-                if player_id in self._player_id_map:
-                    return self._player_id_map[player_id]
-            else:
-                raw = str(player_id).strip()
-                if raw.isdigit():
-                    parsed_idx = int(raw)
-                    if parsed_idx in self._player_id_map:
-                        return self._player_id_map[parsed_idx]
-                if raw in self._player_index_map:
-                    return raw
-        if self._start_player_id in self._player_index_map:
-            return self._start_player_id
-        return self._player_ids[0]
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         """Apply an action and return a GameResult when the game ends."""
@@ -616,9 +497,6 @@ class DoudizhuArenaEnvironment:
             return self._handle_illegal(player_id, reason="wrong_player")
 
         action_text = action.move or ""
-        raw_action = str(action.raw or "")
-        if self._should_fast_finish(action_text, raw_action, action.metadata.get("player_type")):
-            return self._apply_fast_finish(player_id, action)
         if not action_text:
             return self._handle_illegal(player_id, reason="empty_move")
 
@@ -636,7 +514,6 @@ class DoudizhuArenaEnvironment:
         self._refresh_perfect_information()
         self._move_count += 1
         action_text = self._formatter.format_action(action_id)
-        timestamp_ms = int(time.time() * 1000)
         action_cards = self._resolve_action_cards(action_text, player_index)
         chat_text = self._extract_chat_text(action)
         self._record_chat(player_id, chat_text, action.metadata.get("player_type"))
@@ -649,7 +526,6 @@ class DoudizhuArenaEnvironment:
                 "action_text": action_text,
                 "action_cards": action_cards,
                 "chat": chat_text,
-                "timestamp_ms": timestamp_ms,
             }
         )
         self._move_log.append(
@@ -660,14 +536,11 @@ class DoudizhuArenaEnvironment:
                 "action_text": action_text,
                 "action_cards": action_cards,
                 "chat": chat_text,
-                "timestamp_ms": timestamp_ms,
             }
         )
         self._last_move = action_text
         self._core.step(action_id)
         self._refresh_perfect_information()
-        if self._replay_live:
-            self._save_showdown_replay()
 
         # STEP 2: Check terminal state.
         if self._core.is_terminal():
@@ -689,7 +562,6 @@ class DoudizhuArenaEnvironment:
         winner = self._resolve_winner(payoffs)
         resolved_result = "draw" if result == "draw" or winner is None else result
         final_board = self._snapshot_board()
-        replay_path = self._save_showdown_replay()
         self._final_result = GameResult(
             winner=winner,
             result=resolved_result,
@@ -701,7 +573,6 @@ class DoudizhuArenaEnvironment:
             rule_profile=self._rule_profile,
             win_direction=None,
             line_length=None,
-            replay_path=replay_path,
         )
         return self._final_result
 
@@ -721,7 +592,6 @@ class DoudizhuArenaEnvironment:
             winner = self._resolve_illegal_winner(player_id)
             result = "loss"
 
-        replay_path = self._save_showdown_replay()
         self._final_result = GameResult(
             winner=winner,
             result=result,
@@ -733,7 +603,6 @@ class DoudizhuArenaEnvironment:
             rule_profile=self._rule_profile,
             win_direction=None,
             line_length=None,
-            replay_path=replay_path,
         )
         return self._final_result
 
@@ -765,121 +634,6 @@ class DoudizhuArenaEnvironment:
         winner_index = list(payoffs).index(max_payoff)
         return self._player_id_map.get(winner_index)
 
-    def _save_showdown_replay(self) -> Optional[str]:
-        try:
-            replay = self._build_showdown_replay()
-        except Exception as exc:
-            logger.warning("Failed to build showdown replay: {}", exc)
-            return None
-
-        output_path = self._resolve_replay_output_path()
-        if output_path is None:
-            return None
-
-        try:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(replay, ensure_ascii=False, indent=2), encoding="utf-8")
-            self._replay_path = str(output_path)
-            return self._replay_path
-        except Exception as exc:
-            logger.warning("Failed to write showdown replay to {}: {}", output_path, exc)
-            return None
-
-    def _build_showdown_replay(self) -> dict[str, Any]:
-        self._ensure_landlord_id()
-        active_index = self._core.get_active_player_id()
-        try:
-            legal_action_ids = self._core.get_legal_actions(active_index)
-        except Exception:
-            legal_action_ids = []
-        legal_moves = [self._formatter.format_action(action_id) for action_id in legal_action_ids]
-        legal_moves = list(dict.fromkeys(legal_moves))
-        roles = self._resolve_roles(self._landlord_id)
-        player_info = []
-        for idx, player_id in enumerate(self._player_ids):
-            player_info.append(
-                {
-                    "id": idx,
-                    "index": idx,
-                    "role": roles.get(player_id, "peasant"),
-                    "agentInfo": {"name": self._player_names.get(player_id, player_id)},
-                }
-            )
-
-        init_hands = []
-        if self._initial_hands:
-            init_hands = [" ".join(cards) for cards in self._initial_hands]
-        else:
-            init_hands = [" ".join(cards) for cards in self._hand_cards_with_suit]
-        if len(init_hands) < len(self._player_ids):
-            init_hands.extend(["" for _ in range(len(self._player_ids) - len(init_hands))])
-        else:
-            init_hands = init_hands[: len(self._player_ids)]
-
-        move_history = []
-        for entry in self._move_history:
-            player_idx = entry.get("player_idx")
-            action_cards = entry.get("action_cards")
-            action_text = entry.get("action_text")
-            move = action_cards if action_cards not in (None, "") else action_text
-            if isinstance(move, list):
-                move_text = " ".join(move)
-            elif move is None:
-                move_text = ""
-            else:
-                move_text = str(move)
-            move_history.append(
-                {
-                    "playerIdx": int(player_idx) if player_idx is not None else 0,
-                    "move": move_text,
-                    "info": {},
-                    "chat": entry.get("chat"),
-                    "timestamp_ms": entry.get("timestamp_ms"),
-                }
-            )
-
-        return {
-            "playerInfo": player_info,
-            "initHands": init_hands,
-            "moveHistory": move_history,
-            "chatLog": list(self._chat_log),
-            "currentPlayer": int(active_index),
-            "active_player_id": self._player_id_map.get(active_index),
-            "legalMoves": legal_moves,
-            "start_time_ms": self._start_time_ms,
-        }
-
-    def _ensure_landlord_id(self) -> None:
-        if self._landlord_id:
-            return
-        try:
-            raw_obs = self._core.get_observation(0)
-            legal_action_ids = self._core.get_legal_actions(0)
-            public_state, _, _ = self._formatter.format_observation(raw_obs, legal_action_ids)
-            landlord_id = public_state.get("landlord_id")
-            if landlord_id and landlord_id != "unknown":
-                self._landlord_id = str(landlord_id)
-        except Exception:
-            return
-
-    def _resolve_replay_output_path(self) -> Optional[Path]:
-        base_dir = None
-        if self._replay_output_dir:
-            base_dir = Path(self._replay_output_dir)
-        else:
-            run_id = self._run_id or os.environ.get("GAGE_EVAL_RUN_ID")
-            if run_id:
-                base_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")) / run_id / "replays"
-        if base_dir is None:
-            return None
-        sample_id_source = self._sample_id or os.environ.get("GAGE_EVAL_SAMPLE_ID") or "unknown"
-        sample_id = self._sanitize_sample_id(sample_id_source)
-        filename = self._replay_filename or f"doudizhu_replay_{sample_id}.json"
-        return base_dir / filename
-
-    def _sanitize_sample_id(self, value: str) -> str:
-        return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_") or "unknown"
-
     def _snapshot_board(self) -> str:
         try:
             self._refresh_perfect_information()
@@ -908,29 +662,17 @@ class DoudizhuArenaEnvironment:
         *,
         chat_log: Optional[Sequence[dict[str, str]]] = None,
         ui_state: Optional[dict[str, Any]] = None,
-        include_public_state: bool = True,
-        include_private_state: bool = True,
-        include_ui_state: bool = True,
     ) -> str:
         legal_preview = ", ".join(list(legal_moves)[:40]) if legal_moves else "none"
-        lines: list[str] = []
-        if include_public_state:
-            lines.extend(
-                [
-                    "Public State:",
-                    json.dumps(public_state, ensure_ascii=True),
-                    "",
-                ]
-            )
-        if include_private_state:
-            lines.extend(
-                [
-                    "Private State:",
-                    json.dumps(private_state, ensure_ascii=True),
-                    "",
-                ]
-            )
-        lines.append(f"Legal Moves (preview): {legal_preview}")
+        lines = [
+            "Public State:",
+            json.dumps(public_state, ensure_ascii=True),
+            "",
+            "Private State:",
+            json.dumps(private_state, ensure_ascii=True),
+            "",
+            f"Legal Moves (preview): {legal_preview}",
+        ]
         if chat_log is not None:
             lines.extend(
                 [
@@ -939,7 +681,7 @@ class DoudizhuArenaEnvironment:
                     json.dumps(list(chat_log), ensure_ascii=True),
                 ]
             )
-        if include_ui_state and ui_state is not None:
+        if ui_state is not None:
             lines.extend(
                 [
                     "",
@@ -1061,86 +803,6 @@ class DoudizhuArenaEnvironment:
             return normalized
         return cards_with_suit
 
-    def _should_fast_finish(
-        self,
-        action_text: str,
-        raw_action: str,
-        player_type: Optional[str],
-    ) -> bool:
-        if not self._fast_finish_action:
-            return False
-        if self._fast_finish_human_only and player_type != "human":
-            return False
-        candidate = action_text.strip().lower()
-        if not candidate:
-            candidate = self._extract_action_from_raw(raw_action).strip().lower()
-        return candidate == self._fast_finish_action
-
-    def _extract_action_from_raw(self, raw_action: str) -> str:
-        cleaned = str(raw_action or "").strip()
-        if not cleaned:
-            return ""
-        if cleaned.startswith("{"):
-            try:
-                parsed = json.loads(cleaned)
-            except json.JSONDecodeError:
-                return cleaned
-            if isinstance(parsed, dict):
-                action = parsed.get("action")
-                return str(action or "").strip()
-        return cleaned
-
-    def _apply_fast_finish(self, player_id: str, action: ArenaAction) -> Optional[GameResult]:
-        player_index = self._resolve_player_index(player_id)
-        self._refresh_perfect_information()
-        action_cards = list(self._hand_cards_with_suit[player_index]) if self._hand_cards_with_suit else []
-        self._hand_cards_with_suit[player_index] = []
-        self._move_count += 1
-        action_text = self._fast_finish_action or "finish"
-        timestamp_ms = int(time.time() * 1000)
-        chat_text = self._extract_chat_text(action)
-        self._record_chat(player_id, chat_text, action.metadata.get("player_type"))
-        self._latest_actions[player_index] = action_cards
-        self._move_history.append(
-            {
-                "index": self._move_count,
-                "player_id": player_id,
-                "player_idx": player_index,
-                "action_text": action_text,
-                "action_cards": action_cards,
-                "chat": chat_text,
-                "timestamp_ms": timestamp_ms,
-            }
-        )
-        self._move_log.append(
-            {
-                "index": self._move_count,
-                "player": player_id,
-                "action_id": -1,
-                "action_text": action_text,
-                "action_cards": action_cards,
-                "chat": chat_text,
-                "timestamp_ms": timestamp_ms,
-            }
-        )
-        self._last_move = action_text
-        if self._replay_live:
-            self._save_showdown_replay()
-        self._final_result = GameResult(
-            winner=player_id,
-            result="win",
-            reason="fast_finish",
-            move_count=self._move_count,
-            illegal_move_count=self._illegal_move_count,
-            final_board=self._snapshot_board(),
-            move_log=list(self._move_log),
-            rule_profile=self._rule_profile,
-            win_direction=None,
-            line_length=None,
-            replay_path=self._replay_path,
-        )
-        return self._final_result
-
     def _extract_chat_text(self, action: ArenaAction) -> Optional[str]:
         chat_text = action.metadata.get("chat")
         if chat_text:
@@ -1164,8 +826,6 @@ class DoudizhuArenaEnvironment:
         if not chat_text or self._chat_mode == "off":
             return
         if self._chat_mode == "ai-only" and player_type == "human":
-            return
-        if self._chat_every_n > 1 and (self._move_count - 1) % self._chat_every_n != 0:
             return
         self._chat_log.append({"player_id": player_id, "text": chat_text})
 

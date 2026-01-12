@@ -1,4 +1,4 @@
-"""Showdown-inspired Doudizhu renderer for arena snapshots."""
+"""Showdown-inspired Doudizhu renderer for the Gradio visualizer."""
 
 from __future__ import annotations
 
@@ -536,7 +536,7 @@ DOUDIZHU_SHOWDOWN_CSS = """
 @registry.asset(
     "renderer_impls",
     "doudizhu_showdown_v1",
-    desc="Showdown-style Doudizhu renderer for arena snapshots",
+    desc="Showdown-style Doudizhu renderer for Gradio visualizer",
     tags=("doudizhu", "renderer", "card"),
 )
 class DoudizhuShowdownRenderer:
@@ -572,7 +572,7 @@ class DoudizhuShowdownRenderer:
         self._ui_state = self._parse_ui_state(self._raw_text)
 
     def resize(self, board_size: int) -> None:
-        """Resize the renderer when requested by the caller."""
+        """Resize the renderer when requested by the visualizer."""
 
         self._board_size = int(board_size)
 
