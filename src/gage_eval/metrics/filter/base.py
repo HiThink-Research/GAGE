@@ -13,7 +13,6 @@ class RegexFilter(ABC):
         self,
         regex_pattern: str = r"#### (\-?[0-9\.\,]+)",
         group_select: int = 0,
-        fallback: str = "[invalid]",
         ignore_case: bool = False
     ) -> None:
         """
@@ -26,9 +25,9 @@ class RegexFilter(ABC):
         else:
             self.regex = re.compile(regex_pattern)
         self.group_select = group_select
-        self.fallback = fallback
 
     def apply(self, resp: str, doc: str = None) -> str:
+        fallback = resp
         def filter_set(inst):
             filtered = []
             for resp in inst:
@@ -45,7 +44,7 @@ class RegexFilter(ABC):
                             match = self.fallback
                     match = match.strip()
                 else:
-                    match = self.fallback
+                    match = fallback
                 filtered.append(match)
             return filtered
 

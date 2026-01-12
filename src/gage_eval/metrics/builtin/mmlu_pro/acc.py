@@ -23,28 +23,27 @@ from gage_eval.registry import registry
 
 @registry.asset(
     "metrics",
-    "hle_accuracy_local", 
-    desc="HLE accuracy",
-    tags=("HLE",),
+    "mmlu_pro_acc", 
+    desc="MMLU-Pro accuracy",
+    tags=("MMLU-Pro",),
     default_aggregation="mean",
 )
-class HLEAccuracyLocalMetric(SimpleMetric):
+class MMLUProAccuracyMetric(SimpleMetric):
     value_key = "acc"
-    regex_pattern = r"Answer:\s*(.+?)\s*\r?\n\s*Confidence:"
+    regex_pattern =  r"the answer is \s*(.+?)\s*\r?\n\s*"
     def compute(self, context: MetricContext) -> MetricResult:
         # STEP 1: extract sample/predict /groud truth
         sample_dict = extract_field(context, 'sample')
         answer = get_first_reference(sample_dict)     
         prediction_raw = get_text_content_of_first_predict_result(sample_dict)
 
-
         # STEP 2: pretty prediction
         rf = RegexFilter(regex_pattern=self.regex_pattern, group_select=-1, ignore_case=True)
+
+  
         pred = rf.apply(prediction_raw)
 
-        answer_type = sample_dict.get("metadata").get("answer_type")
-        if answer_type != "exactMatch":
-            pred = extract_single_choice_letter(pred)
+        pred = extract_single_choice_letter(pred)
 
         # STEP 3: compute score
         final_pred, score = match_str(pred, str(answer), location="exact")
@@ -52,9 +51,9 @@ class HLEAccuracyLocalMetric(SimpleMetric):
         metadata = {"prediction": final_pred, "references": answer}
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-__all__ = ["HLEAccuracyLocalMetric", ]
+__all__ = ["MMLUProAccuracyMetric", ]
 
 if __name__ ==  '__main__':
     from gage_eval.config.pipeline_config import MetricSpec
     spec = MetricSpec(metric_id='test', implementation='fake_acc')
-    hle_metric = HLEAccuracyLocalMetric(spec=spec)
+    hle_metric = MMLUProAccuracyMetric(spec=spec)

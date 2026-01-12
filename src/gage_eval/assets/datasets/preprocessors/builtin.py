@@ -40,6 +40,8 @@ from gage_eval.assets.datasets.preprocessors.aime.aime2025 import AIME2025Prepro
 # benchmark HLE (Humanity's Last Exam)
 from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLEConverter
 
+# benchmark MMLU-Pro
+from gage_eval.assets.datasets.preprocessors.mmlu_pro.mmlu_pro_converter import MMLUProConverter
 
 @registry.asset(
     "dataset_preprocessors",
@@ -210,4 +212,14 @@ class AIME2025Preprocessor(NewAIME2025Preprocessor):
     tags=("prompt", "hle"),
 )
 class HLEPreprocessor(HLEConverter):
+    pass
+
+# benchmark MMLU-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "mmlu_pro_chat_preprocessor",
+    desc="MMLU Pro prompt wrapper",
+    tags=("prompt", "mmlu-pro"),
+)
+class MMLUPreprocessor(MMLUProConverter):
     pass
