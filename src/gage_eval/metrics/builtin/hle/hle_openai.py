@@ -80,7 +80,7 @@ class HLEAccuracyOpenAIMetric(SimpleMetric):
         self._judge_model = str(
             self.args.get("judge_model")
             or os.environ.get("HLE_JUDGE_MODEL")
-            or "gpt-4.1"
+            or "gpt-5.1"
         )
         self._api_key = self.args.get("api_key") or os.environ.get("OPENAI_API_KEY")
         self._api_base = self.args.get("api_base") or os.environ.get("OPENAI_BASE_URL")

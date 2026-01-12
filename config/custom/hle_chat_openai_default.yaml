@@ -12,20 +12,6 @@ custom:
       adapter_id: hle_answer_cleaner
     - step: auto_eval
 
-prompts:
-  - prompt_id: hle_answer_cleaner_prompt
-    renderer: jinja
-    template: |
-      You are a strict answer cleaner.
-      Question:
-      {{ sample.metadata.question }}
-
-      Model response:
-      {{ sample.predict_result[-1].answer }}
-
-      Output only the final answer. Do not include explanation or extra text.
-      If there is no clear final answer, output "None".
-
 datasets:
   - dataset_id: hle_ds
     hub: huggingface
@@ -73,7 +59,8 @@ role_adapters:
   - adapter_id: hle_answer_cleaner
     role_type: helper_model
     backend_id: hle_answer_cleaner_litellm
-    prompt_id: hle_answer_cleaner_prompt
+    params:
+      mode: answer_cleaner
     capabilities:
       - chat_completion
 
