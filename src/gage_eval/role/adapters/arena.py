@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import json
 import os
-import re
-from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -109,7 +106,6 @@ class ArenaRoleAdapter(RoleAdapter):
             player_names=player_names,
             player_models=model_labels if "mahjong" in env_impl_lower else None,
             start_player_id=start_player_id,
-            chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
         )
         if visualizer is not None:
@@ -276,7 +272,6 @@ class ArenaRoleAdapter(RoleAdapter):
         player_names: Optional[Dict[str, str]] = None,
         player_models: Optional[Dict[str, str]] = None,
         start_player_id: Optional[str] = None,
-        chat_queue=None,
         trace: Optional[ObservabilityTrace] = None,
     ):
         metadata = sample.get("metadata") or {}
@@ -327,6 +322,21 @@ class ArenaRoleAdapter(RoleAdapter):
         }
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
+        if "doudizhu" in str(impl).lower():
+            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            if run_id:
+                env_kwargs["run_id"] = str(run_id)
+            if sample_id:
+                env_kwargs["sample_id"] = str(sample_id)
+            if env_cfg.get("chat_every_n") is not None:
+                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
+            if env_cfg.get("replay_live") is not None:
+                env_kwargs["replay_live"] = env_cfg.get("replay_live")
+            if env_cfg.get("replay_output_dir") is not None:
+                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
+            if env_cfg.get("replay_filename") is not None:
+                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:

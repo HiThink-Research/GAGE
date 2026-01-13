@@ -78,6 +78,8 @@ role_adapters:
       environment:
         impl: doudizhu_arena_v1
         chat_mode: ai-only
+        chat_every_n: 2
+        replay_live: true
       rules:
         illegal_policy:
           retry: 1
@@ -87,16 +89,6 @@ role_adapters:
         max_turns: 400
       parser:
         impl: doudizhu_arena_parser_v1
-      visualizer:
-        enabled: true
-        title: GAGE Doudizhu Arena
-        port: ${DOUDIZHU_GRADIO_PORT:-7863}
-        launch_browser: true
-        refresh_s: 0.3
-        wait_for_finish: true
-        show_chat: true
-        renderer:
-          impl: doudizhu_showdown_v1
       players:
         - name: player_0
           player_id: player_0

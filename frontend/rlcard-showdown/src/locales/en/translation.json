@@ -26,7 +26,6 @@
         "pass": "Pass",
         "deselect": "Deselect",
         "hint": "Hint",
-        "play": "Play",
-        "finish": "Finish"
+        "play": "Play"
     }
 }
