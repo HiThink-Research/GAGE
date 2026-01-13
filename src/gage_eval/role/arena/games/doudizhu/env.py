@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import re
+import time
+from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
+
+from loguru import logger
 
 from gage_eval.registry import registry
 from gage_eval.role.arena.games.doudizhu.core_factory import make_core
@@ -374,6 +380,12 @@ class DoudizhuArenaEnvironment:
         win_directions: Optional[Sequence[str]] = None,
         illegal_policy: Optional[dict[str, str | int]] = None,
         chat_mode: str = "off",
+        chat_every_n: int = 1,
+        run_id: Optional[str] = None,
+        sample_id: Optional[str] = None,
+        replay_output_dir: Optional[str] = None,
+        replay_filename: Optional[str] = None,
+        replay_live: bool = False,
         **_: Any,
     ) -> None:
         """Initialize the Doudizhu arena environment.
@@ -390,6 +402,12 @@ class DoudizhuArenaEnvironment:
             win_directions: Unused placeholder for ArenaRoleAdapter compatibility.
             illegal_policy: Policy controlling illegal move retries and outcome.
             chat_mode: Chat logging mode ("off", "ai-only", "all").
+            chat_every_n: Record chat every N moves (>=1).
+            run_id: Optional run identifier used for replay output.
+            sample_id: Optional sample identifier used for replay output.
+            replay_output_dir: Optional override for the replay output directory.
+            replay_filename: Optional override for the replay filename.
+            replay_live: Whether to update the replay file after each move.
             **_: Ignored extra keyword arguments.
         """
 
@@ -411,6 +429,13 @@ class DoudizhuArenaEnvironment:
         self._max_illegal = int(self._illegal_policy.get("retry", 0))
         self._illegal_on_fail = str(self._illegal_policy.get("on_fail", "loss"))
         self._chat_mode = str(chat_mode or "off")
+        self._chat_every_n = max(1, int(chat_every_n))
+        self._run_id = str(run_id) if run_id else None
+        self._sample_id = str(sample_id) if sample_id else None
+        self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
+        self._replay_filename = str(replay_filename) if replay_filename else None
+        self._replay_live = bool(replay_live)
+        self._replay_path: Optional[str] = None
         self._illegal_counts = {player_id: 0 for player_id in self._player_ids}
         self._move_log: list[dict[str, Any]] = []
         self._move_history: list[dict[str, Any]] = []
@@ -423,6 +448,7 @@ class DoudizhuArenaEnvironment:
         self._latest_actions: list[list[str] | str] = []
         self._landlord_id: Optional[str] = None
         self._final_result: Optional[GameResult] = None
+        self._start_time_ms: Optional[int] = None
         self.reset()
 
     def reset(self) -> None:
@@ -440,9 +466,13 @@ class DoudizhuArenaEnvironment:
         self._hand_cards_with_suit = []
         self._initial_hands = []
         self._landlord_id = None
+        self._replay_path = None
         self._final_result = None
+        self._start_time_ms = int(time.time() * 1000)
         self._refresh_perfect_information()
         self._initial_hands = [list(cards) for cards in self._hand_cards_with_suit]
+        if self._replay_live:
+            self._save_showdown_replay()
 
     def get_active_player(self) -> str:
         """Return the active player identifier."""
@@ -514,6 +544,7 @@ class DoudizhuArenaEnvironment:
         self._refresh_perfect_information()
         self._move_count += 1
         action_text = self._formatter.format_action(action_id)
+        timestamp_ms = int(time.time() * 1000)
         action_cards = self._resolve_action_cards(action_text, player_index)
         chat_text = self._extract_chat_text(action)
         self._record_chat(player_id, chat_text, action.metadata.get("player_type"))
@@ -526,6 +557,7 @@ class DoudizhuArenaEnvironment:
                 "action_text": action_text,
                 "action_cards": action_cards,
                 "chat": chat_text,
+                "timestamp_ms": timestamp_ms,
             }
         )
         self._move_log.append(
@@ -536,11 +568,14 @@ class DoudizhuArenaEnvironment:
                 "action_text": action_text,
                 "action_cards": action_cards,
                 "chat": chat_text,
+                "timestamp_ms": timestamp_ms,
             }
         )
         self._last_move = action_text
         self._core.step(action_id)
         self._refresh_perfect_information()
+        if self._replay_live:
+            self._save_showdown_replay()
 
         # STEP 2: Check terminal state.
         if self._core.is_terminal():
@@ -562,6 +597,7 @@ class DoudizhuArenaEnvironment:
         winner = self._resolve_winner(payoffs)
         resolved_result = "draw" if result == "draw" or winner is None else result
         final_board = self._snapshot_board()
+        replay_path = self._save_showdown_replay()
         self._final_result = GameResult(
             winner=winner,
             result=resolved_result,
@@ -573,6 +609,7 @@ class DoudizhuArenaEnvironment:
             rule_profile=self._rule_profile,
             win_direction=None,
             line_length=None,
+            replay_path=replay_path,
         )
         return self._final_result
 
@@ -592,6 +629,7 @@ class DoudizhuArenaEnvironment:
             winner = self._resolve_illegal_winner(player_id)
             result = "loss"
 
+        replay_path = self._save_showdown_replay()
         self._final_result = GameResult(
             winner=winner,
             result=result,
@@ -603,6 +641,7 @@ class DoudizhuArenaEnvironment:
             rule_profile=self._rule_profile,
             win_direction=None,
             line_length=None,
+            replay_path=replay_path,
         )
         return self._final_result
 
@@ -633,6 +672,111 @@ class DoudizhuArenaEnvironment:
             return None
         winner_index = list(payoffs).index(max_payoff)
         return self._player_id_map.get(winner_index)
+
+    def _save_showdown_replay(self) -> Optional[str]:
+        try:
+            replay = self._build_showdown_replay()
+        except Exception as exc:
+            logger.warning("Failed to build showdown replay: {}", exc)
+            return None
+
+        output_path = self._resolve_replay_output_path()
+        if output_path is None:
+            return None
+
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(replay, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._replay_path = str(output_path)
+            return self._replay_path
+        except Exception as exc:
+            logger.warning("Failed to write showdown replay to {}: {}", output_path, exc)
+            return None
+
+    def _build_showdown_replay(self) -> dict[str, Any]:
+        self._ensure_landlord_id()
+        roles = self._resolve_roles(self._landlord_id)
+        player_info = []
+        for idx, player_id in enumerate(self._player_ids):
+            player_info.append(
+                {
+                    "id": idx,
+                    "index": idx,
+                    "role": roles.get(player_id, "peasant"),
+                    "agentInfo": {"name": self._player_names.get(player_id, player_id)},
+                }
+            )
+
+        init_hands = []
+        if self._initial_hands:
+            init_hands = [" ".join(cards) for cards in self._initial_hands]
+        else:
+            init_hands = [" ".join(cards) for cards in self._hand_cards_with_suit]
+        if len(init_hands) < len(self._player_ids):
+            init_hands.extend(["" for _ in range(len(self._player_ids) - len(init_hands))])
+        else:
+            init_hands = init_hands[: len(self._player_ids)]
+
+        move_history = []
+        for entry in self._move_history:
+            player_idx = entry.get("player_idx")
+            action_cards = entry.get("action_cards")
+            action_text = entry.get("action_text")
+            move = action_cards if action_cards not in (None, "") else action_text
+            if isinstance(move, list):
+                move_text = " ".join(move)
+            elif move is None:
+                move_text = ""
+            else:
+                move_text = str(move)
+            move_history.append(
+                {
+                    "playerIdx": int(player_idx) if player_idx is not None else 0,
+                    "move": move_text,
+                    "info": {},
+                    "chat": entry.get("chat"),
+                    "timestamp_ms": entry.get("timestamp_ms"),
+                }
+            )
+
+        return {
+            "playerInfo": player_info,
+            "initHands": init_hands,
+            "moveHistory": move_history,
+            "chatLog": list(self._chat_log),
+            "start_time_ms": self._start_time_ms,
+        }
+
+    def _ensure_landlord_id(self) -> None:
+        if self._landlord_id:
+            return
+        try:
+            raw_obs = self._core.get_observation(0)
+            legal_action_ids = self._core.get_legal_actions(0)
+            public_state, _, _ = self._formatter.format_observation(raw_obs, legal_action_ids)
+            landlord_id = public_state.get("landlord_id")
+            if landlord_id and landlord_id != "unknown":
+                self._landlord_id = str(landlord_id)
+        except Exception:
+            return
+
+    def _resolve_replay_output_path(self) -> Optional[Path]:
+        base_dir = None
+        if self._replay_output_dir:
+            base_dir = Path(self._replay_output_dir)
+        else:
+            run_id = self._run_id or os.environ.get("GAGE_EVAL_RUN_ID")
+            if run_id:
+                base_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")) / run_id / "replays"
+        if base_dir is None:
+            return None
+        sample_id_source = self._sample_id or os.environ.get("GAGE_EVAL_SAMPLE_ID") or "unknown"
+        sample_id = self._sanitize_sample_id(sample_id_source)
+        filename = self._replay_filename or f"doudizhu_replay_{sample_id}.json"
+        return base_dir / filename
+
+    def _sanitize_sample_id(self, value: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_") or "unknown"
 
     def _snapshot_board(self) -> str:
         try:
@@ -826,6 +970,8 @@ class DoudizhuArenaEnvironment:
         if not chat_text or self._chat_mode == "off":
             return
         if self._chat_mode == "ai-only" and player_type == "human":
+            return
+        if self._chat_every_n > 1 and (self._move_count - 1) % self._chat_every_n != 0:
             return
         self._chat_log.append({"player_id": player_id, "text": chat_text})
 

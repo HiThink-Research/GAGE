@@ -1,0 +1,321 @@
+@import "cards.css";
+
+.doudizhu-wrapper {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+   
+    #gameboard-background {
+        width: 100%;
+        height: 100%;
+        background-image: url("./images/gameboard.png");
+        background-repeat: no-repeat;
+        background-size: 100% 125%;
+        background-position: bottom;
+        
+        &.blur-background {
+            filter: blur(3px);
+            pointer-events: none;
+        }
+    }
+
+    .played-card-area {
+        font-size: 12px;
+        width: 340px;
+        display: flex;
+        justify-content: center;
+
+        .timer.fade-in {
+            visibility: hidden;
+            opacity: 0;
+        }
+
+        .timer.fade-out {
+            visibility: hidden;
+            transition: visibility 0.1s, opacity 0.05s;
+            opacity: 0;
+        }
+        
+        .main-player-action-wrapper {
+            display: flex;
+            align-items: center;
+            
+            button {
+                font-weight: bolder;
+                border-radius: 40px;
+            }
+        }
+
+        .timer {
+            visibility: visible;
+            transition: visibility 0s, opacity 0.2s, transform 0.3s;
+            opacity: 1;
+            width: 51px;
+            height: 60px;
+            .timer-text {
+                color: #303133;
+                transform: translateY(5px);
+                font-size: 23px;
+                font-weight: bold;
+                text-shadow: 0 2px 2px #909399;
+                line-height: 55px;
+            }
+            text-align: center;
+            background-image: url("./images/timer.png");
+            background-repeat: no-repeat;
+            background-size: 100% 100%;
+        }
+
+        .non-card {
+            display: table;
+            width: 280px;
+            height: 80px;
+
+            span {
+                display: table-cell;
+                vertical-align: middle;
+                text-align: center;
+                font-size: 23px;
+                font-weight: bold;
+                text-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                color: #F2F6FC;
+            }
+        }
+    }
+
+    .player-hand-placeholder {
+        font-size: 16px;
+        display: table;
+
+        span {
+            color: whitesmoke;
+            display: table-cell;
+            vertical-align: middle;
+            text-align: center;
+        }
+    }
+
+    .player-info {
+        font-size: 16px;
+        width: 150px;
+        height: 150px;
+        position: relative;
+        overflow: visible;
+        div {
+            text-align: center;
+        }
+        span {
+            white-space: pre;
+            text-align: center;
+        }
+    }
+
+    .player-info .player-chat-bubble {
+        position: absolute;
+        max-width: 240px;
+        min-width: 120px;
+        padding: 8px 12px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #fffdf8 0%, #f6eddf 100%);
+        border: 1px solid rgba(92, 77, 62, 0.18);
+        color: #2f2a25;
+        font-size: 13px;
+        line-height: 1.5;
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+        pointer-events: none;
+        z-index: 2;
+        text-align: left;
+        white-space: normal;
+        word-break: break-word;
+        overflow: hidden;
+    }
+
+    .player-info .player-chat-bubble::after {
+        content: '';
+        position: absolute;
+        width: 0;
+        height: 0;
+        border: 6px solid transparent;
+    }
+
+    .player-info.bubble-left .player-chat-bubble,
+    .player-info.bubble-right .player-chat-bubble {
+        left: 50%;
+        top: 100%;
+        margin-top: 10px;
+        transform: translateX(-50%);
+    }
+
+    .player-info.bubble-left .player-chat-bubble::after,
+    .player-info.bubble-right .player-chat-bubble::after {
+        left: 50%;
+        top: -12px;
+        transform: translateX(-50%);
+        border-bottom-color: #f6eddf;
+    }
+
+    .player-info.bubble-bottom .player-chat-bubble {
+        left: 50%;
+        bottom: 100%;
+        margin-bottom: 10px;
+        transform: translateX(-50%);
+    }
+
+    .player-info.bubble-bottom .player-chat-bubble::after {
+        left: 50%;
+        bottom: -12px;
+        transform: translateX(-50%);
+        border-top-color: #f6eddf;
+    }
+
+    .player-main-area {
+        background-color: initial;
+    }
+
+    #left-player {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+
+        .player-main-area {
+            width: 340px;
+            height: 150px;
+            font-size: 10px;
+
+            .player-hand-up {
+                position: absolute;
+                top: 0;
+                margin-left: 175px;
+                width: 175px;
+            }
+
+            .player-hand-down {
+                position: absolute;
+                top: 58px;
+                margin-left: 175px;
+                width: 175px;
+            }
+
+            .player-hand-placeholder {
+                width: 175px;
+                height: 150px;
+                position: absolute;
+                top: 0;
+                margin-left: 170px;
+            }
+        }
+
+        .played-card-area {
+            position: relative;
+            left: 20px;
+            top: 20px;
+        }
+    }
+
+    #right-player {
+        position: absolute;
+        right: 10px;
+        top: 10px;
+
+        .player-main-area {
+            width: 340px;
+            height: 150px;
+            font-size: 10px;
+
+            .player-hand-up {
+                position: absolute;
+                top: 0;
+                margin-right: 175px;
+                width: 175px;
+            }
+
+            .player-hand-down {
+                position: absolute;
+                top: 58px;
+                margin-right: 175px;
+                width: 175px;
+            }
+
+            .player-hand-placeholder {
+                width: 175px;
+                height: 150px;
+                position: absolute;
+                top: 0;
+                margin-right: 170px;
+            }
+
+            .player-info {
+                float: right;
+            }
+        }
+
+        .played-card-area {
+            position: relative;
+            right: 20px;
+            top: 20px;
+        }
+    }
+
+    #bottom-player {
+        position: absolute;
+        bottom: 10px;
+        left: 50%;
+        margin-left: -340px;
+
+        .player-main-area {
+            width: 680px;
+            height: 150px;
+            position: relative;
+
+            .player-hand {
+                position: absolute;
+                top: 0;
+                padding-left: 20px;
+                margin-left: 150px;
+                width: 520px;
+                font-size: 14px;
+            }
+
+            .player-hand-placeholder {
+                width: 170px;
+                height: 150px;
+                position: absolute;
+                top: 0;
+                padding-left: 20px;
+                margin-left: 150px;
+            }
+        }
+
+        .played-card-area {
+            width: 100%;
+            position: relative;
+            transform: translateY(-10px);
+
+            .playingCards ul.hand {
+                margin-bottom: 0;
+            }
+
+            .non-card {
+                height: 70px;
+                //transform: translateY(-25px);
+            }
+        }
+    }
+
+    .playingCards {
+        a.card.selected {
+            bottom: 1em;
+        }
+    }
+}
+
+.doudizhu-statistic-table {
+    .MuiTableHead-root {
+        th.MuiTableCell-root.MuiTableCell-head {
+            font-weight: bolder;
+        }
+    }
+}

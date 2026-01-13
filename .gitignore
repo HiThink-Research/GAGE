@@ -198,6 +198,8 @@ demo_hf_backend.py
 .vscode/
 
 runs/
+node_modules/
+frontend/rlcard-showdown/build/
 scripts/oneclick/.generated/
 scripts/oneclick/.env.example
 .venv311/

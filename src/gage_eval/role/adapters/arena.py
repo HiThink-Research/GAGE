@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import os
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -80,6 +81,7 @@ class ArenaRoleAdapter(RoleAdapter):
             player_ids=player_ids,
             player_names=player_names,
             start_player_id=start_player_id,
+            trace=trace,
         )
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
@@ -238,6 +240,7 @@ class ArenaRoleAdapter(RoleAdapter):
         player_ids: Optional[Sequence[str]] = None,
         player_names: Optional[Dict[str, str]] = None,
         start_player_id: Optional[str] = None,
+        trace: Optional[ObservabilityTrace] = None,
     ):
         metadata = sample.get("metadata") or {}
         eval_config = sample.get("eval_config") or {}
@@ -281,6 +284,21 @@ class ArenaRoleAdapter(RoleAdapter):
         }
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
+        if "doudizhu" in str(impl).lower():
+            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            if run_id:
+                env_kwargs["run_id"] = str(run_id)
+            if sample_id:
+                env_kwargs["sample_id"] = str(sample_id)
+            if env_cfg.get("chat_every_n") is not None:
+                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
+            if env_cfg.get("replay_live") is not None:
+                env_kwargs["replay_live"] = env_cfg.get("replay_live")
+            if env_cfg.get("replay_output_dir") is not None:
+                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
+            if env_cfg.get("replay_filename") is not None:
+                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
