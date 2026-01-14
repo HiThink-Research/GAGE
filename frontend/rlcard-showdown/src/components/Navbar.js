@@ -24,7 +24,7 @@ function Navbar({subtitleMap}) {
                 <div className={"stretch"} />
                 <div className={"github-info"} onClick={()=>{window.location.href = 'https://github.com/HiThink-Research/GAGE'}}>
                     <div className={"github-icon"}><GitHubIcon /></div>
-                    <div className={"github-text"}>Github<br /><span>{stars} stars</span></div>
+                    <div className={"github-text"}>Github</div>
                 </div>
             </div>
         </AppBar>
