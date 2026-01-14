@@ -9,7 +9,8 @@
 
 一键启动：
 ```bash
-scripts/oneclick/run_doudizhu_showdown.sh
+scripts/oneclick/run_doudizhu_showdown.sh （3ai对战）
+scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
 ```
 
 启动后脚本会输出：
@@ -34,6 +35,132 @@ runs/<run_id>/replays/doudizhu_replay_<sample_id>.json
 
 回放由 replay server 提供，前端通过 `replay_url` 参数读取。  
 如果需要定位回放文件，可从上面的路径直接读取 JSON。
+
+## GameResult 与结果流转
+
+GAGE 的 arena 步骤会在一局结束后产出 `GameResult`，并写入样本的
+`predict_result`，供下游（judge/auto_eval）读取：
+- 写入位置：`src/gage_eval/evaluation/task_planner.py` → `append_predict_result()`
+- 结果格式来源：`src/gage_eval/role/adapters/arena.py::_format_result()`
+
+标准字段（与五子棋一致）：
+- `winner`: 赢家 player_id（或 `null`）
+- `result`: `"win" | "draw" | "loss"`
+- `reason`: 终局原因（如 `terminal`/`illegal_move`/`max_turns`）
+- `move_count` / `illegal_move_count`
+- `final_board`: 最终棋盘快照（文本）
+- `game_log`: 每步动作明细
+- `rule_profile` / `win_direction` / `line_length`
+
+五子棋 `game_log` 结构（示例）：
+```json
+{"index": 1, "player": "player_0", "coord": "H8", "row": 7, "col": 7}
+```
+
+斗地主 `game_log` 结构（`doudizhu_arena_v1`）：
+```json
+{
+  "index": 1,
+  "player": "player_0",
+  "action_id": 123,
+  "action_text": "333444",
+  "action_cards": ["S3","H3","D3","C4","S4","H4"],
+  "chat": "先压一手",
+  "timestamp_ms": 1730000000000
+}
+```
+
+说明：
+- 斗地主的 `final_board` 是 `_snapshot_board()` 的文本快照，包含 Public/Private State、Legal Moves 预览、Chat Log 等。
+- 下游如果只关心赢家/结果，直接读 `winner`/`result` 即可；若需回放细节，用 `game_log`。
+
+## 运行逻辑（关键流程）
+
+### 1) 数据集输入（system prompt）
+
+位置：`tests/data/Test_Doudizhu_LiteLLM.jsonl`
+
+核心字段：
+- `messages`: 系统提示词，决定 AI 性格/语气/输出格式。
+- `metadata.player_ids`: 玩家 ID（如 `player_0/1/2`）。
+- `metadata.start_player_id`: 起始出牌玩家。
+
+### 2) 运行时观测（每回合上下文）
+
+后端在每回合构造观测并交给 LLM：
+- 文件：`src/gage_eval/role/arena/games/doudizhu/env.py`
+- 入口：`observe()` 与 `_format_board_text()`
+
+观测包含：
+- `Public State` / `Private State`（公共/私有状态 JSON）
+- `Legal Moves (preview)`（合法招法预览，默认截断）
+- `Chat Log`（若开启聊天）
+- `UI_STATE_JSON`（前端渲染需要的结构化状态）
+
+同时 `metadata` 会携带：
+- `player_ids` / `player_names`
+- `public_state` / `private_state`
+- `chat_log` / `chat_mode`
+
+### 3) LLM 提示组装
+
+位置：`src/gage_eval/role/arena/players/llm_player.py`
+
+拼接顺序：
+1. 数据集 `messages`（system prompt）
+2. 运行时观测（含 board_text + legal moves + instructions）
+
+当 `chat_mode` 为 `ai-only`/`all` 时，会要求输出：
+```json
+{"action": "<action>", "chat": "<short line>"}
+```
+
+示例（模型实际看到的上下文）：
+```text
+[system]
+Start Doudizhu. Output exactly one legal action string such as 'pass' or card ranks like '33'. You may also output JSON: {"action": "pass", "chat": "..."}.
+
+[user]
+Active player: Player 0 (player_0)
+Opponent last move: pass
+
+Current State:
+Public State:
+{"round":2,"landlord_id":"player_0","last_move":"pass",...}
+ 
+Private State:
+{"hand":["S3","H3","D3","C4","S4","BJ","RJ",...],...}
+
+Legal Moves (preview): pass, 33, 44, 34567, ...
+
+Chat Log:
+[{"player_id":"player_1","text":"先让一手。"}]...
+
+UI_STATE_JSON:
+{"player_ids":["player_0","player_1","player_2"],"hands":[...],"latest_actions":[...],...}
+
+Status:
+- Legal moves (preview): pass, 33, 44, 34567, ...
+
+Instructions:
+- Choose exactly one legal action string from the legal moves.
+- Include a short table-talk line every turn.
+- Output JSON: {"action": "<action>", "chat": "<short line>"}
+```
+
+### 4) 回放写入与前端读取
+
+回放由 `doudizhu_arena_v1` 写入：
+- 文件：`src/gage_eval/role/arena/games/doudizhu/env.py`
+- 生成路径：`runs/<run_id>/replays/doudizhu_replay_<sample_id>.json`
+
+回放服务：
+- 文件：`src/gage_eval/tools/replay_server.py`
+- URL：`/tournament/replay?run_id=...&sample_id=...`
+
+前端读取：
+- 文件：`frontend/rlcard-showdown/src/view/ReplayView/DoudizhuReplayView.js`
+- URL：`/replay/doudizhu?run_id=...&sample_id=...&live=1`
 
 ## AI 性格/对话配置
 

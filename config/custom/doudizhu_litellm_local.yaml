@@ -35,7 +35,7 @@ backends:
     config:
       provider: openai
       api_base: https://api.openai.com/v1
-      model: gpt-4.1
+      model: gpt-5-mini
       generation_parameters:
         max_new_tokens: 512
         temperature: 0.0
@@ -46,7 +46,7 @@ backends:
     config:
       provider: openai
       api_base: https://api.openai.com/v1
-      model: gpt-4.1
+      model: gpt-5-nano
       generation_parameters:
         max_new_tokens: 512
         temperature: 0.0
@@ -80,6 +80,8 @@ role_adapters:
         chat_mode: ai-only
         chat_every_n: 2
         replay_live: true
+        context_include_public: false
+        context_include_ui_state: false
       rules:
         illegal_policy:
           retry: 1

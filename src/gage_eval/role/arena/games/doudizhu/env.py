@@ -8,7 +8,8 @@ import random
 import re
 import time
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from queue import Empty, Queue
+from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -381,11 +382,16 @@ class DoudizhuArenaEnvironment:
         illegal_policy: Optional[dict[str, str | int]] = None,
         chat_mode: str = "off",
         chat_every_n: int = 1,
+        context_include_public: bool = True,
+        context_include_ui_state: bool = True,
         run_id: Optional[str] = None,
         sample_id: Optional[str] = None,
         replay_output_dir: Optional[str] = None,
         replay_filename: Optional[str] = None,
         replay_live: bool = False,
+        chat_queue: Optional[Queue[dict[str, str] | str]] = None,
+        fast_finish_action: Optional[str] = None,
+        fast_finish_human_only: bool = True,
         **_: Any,
     ) -> None:
         """Initialize the Doudizhu arena environment.
@@ -403,11 +409,16 @@ class DoudizhuArenaEnvironment:
             illegal_policy: Policy controlling illegal move retries and outcome.
             chat_mode: Chat logging mode ("off", "ai-only", "all").
             chat_every_n: Record chat every N moves (>=1).
+            context_include_public: Whether to include public_state in AI context.
+            context_include_ui_state: Whether to include UI_STATE_JSON in AI context.
             run_id: Optional run identifier used for replay output.
             sample_id: Optional sample identifier used for replay output.
             replay_output_dir: Optional override for the replay output directory.
             replay_filename: Optional override for the replay filename.
             replay_live: Whether to update the replay file after each move.
+            chat_queue: Optional queue for chat-only messages.
+            fast_finish_action: Optional action string to force a fast finish.
+            fast_finish_human_only: Whether to allow fast finish only for human players.
             **_: Ignored extra keyword arguments.
         """
 
@@ -430,11 +441,16 @@ class DoudizhuArenaEnvironment:
         self._illegal_on_fail = str(self._illegal_policy.get("on_fail", "loss"))
         self._chat_mode = str(chat_mode or "off")
         self._chat_every_n = max(1, int(chat_every_n))
+        self._context_include_public = bool(context_include_public)
+        self._context_include_ui_state = bool(context_include_ui_state)
         self._run_id = str(run_id) if run_id else None
         self._sample_id = str(sample_id) if sample_id else None
         self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
         self._replay_filename = str(replay_filename) if replay_filename else None
         self._replay_live = bool(replay_live)
+        self._chat_queue = chat_queue
+        self._fast_finish_action = str(fast_finish_action).strip().lower() if fast_finish_action else None
+        self._fast_finish_human_only = bool(fast_finish_human_only)
         self._replay_path: Optional[str] = None
         self._illegal_counts = {player_id: 0 for player_id in self._player_ids}
         self._move_log: list[dict[str, Any]] = []
@@ -469,6 +485,7 @@ class DoudizhuArenaEnvironment:
         self._replay_path = None
         self._final_result = None
         self._start_time_ms = int(time.time() * 1000)
+        self._drain_chat_queue(record=False)
         self._refresh_perfect_information()
         self._initial_hands = [list(cards) for cards in self._hand_cards_with_suit]
         if self._replay_live:
@@ -482,6 +499,7 @@ class DoudizhuArenaEnvironment:
     def observe(self, player: str) -> ArenaObservation:
         """Return an observation for the given player."""
 
+        self._drain_chat_queue()
         player_index = self._resolve_player_index(player)
         raw_obs = self._core.get_observation(player_index)
         legal_action_ids = self._core.get_legal_actions(player_index)
@@ -496,7 +514,9 @@ class DoudizhuArenaEnvironment:
             private_state,
             legal_moves,
             chat_log=self._chat_log,
-            ui_state=ui_state,
+            ui_state=ui_state if self._context_include_ui_state else None,
+            include_public_state=self._context_include_public,
+            include_private_state=True,
         )
         return ArenaObservation(
             board_text=board_text,
@@ -516,6 +536,68 @@ class DoudizhuArenaEnvironment:
             },
         )
 
+    def _drain_chat_queue(self, *, record: bool = True) -> None:
+        if self._chat_queue is None:
+            return
+        added = False
+        while True:
+            try:
+                payload = self._chat_queue.get_nowait()
+            except Empty:
+                break
+            parsed = self._parse_chat_payload(payload)
+            if not parsed:
+                continue
+            player_id, chat_text = parsed
+            if record:
+                self._record_chat(player_id, chat_text, "human")
+                added = True
+        if added and self._replay_live:
+            self._save_showdown_replay()
+
+    def _parse_chat_payload(self, payload: Any) -> Optional[Tuple[str, str]]:
+        if payload is None:
+            return None
+        if isinstance(payload, str):
+            text = payload.strip()
+            if not text:
+                return None
+            if text.startswith("{"):
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    return (self._resolve_chat_player_id(None), text)
+                if isinstance(parsed, dict):
+                    chat_text = parsed.get("chat") or parsed.get("text") or parsed.get("message")
+                    player_id = parsed.get("player_id") or parsed.get("playerId") or parsed.get("player")
+                    if chat_text:
+                        return (self._resolve_chat_player_id(player_id), str(chat_text).strip())
+            return (self._resolve_chat_player_id(None), text)
+        if isinstance(payload, dict):
+            chat_text = payload.get("chat") or payload.get("text") or payload.get("message")
+            if not chat_text:
+                return None
+            player_id = payload.get("player_id") or payload.get("playerId") or payload.get("player")
+            return (self._resolve_chat_player_id(player_id), str(chat_text).strip())
+        return None
+
+    def _resolve_chat_player_id(self, player_id: Optional[object]) -> str:
+        if player_id is not None:
+            if isinstance(player_id, int):
+                if player_id in self._player_id_map:
+                    return self._player_id_map[player_id]
+            else:
+                raw = str(player_id).strip()
+                if raw.isdigit():
+                    parsed_idx = int(raw)
+                    if parsed_idx in self._player_id_map:
+                        return self._player_id_map[parsed_idx]
+                if raw in self._player_index_map:
+                    return raw
+        if self._start_player_id in self._player_index_map:
+            return self._start_player_id
+        return self._player_ids[0]
+
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         """Apply an action and return a GameResult when the game ends."""
 
@@ -527,6 +609,9 @@ class DoudizhuArenaEnvironment:
             return self._handle_illegal(player_id, reason="wrong_player")
 
         action_text = action.move or ""
+        raw_action = str(action.raw or "")
+        if self._should_fast_finish(action_text, raw_action, action.metadata.get("player_type")):
+            return self._apply_fast_finish(player_id, action)
         if not action_text:
             return self._handle_illegal(player_id, reason="empty_move")
 
@@ -695,6 +780,13 @@ class DoudizhuArenaEnvironment:
 
     def _build_showdown_replay(self) -> dict[str, Any]:
         self._ensure_landlord_id()
+        active_index = self._core.get_active_player_id()
+        try:
+            legal_action_ids = self._core.get_legal_actions(active_index)
+        except Exception:
+            legal_action_ids = []
+        legal_moves = [self._formatter.format_action(action_id) for action_id in legal_action_ids]
+        legal_moves = list(dict.fromkeys(legal_moves))
         roles = self._resolve_roles(self._landlord_id)
         player_info = []
         for idx, player_id in enumerate(self._player_ids):
@@ -744,6 +836,9 @@ class DoudizhuArenaEnvironment:
             "initHands": init_hands,
             "moveHistory": move_history,
             "chatLog": list(self._chat_log),
+            "currentPlayer": int(active_index),
+            "active_player_id": self._player_id_map.get(active_index),
+            "legalMoves": legal_moves,
             "start_time_ms": self._start_time_ms,
         }
 
@@ -806,17 +901,29 @@ class DoudizhuArenaEnvironment:
         *,
         chat_log: Optional[Sequence[dict[str, str]]] = None,
         ui_state: Optional[dict[str, Any]] = None,
+        include_public_state: bool = True,
+        include_private_state: bool = True,
+        include_ui_state: bool = True,
     ) -> str:
         legal_preview = ", ".join(list(legal_moves)[:40]) if legal_moves else "none"
-        lines = [
-            "Public State:",
-            json.dumps(public_state, ensure_ascii=True),
-            "",
-            "Private State:",
-            json.dumps(private_state, ensure_ascii=True),
-            "",
-            f"Legal Moves (preview): {legal_preview}",
-        ]
+        lines: list[str] = []
+        if include_public_state:
+            lines.extend(
+                [
+                    "Public State:",
+                    json.dumps(public_state, ensure_ascii=True),
+                    "",
+                ]
+            )
+        if include_private_state:
+            lines.extend(
+                [
+                    "Private State:",
+                    json.dumps(private_state, ensure_ascii=True),
+                    "",
+                ]
+            )
+        lines.append(f"Legal Moves (preview): {legal_preview}")
         if chat_log is not None:
             lines.extend(
                 [
@@ -825,7 +932,7 @@ class DoudizhuArenaEnvironment:
                     json.dumps(list(chat_log), ensure_ascii=True),
                 ]
             )
-        if ui_state is not None:
+        if include_ui_state and ui_state is not None:
             lines.extend(
                 [
                     "",
@@ -946,6 +1053,86 @@ class DoudizhuArenaEnvironment:
         if not cards_with_suit:
             return normalized
         return cards_with_suit
+
+    def _should_fast_finish(
+        self,
+        action_text: str,
+        raw_action: str,
+        player_type: Optional[str],
+    ) -> bool:
+        if not self._fast_finish_action:
+            return False
+        if self._fast_finish_human_only and player_type != "human":
+            return False
+        candidate = action_text.strip().lower()
+        if not candidate:
+            candidate = self._extract_action_from_raw(raw_action).strip().lower()
+        return candidate == self._fast_finish_action
+
+    def _extract_action_from_raw(self, raw_action: str) -> str:
+        cleaned = str(raw_action or "").strip()
+        if not cleaned:
+            return ""
+        if cleaned.startswith("{"):
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError:
+                return cleaned
+            if isinstance(parsed, dict):
+                action = parsed.get("action")
+                return str(action or "").strip()
+        return cleaned
+
+    def _apply_fast_finish(self, player_id: str, action: ArenaAction) -> Optional[GameResult]:
+        player_index = self._resolve_player_index(player_id)
+        self._refresh_perfect_information()
+        action_cards = list(self._hand_cards_with_suit[player_index]) if self._hand_cards_with_suit else []
+        self._hand_cards_with_suit[player_index] = []
+        self._move_count += 1
+        action_text = self._fast_finish_action or "finish"
+        timestamp_ms = int(time.time() * 1000)
+        chat_text = self._extract_chat_text(action)
+        self._record_chat(player_id, chat_text, action.metadata.get("player_type"))
+        self._latest_actions[player_index] = action_cards
+        self._move_history.append(
+            {
+                "index": self._move_count,
+                "player_id": player_id,
+                "player_idx": player_index,
+                "action_text": action_text,
+                "action_cards": action_cards,
+                "chat": chat_text,
+                "timestamp_ms": timestamp_ms,
+            }
+        )
+        self._move_log.append(
+            {
+                "index": self._move_count,
+                "player": player_id,
+                "action_id": -1,
+                "action_text": action_text,
+                "action_cards": action_cards,
+                "chat": chat_text,
+                "timestamp_ms": timestamp_ms,
+            }
+        )
+        self._last_move = action_text
+        if self._replay_live:
+            self._save_showdown_replay()
+        self._final_result = GameResult(
+            winner=player_id,
+            result="win",
+            reason="fast_finish",
+            move_count=self._move_count,
+            illegal_move_count=self._illegal_move_count,
+            final_board=self._snapshot_board(),
+            move_log=list(self._move_log),
+            rule_profile=self._rule_profile,
+            win_direction=None,
+            line_length=None,
+            replay_path=self._replay_path,
+        )
+        return self._final_result
 
     def _extract_chat_text(self, action: ArenaAction) -> Optional[str]:
         chat_text = action.metadata.get("chat")

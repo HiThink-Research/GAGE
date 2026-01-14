@@ -84,16 +84,12 @@ class ArenaRoleAdapter(RoleAdapter):
         # STEP 1: Build core components for the game loop.
         player_specs, player_ids, player_names, start_player_id = self._normalize_player_specs(sample)
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
-        env_impl_lower = str(env_impl).lower()
-        model_labels: Dict[str, str] = {}
-        if "doudizhu" in env_impl_lower:
+        if "doudizhu" in str(env_impl).lower():
             model_labels = self._resolve_player_labels(player_specs, role_manager)
             for player_id in player_ids:
                 label = model_labels.get(player_id)
-                if label and player_id not in player_names:
+                if label:
                     player_names[player_id] = label
-        elif "mahjong" in env_impl_lower:
-            model_labels = self._resolve_player_labels(player_specs, role_manager)
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
         visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
@@ -106,6 +102,7 @@ class ArenaRoleAdapter(RoleAdapter):
             player_names=player_names,
             player_models=model_labels if "mahjong" in env_impl_lower else None,
             start_player_id=start_player_id,
+            chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
         )
         if visualizer is not None:
@@ -272,6 +269,7 @@ class ArenaRoleAdapter(RoleAdapter):
         player_names: Optional[Dict[str, str]] = None,
         player_models: Optional[Dict[str, str]] = None,
         start_player_id: Optional[str] = None,
+        chat_queue=None,
         trace: Optional[ObservabilityTrace] = None,
     ):
         metadata = sample.get("metadata") or {}
@@ -337,6 +335,16 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
             if env_cfg.get("replay_filename") is not None:
                 env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
+            if env_cfg.get("context_include_public") is not None:
+                env_kwargs["context_include_public"] = env_cfg.get("context_include_public")
+            if env_cfg.get("context_include_ui_state") is not None:
+                env_kwargs["context_include_ui_state"] = env_cfg.get("context_include_ui_state")
+            if env_cfg.get("fast_finish_action") is not None:
+                env_kwargs["fast_finish_action"] = env_cfg.get("fast_finish_action")
+            if env_cfg.get("fast_finish_human_only") is not None:
+                env_kwargs["fast_finish_human_only"] = env_cfg.get("fast_finish_human_only")
+            if chat_queue is not None:
+                env_kwargs["chat_queue"] = chat_queue
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
