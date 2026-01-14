@@ -28,7 +28,7 @@ import {
     removeCards,
     translateCardData,
 } from '../../utils';
-import { apiUrl } from '../../utils/config';
+import { actionUrl, apiUrl } from '../../utils/config';
 
 class DoudizhuReplayView extends React.Component {
     constructor(props) {
@@ -42,17 +42,23 @@ class DoudizhuReplayView extends React.Component {
         this.moveHistory = [];
         this.gameStateHistory = [];
         this.chatLog = [];
+        this.pendingChatLog = [];
         this.chatPanelRef = React.createRef();
         this.historyPanelRef = React.createRef();
         this.turnStartMs = null;
         this.replayStartMs = null;
         this.moveIntervals = [];
         this.defaultReplayStepMs = 900;
+        this.defaultLiveStepMs = 220;
         this.liveReplay = false;
         this.livePending = false;
         this.liveInterval = null;
         this.livePollMs = 1500;
         this.requestUrl = '';
+        this.humanPlayEnabled = false;
+        this.fastFinishEnabled = false;
+        this.fastFinishAction = 'finish';
+        this.legalMoves = [];
         this.initGameState = {
             gameStatus: 'ready', // "ready", "playing", "paused", "over"
             playerInfo: [],
@@ -75,11 +81,20 @@ class DoudizhuReplayView extends React.Component {
             gameEndDialogText: '',
             fullScreenLoading: false,
             chatLog: [],
+            selectedCards: [],
+            isPassDisabled: false,
+            isHintDisabled: true,
+            pendingAction: false,
+            pendingChat: false,
+            legalMoves: [],
+            chatDraft: '',
+            hintCursor: null,
         };
     }
 
     componentDidMount() {
         const query = qs.parse(window.location.search);
+        this.humanPlayEnabled = this.parseLiveFlag(query.play || query.human || query.interactive);
         const autoStart = this.parseLiveFlag(query.autoplay || query.auto || query.start || query.live);
         if (autoStart) {
             this.startReplay();
@@ -114,6 +129,340 @@ class DoudizhuReplayView extends React.Component {
     parseLiveFlag(value) {
         const normalized = this.pickQueryValue(value).toLowerCase();
         return ['1', 'true', 'yes', 'on'].includes(normalized);
+    }
+
+    resolveActionEndpoint() {
+        const query = qs.parse(window.location.search);
+        const override = this.pickQueryValue(query.action_url || query.actionUrl || query.action);
+        if (override) {
+            const trimmed = override.endsWith('/') ? override.slice(0, -1) : override;
+            return trimmed.endsWith('/tournament/action') ? trimmed : `${trimmed}/tournament/action`;
+        }
+        const base = actionUrl.endsWith('/') ? actionUrl.slice(0, -1) : actionUrl;
+        return `${base}/tournament/action`;
+    }
+
+    resolveChatEndpoint() {
+        const actionEndpoint = this.resolveActionEndpoint();
+        if (actionEndpoint.endsWith('/tournament/action')) {
+            return actionEndpoint.replace('/tournament/action', '/tournament/chat');
+        }
+        const trimmed = actionEndpoint.endsWith('/') ? actionEndpoint.slice(0, -1) : actionEndpoint;
+        return `${trimmed}/tournament/chat`;
+    }
+
+    isHumanTurnForState(gameInfo) {
+        if (!this.humanPlayEnabled || !this.liveReplay || !gameInfo) {
+            return false;
+        }
+        return (
+            gameInfo.gameStatus === 'playing' &&
+            gameInfo.currentPlayer !== null &&
+            gameInfo.currentPlayer === gameInfo.mainViewerId
+        );
+    }
+
+    isHumanTurn() {
+        return this.isHumanTurnForState(this.state.gameInfo);
+    }
+
+    computeHumanControls() {
+        const legalMoves = Array.isArray(this.state.legalMoves) ? this.state.legalMoves.map(String) : [];
+        const legalSet = new Set(legalMoves);
+        const hasLegal = legalSet.size > 0;
+        const actionText = this.buildActionText(this.state.selectedCards);
+        const canPass = this.isHumanTurn() && hasLegal && legalSet.has('pass');
+        const canPlay = this.isHumanTurn() && hasLegal && actionText && legalSet.has(actionText);
+        const canHint = this.isHumanTurn() && hasLegal;
+        return { canPass, canPlay, canHint };
+    }
+
+    buildActionText(cards) {
+        if (!Array.isArray(cards) || cards.length === 0) {
+            return '';
+        }
+        const ranks = cards
+            .map((card) => {
+                let { rank } = card2SuiteAndRank(card);
+                if (rank === 'X') rank = 'B';
+                else if (rank === 'D') rank = 'R';
+                return rank;
+            });
+        const legalMoves = Array.isArray(this.state.legalMoves) ? this.state.legalMoves : [];
+        const targetCounts = this.buildRankCounts(ranks);
+        for (const move of legalMoves) {
+            if (!move || move === 'pass') {
+                continue;
+            }
+            const moveRanks = this.extractActionRanks(move);
+            if (this.isSameRankCounts(targetCounts, this.buildRankCounts(moveRanks))) {
+                return String(move);
+            }
+        }
+        return ranks.join('');
+    }
+
+    buildRankCounts(ranks) {
+        const counts = {};
+        (ranks || []).forEach((rank) => {
+            if (!rank) {
+                return;
+            }
+            counts[rank] = (counts[rank] || 0) + 1;
+        });
+        return counts;
+    }
+
+    extractActionRanks(actionText) {
+        const matches = String(actionText || '')
+            .toUpperCase()
+            .match(/[3456789TJQKA2BR]/g);
+        return matches ? matches : [];
+    }
+
+    isSameRankCounts(leftCounts, rightCounts) {
+        const leftKeys = Object.keys(leftCounts || {});
+        const rightKeys = Object.keys(rightCounts || {});
+        if (leftKeys.length !== rightKeys.length) {
+            return false;
+        }
+        for (const key of leftKeys) {
+            if (leftCounts[key] !== rightCounts[key]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    resolveActionPayload(actionText, chatText) {
+        const query = qs.parse(window.location.search);
+        const payload = { action: actionText };
+        const runId = this.pickQueryValue(query.run_id || query.runId);
+        const sampleId = this.pickQueryValue(query.sample_id || query.sampleId);
+        if (runId) {
+            payload.run_id = runId;
+        }
+        if (sampleId) {
+            payload.sample_id = sampleId;
+        }
+        if (chatText) {
+            payload.chat = chatText;
+        }
+        return payload;
+    }
+
+    resolveChatPayload(chatText) {
+        const query = qs.parse(window.location.search);
+        const payload = { chat: chatText };
+        const runId = this.pickQueryValue(query.run_id || query.runId);
+        const sampleId = this.pickQueryValue(query.sample_id || query.sampleId);
+        if (runId) {
+            payload.run_id = runId;
+        }
+        if (sampleId) {
+            payload.sample_id = sampleId;
+        }
+        if (this.state.gameInfo && this.state.gameInfo.mainViewerId !== undefined) {
+            payload.player_idx = this.state.gameInfo.mainViewerId;
+        }
+        return payload;
+    }
+
+    buildChatKey(entry) {
+        const { playerIdx, playerId } = this.resolveChatPlayer(entry || {});
+        const rawText = entry.text || entry.message || entry.chat || '';
+        const cleaned = this.normalizeChatText(rawText);
+        if (!cleaned) {
+            return null;
+        }
+        const key = `${playerIdx ?? playerId ?? 'unknown'}::${cleaned}`;
+        return { key, text: cleaned };
+    }
+
+    submitHumanAction(actionText) {
+        if (!actionText || this.state.pendingAction) {
+            return;
+        }
+        const endpoint = this.resolveActionEndpoint();
+        const chatText = (this.state.chatDraft || '').trim();
+        const payload = this.resolveActionPayload(actionText, chatText);
+        this.setState({ pendingAction: true });
+        axios
+            .post(endpoint, payload)
+            .catch((err) => {
+                const status = err && err.response ? err.response.status : null;
+                const detail = err && err.response && err.response.data ? err.response.data.error : '';
+                Message({
+                    message: `Failed to submit action${status ? ` (${status})` : ''}${detail ? `: ${detail}` : ''}`,
+                    type: 'error',
+                    showClose: true,
+                });
+            })
+            .finally(() => {
+                this.setState({ pendingAction: false, chatDraft: '' });
+            });
+    }
+
+    submitHumanChat() {
+        const chatText = (this.state.chatDraft || '').trim();
+        if (!chatText || this.state.pendingChat) {
+            return;
+        }
+        const endpoint = this.resolveChatEndpoint();
+        const payload = this.resolveChatPayload(chatText);
+        this.setState({ pendingChat: true });
+        axios
+            .post(endpoint, payload)
+            .then(() => {
+                const playerIdx = this.state.gameInfo.mainViewerId ?? 0;
+                const entry = {
+                    player_idx: playerIdx,
+                    text: chatText,
+                    timestamp_ms: Date.now(),
+                    local: true,
+                };
+                this.pendingChatLog.push(entry);
+                const mergedChatLog = this.mergePendingChatLog(this.state.chatLog || []);
+                this.chatLog = mergedChatLog;
+                this.setState({ chatDraft: '', chatLog: mergedChatLog });
+            })
+            .catch((err) => {
+                const status = err && err.response ? err.response.status : null;
+                const detail = err && err.response && err.response.data ? err.response.data.error : '';
+                Message({
+                    message: `Failed to submit chat${status ? ` (${status})` : ''}${detail ? `: ${detail}` : ''}`,
+                    type: 'error',
+                    showClose: true,
+                });
+            })
+            .finally(() => {
+                this.setState({ pendingChat: false });
+            });
+    }
+
+    handleSelectedCards(cards) {
+        if (!this.isHumanTurn()) {
+            return;
+        }
+        const selection = Array.isArray(this.state.selectedCards) ? this.state.selectedCards.slice() : [];
+        (Array.isArray(cards) ? cards : []).forEach((card) => {
+            const idx = selection.indexOf(card);
+            if (idx >= 0) {
+                selection.splice(idx, 1);
+            } else {
+                selection.push(card);
+            }
+        });
+        this.setState({ selectedCards: selection });
+    }
+
+    handleMainPlayerAct(actionType) {
+        if (!this.humanPlayEnabled) {
+            return;
+        }
+        const controls = this.computeHumanControls();
+        if (actionType === 'deselect') {
+            this.setState({ selectedCards: [] });
+            return;
+        }
+        if (actionType === 'hint') {
+            if (!controls.canHint) {
+                return;
+            }
+            const hint = this.pickNextHint();
+            if (hint) {
+                this.setState({ selectedCards: hint.cards, hintCursor: hint.cursor });
+                return;
+            }
+            return;
+        }
+        if (actionType === 'finish') {
+            if (!this.fastFinishEnabled || !this.isHumanTurn()) {
+                return;
+            }
+            this.setState({ selectedCards: [], hintCursor: null });
+            this.submitHumanAction(this.fastFinishAction);
+            return;
+        }
+        if (actionType === 'pass') {
+            if (!controls.canPass) {
+                return;
+            }
+            this.setState({ selectedCards: [], hintCursor: null });
+            this.submitHumanAction('pass');
+            return;
+        }
+        if (actionType === 'play') {
+            const actionText = this.buildActionText(this.state.selectedCards);
+            if (!actionText || !controls.canPlay) {
+                Message({
+                    message: 'Selected cards are not legal',
+                    type: 'warning',
+                    showClose: true,
+                });
+                return;
+            }
+            this.setState({ selectedCards: [], hintCursor: null });
+            this.submitHumanAction(actionText);
+        }
+    }
+
+    handleChatDraftChange(value) {
+        this.setState({ chatDraft: value });
+    }
+
+    pickNextHint() {
+        const legalMoves = Array.isArray(this.state.legalMoves) ? this.state.legalMoves : [];
+        const hand = this.state.gameInfo.hands[this.state.gameInfo.mainViewerId] || [];
+        const candidates = legalMoves.filter((move) => move && move !== 'pass');
+        if (candidates.length === 0) {
+            return null;
+        }
+        const current = this.state.hintCursor;
+        const currentIndex = current ? candidates.findIndex((move) => String(move) === String(current)) : -1;
+        for (let offset = 1; offset <= candidates.length; offset += 1) {
+            const nextIndex = (currentIndex + offset) % candidates.length;
+            const move = String(candidates[nextIndex]);
+            const cards = this.resolveCardsForAction(move, hand);
+            if (cards.length > 0) {
+                return { cards, cursor: move };
+            }
+        }
+        return null;
+    }
+
+    resolveCardsForAction(actionText, hand) {
+        if (!actionText || actionText === 'pass') {
+            return [];
+        }
+        const ranks = this.extractActionRanks(actionText);
+        if (ranks.length === 0) {
+            return [];
+        }
+        const cardsLeft = Array.isArray(hand) ? hand.slice() : [];
+        const selected = [];
+        const trans = { B: 'BJ', R: 'RJ' };
+        for (const char of ranks) {
+            const target = trans[char];
+            if (target) {
+                const idx = cardsLeft.indexOf(target);
+                if (idx >= 0) {
+                    selected.push(target);
+                    cardsLeft.splice(idx, 1);
+                    continue;
+                }
+                return [];
+            }
+            const idx = cardsLeft.findIndex((card) => card && card[1] === char);
+            if (idx >= 0) {
+                const picked = cardsLeft[idx];
+                selected.push(picked);
+                cardsLeft.splice(idx, 1);
+            } else {
+                return [];
+            }
+        }
+        return selected;
     }
 
     resolveReplayRequest(query) {
@@ -157,6 +506,13 @@ class DoudizhuReplayView extends React.Component {
         const initHands = payload.initHands || payload.init_hands || [];
         const moveHistory = payload.moveHistory || payload.move_history || [];
         const chatLog = payload.chatLog || payload.chat_log || [];
+        const legalMoves = payload.legalMoves || payload.legal_moves || [];
+        const currentPlayer =
+            payload.currentPlayer ??
+            payload.current_player ??
+            payload.active_player_idx ??
+            payload.activePlayer ??
+            null;
         const startTimeMs =
             payload.startTimeMs ||
             payload.start_time_ms ||
@@ -168,6 +524,8 @@ class DoudizhuReplayView extends React.Component {
             initHands,
             moveHistory,
             chatLog,
+            legalMoves,
+            currentPlayer,
             startTimeMs,
         };
     }
@@ -254,6 +612,11 @@ class DoudizhuReplayView extends React.Component {
         return interval / speedFactor;
     }
 
+    resolveLiveDelayMs() {
+        const speedFactor = Math.pow(2, this.state.gameSpeed || 0);
+        return this.defaultLiveStepMs / speedFactor;
+    }
+
     clearTimers() {
         if (this.gameStateTimeout) {
             window.clearTimeout(this.gameStateTimeout);
@@ -319,7 +682,7 @@ class DoudizhuReplayView extends React.Component {
 
     resolveChatPlayer(entry) {
         const rawPlayerId = entry.player_id || entry.playerId || entry.player;
-        const rawPlayerIdx = entry.player_idx || entry.playerIdx;
+        const rawPlayerIdx = entry.player_idx ?? entry.playerIdx;
         let playerIdx = rawPlayerIdx !== undefined ? Number(rawPlayerIdx) : undefined;
         if (playerIdx !== undefined && Number.isNaN(playerIdx)) {
             playerIdx = undefined;
@@ -354,48 +717,52 @@ class DoudizhuReplayView extends React.Component {
     }
 
     mergeChatLog(chatLog, moveHistory) {
-        const normalized = Array.isArray(chatLog) ? [...chatLog] : [];
         const moves = Array.isArray(moveHistory) ? moveHistory : [];
-        if (moves.length === 0) {
-            return this.compactChatLog(normalized);
-        }
-        const moveChats = [];
-        for (const entry of moves) {
-            const rawText = entry.chat || entry.chat_text || entry.chatText || '';
-            const cleaned = this.normalizeChatText(rawText);
-            if (!cleaned) {
-                continue;
+        const merged = [];
+        if (moves.length > 0) {
+            for (const entry of moves) {
+                const rawText = entry.chat || entry.chat_text || entry.chatText || '';
+                const cleaned = this.normalizeChatText(rawText);
+                if (!cleaned) {
+                    continue;
+                }
+                merged.push({
+                    player_id: entry.player_id || entry.playerId || entry.player,
+                    player_idx: entry.player_idx ?? entry.playerIdx,
+                    text: cleaned,
+                });
             }
-            moveChats.push({
-                player_id: entry.player_id || entry.playerId || entry.player,
-                player_idx: entry.player_idx ?? entry.playerIdx,
-                text: cleaned,
-            });
         }
-        if (moveChats.length === 0) {
-            return normalized;
-        }
-        if (normalized.length === 0) {
-            return moveChats;
-        }
-        const lastLog = normalized[normalized.length - 1] || {};
-        const lastMove = moveChats[moveChats.length - 1];
-        const lastLogText = this.normalizeChatText(lastLog.text || lastLog.message || lastLog.chat || '');
-        const lastMoveText = lastMove.text;
-        const lastLogPlayer = lastLog.player_id || lastLog.playerId || lastLog.player;
-        const lastMovePlayer = lastMove.player_id;
-        const lastLogIdx = lastLog.player_idx ?? lastLog.playerIdx;
-        const lastMoveIdx = lastMove.player_idx;
-        const samePlayer =
-            (lastLogIdx !== undefined &&
-                lastMoveIdx !== undefined &&
-                Number(lastLogIdx) === Number(lastMoveIdx)) ||
-            (lastLogPlayer && lastMovePlayer && String(lastLogPlayer) === String(lastMovePlayer));
-        const sameText = lastLogText && lastMoveText && lastLogText === lastMoveText;
-        if (!samePlayer || !sameText) {
-            normalized.push(lastMove);
-        }
-        return this.compactChatLog(normalized);
+        const normalized = Array.isArray(chatLog) ? [...chatLog] : [];
+        merged.push(...normalized);
+        return this.compactChatLog(merged);
+    }
+
+    mergePendingChatLog(chatLog) {
+        const base = this.compactChatLog(Array.isArray(chatLog) ? [...chatLog] : []);
+        const existingKeys = new Set();
+        base.forEach((entry) => {
+            const info = this.buildChatKey(entry);
+            if (info) {
+                existingKeys.add(info.key);
+            }
+        });
+        const pending = [];
+        const merged = [...base];
+        (this.pendingChatLog || []).forEach((entry) => {
+            const info = this.buildChatKey(entry);
+            if (!info) {
+                return;
+            }
+            if (existingKeys.has(info.key)) {
+                return;
+            }
+            pending.push(entry);
+            merged.push({ ...entry, text: info.text });
+            existingKeys.add(info.key);
+        });
+        this.pendingChatLog = pending;
+        return merged;
     }
 
     compactChatLog(entries) {
@@ -426,73 +793,68 @@ class DoudizhuReplayView extends React.Component {
             gameInfo = deepCopy(this.gameStateHistory[this.state.gameInfo.turn + 1]);
         } else {
             let newMove = this.moveHistory[this.state.gameInfo.turn];
-            if (newMove.playerIdx === this.state.gameInfo.currentPlayer) {
-                gameInfo.latestAction[newMove.playerIdx] = this.cardStr2Arr(
-                    Array.isArray(newMove.move) ? newMove.move.join(' ') : newMove.move,
-                );
-                gameInfo.turn++;
-                gameInfo.currentPlayer = (gameInfo.currentPlayer + 1) % 3;
-                // take away played cards from player's hands
-                const remainedCards = removeCards(
-                    gameInfo.latestAction[newMove.playerIdx],
-                    gameInfo.hands[newMove.playerIdx],
-                );
-                if (remainedCards !== false) {
-                    gameInfo.hands[newMove.playerIdx] = remainedCards;
-                } else {
-                    Message({
-                        message: "Cannot find cards in move from player's hand",
-                        type: 'error',
-                        showClose: true,
-                    });
-                }
-                // check if game ends
-                if (remainedCards.length === 0) {
-                    doubleRaf(() => {
-                        const winner = this.state.gameInfo.playerInfo.find((element) => {
-                            return element.index === newMove.playerIdx;
-                        });
-                        if (winner) {
-                            gameInfo.gameStatus = 'over';
-                            this.setState({ gameInfo: gameInfo });
-                            if (winner.role === 'landlord')
-                                setTimeout(() => {
-                                    const mes = 'Landlord Wins';
-                                    this.setState({ gameEndDialog: true, gameEndDialogText: mes });
-                                }, 200);
-                            else
-                                setTimeout(() => {
-                                    const mes = 'Peasants Win';
-                                    this.setState({ gameEndDialog: true, gameEndDialogText: mes });
-                                }, 200);
-                        } else {
-                            Message({
-                                message: 'Error in finding winner',
-                                type: 'error',
-                                showClose: true,
-                            });
-                        }
-                    });
-                    return gameInfo;
-                }
-                gameInfo.considerationTime = this.initConsiderationTime;
-                gameInfo.completedPercent += 100.0 / (this.moveHistory.length - 1);
+            if (newMove.playerIdx === undefined || newMove.playerIdx === null) {
+                return gameInfo;
+            }
+            if (newMove.playerIdx !== this.state.gameInfo.currentPlayer) {
+                gameInfo.currentPlayer = newMove.playerIdx;
+            }
+            gameInfo.latestAction[newMove.playerIdx] = this.cardStr2Arr(
+                Array.isArray(newMove.move) ? newMove.move.join(' ') : newMove.move,
+            );
+            gameInfo.turn++;
+            gameInfo.currentPlayer = (gameInfo.currentPlayer + 1) % 3;
+            // take away played cards from player's hands
+            const remainedCards = removeCards(
+                gameInfo.latestAction[newMove.playerIdx],
+                gameInfo.hands[newMove.playerIdx],
+            );
+            if (remainedCards !== false) {
+                gameInfo.hands[newMove.playerIdx] = remainedCards;
             } else {
                 Message({
-                    message: 'Mismatched current player index',
+                    message: "Cannot find cards in move from player's hand",
                     type: 'error',
                     showClose: true,
                 });
             }
+            // check if game ends
+            if (remainedCards.length === 0) {
+                doubleRaf(() => {
+                    const winner = this.state.gameInfo.playerInfo.find((element) => {
+                        return element.index === newMove.playerIdx;
+                    });
+                    if (winner) {
+                        gameInfo.gameStatus = 'over';
+                        this.setState({ gameInfo: gameInfo });
+                        if (winner.role === 'landlord')
+                            setTimeout(() => {
+                                const mes = 'Landlord Wins';
+                                this.setState({ gameEndDialog: true, gameEndDialogText: mes });
+                            }, 200);
+                        else
+                            setTimeout(() => {
+                                const mes = 'Peasants Win';
+                                this.setState({ gameEndDialog: true, gameEndDialogText: mes });
+                            }, 200);
+                    } else {
+                        Message({
+                            message: 'Error in finding winner',
+                            type: 'error',
+                            showClose: true,
+                        });
+                    }
+                });
+                return gameInfo;
+            }
+            gameInfo.considerationTime = this.initConsiderationTime;
+            gameInfo.completedPercent += 100.0 / (this.moveHistory.length - 1);
             // if current state is new to game state history, push it to the game state history array
             if (gameInfo.turn === this.gameStateHistory.length) {
                 this.gameStateHistory.push(gameInfo);
             } else {
-                Message({
-                    message: 'inconsistent game state history length and turn number',
-                    type: 'error',
-                    showClose: true,
-                });
+                this.gameStateHistory = this.gameStateHistory.slice(0, gameInfo.turn);
+                this.gameStateHistory.push(gameInfo);
             }
         }
         return gameInfo;
@@ -513,7 +875,7 @@ class DoudizhuReplayView extends React.Component {
                 let gameInfo = deepCopy(this.state.gameInfo);
                 gameInfo.considerationTime = elapsed;
                 const hasNextMove = this.state.gameInfo.turn < this.moveHistory.length;
-                const nextDelayMs = this.resolveNextDelayMs();
+                const nextDelayMs = this.humanPlayEnabled ? this.resolveLiveDelayMs() : this.resolveNextDelayMs();
                 if (hasNextMove && elapsed >= nextDelayMs) {
                     this.turnStartMs = Date.now();
                     const nextGameInfo = this.generateNewState();
@@ -602,13 +964,17 @@ class DoudizhuReplayView extends React.Component {
             }
             return this.cardStr2Arr(element);
         });
-        const landlordEntry = normalized.playerInfo.find((element) => element.role === 'landlord');
-        if (landlordEntry) {
-            gameInfo.currentPlayer = landlordEntry.index !== undefined ? landlordEntry.index : landlordEntry.id;
+        if (normalized.currentPlayer !== null && normalized.currentPlayer !== undefined) {
+            gameInfo.currentPlayer = Number(normalized.currentPlayer) || 0;
         } else {
-            gameInfo.currentPlayer = 0;
+            const landlordEntry = normalized.playerInfo.find((element) => element.role === 'landlord');
+            if (landlordEntry) {
+                gameInfo.currentPlayer = landlordEntry.index !== undefined ? landlordEntry.index : landlordEntry.id;
+            } else {
+                gameInfo.currentPlayer = 0;
+            }
+            gameInfo.currentPlayer = Number(gameInfo.currentPlayer) || 0;
         }
-        gameInfo.currentPlayer = Number(gameInfo.currentPlayer) || 0;
         return gameInfo;
     }
 
@@ -618,6 +984,8 @@ class DoudizhuReplayView extends React.Component {
         this.moveHistory = this.normalizeMoveHistory(normalized.moveHistory);
         this.preprocessMoveHistory();
         this.chatLog = Array.isArray(normalized.chatLog) ? normalized.chatLog : [];
+        this.chatLog = this.mergePendingChatLog(this.chatLog);
+        this.legalMoves = Array.isArray(normalized.legalMoves) ? normalized.legalMoves : [];
         this.buildMoveIntervals(this.replayStartMs);
 
         if (resetState) {
@@ -628,15 +996,25 @@ class DoudizhuReplayView extends React.Component {
                 gameInfo.considerationTime = 0;
             }
             this.gameStateHistory.push(gameInfo);
-            this.setState({ gameInfo: gameInfo, fullScreenLoading: false, chatLog: this.chatLog }, () => {
-                this.clearTimers();
-                if (this.moveHistory.length > 0) {
-                    this.gameStateTimer();
-                }
-                doubleRaf(() => {
-                    this.scrollPanels();
-                });
-            });
+            this.setState(
+                {
+                    gameInfo: gameInfo,
+                    fullScreenLoading: false,
+                    chatLog: this.chatLog,
+                    legalMoves: this.legalMoves,
+                    selectedCards: [],
+                    hintCursor: null,
+                },
+                () => {
+                    this.clearTimers();
+                    if (this.moveHistory.length > 0) {
+                        this.gameStateTimer();
+                    }
+                    doubleRaf(() => {
+                        this.scrollPanels();
+                    });
+                },
+            );
             return;
         }
 
@@ -650,7 +1028,9 @@ class DoudizhuReplayView extends React.Component {
                 }
                 return this.cardStr2Arr(element);
             });
-            if (gameInfo.currentPlayer === null) {
+            if (normalized.currentPlayer !== null && normalized.currentPlayer !== undefined) {
+                gameInfo.currentPlayer = Number(normalized.currentPlayer) || 0;
+            } else if (gameInfo.currentPlayer === null) {
                 const landlordEntry = normalized.playerInfo.find((element) => element.role === 'landlord');
                 if (landlordEntry) {
                     gameInfo.currentPlayer =
@@ -662,9 +1042,14 @@ class DoudizhuReplayView extends React.Component {
             }
         }
 
-        const stateUpdate = { chatLog: this.chatLog };
+        const stateUpdate = { chatLog: this.chatLog, legalMoves: this.legalMoves };
         if (gameInfo) {
             stateUpdate.gameInfo = gameInfo;
+        }
+        const nextGameInfo = gameInfo || this.state.gameInfo;
+        if (!this.isHumanTurnForState(nextGameInfo)) {
+            stateUpdate.selectedCards = [];
+            stateUpdate.hintCursor = null;
         }
         this.setState(stateUpdate, () => {
             if (
@@ -732,8 +1117,17 @@ class DoudizhuReplayView extends React.Component {
             .catch(() => {});
     }
 
-    startReplay() {
+    startReplay(options = {}) {
+        const { forceNonLive = false } = options;
         const query = qs.parse(window.location.search);
+        this.humanPlayEnabled = this.parseLiveFlag(query.play || query.human || query.interactive);
+        this.fastFinishEnabled = this.parseLiveFlag(
+            query.fast_finish || query.fastFinish || query.finish,
+        );
+        const fastAction = this.pickQueryValue(query.fast_finish_action || query.fastFinishAction);
+        if (fastAction) {
+            this.fastFinishAction = fastAction;
+        }
         const requestUrl = this.resolveReplayRequest(query);
         if (!requestUrl) {
             Message({
@@ -745,11 +1139,16 @@ class DoudizhuReplayView extends React.Component {
         }
 
         this.requestUrl = requestUrl;
-        this.liveReplay = this.parseLiveFlag(query.live || query.streaming);
+        this.liveReplay = !forceNonLive && this.parseLiveFlag(query.live || query.streaming);
         this.initConsiderationTime = this.liveReplay ? 0 : this.defaultConsiderationTime;
         this.initGameState.considerationTime = this.initConsiderationTime;
+        if (this.humanPlayEnabled) {
+            this.livePollMs = 300;
+        } else {
+            this.livePollMs = 1500;
+        }
         const pollMs = Number(this.pickQueryValue(query.live_poll_ms || query.poll_ms));
-        if (!Number.isNaN(pollMs) && pollMs >= 500) {
+        if (!Number.isNaN(pollMs) && pollMs >= 200) {
             this.livePollMs = pollMs;
         }
 
@@ -860,7 +1259,7 @@ class DoudizhuReplayView extends React.Component {
                         startIcon={<ReplayRoundedIcon />}
                         color="primary"
                         onClick={() => {
-                            this.startReplay();
+                            this.startReplay({ forceNonLive: this.humanPlayEnabled });
                         }}
                     >
                         Restart
@@ -1064,10 +1463,12 @@ class DoudizhuReplayView extends React.Component {
         const playerInfo = this.state.gameInfo.playerInfo || [];
         const mergedChatLog = this.mergeChatLog(this.state.chatLog || [], this.moveHistory || []);
         const chatBubbles = this.buildChatBubbleMap(mergedChatLog);
+        const controls = this.computeHumanControls();
+        const isHumanTurn = this.isHumanTurn();
         const currentHistoryIndex = this.state.gameInfo.turn - 1;
         const chatEntries = mergedChatLog.map((entry, idx) => {
             const rawPlayerId = entry.player_id || entry.playerId || entry.player;
-            const rawPlayerIdx = entry.player_idx || entry.playerIdx;
+            const rawPlayerIdx = entry.player_idx ?? entry.playerIdx;
             let playerName = rawPlayerId ? String(rawPlayerId) : 'Player';
             if (rawPlayerIdx !== undefined) {
                 const parsedIdx = Number(rawPlayerIdx);
@@ -1162,6 +1563,16 @@ class DoudizhuReplayView extends React.Component {
                                         toggleFade={this.state.gameInfo.toggleFade}
                                         gameStatus={this.state.gameInfo.gameStatus}
                                         chatBubbles={chatBubbles}
+                                        gamePlayable={isHumanTurn}
+                                        showFinishButton={this.fastFinishEnabled}
+                                        showCardBack={this.humanPlayEnabled && this.liveReplay}
+                                        selectedCards={this.state.selectedCards}
+                                        handleSelectedCards={(cards) => this.handleSelectedCards(cards)}
+                                        handleMainPlayerAct={(action) => this.handleMainPlayerAct(action)}
+                                        isPassDisabled={!controls.canPass || this.state.pendingAction}
+                                        isHintDisabled={!controls.canHint || this.state.pendingAction}
+                                        isPlayDisabled={!controls.canPlay || this.state.pendingAction}
+                                        isFinishDisabled={!isHumanTurn || this.state.pendingAction}
                                     />
                                 </Paper>
                             </div>
@@ -1205,6 +1616,35 @@ class DoudizhuReplayView extends React.Component {
                                         <div className="doudizhu-panel-empty">No chat yet</div>
                                     )}
                                 </div>
+                                {this.humanPlayEnabled && (
+                                    <div className="doudizhu-chat-input">
+                                        <input
+                                            type="text"
+                                            value={this.state.chatDraft}
+                                            onChange={(event) => this.handleChatDraftChange(event.target.value)}
+                                            placeholder="Table talk (send anytime)"
+                                            onKeyDown={(event) => {
+                                                if (event.key === 'Enter') {
+                                                    event.preventDefault();
+                                                    this.submitHumanChat();
+                                                }
+                                            }}
+                                            disabled={this.state.pendingAction || this.state.pendingChat}
+                                        />
+                                        <Button
+                                            variant="contained"
+                                            color="primary"
+                                            disabled={
+                                                this.state.pendingAction ||
+                                                this.state.pendingChat ||
+                                                !(this.state.chatDraft || '').trim()
+                                            }
+                                            onClick={() => this.submitHumanChat()}
+                                        >
+                                            Send
+                                        </Button>
+                                    </div>
+                                )}
                             </Paper>
                         </Layout.Col>
                         <Layout.Col span="12" style={{ height: '100%' }}>

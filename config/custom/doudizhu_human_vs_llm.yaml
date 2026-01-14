@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: doudizhu_litellm_local
-  description: RLCard Doudizhu arena with LiteLLM backends (3 AI players).
+  name: doudizhu_human_vs_llm
+  description: Doudizhu arena (Human vs 2 AI, human uses CLI input).
 
 custom:
   steps:
@@ -11,7 +11,7 @@ custom:
       adapter_id: doudizhu_arena
 
 datasets:
-  - dataset_id: doudizhu_local_litellm
+  - dataset_id: doudizhu_local_human
     loader: jsonl
     params:
       path: tests/data/Test_Doudizhu_LiteLLM.jsonl
@@ -19,17 +19,6 @@ datasets:
       streaming: false
 
 backends:
-  - backend_id: doudizhu_litellm_0
-    type: litellm
-    config:
-      provider: openai
-      api_base: https://api.openai.com/v1
-      model: gpt-5.2
-      generation_parameters:
-        max_new_tokens: 512
-        temperature: 0.0
-      streaming: false
-      max_retries: 6
   - backend_id: doudizhu_litellm_1
     type: litellm
     config:
@@ -54,11 +43,10 @@ backends:
       max_retries: 6
 
 role_adapters:
-  - adapter_id: doudizhu_player_0
-    role_type: dut_model
-    backend_id: doudizhu_litellm_0
-    capabilities:
-      - chat_completion
+  - adapter_id: doudizhu_human
+    role_type: human
+    params:
+      source: queue
 
   - adapter_id: doudizhu_player_1
     role_type: dut_model
@@ -75,10 +63,15 @@ role_adapters:
   - adapter_id: doudizhu_arena
     role_type: arena
     params:
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: ${DOUDIZHU_ACTION_PORT:-8001}
+        allow_origin: "*"
       environment:
         impl: doudizhu_arena_v1
-        chat_mode: ai-only
-        chat_every_n: 2
+        chat_mode: all
+        chat_every_n: 1
         replay_live: true
         context_include_public: false
         context_include_ui_state: false
@@ -94,10 +87,8 @@ role_adapters:
       players:
         - name: player_0
           player_id: player_0
-          type: backend
-          ref: doudizhu_player_0
-          max_retries: 1
-          fallback_policy: first_legal
+          type: human
+          ref: doudizhu_human
         - name: player_1
           player_id: player_1
           type: backend
@@ -112,8 +103,8 @@ role_adapters:
           fallback_policy: first_legal
 
 tasks:
-  - task_id: doudizhu_litellm_local
-    dataset_id: doudizhu_local_litellm
+  - task_id: doudizhu_human_vs_llm
+    dataset_id: doudizhu_local_human
     max_samples: 1
     concurrency: 1
     reporting:
@@ -121,4 +112,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/doudizhu_litellm_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/doudizhu_human_events.jsonl

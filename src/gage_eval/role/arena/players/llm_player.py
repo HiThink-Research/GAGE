@@ -151,13 +151,20 @@ class LLMPlayer:
         lines = [
             f"Active player: {active_player}",
             f"Opponent last move: {observation.last_move or 'First move'}",
-            "\nCurrent State:",
-            observation.board_text,
-            "\nStatus:",
-            f"- Legal moves (preview): {legal_hint}",
-            "\nInstructions:",
-            *instructions,
         ]
+        team_hint = self._build_team_hint(observation)
+        if team_hint:
+            lines.append(team_hint)
+        lines.extend(
+            [
+                "\nCurrent State:",
+                observation.board_text,
+                "\nStatus:",
+                f"- Legal moves (preview): {legal_hint}",
+                "\nInstructions:",
+                *instructions,
+            ]
+        )
         return "\n".join(lines)
 
     def _should_use_card_prompt(self, observation: ArenaObservation) -> bool:
@@ -168,6 +175,32 @@ class LLMPlayer:
         if isinstance(observation.metadata.get("public_state"), dict):
             return True
         return "Public State:" in observation.board_text
+
+    def _build_team_hint(self, observation: ArenaObservation) -> str:
+        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
+        public_state = metadata.get("public_state")
+        if not isinstance(public_state, dict):
+            return ""
+        landlord_id = public_state.get("landlord_id")
+        if not landlord_id:
+            return ""
+        player_id = metadata.get("player_id") or observation.active_player
+        if not player_id:
+            return ""
+        player_ids = metadata.get("player_ids")
+        if not isinstance(player_ids, list):
+            player_ids = []
+        if player_id == landlord_id:
+            opponents = [str(pid) for pid in player_ids if pid and pid != landlord_id]
+            opponent_label = ", ".join(opponents) if opponents else "the two peasants"
+            return f"Role: Landlord. Opponents: {opponent_label}."
+        teammates = [
+            str(pid)
+            for pid in player_ids
+            if pid and pid not in {player_id, landlord_id}
+        ]
+        teammate_label = ", ".join(teammates) if teammates else "the other peasant"
+        return f"Role: Peasant. Teammate: {teammate_label}. Coordinate to beat landlord {landlord_id}."
 
     def _truncate_legal_moves(self, legal_moves: Sequence[str]) -> Sequence[str]:
         if self._legal_moves_limit <= 0:

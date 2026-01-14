@@ -40,6 +40,7 @@ class ArenaRoleAdapter(RoleAdapter):
         scheduler: Optional[Dict[str, Any]] = None,
         parser: Optional[Dict[str, Any]] = None,
         visualizer: Optional[Dict[str, Any]] = None,
+        human_input: Optional[Dict[str, Any]] = None,
         players: Optional[Sequence[Dict[str, Any]]] = None,
         capabilities=(),
         role_type: str = "arena",
@@ -52,8 +53,10 @@ class ArenaRoleAdapter(RoleAdapter):
         self._scheduler_cfg = dict(scheduler or {})
         self._parser_cfg = dict(parser or {})
         self._visualizer_cfg = dict(visualizer or {})
+        self._human_input_cfg = dict(human_input or {})
         self._player_specs = list(players or [])
         self._shared_visualizer = None
+        self._action_server = None
 
     def invoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
         """Run the arena loop in a synchronous context."""
@@ -76,16 +79,27 @@ class ArenaRoleAdapter(RoleAdapter):
 
         # STEP 1: Build core components for the game loop.
         player_specs, player_ids, player_names, start_player_id = self._normalize_player_specs(sample)
+        env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
+        if "doudizhu" in str(env_impl).lower():
+            model_labels = self._resolve_player_labels(player_specs, role_manager)
+            for player_id in player_ids:
+                label = model_labels.get(player_id)
+                if label:
+                    player_names[player_id] = label
+        parser = self._build_parser(sample)
+        scheduler = self._build_scheduler(sample)
+        visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
+        action_server, action_queue_server = self._ensure_action_server(player_specs)
+        if action_queue is None:
+            action_queue = action_queue_server
         environment = self._build_environment(
             sample,
             player_ids=player_ids,
             player_names=player_names,
             start_player_id=start_player_id,
+            chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
         )
-        parser = self._build_parser(sample)
-        scheduler = self._build_scheduler(sample)
-        visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
         if visualizer is not None:
             visualizer.reset_state()
             visualizer.set_players(
@@ -240,6 +254,7 @@ class ArenaRoleAdapter(RoleAdapter):
         player_ids: Optional[Sequence[str]] = None,
         player_names: Optional[Dict[str, str]] = None,
         start_player_id: Optional[str] = None,
+        chat_queue=None,
         trace: Optional[ObservabilityTrace] = None,
     ):
         metadata = sample.get("metadata") or {}
@@ -299,6 +314,16 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
             if env_cfg.get("replay_filename") is not None:
                 env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
+            if env_cfg.get("context_include_public") is not None:
+                env_kwargs["context_include_public"] = env_cfg.get("context_include_public")
+            if env_cfg.get("context_include_ui_state") is not None:
+                env_kwargs["context_include_ui_state"] = env_cfg.get("context_include_ui_state")
+            if env_cfg.get("fast_finish_action") is not None:
+                env_kwargs["fast_finish_action"] = env_cfg.get("fast_finish_action")
+            if env_cfg.get("fast_finish_human_only") is not None:
+                env_kwargs["fast_finish_human_only"] = env_cfg.get("fast_finish_human_only")
+            if chat_queue is not None:
+                env_kwargs["chat_queue"] = chat_queue
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
@@ -466,16 +491,45 @@ class ArenaRoleAdapter(RoleAdapter):
         self._shared_visualizer = visualizer
         return visualizer, visualizer.action_queue
 
+    def _ensure_action_server(self, player_specs: Sequence[Dict[str, Any]]):
+        if self._action_server is not None:
+            return self._action_server, self._action_server.action_queue
+
+        if not self._human_input_cfg:
+            return None, None
+        enabled = bool(self._human_input_cfg.get("enabled", False))
+        if not enabled:
+            return None, None
+        has_human = any(spec.get("type") == "human" for spec in player_specs)
+        if not has_human:
+            return None, None
+
+        from gage_eval.tools.action_server import ActionQueueServer
+
+        host = self._human_input_cfg.get("host", "127.0.0.1")
+        port = int(self._human_input_cfg.get("port", 8001))
+        allow_origin = self._human_input_cfg.get("allow_origin", "*")
+        server = ActionQueueServer(host=str(host), port=port, allow_origin=str(allow_origin))
+        server.start()
+        self._action_server = server
+        return server, server.action_queue
+
     def shutdown(self) -> None:
         """Shutdown the shared visualizer when the runtime ends."""
 
-        if self._shared_visualizer is None:
-            return
-        try:
-            self._shared_visualizer.stop()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("ArenaRoleAdapter {} visualizer stop failed: {}", self.adapter_id, exc)
-        self._shared_visualizer = None
+        if self._shared_visualizer is not None:
+            try:
+                self._shared_visualizer.stop()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("ArenaRoleAdapter {} visualizer stop failed: {}", self.adapter_id, exc)
+            self._shared_visualizer = None
+
+        if self._action_server is not None:
+            try:
+                self._action_server.stop()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("ArenaRoleAdapter {} action server stop failed: {}", self.adapter_id, exc)
+            self._action_server = None
 
 
 class _VisualizedEnvironment:

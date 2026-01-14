@@ -14,8 +14,6 @@ class DoudizhuGameBoard extends React.Component {
     constructor(props) {
         super(props);
 
-        this.isSelectingCards = false;
-        this.selectingCards = { start: null, cards: [] };
         this.state = {
             highlightedCards: [],
         };
@@ -91,44 +89,18 @@ class DoudizhuGameBoard extends React.Component {
 
     handleContainerMouseLeave() {
         if (!this.props.gamePlayable) return;
-        if (this.isSelectingCards) {
-            this.isSelectingCards = false;
-            this.selectingCards = { start: null, cards: [] };
-            this.setState({ highlightedCards: [] });
-        }
+        this.setState({ highlightedCards: [] });
     }
 
     handleContainerMouseUp() {
         if (!this.props.gamePlayable) return;
-        if (this.isSelectingCards) {
-            this.isSelectingCards = false;
-            this.props.handleSelectedCards(this.selectingCards.cards);
-            this.selectingCards = { start: null, cards: [] };
-            this.setState({ highlightedCards: [] });
-        } else {
-            this.props.handleMainPlayerAct('deselect');
-        }
+        this.props.handleMainPlayerAct('deselect');
     }
 
-    handleCardMouseDown(card, idx) {
-        this.isSelectingCards = true;
-        this.selectingCards.start = idx;
-        this.selectingCards.cards = [card];
-        this.setState({ highlightedCards: this.selectingCards.cards });
-    }
-
-    handleCardMouseOver(allCards, card, idx) {
-        if (this.isSelectingCards) {
-            let tmpCards;
-            if (idx > this.selectingCards.start) {
-                tmpCards = allCards.slice(this.selectingCards.start, idx + 1);
-            } else if (idx < this.selectingCards.start) {
-                tmpCards = allCards.slice(idx, this.selectingCards.start + 1);
-            } else {
-                tmpCards = [card];
-            }
-            this.selectingCards = { ...this.selectingCards, cards: tmpCards };
-            this.setState({ highlightedCards: this.selectingCards.cards });
+    toggleSelectedCard(card) {
+        if (!this.props.gamePlayable) return;
+        if (this.props.handleSelectedCards) {
+            this.props.handleSelectedCards([card]);
         }
     }
 
@@ -151,7 +123,7 @@ class DoudizhuGameBoard extends React.Component {
                     }`}
                 >
                     <ul className="hand" style={{ width: computeHandCardsWidth(cards.length, 12) }}>
-                        {cards.map((card, idx) => {
+                        {cards.map((card) => {
                             const [rankClass, suitClass, rankText, suitText] = translateCardData(card);
                             let selected = false;
                             if (this.props.gamePlayable && cardSelectable) {
@@ -161,20 +133,11 @@ class DoudizhuGameBoard extends React.Component {
                             return (
                                 <li key={`handCard-${card}`}>
                                     <label
-                                        onMouseDown={(e) => {
+                                        onClick={(e) => {
                                             e.stopPropagation();
-                                            cardSelectable && this.handleCardMouseDown(card, idx);
+                                            cardSelectable && this.toggleSelectedCard(card);
                                         }}
-                                        onMouseOver={(e) => {
-                                            e.stopPropagation();
-                                            cardSelectable && this.handleCardMouseOver(cards, card, idx);
-                                        }}
-                                        // onClick={() => this.props.handleSelectedCards([card])}
-                                        className={`card ${rankClass} ${suitClass} ${selected ? 'selected' : ''} ${
-                                            cardSelectable && this.state.highlightedCards.includes(card)
-                                                ? 'user-selecting'
-                                                : ''
-                                        }`}
+                                        className={`card ${rankClass} ${suitClass} ${selected ? 'selected' : ''}`}
                                     >
                                         <span className="rank">{rankText}</span>
                                         <span className="suit">{suitText}</span>
@@ -292,6 +255,20 @@ class DoudizhuGameBoard extends React.Component {
                                 >
                                     {t('doudizhu.hint')}
                                 </Button>
+                                {this.props.showFinishButton ? (
+                                    <Button
+                                        disabled={this.props.isFinishDisabled || this.props.gameStatus !== 'playing'}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            this.props.handleMainPlayerAct('finish');
+                                        }}
+                                        style={{ marginRight: '2em' }}
+                                        variant="contained"
+                                        color="secondary"
+                                    >
+                                        {t('doudizhu.finish')}
+                                    </Button>
+                                ) : null}
                                 <Button
                                     disabled={this.props.isPassDisabled || this.props.gameStatus !== 'playing'}
                                     onClick={(e) => {
@@ -306,6 +283,7 @@ class DoudizhuGameBoard extends React.Component {
                                 </Button>
                                 <Button
                                     disabled={
+                                        this.props.isPlayDisabled ||
                                         !this.props.selectedCards ||
                                         this.props.selectedCards.length === 0 ||
                                         this.props.gameStatus !== 'playing'
