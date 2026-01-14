@@ -73,6 +73,9 @@ class DoudizhuReplayView extends React.Component {
             completedPercent: 0,
         };
 
+        this.chatEntryFirstSeen = new Map();
+        this.chatUpdateInterval = null;
+
         this.state = {
             gameInfo: this.initGameState,
             gameStateLoop: null,
@@ -99,6 +102,11 @@ class DoudizhuReplayView extends React.Component {
         if (autoStart) {
             this.startReplay();
         }
+        this.chatUpdateInterval = setInterval(() => {
+            if (this.chatEntryFirstSeen.size > 0) {
+                this.forceUpdate();
+            }
+        }, 1000);
     }
 
     componentDidUpdate(prevProps, prevState) {
@@ -113,7 +121,12 @@ class DoudizhuReplayView extends React.Component {
 
     componentWillUnmount() {
         this.clearTimers();
+        this.clearTimers();
         this.stopLivePolling();
+        if (this.chatUpdateInterval) {
+            clearInterval(this.chatUpdateInterval);
+            this.chatUpdateInterval = null;
+        }
     }
 
     pickQueryValue(value) {
@@ -699,6 +712,9 @@ class DoudizhuReplayView extends React.Component {
 
     buildChatBubbleMap(chatLog) {
         const bubbles = {};
+        const now = Date.now();
+        const expirationMs = 5000;
+        
         (chatLog || []).forEach((entry) => {
             const { playerIdx, playerId } = this.resolveChatPlayer(entry);
             const rawText = entry.text || entry.message || entry.chat || '';
@@ -706,6 +722,23 @@ class DoudizhuReplayView extends React.Component {
             if (!cleaned) {
                 return;
             }
+            
+            // Generate a unique key for the message
+            // Use timestamp if available from entry to differentiate same content messages if possible
+            const timestamp = entry.timestamp_ms || entry.timestampMs;
+            const uniqueKey = `${playerIdx ?? playerId ?? 'unknown'}::${cleaned}::${timestamp || 'no_ts'}`;
+            
+            if (!this.chatEntryFirstSeen.has(uniqueKey)) {
+                this.chatEntryFirstSeen.set(uniqueKey, now);
+            }
+            
+            const firstSeen = this.chatEntryFirstSeen.get(uniqueKey);
+            
+            // Only show if seen within last 5 seconds
+            if (now - firstSeen > expirationMs) {
+                return;
+            }
+
             const displayText = this.truncateChatText(cleaned);
             if (playerIdx !== undefined) {
                 bubbles[playerIdx] = displayText;
