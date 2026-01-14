@@ -53,11 +53,14 @@ class HumanPlayer:
         parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_moves)
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
+        metadata = self._build_action_metadata(parse_result)
+        if parse_result.error:
+            metadata["error"] = parse_result.error
         return ArenaAction(
             player=self.name,
             move=parse_result.coord or "",
             raw=raw_text,
-            metadata={"error": parse_result.error} if parse_result.error else {},
+            metadata=metadata,
         )
 
     def _format_observation(self, observation: ArenaObservation) -> str:
@@ -76,6 +79,13 @@ class HumanPlayer:
     @staticmethod
     def _build_user_message(text: str) -> Dict[str, Any]:
         return {"role": "user", "content": [{"type": "text", "text": text}]}
+
+    def _build_action_metadata(self, parse_result) -> Dict[str, Any]:
+        metadata = {"player_type": "human"}
+        chat_text = getattr(parse_result, "chat_text", None)
+        if chat_text:
+            metadata["chat"] = str(chat_text)
+        return metadata
 
 
 def _format_player_label(observation: ArenaObservation, player_id: str) -> str:

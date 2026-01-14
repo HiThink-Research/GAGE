@@ -1,0 +1,124 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: doudizhu_litellm_local
+  description: RLCard Doudizhu arena with LiteLLM backends (3 AI players).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: doudizhu_arena
+
+datasets:
+  - dataset_id: doudizhu_local_litellm
+    loader: jsonl
+    params:
+      path: tests/data/Test_Doudizhu_LiteLLM.jsonl
+      preprocess: card_game_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: doudizhu_litellm_0
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-5.2
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+  - backend_id: doudizhu_litellm_1
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-5-mini
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+  - backend_id: doudizhu_litellm_2
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-5-nano
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: doudizhu_player_0
+    role_type: dut_model
+    backend_id: doudizhu_litellm_0
+    capabilities:
+      - chat_completion
+
+  - adapter_id: doudizhu_player_1
+    role_type: dut_model
+    backend_id: doudizhu_litellm_1
+    capabilities:
+      - chat_completion
+
+  - adapter_id: doudizhu_player_2
+    role_type: dut_model
+    backend_id: doudizhu_litellm_2
+    capabilities:
+      - chat_completion
+
+  - adapter_id: doudizhu_arena
+    role_type: arena
+    params:
+      environment:
+        impl: doudizhu_arena_v1
+        chat_mode: ai-only
+        chat_every_n: 2
+        replay_live: true
+        context_include_public: false
+        context_include_ui_state: false
+      rules:
+        illegal_policy:
+          retry: 1
+          on_fail: loss
+      scheduler:
+        type: turn
+        max_turns: 400
+      parser:
+        impl: doudizhu_arena_parser_v1
+      players:
+        - name: player_0
+          player_id: player_0
+          type: backend
+          ref: doudizhu_player_0
+          max_retries: 1
+          fallback_policy: first_legal
+        - name: player_1
+          player_id: player_1
+          type: backend
+          ref: doudizhu_player_1
+          max_retries: 1
+          fallback_policy: first_legal
+        - name: player_2
+          player_id: player_2
+          type: backend
+          ref: doudizhu_player_2
+          max_retries: 1
+          fallback_policy: first_legal
+
+tasks:
+  - task_id: doudizhu_litellm_local
+    dataset_id: doudizhu_local_litellm
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/doudizhu_litellm_events.jsonl
