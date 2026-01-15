@@ -1,0 +1,62 @@
+api_version: aime2025/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: aime2025_vllm_async
+  description: using vllm_backend aime2025。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: aime2025_ds
+    hub: huggingface
+    hub_params:
+      hub_id: math-ai/aime25
+      split: test
+    loader: hf_hub
+    params:
+      #preprocess: gpqa_diamond_multi_choice
+      #preprocess_kwargs:
+      #  gpqa_prompt_type: zero_shot    
+      preprocess: aime2025_preprocessor
+backends:
+  - backend_id: aime2025_vllm_backend
+    type: vllm
+    config:
+      model_path: ${AIME2025_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${AIME2025_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true      
+      tensor_parallel_size: 1
+      max_tokens: 1280
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+
+role_adapters:
+  - adapter_id: dut_aime2025_vllm_qwen
+    role_type: dut_model
+    backend_id: aime2025_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: aime2025_acc
+    implementation: aime2024_accuracy
+
+tasks:
+  - task_id: aime2025_eval
+    dataset_id: aime2025_ds
+    max_samples: 30
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/aime2025_vllm_events.jsonl

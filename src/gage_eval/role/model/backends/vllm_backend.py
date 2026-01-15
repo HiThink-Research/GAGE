@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 import threading
 import types
 from types import SimpleNamespace
@@ -230,39 +231,68 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         # NOTE: `_load_multimodal_payload` already uses a thread pool internally; this is a thread-safe sync call.
         mm_raw = self._prepare_multi_modal_data(prepared) if mm_requested and self._mm_supported else None
         mm_loaded = self._load_multimodal_payload(mm_raw) if mm_raw else None
+        mm_payload = mm_loaded if mm_loaded and self._mm_supported else None
+        mm_available = self._has_mm_payload(mm_payload)
+        prompt_has_mm_tokens = self._prompt_has_mm_tokens(prompt)
 
         # Define an async task to be executed on the background event loop thread.
         async def _async_generate():
             # Render the prompt with processor for multimodal requests.
             # For multimodal, prepare_inputs skipped tokenizer rendering to avoid double vision tokens.
             # So we MUST render here with processor to get proper Qwen vision tokens.
-            if mm_requested:
-                rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"), preserve_multimodal=True)
-                final_prompt_text = rendered_mm if rendered_mm else prompt
+            if mm_requested and not mm_available:
+                logger.warning(
+                    "vllm_backend: multimodal inputs missing payload; falling back to text-only request_id={}",
+                    request_id,
+                )
+                final_prompt_text = self._render_text_fallback(messages, self._strip_mm_tokens(prompt))
+                mm_requested_local = False
+                mm_payload_local = None
+            elif mm_requested:
+                if prompt_has_mm_tokens and prompt:
+                    final_prompt_text = prompt
+                else:
+                    rendered_mm = self._render_with_processor(
+                        messages,
+                        prompt,
+                        prepared.get("chat_template_kwargs"),
+                        preserve_multimodal=True,
+                    )
+                    final_prompt_text = rendered_mm if rendered_mm else prompt
+                mm_requested_local = True
+                mm_payload_local = mm_payload
             else:
                 # Non-multimodal: check render flags
                 pre_rendered = prepared.get("chat_template_mode") == "preprocess" or prepared.get("rendered_by") == "preprocess"
                 if pre_rendered:
-                    final_prompt_text = prompt
+                    final_prompt_text = self._strip_mm_tokens(prompt) if prompt_has_mm_tokens else prompt
                 else:
                     rendered_mm = self._render_with_processor(messages, prompt, prepared.get("chat_template_kwargs"))
                     final_prompt_text = rendered_mm if rendered_mm else prompt
+                mm_requested_local = False
+                mm_payload_local = None
+                if self._prompt_has_mm_tokens(final_prompt_text):
+                    logger.warning(
+                        "vllm_backend: multimodal tokens detected without payload; stripping tokens request_id={}",
+                        request_id,
+                    )
+                    final_prompt_text = self._strip_mm_tokens(final_prompt_text)
 
             # vLLM v1 (>=0.8.0) accepts a single PromptInputs dict as a positional argument; older APIs only accept
             # keyword `prompt`/`inputs`.
             use_v1_prompt = bool(_VLLM_PROMPT_V1)
             prompt_input: Any
-            mm_payload = None
-            if mm_loaded and self._mm_supported:
+            final_mm_payload = None
+            if mm_payload_local and self._mm_supported:
                 if self._mm_strategy == "inputs":
-                    mm_payload = mm_loaded
+                    final_mm_payload = mm_payload_local
                 else:
                     if self._strict_mm:
                         raise RuntimeError("multi_modal_data disabled for this vLLM version")
                     logger.warning("vllm_backend multi_modal_data disabled; falling back to prompt-only")
-            if mm_payload:
+            if final_mm_payload:
                 # Ensure the prompt contains enough `<image>` placeholders to match the multimodal payload.
-                image_field = mm_payload.get("image") if isinstance(mm_payload, dict) else None
+                image_field = final_mm_payload.get("image") if isinstance(final_mm_payload, dict) else None
                 if isinstance(image_field, (list, tuple)):
                     image_count = len(image_field)
                 elif image_field is None:
@@ -270,14 +300,14 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 else:
                     image_count = 1
                 final_prompt_text = normalize_image_placeholders(final_prompt_text, image_count)
-                prompt_input = {"prompt": final_prompt_text, "multi_modal_data": mm_payload}
+                prompt_input = {"prompt": final_prompt_text, "multi_modal_data": final_mm_payload}
             else:
                 prompt_input = final_prompt_text
 
             log_debug_mm_prompt(final_prompt_text, request_id)
 
             extra_inputs = prepared.get("inputs") or prepared.get("prompt_token_ids")
-            if mm_requested and isinstance(extra_inputs, dict):
+            if mm_requested_local and isinstance(extra_inputs, dict):
                 extra_inputs = {k: v for k, v in extra_inputs.items() if k not in {"prompt_token_ids", "input_ids"}}
             if isinstance(extra_inputs, dict):
                 # If `input_ids`/`prompt_token_ids` exist, build a dict PromptInputs payload to match llm-eval behavior.
@@ -623,6 +653,40 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             except Exception as tok_exc:
                 logger.debug("vllm_backend tokenizer chat_template failed: {}", tok_exc)
         return None
+
+    def _render_text_fallback(self, messages: List[Dict[str, Any]], prompt: str) -> str:
+        if prompt:
+            return prompt
+        return simple_render_messages(messages)
+
+    def _prompt_has_mm_tokens(self, prompt: str) -> bool:
+        if not prompt:
+            return False
+        lowered = prompt.lower()
+        if "<|vision_start|>" in lowered or "<|image_pad|>" in lowered:
+            return True
+        return re.search(r"<image\\s*\\d*>", lowered) is not None
+
+    def _strip_mm_tokens(self, prompt: str) -> str:
+        if not prompt:
+            return ""
+        cleaned = prompt.replace("<|vision_start|>", "").replace("<|vision_end|>", "").replace("<|image_pad|>", "")
+        cleaned = re.sub(r"<image\\s*\\d*>", "", cleaned, flags=re.IGNORECASE)
+        return " ".join(cleaned.split())
+
+    def _has_mm_payload(self, mm_payload: Optional[Dict[str, Any]]) -> bool:
+        if not mm_payload or not isinstance(mm_payload, dict):
+            return False
+        for key in ("image", "audio", "video"):
+            value = mm_payload.get(key)
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple)):
+                if any(item is not None for item in value):
+                    return True
+            else:
+                return True
+        return False
 
     def _prepare_multi_modal_data(self, prepared: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         sources = collect_multimodal_sources(prepared)

@@ -1,0 +1,59 @@
+api_version: hle/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: hle_vllm_async
+  description: using vllm_backend hle
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: hle_ds
+    hub: huggingface
+    hub_params:
+      hub_id: cais/hle
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: hle_preprocessor
+backends:
+  - backend_id: hle_vllm_backend
+    type: vllm
+    config:
+      model_path: ${HLE_MODEL_PATH:-/mnt/model/qwen2_5_vl_3b}
+      tokenizer_path: ${HLE_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true      
+      tensor_parallel_size: 1
+      max_tokens: 8192
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+
+role_adapters:
+  - adapter_id: dut_hle_vllm_qwen
+    role_type: dut_model
+    backend_id: hle_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: hle_acc
+    implementation: hle_accuracy_local
+
+tasks:
+  - task_id: hle_eval
+    dataset_id: hle_ds
+    max_samples: 30
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/hle_vllm_events.jsonl

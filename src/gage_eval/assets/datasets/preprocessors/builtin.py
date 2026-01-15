@@ -25,12 +25,23 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
 )
 from gage_eval.registry import registry
 
-# 1.benchmark GPQA-diamond
+# benchmark GPQA-diamond
 from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
 
-# 2.benchmark MathVista
+# benchmark MathVista
 from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
 
+# benchmark aime 2024
+from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Preprocessor as NewAIME2024Preprocessor
+
+# benchmark aime 2025
+from gage_eval.assets.datasets.preprocessors.aime.aime2025 import AIME2025Preprocessor as NewAIME2025Preprocessor
+
+# benchmark HLE (Humanity's Last Exam)
+from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLEConverter
+
+# benchmark MMLU-Pro
+from gage_eval.assets.datasets.preprocessors.mmlu_pro.mmlu_pro_converter import MMLUProConverter
 
 @registry.asset(
     "dataset_preprocessors",
@@ -152,7 +163,7 @@ class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
     pass
 
 
-# 1.benchmark GPQA-diamond
+# benchmark GPQA-diamond
 @registry.asset(
     "dataset_preprocessors",
     "gpqa_diamond_multi_choice",
@@ -162,7 +173,7 @@ class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
 class GpqaDiamondPreprocessor(NewGpqaDiamond):
     pass
 
-# 2.benchmark MathVista
+# benchmark MathVista
 @registry.asset(
     "dataset_preprocessors",
     "mathvista_chat_preprocessor",
@@ -170,4 +181,45 @@ class GpqaDiamondPreprocessor(NewGpqaDiamond):
     tags=("prompt", "vision", "mathvista"),
 )
 class MathVistaChatPreprocessor(NewMathVistaChat):
+    pass
+
+# benchmark aime2024
+@registry.asset(
+    "dataset_preprocessors",
+    "aime2024_preprocessor",
+    desc="AIME 2024 prompt wrapper",
+    tags=("prompt", "aime2024"),
+)
+class AIME2024Preprocessor(NewAIME2024Preprocessor):
+    pass
+
+
+# benchmark aime2025
+@registry.asset(
+    "dataset_preprocessors",
+    "aime2025_preprocessor",
+    desc="AIME 2025 prompt wrapper",
+    tags=("prompt", "aime2025"),
+)
+class AIME2025Preprocessor(NewAIME2025Preprocessor):
+    pass
+
+# benchmark HLE (Humanity's Last Exam)
+@registry.asset(
+    "dataset_preprocessors",
+    "hle_preprocessor",
+    desc="HLE prompt wrapper",
+    tags=("prompt", "hle"),
+)
+class HLEPreprocessor(HLEConverter):
+    pass
+
+# benchmark MMLU-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "mmlu_pro_chat_preprocessor",
+    desc="MMLU Pro prompt wrapper",
+    tags=("prompt", "mmlu-pro"),
+)
+class MMLUPreprocessor(MMLUProConverter):
     pass
