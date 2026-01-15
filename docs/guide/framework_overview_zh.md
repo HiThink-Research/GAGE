@@ -11,7 +11,7 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 - 项目首页（English）：[`README.md`](../../README.md)
 - 项目首页（中文）：[`README_zh.md`](../../README_zh.md)
 - 测试体系：[`TESTING.md`](../../TESTING.md)
-- 示例配置：[`config/custom/`](../../config/custom/) 、[`config/builtin_templates/`](../../config/builtin_templates/)
+- 示例配置：[`config/custom/`](../../config/custom/)、[`config/builtin_templates/`](../../config/builtin_templates/)、[`config/run_configs/`](../../config/run_configs/)
 - 扩展开发：[`support_cli_zh.md`](support_cli_zh.md)（support 模块指南，实验性，后续由 gage-client 取代）
 - Sample 契约：[`sample_zh.md`](sample_zh.md)（标准化 Sample 设计）
 - Game Arena：[`game_arena_zh.md`](game_arena_zh.md)（对战评测模块）

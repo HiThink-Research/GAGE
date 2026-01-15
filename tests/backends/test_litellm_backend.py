@@ -105,6 +105,7 @@ class LiteLLMBackendTests(unittest.TestCase):
             "AZURE_OPENAI_ENDPOINT": "https://demo-openai.eastus.azure.com",
             "AZURE_OPENAI_API_KEY": "azure-key",
             "AZURE_OPENAI_API_VERSION": "2024-06-01-preview",
+            "OPENAI_API_KEY": "",  # Unset to prevent interference from local environment
         }
         with mock.patch.dict(os.environ, env, clear=False), mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
             backend = LiteLLMBackend(
