@@ -13,6 +13,7 @@ from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.registry import registry
+from gage_eval.utils.messages import stringify_message_content
 
 
 @registry.asset(
@@ -126,6 +127,9 @@ class LiteLLMBackend(EngineBackend):
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
+
+        if self._should_sanitize_openai_messages():
+            messages = self._sanitize_openai_messages(messages)
 
         sampling_params = dict(self._base_sampling)
         sampling_params.update(sample.get("sampling_params") or {})
@@ -244,6 +248,49 @@ class LiteLLMBackend(EngineBackend):
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
+    def _should_sanitize_openai_messages(self) -> bool:
+        provider = (self._custom_llm_provider or self.provider or "").lower()
+        return provider in {"openai", "azure"}
+
+    def _sanitize_openai_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        sanitized: List[Dict[str, Any]] = []
+        for msg in messages or []:
+            new_msg = dict(msg)
+            content = msg.get("content")
+            if isinstance(content, list):
+                new_content: List[Dict[str, Any]] = []
+                for item in content:
+                    if isinstance(item, dict):
+                        itype = item.get("type")
+                        if itype == "text":
+                            text = item.get("text")
+                            if text is not None:
+                                new_content.append({"type": "text", "text": str(text)})
+                        elif itype == "image_url":
+                            url = None
+                            val = item.get("image_url")
+                            if isinstance(val, dict):
+                                url = val.get("url")
+                            elif isinstance(val, str):
+                                url = val
+                            if not url:
+                                url = item.get("url") or item.get("image")
+                            if url:
+                                new_content.append({"type": "image_url", "image_url": {"url": url}})
+                        else:
+                            text = item.get("text")
+                            if text is not None:
+                                new_content.append({"type": "text", "text": str(text)})
+                    elif item is not None:
+                        new_content.append({"type": "text", "text": str(item)})
+                if not new_content:
+                    fallback_text = stringify_message_content(content, image_placeholder=None)
+                    new_msg["content"] = fallback_text
+                else:
+                    new_msg["content"] = new_content
+            sanitized.append(new_msg)
+        return sanitized
+
     def _normalize_sampling_params(self, params: Dict[str, Any], num_samples: Optional[int]) -> Dict[str, Any]:
         sampling = {k: v for k, v in params.items() if v is not None}
         normalized: Dict[str, Any] = {}

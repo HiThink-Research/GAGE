@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional, Callable, Literal, List, NamedTuple
+
+import random
+import string
+import textwrap
 
 from loguru import logger
 
-from gage_eval.evaluation.sample_envelope import resolve_judge_output, resolve_model_output
 
 _MISSING = object()
 
@@ -61,11 +64,7 @@ def extract_field(context: Any, descriptor: Optional[str], default: Any = None, 
     root_key = parts[0]
     tail = ".".join(parts[1:]) if len(parts) > 1 else None
 
-    if root_key == "model_output":
-        base = resolve_model_output(sample, roots.get("model_output"))
-    elif root_key == "judge_output":
-        base = resolve_judge_output(sample, roots.get("judge_output"))
-    elif root_key in roots and roots[root_key] is not None:
+    if root_key in roots and roots[root_key] is not None:
         base = roots[root_key]
     else:
         base = sample
@@ -187,7 +186,24 @@ def get_first_reference(sample_dict):
         logger.warning(f'[warning]{e}')
         return None
 
+def strip_punctuation(s: str) -> str:
+    return s.strip(string.whitespace + string.punctuation)
+
+def strip_numeric_punctuation(s: str) -> str:
+    # strip $, €, £, and ,
+    # *,_ to string formatting characters sometimes added by LLMs
+    stripped = re.sub(r"[$,£,€,*,_]", "", s)
+
+    # strip . if it's followed by a space, the end of the string,
+    # or a non-digit character
+    stripped = re.sub(r"\.(?=\s|$|\D)", "", stripped)
+    return stripped
+
+
+
 __all__ = [
+    "strip_punctuation",
+    "strip_numeric_punctuation",
     "get_text_content_of_first_predict_result",
     "get_sample_label",
     "get_sample_options",
