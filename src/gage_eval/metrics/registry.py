@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import threading
-from typing import Callable, Dict, Type
+from typing import Callable, Dict, Type, TYPE_CHECKING
 
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.metrics.aggregators import (
@@ -22,14 +22,31 @@ except ImportError:
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
 
-MetricFactory = Callable[[MetricSpec], BaseMetric]
-AggregatorFactory = Callable[[MetricSpec], MetricAggregator]
+if TYPE_CHECKING:
+    from gage_eval.metrics.aggregators import (
+        IdentityAggregator,
+        MeanAggregator,
+        MetricAggregator,
+        WeightedMeanAggregator,
+        CategoricalCountAggregator,
+    )
+    from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
+
+MetricFactory = Callable[[MetricSpec], "BaseMetric"]
+AggregatorFactory = Callable[[MetricSpec], "MetricAggregator"]
 
 
 class MetricRegistry:
     """Holds all metric/aggregation registrations and creates runtime instances."""
 
     def __init__(self) -> None:
+        from gage_eval.metrics.aggregators import (
+            IdentityAggregator,
+            MeanAggregator,
+            WeightedMeanAggregator,
+            CategoricalCountAggregator,
+        )
+
         self._aggregators: Dict[str, AggregatorFactory] = {}
         self.register_aggregator("mean", lambda spec: MeanAggregator(spec))
         self.register_aggregator("weighted_mean", lambda spec: WeightedMeanAggregator(spec))
@@ -81,6 +98,8 @@ class MetricRegistry:
             )
         module = importlib.import_module(module_name)
         candidate = getattr(module, class_name)
+        
+        from gage_eval.metrics.base import BaseMetric
         if not issubclass(candidate, BaseMetric):
             raise TypeError(
                 f"Metric class '{implementation}' must inherit from BaseMetric (found {candidate})"

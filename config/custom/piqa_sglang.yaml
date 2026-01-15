@@ -36,7 +36,7 @@ datasets:
     loader: jsonl
     params:
       # 使用本地 JSONL，避免 datasets>=4.4 禁止远程脚本导致的报错（piqa.py 被阻止）
-      path: ${PIQA_DATA_PATH:-./local-datasets/piqa/piqa_dev_500.jsonl}
+      path: ${PIQA_MINI_PATH:-./tests/fixtures/piqa_mini.jsonl}
       preprocess: piqa_struct_only
       streaming: false
 
