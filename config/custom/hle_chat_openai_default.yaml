@@ -1,8 +1,8 @@
 api_version: hle/v1alpha1
 kind: PipelineConfig
 metadata:
-  name: hle_vllm_async
-  description: using vllm_backend hle
+  name: hle_vllm_async_openai_default
+  description: using vllm_backend hle with default judge config
 
 custom:
   steps:
@@ -11,20 +11,6 @@ custom:
     - step: support
       adapter_id: hle_answer_cleaner
     - step: auto_eval
-
-prompts:
-  - prompt_id: hle_answer_cleaner_prompt
-    renderer: jinja
-    template: |
-      You are a strict answer cleaner.
-      Question:
-      {{ sample.metadata.question }}
-
-      Model response:
-      {{ sample.predict_result[-1].answer }}
-
-      Output only the final answer. Do not include explanation or extra text.
-      If there is no clear final answer, output "None".
 
 datasets:
   - dataset_id: hle_ds
@@ -42,7 +28,7 @@ backends:
       model_path: ${HLE_MODEL_PATH:-/mnt/model/qwen2_5_vl_3b}
       tokenizer_path: ${HLE_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
       force_tokenize_prompt: true
-      tokenizer_trust_remote_code: true      
+      tokenizer_trust_remote_code: true
       tensor_parallel_size: 1
       max_tokens: 8192
       sampling_params:
@@ -73,14 +59,14 @@ role_adapters:
   - adapter_id: hle_answer_cleaner
     role_type: helper_model
     backend_id: hle_answer_cleaner_litellm
-    prompt_id: hle_answer_cleaner_prompt
+    params:
+      mode: answer_cleaner
     capabilities:
       - chat_completion
 
 metrics:
   - metric_id: hle_acc
-    #implementation: hle_accuracy_local
-    implementation: hle_accuracy_openai
+    implementation: hle_accuracy_openai_default
 
 tasks:
   - task_id: hle_eval

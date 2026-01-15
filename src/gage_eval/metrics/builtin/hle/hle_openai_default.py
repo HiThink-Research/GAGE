@@ -1,76 +1,32 @@
-""" HLE accuracy metric (OpenAI)"""
+"""HLE accuracy metric (OpenAI default judge config)."""
 
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, Optional, Literal
 import os
-import json
-import copy
-import math
-import argparse
-import asyncio
-import numpy as np
-from openai import OpenAI
-from pydantic import BaseModel
-from tqdm.asyncio import tqdm_asyncio
-
-
-from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
-
-from gage_eval.metrics.filter.base import RegexFilter
-from gage_eval.metrics.numeric import extract_numeric_answer
-from gage_eval.metrics.match import match_str
-from gage_eval.metrics.choice import extract_single_choice_letter
-
-from gage_eval.metrics.utils import (
-    ensure_list_of_strings, extract_field, normalize_text_advanced,
-        get_text_content_of_first_predict_result,
-    get_sample_label,
-    get_first_reference
-)
-
-from gage_eval.registry import registry
+from typing import Any, Optional
 
 from loguru import logger
+from openai import OpenAI
 
-JUDGE_PROMPT = """Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
-
-[question]: {question}
-
-[response]: {response}
-
-Your judgement must be in the format and criteria specified below:
-
-extracted_final_answer: The final exact answer extracted from the [response]. Put the extracted answer as 'None' if there is no exact, final answer to extract from the response.
-
-[correct_answer]: {correct_answer}
-
-reasoning: Explain why the extracted_final_answer is correct or incorrect based on [correct_answer], focusing only on if there are meaningful differences between [correct_answer] and the extracted_final_answer. Do not comment on any background to the problem, do not attempt to solve the problem, do not argue for any answer different than [correct_answer], focus only on whether the answers match.
-
-correct: Answer 'yes' if extracted_final_answer matches the [correct_answer] given above, or is within a small margin of error for numerical problems. Answer 'no' otherwise, i.e. if there if there is any inconsistency, ambiguity, non-equivalency, or if the extracted answer is incorrect.
-
-
-confidence: The extracted confidence score between 0|\%| and 100|\%| from [response]. Put 100 if there is no confidence score available."""
-
-class ExtractedAnswer(BaseModel):
-    extracted_final_answer: str
-    reasoning: str
-    correct: Literal["yes", "no"]
-    confidence: int
-    strict: Literal[True] # 100% reliability
-
+from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
+from gage_eval.metrics.judge.defaults import OpenAIJudgePromptDefaults
+from gage_eval.metrics.utils import (
+    extract_field,
+    get_first_reference,
+    get_text_content_of_first_predict_result,
+)
+from gage_eval.registry import registry
 
 
 @registry.asset(
     "metrics",
-    "hle_accuracy_openai", 
-    desc="HLE accuracy",
+    "hle_accuracy_openai_default",
+    desc="HLE accuracy (default judge config)",
     tags=("HLE",),
     default_aggregation="mean",
 )
-class HLEAccuracyOpenAIMetric(SimpleMetric):
-    """Compute HLE accuracy using an OpenAI judge model."""
+class HLEAccuracyOpenAIDefaultMetric(OpenAIJudgePromptDefaults, SimpleMetric):
+    """Compute HLE accuracy using the shared judge defaults."""
 
     value_key = "acc"
 
@@ -107,34 +63,39 @@ class HLEAccuracyOpenAIMetric(SimpleMetric):
             return None
         return self._client
 
-    def extract_answer(self, question: str, correct_answer: str, response: str) -> Optional[Dict[str, Any]]:
+    def extract_answer(
+        self, question: str, correct_answer: str, response: str
+    ) -> Optional[dict[str, Any]]:
         """Call the OpenAI judge and return the parsed answer payload."""
 
         client = self._get_client()
         if client is None:
             return None
-        prompt = JUDGE_PROMPT.format(question=question, correct_answer=correct_answer, response=response)
+        prompt = self.build_judge_prompt(
+            question=question,
+            correct_answer=correct_answer,
+            response=response,
+        )
         try:
             result = client.beta.chat.completions.parse(
                 model=self._judge_model,
-                max_completion_tokens=4096, # overkill for judge
+                max_completion_tokens=4096,  # overkill for judge
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                response_format=ExtractedAnswer, 
-            ) 
+                response_format=self.response_model,
+            )
             content = result.choices[0].message.parsed
-            return { 
+            return {
                 "correct_answer": correct_answer,
                 "model_answer": content.extracted_final_answer,
                 "reasoning": content.reasoning,
                 "correct": content.correct,
-                "confidence": content.confidence
+                "confidence": content.confidence,
             }
-        except Exception as e: # very, very rare
+        except Exception as e:  # very, very rare
             logger.warning(f"Error:{e}")
             return None
-    
 
     def compute(self, context: MetricContext) -> MetricResult:
         # STEP 1: extract sample, prediction, and ground truth
@@ -182,9 +143,12 @@ class HLEAccuracyOpenAIMetric(SimpleMetric):
         )
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-__all__ = ["HLEAccuracyOpenAIMetric", ]
 
-if __name__ ==  '__main__':
+__all__ = ["HLEAccuracyOpenAIDefaultMetric"]
+
+
+if __name__ == "__main__":
     from gage_eval.config.pipeline_config import MetricSpec
-    spec = MetricSpec(metric_id='test', implementation='fake_acc')
-    hle_metric = HLEAccuracyOpenAIMetric(spec=spec)
+
+    spec = MetricSpec(metric_id="test", implementation="fake_acc")
+    hle_metric = HLEAccuracyOpenAIDefaultMetric(spec=spec)
