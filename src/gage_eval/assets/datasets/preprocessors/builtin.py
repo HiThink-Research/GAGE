@@ -31,6 +31,18 @@ from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor impo
 # benchmark MathVista
 from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
 
+
+# 3.benchmark MATH-500
+from gage_eval.assets.datasets.preprocessors.math500.math500_preprocessor import (
+    Math500Preprocessor as NewMath500,
+)
+
+# 4.benchmark MME
+from gage_eval.assets.datasets.preprocessors.mme_preprocessor import (
+    MMEPreprocessor as NewMME,
+)
+
+
 # benchmark aime 2024
 from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Preprocessor as NewAIME2024Preprocessor
 
@@ -42,6 +54,7 @@ from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLECo
 
 # benchmark MMLU-Pro
 from gage_eval.assets.datasets.preprocessors.mmlu_pro.mmlu_pro_converter import MMLUProConverter
+
 
 @registry.asset(
     "dataset_preprocessors",
@@ -183,6 +196,27 @@ class GpqaDiamondPreprocessor(NewGpqaDiamond):
 class MathVistaChatPreprocessor(NewMathVistaChat):
     pass
 
+
+# 3.benchmark MATH-500
+@registry.asset(
+    "dataset_preprocessors",
+    "math500",
+    desc="MATH-500 preprocessor for math problem evaluation",
+    tags=("prompt", "text", "math500"),
+)
+class Math500Preprocessor(NewMath500):
+    pass
+
+# 4.benchmark MME
+@registry.asset(
+    "dataset_preprocessors",
+    "mme",
+    desc="MME (Multimodal Evaluation) preprocessor for Yes/No questions",
+    tags=("prompt", "vision", "mme"),
+)
+class MMEPreprocessor(NewMME):
+    pass
+
 # benchmark aime2024
 @registry.asset(
     "dataset_preprocessors",
@@ -223,3 +257,4 @@ class HLEPreprocessor(HLEConverter):
 )
 class MMLUPreprocessor(MMLUProConverter):
     pass
+

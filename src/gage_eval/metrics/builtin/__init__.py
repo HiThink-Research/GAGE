@@ -11,6 +11,8 @@ from gage_eval.metrics.builtin.mmmu import MMMUAccuracyMetric
 from gage_eval.metrics.builtin.likelihood import LikelihoodMetric
 from gage_eval.metrics.builtin.ranking import RankingMetric
 from gage_eval.metrics.builtin.mathvista import MathVistaAccuracyMetric
+from gage_eval.metrics.builtin.math500 import Math500AccuracyMetric
+from gage_eval.metrics.builtin.mme import MMEAccuracyMetric
 from gage_eval.metrics.builtin.text import (
     ContainsMatchMetric,
     ExactMatchMetric,
@@ -36,6 +38,8 @@ __all__ = [
     "DocVQAANLSMetric",
     "MMMUAccuracyMetric",
     "MathVistaAccuracyMetric",
+    "Math500AccuracyMetric",
+    "MMEAccuracyMetric",
     "LikelihoodMetric",
     "RankingMetric",
 ]

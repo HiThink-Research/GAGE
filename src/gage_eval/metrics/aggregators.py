@@ -151,3 +151,5 @@ class CategoricalCountAggregator(MetricAggregator):
             values=dict(self._counts),
             count=self._total,
         )
+
+
