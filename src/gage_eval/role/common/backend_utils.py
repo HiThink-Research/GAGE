@@ -447,11 +447,16 @@ def maybe_tokenize_messages(
     if not isinstance(messages, list) or not messages:
         return prompt, inputs, {}
 
+    has_multimodal = ChatTemplateMixin.detect_multimodal(prepared)
+    render_messages = messages if has_multimodal else normalize_fn(messages)
+
     chat_template_fn = None
-    if processor and hasattr(processor, "apply_chat_template"):
+    if has_multimodal and processor and hasattr(processor, "apply_chat_template"):
         chat_template_fn = processor.apply_chat_template
     elif tokenizer and hasattr(tokenizer, "apply_chat_template"):
         chat_template_fn = tokenizer.apply_chat_template
+    elif processor and hasattr(processor, "apply_chat_template"):
+        chat_template_fn = processor.apply_chat_template
     if not chat_template_fn:
         return prompt, inputs, {}
 
@@ -473,9 +478,11 @@ def maybe_tokenize_messages(
         rendered = None
         tokenized = None
         try:
-            rendered = chat_template_fn(messages, tokenize=False, add_generation_prompt=True)
-            tokenized = chat_template_fn(messages, tokenize=True, add_generation_prompt=True)
+            rendered = chat_template_fn(render_messages, tokenize=False, add_generation_prompt=True)
+            tokenized = chat_template_fn(render_messages, tokenize=True, add_generation_prompt=True)
         except Exception:
+            if not has_multimodal:
+                return prompt, inputs, {}
             sanitized_messages = _strip_non_text(messages)
             rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
             tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
@@ -536,6 +543,8 @@ def render_prompt_with_template(
     """Render prompt via chat template, with backend metadata populated."""
 
     messages = prepared.get("messages") or []
+    if not ChatTemplateMixin.detect_multimodal(prepared):
+        messages = normalize_messages_for_template(messages)
     raw_prompt = prepared.get("prompt") or prepared.get("text") or ""
     chat_kwargs = chat_kwargs or {}
     simple_render = simple_renderer or (lambda msgs: "")

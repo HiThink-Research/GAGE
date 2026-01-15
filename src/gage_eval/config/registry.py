@@ -15,11 +15,10 @@ from gage_eval.config.pipeline_config import (
     PipelineConfig,
     RoleAdapterSpec,
 )
-
-if TYPE_CHECKING:
-    from gage_eval.assets.prompts.assets import PromptTemplateAsset
-    from gage_eval.metrics.registry import MetricRegistry
-    from gage_eval.registry.manager import RegistryManager
+from gage_eval.assets.prompts.assets import PromptTemplateAsset
+from gage_eval.assets.prompts.defaults import resolve_prompt_id_for_adapter
+from gage_eval.metrics.registry import MetricRegistry
+from gage_eval.registry import registry
 
 
 class ConfigRegistry:
@@ -84,12 +83,23 @@ class ConfigRegistry:
             backend_obj = backends[spec.backend_id]
         if backend_obj is not None:
             adapter_kwargs.setdefault("backend", backend_obj)
-        if spec.prompt_id:
-            if not prompts or spec.prompt_id not in prompts:
-                raise KeyError(
-                    f"Prompt '{spec.prompt_id}' referenced by adapter '{spec.adapter_id}' is not defined"
-                )
-            prompt_renderer = prompts[spec.prompt_id].instantiate(spec.prompt_params)
+        prompt_id = spec.prompt_id or resolve_prompt_id_for_adapter(
+            spec.adapter_id,
+            spec.role_type,
+            spec.params,
+        )
+        if prompt_id:
+            prompt_asset = None
+            if prompts and prompt_id in prompts:
+                prompt_asset = prompts[prompt_id]
+            else:
+                try:
+                    prompt_asset = registry.get("prompts", prompt_id)
+                except KeyError as exc:
+                    raise KeyError(
+                        f"Prompt '{prompt_id}' referenced by adapter '{spec.adapter_id}' is not defined"
+                    ) from exc
+            prompt_renderer = prompt_asset.instantiate(spec.prompt_params)
             adapter_kwargs.setdefault("prompt_renderer", prompt_renderer)
         adapter = adapter_cls(
             adapter_id=spec.adapter_id,
