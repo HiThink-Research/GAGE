@@ -236,6 +236,44 @@ At runtime, the framework writes results back to the Sample object:
 - `predict_result`: inference outputs (often messages/text/tool calls depending on backend)
 - `eval_result`: judge outputs and/or metric outputs
 
+**predict_result example**
+
+```json
+{
+  "predict_result": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "B"}]
+      },
+      "raw_response": {},
+      "usage": {"total_tokens": 123},
+      "latency_ms": 1200
+    }
+  ]
+}
+```
+
+**eval_result example**
+
+```json
+{
+  "eval_result": {
+    "overall": {"score": 1.0, "passed": true},
+    "metrics": {
+      "exact_match": {"score": 1.0},
+      "bleu": {"score": 0.72}
+    },
+    "judge": {
+      "model": "gpt-4o-mini",
+      "verdict": "correct",
+      "reason": "Answer matches the reference"
+    }
+  }
+}
+```
+
 ### 1.5 Mapping to the current implementation
 
 The standardized Sample is designed to be compatible with the current gage-eval implementation through preprocessing mappings.
@@ -246,6 +284,23 @@ Typical mappings:
 - legacy `choices/options` -> normalized `choices` + `metadata.option_map` via `normalize_options`/`map_question_option_answer`
 - legacy `answer/label` -> `label` and `metadata.correct_choice` (optional `references`)
 - multimodal legacy fields -> `messages[*].content[*]` segments + `inputs.multi_modal_data`
+
+**Code excerpt: writing predict_result**
+
+```python
+def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[str, Any]]) -> None:
+    # Skip empty outputs
+    if not isinstance(model_output, dict) or not model_output:
+        return
+    predict_result = sample.setdefault("predict_result", [])
+    if not isinstance(predict_result, list):
+        predict_result = sample["predict_result"] = []
+    entry = copy.deepcopy(model_output)
+    entry.setdefault("index", len(predict_result))
+    if "message" not in entry:
+        entry["message"] = _build_message(entry)
+    predict_result.append(entry)
+```
 
 ### 1.6 Example cases
 
@@ -530,6 +585,19 @@ Below are example Sample JSON snippets for common task types.
   ],
   "references": [{"answer": [{"type": "text", "text": "Paris is sunny at 22C."}]}]
 }
+```
+
+**Agent execution flow**
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Model
+  participant Tool
+  User->>Model: messages and tools
+  Model->>Tool: tool_call
+  Tool-->>Model: tool_result
+  Model-->>User: final_answer
 ```
 
 ## 2. Usage in gage-eval

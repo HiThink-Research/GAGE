@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from gage_eval.assets.datasets.bundles.base import BaseBundle
+
 from gage_eval.assets.datasets.bundles.mme.bundle import MMEBundle as MMEBundleProvider
-from gage_eval.assets.datasets.bundles.mathvista.bundle import MathVistaBundle 
+from gage_eval.assets.datasets.bundles.mathvista.bundle import MathVistaBundle
 from gage_eval.assets.datasets.bundles.mmlu_pro.few_shot import MMLUProBundle
+
 from gage_eval.registry import registry
 
 # mathvista
@@ -19,6 +21,7 @@ class MathVistaBundleProvider(MathVistaBundle):
     pass
 
 
+# mme
 @registry.asset(
     "bundles",
     "mme",
@@ -27,7 +30,7 @@ class MathVistaBundleProvider(MathVistaBundle):
 )
 class MMEBundle(MMEBundleProvider):
     pass
- 
+
 
 # mmlu_pro
 @registry.asset(
@@ -38,4 +41,3 @@ class MMEBundle(MMEBundleProvider):
 )
 class MMLUProBundleProvider(MMLUProBundle):
     pass
-

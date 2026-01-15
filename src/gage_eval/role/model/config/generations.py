@@ -57,4 +57,4 @@ class GenerationParameters(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Return a shallow copy excluding `None` entries."""
 
-        return {k: v for k, v in self.dict().items() if v is not None}
+        return {k: v for k, v in self.model_dump().items() if v is not None}
