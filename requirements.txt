@@ -1,3 +1,9 @@
+# Doudizhu runtime (arena + AI players)
+rlcard>=1.2.0
+openai>=1.6.0
+litellm>=1.36.0
+loguru>=0.7.2
+
 # Core runtime + data dependencies
 numpy>=1.24.0
 torch>=2.0.0
@@ -23,8 +29,6 @@ librosa>=0.10.0
 soundfile>=0.12.1
 modelscope>=1.13.0
 addict>=2.4.0
-openai>=1.6.0
-litellm>=1.36.0
 
 # Multimodal / preprocessing helpers
 Pillow>=10.0.0
