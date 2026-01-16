@@ -6,6 +6,12 @@
 
 [English](README.md) · **中文**
 
+<div align="center">
+
+📧 **负责人邮箱:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
+
+</div>
+
 [框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Agent 模块](docs/guide/agent_evaluation_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [Support 模块](docs/guide/support_cli_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
 
 </div>
