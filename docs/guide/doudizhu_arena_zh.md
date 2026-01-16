@@ -6,12 +6,12 @@
 - Node.js + npm
 - 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install`
 - 设置密钥：`OPENAI_API_KEY`（或 `LITELLM_API_KEY`）
-- run_doudizhu_showdown 中 PYTHON_BIN 指向对应环境
+- `run_doudizhu_showdown` 中 `PYTHON_BIN` 指向对应环境
 
 一键启动：
 ```bash
-scripts/oneclick/run_doudizhu_showdown.sh （3ai对战）
-scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
+scripts/oneclick/run_doudizhu_showdown.sh       # 3ai对战
+scripts/oneclick/run_doudizhu_showdown_human.sh # human模式
 ```
 
 启动后脚本会输出：
@@ -27,7 +27,8 @@ scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
 - `AUTO_OPEN=0`：禁用自动打开浏览器
 - `FRONTEND_DIR`：前端目录（默认 `frontend/rlcard-showdown`）
 
-## 脚本流程说明（对应 `scripts/oneclick/run_doudizhu_showdown.sh`）
+## 脚本流程说明
+(对应 `scripts/oneclick/run_doudizhu_showdown.sh`)
 
 脚本主要流程如下：
 1. 解析项目根目录与 Python 路径，读取默认配置 `config/custom/doudizhu_litellm_local.yaml`。
@@ -48,13 +49,12 @@ scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
 runs/<run_id>/replays/doudizhu_replay_<sample_id>.json
 ```
 
-回放由 replay server 提供，前端通过 `replay_url` 参数读取。  
+回放由 replay server 提供，前端通过 `replay_url` 参数读取。
 如果需要定位回放文件，可从上面的路径直接读取 JSON。
 
 ## GameResult 与结果流转
 
-GAGE 的 arena 步骤会在一局结束后产出 `GameResult`，并写入样本的
-`predict_result`，供下游（judge/auto_eval）读取：
+GAGE 的 arena 步骤会在一局结束后产出 `GameResult`，并写入样本的 `predict_result`，供下游（judge/auto_eval）读取：
 - 写入位置：`src/gage_eval/evaluation/task_planner.py` → `append_predict_result()`
 - 结果格式来源：`src/gage_eval/role/adapters/arena.py::_format_result()`
 
@@ -91,7 +91,7 @@ GAGE 的 arena 步骤会在一局结束后产出 `GameResult`，并写入样本�
 
 ## 运行逻辑（关键流程）
 
-### 1) 数据集输入（system prompt）
+### 1) 数据集输入 (system prompt)
 
 位置：`tests/data/Test_Doudizhu_LiteLLM.jsonl`
 
@@ -181,7 +181,7 @@ Instructions:
 
 ### 1) 系统提示词（性格/风格的主要入口）
 
-当前版本的 `doudizhu_arena_v1` 不会读取 `ai_persona` 字段，  
+当前版本的 `doudizhu_arena_v1` 不会读取 `ai_persona` 字段，
 AI 的“性格/风格”主要通过数据集里的 system prompt 控制。
 
 编辑文件：
@@ -259,8 +259,8 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 ## 常见问题
 
-- 浏览器打不开页面（ERR_CONNECTION_REFUSED）  
+- 浏览器打不开页面 (ERR_CONNECTION_REFUSED)
   通常是前端没启动成功或端口被占用。请确认脚本输出的端口号并打开对应 URL。
 
-- Node 报 `ERR_OSSL_EVP_UNSUPPORTED`  
+- Node 报 `ERR_OSSL_EVP_UNSUPPORTED`
   使用 `NODE_OPTIONS=--openssl-legacy-provider`（脚本已自动加上）。

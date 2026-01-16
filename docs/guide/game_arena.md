@@ -180,6 +180,9 @@ Demo configs:
 - `config/custom/tictactoe_litellm_local.yaml`
 - `config/custom/tictactoe_human_vs_llm.yaml`
 
+run command:
+
+python run.py -c config/custom/gomoku_human_vs_llm.yaml
 Related tests:
 
 - `tests/unit/core/arena/test_gomoku_environment.py`
