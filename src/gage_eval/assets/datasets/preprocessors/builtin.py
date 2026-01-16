@@ -6,6 +6,7 @@ from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
 from gage_eval.assets.datasets.preprocessors.default_preprocessor import DefaultPreprocessor
 from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import MultiChoicePreprocessor as NewMultiChoice
 from gage_eval.assets.datasets.preprocessors.docvqa_preprocessor import DocVQAPreprocessor as NewDocVQA
+from gage_eval.assets.datasets.preprocessors.omnidoc_preprocessor import OmniDocPreprocessor as NewOmniDoc
 from gage_eval.assets.datasets.preprocessors.mathvista_preprocessor import (
     MathVistaPreprocessor as NewMathVista,
     MathVistaStructOnlyPreprocessor as NewMathVistaStructOnly,
@@ -72,6 +73,14 @@ class MultiChoicePreprocessor(NewMultiChoice):
 class DocVQAPreprocessor(NewDocVQA):
     pass
 
+@registry.asset(
+    "dataset_preprocessors",
+    "omnidoc_image_standardizer",
+    desc="OmniDocBench multimodal preprocessor (new)",
+    tags=("prompt", "vision", "omnidoc"),
+)
+class OmniDocPreprocessor(NewOmniDoc):
+    pass
 
 @registry.asset(
     "dataset_preprocessors",

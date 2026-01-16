@@ -216,3 +216,4 @@ scripts/oneclick/.env.example
 __pycache__/
 *.pyc
 *.pyo
+run.sh
