@@ -9,6 +9,12 @@
 
 **English** · [中文](README_zh.md)
 
+<div align="center">
+
+📧 **Contact:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
+
+</div>
+
 [Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Agent Eval](docs/guide/agent_evaluation.md) · [Benchmark](docs/guide/benchmark.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
 
 </div>
