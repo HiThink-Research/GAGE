@@ -1,0 +1,87 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: math500_vllm_async
+  description: 使用 vllm_backend 运行 MATH-500 测试集评测。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+# prompts:
+#   - prompt_id: math500_infer_prompt
+#     renderer: jinja
+#     params:
+#       system_prompt: >
+#         你是一位擅长数学问题的 AI 助手。请仔细阅读题目，给出详细的解答步骤，最后输出最终答案。
+#       instruction: >
+#         请按照以下格式输出：
+#         1. 先给出详细的解题步骤
+#         2. 最后一行输出最终答案（使用 LaTeX 格式，如 \boxed{答案}）
+#     template: |
+#       {{ system_prompt }}
+#
+#       ### 题目：
+#       {{ sample.messages[0].content[0].text }}
+#
+#       {{ instruction }}
+#
+#       ### 解答：
+
+datasets:
+  - dataset_id: math500_test
+    hub: huggingface
+    hub_params:
+      hub_id: HuggingFaceH4/MATH-500
+      split: test
+    loader: hf_hub
+    params:
+      streaming: false
+      preprocess: math500
+      preprocess_kwargs:
+        # system_prompt: "你是一位擅长数学问题的 AI 助手。"
+        # instruction: "请给出详细的解答步骤，最后输出最终答案（使用 LaTeX 格式）。"
+
+backends:
+  - backend_id: math500_vllm_backend
+    type: vllm
+    config:
+      model_path: ${MATH500_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${MATH500_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.75
+      enforce_eager: false
+      async_max_concurrency: 32
+      output_type: text
+
+role_adapters:
+  - adapter_id: dut_math500_vllm_qwen
+    role_type: dut_model
+    backend_id: math500_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: math500_acc
+    implementation: math500_accuracy
+
+tasks:
+  - task_id: math500_test_eval
+    dataset_id: math500_test
+    max_samples: 5
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/math500_vllm_events.jsonl
+

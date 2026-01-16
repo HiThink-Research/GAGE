@@ -43,6 +43,12 @@ from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLECo
 # benchmark MMLU-Pro
 from gage_eval.assets.datasets.preprocessors.mmlu_pro.mmlu_pro_converter import MMLUProConverter
 
+# benchmark Math500
+from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
+
+# benchmark MME
+from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -222,4 +228,24 @@ class HLEPreprocessor(HLEConverter):
     tags=("prompt", "mmlu-pro"),
 )
 class MMLUPreprocessor(MMLUProConverter):
+    pass
+
+# benchmark Math500
+@registry.asset(
+    "dataset_preprocessors",
+    "math500_preprocessor",
+    desc="MATH-500 dataset preprocessing logic",
+    tags=("math", "math500", "latex"),
+)
+class Math500PreprocessorProvider(Math500Preprocessor):
+    pass
+
+# benchmark MME
+@registry.asset(
+    "dataset_preprocessors",
+    "mme_preprocessor",
+    desc="MME dataset preprocessing logic",
+    tags=("vision", "mme", "multi-modal"),
+)
+class MMEPreprocessorProvider(MMEPreprocessor):
     pass
