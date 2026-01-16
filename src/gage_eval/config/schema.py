@@ -26,6 +26,9 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     datasets = _ensure_list(data.get("datasets"), "datasets", errors)
     models = _ensure_list(data.get("models"), "models", errors)
     backends = _ensure_list(data.get("backends"), "backends", errors)
+    agent_backends = _ensure_list(data.get("agent_backends"), "agent_backends", errors)
+    sandbox_profiles = _ensure_list(data.get("sandbox_profiles"), "sandbox_profiles", errors)
+    mcp_clients = _ensure_list(data.get("mcp_clients"), "mcp_clients", errors)
     prompts = _ensure_list(data.get("prompts"), "prompts", errors)
     role_adapters = _ensure_list(data.get("role_adapters"), "role_adapters", errors)
     metrics = _ensure_list(data.get("metrics"), "metrics", errors)
@@ -48,11 +51,15 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     dataset_ids = _ensure_unique(datasets, "dataset_id", "dataset", errors)
     model_ids = _ensure_unique(models, "model_id", "model", errors)
     backend_ids = _ensure_unique(backends, "backend_id", "backend", errors)
+    agent_backend_ids = _ensure_unique(agent_backends, "agent_backend_id", "agent backend", errors)
+    _normalize_sandbox_profile_ids(sandbox_profiles, errors)
+    _ensure_unique(sandbox_profiles, "sandbox_id", "sandbox profile", errors)
+    mcp_client_ids = _ensure_unique(mcp_clients, "mcp_client_id", "mcp client", errors)
     prompt_ids = _ensure_unique(prompts, "prompt_id", "prompt", errors)
     adapter_ids = _ensure_unique(role_adapters, "adapter_id", "role adapter", errors)
     metric_ids = _ensure_unique(metrics, "metric_id", "metric", errors, allow_str=True)
 
-    _validate_role_bindings(role_adapters, backend_ids, prompt_ids, errors)
+    _validate_role_bindings(role_adapters, backend_ids, agent_backend_ids, prompt_ids, mcp_client_ids, errors)
     _validate_steps(custom, errors)
     _validate_tasks(
         tasks=tasks,
@@ -70,6 +77,9 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["datasets"] = datasets
     data["models"] = models
     data["backends"] = backends
+    data["agent_backends"] = agent_backends
+    data["sandbox_profiles"] = sandbox_profiles
+    data["mcp_clients"] = mcp_clients
     data["prompts"] = prompts
     data["role_adapters"] = role_adapters
     data["metrics"] = metrics
@@ -111,18 +121,40 @@ def _ensure_unique(items: List[dict], key: str, label: str, errors: List[str], a
     return ids
 
 
+def _normalize_sandbox_profile_ids(items: List[dict], errors: List[str]) -> None:
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        sandbox_id = item.get("sandbox_id")
+        template_name = item.get("template_name")
+        if sandbox_id and template_name and sandbox_id != template_name:
+            errors.append(
+                f"sandbox profile sandbox_id '{sandbox_id}' does not match template_name '{template_name}'"
+            )
+            continue
+        if not sandbox_id and template_name:
+            item["sandbox_id"] = template_name
+
+
 def _validate_role_bindings(
     role_adapters: List[dict],
     backend_ids: List[str],
+    agent_backend_ids: List[str],
     prompt_ids: List[str],
+    mcp_client_ids: List[str],
     errors: List[str],
 ) -> None:
     backend_set = set(backend_ids)
+    agent_backend_set = set(agent_backend_ids)
     prompt_set = set(prompt_ids)
+    mcp_client_set = set(mcp_client_ids)
     for adapter in role_adapters:
         backend_id = adapter.get("backend_id")
         inline_backend = adapter.get("backend")
+        agent_backend_id = adapter.get("agent_backend_id")
+        inline_agent_backend = adapter.get("agent_backend")
         prompt_id = adapter.get("prompt_id")
+        mcp_client_id = adapter.get("mcp_client_id")
         adapter_id = adapter.get("adapter_id", "<unknown>")
         if backend_id and backend_id not in backend_set:
             errors.append(
@@ -137,9 +169,26 @@ def _validate_role_bindings(
                 errors.append(
                     f"role adapter '{adapter_id}' inline backend missing required field 'type'"
                 )
+        if agent_backend_id and agent_backend_id not in agent_backend_set:
+            errors.append(
+                f"role adapter '{adapter_id}' references unknown agent backend '{agent_backend_id}'"
+            )
+        if inline_agent_backend is not None:
+            if not isinstance(inline_agent_backend, dict):
+                errors.append(
+                    f"role adapter '{adapter_id}' inline agent backend must be a mapping with 'type'/'config'"
+                )
+            elif not inline_agent_backend.get("type"):
+                errors.append(
+                    f"role adapter '{adapter_id}' inline agent backend missing required field 'type'"
+                )
         if prompt_id and prompt_id not in prompt_set:
             errors.append(
                 f"role adapter '{adapter_id}' references unknown prompt '{prompt_id}'"
+            )
+        if mcp_client_id and mcp_client_id not in mcp_client_set:
+            errors.append(
+                f"role adapter '{adapter_id}' references unknown mcp client '{mcp_client_id}'"
             )
 
 

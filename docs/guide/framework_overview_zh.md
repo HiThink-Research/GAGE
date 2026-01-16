@@ -14,6 +14,7 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 - 示例配置：[`config/custom/`](../../config/custom/)、[`config/builtin_templates/`](../../config/builtin_templates/)、[`config/run_configs/`](../../config/run_configs/)
 - 扩展开发：[`support_cli_zh.md`](support_cli_zh.md)（support 模块指南，实验性，后续由 gage-client 取代）
 - Sample 契约：[`sample_zh.md`](sample_zh.md)（标准化 Sample 设计）
+- Agent 评测：[`agent_evaluation_zh.md`](agent_evaluation_zh.md)（AppWorld Agent 评测指南）
 - Game Arena：[`game_arena_zh.md`](game_arena_zh.md)（对战评测模块）
 
 ## 1. 项目概览
@@ -36,6 +37,7 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 | 高性能并发 | SampleLoop bounded buffer，支持 `prefetch_factor/max_inflight` 背压控制 | `src/gage_eval/evaluation/sample_loop.py` |
 | 统一产物 | `events.jsonl`, `samples.jsonl`, `summary.json` | `src/gage_eval/observability/trace.py`, `src/gage_eval/evaluation/cache.py`, `src/gage_eval/pipeline/steps/report.py` |
 | SWE-bench 扩展坞 | `context_provider` + `judge_extend` 将上下文与裁判解耦成可插拔实现 | `src/gage_eval/role/adapters/context_provider.py`, `src/gage_eval/role/adapters/judge_extend.py` |
+| Agent 评测 | DUTAgent + Toolchain + Sandbox 支撑工具型 Agent | `src/gage_eval/role/adapters/dut_agent.py`, `src/gage_eval/role/adapters/toolchain.py`, `src/gage_eval/sandbox/` |
 | Game Arena 对战模块 | 回合制棋类评测，支持 Human/LLM 对战与可视化交互 | `src/gage_eval/role/arena/`, `src/gage_eval/role/adapters/arena.py` |
 
 ### 1.3 整体执行流程
@@ -190,6 +192,34 @@ flowchart LR
 - `support`：注入规则说明与棋盘状态（例如 `context_provider`）。
 - `arena`：负责对局主循环，驱动 environment、players、parser，并在启用可视化时推送 UI；输出写入 `model_output` 与 `predict_result`。
 - `auto_eval`：基于 `model_output` 计算指标并写入缓存。
+
+#### 1.4.5 Agent 评测示例
+
+Agent 评测采用 `support -> inference -> judge -> auto_eval` 链路，由 `dut_agent` 驱动 AgentLoop，Toolchain 注入工具，Sandbox 隔离副作用执行。
+
+示例配置：`gage-eval-main/config/custom/appworld_official_jsonl.yaml`
+
+```mermaid
+flowchart LR
+  classDef fixed fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray: 4 2,color:#666
+  classDef step fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000
+  classDef role fill:#FFF8E1,stroke:#FF8F00,stroke-width:2px,color:#000
+  classDef impl fill:#E8F5E9,stroke:#2E7D32,stroke-width:1px,color:#000
+  classDef out fill:#E8F5E9,stroke:#2E7D32,stroke-width:1px,color:#000
+
+  Pre[Preprocess]:::fixed --> Sup[Support]:::step --> Inf[Inference]:::step --> Jdg[Judge]:::step --> AE[AutoEval]:::step --> Rep[Report]:::fixed
+
+  Sup -. adapter_id .-> Toolchain[Role Toolchain]:::role --> Tools[MCP Tools]:::impl
+  Inf -. adapter_id .-> Dut[Role DutAgent]:::role --> Loop[AgentLoop]:::impl --> Backend[AgentBackend]:::impl
+  Loop --> Sandbox[Sandbox]:::impl
+  Jdg -. adapter_id .-> JExt[Role JudgeExtend]:::role --> Eval[AppWorld Evaluate]:::impl
+
+  AE --> Cache[EvalCache]:::impl
+  Cache --> Rep
+
+  Cache --> Samp[samples jsonl]:::out
+  Rep --> Sum[summary json]:::out
+```
 
 ## 2. 快速开始
 
