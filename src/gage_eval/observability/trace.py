@@ -35,6 +35,11 @@ class ObservabilityTrace:
         logger.trace("Trace[{}] event={} sample={}", self.run_id, event, sample_id)
         self._recorder.record_event(event, payload, sample_id=sample_id)
 
+    def emit_tool_documentation(self, payload: Dict[str, Any], sample_id: Optional[str] = None) -> None:
+        """Emit tool documentation metrics for observability."""
+
+        self.emit("tool_documentation_built", payload, sample_id=sample_id)
+
     @contextmanager
     def use_sample(self, sample_id: Optional[str]):
         with self._recorder.use_sample(sample_id):

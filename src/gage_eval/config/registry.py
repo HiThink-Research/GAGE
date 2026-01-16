@@ -61,6 +61,9 @@ class ConfigRegistry:
         spec: RoleAdapterSpec,
         backends: Optional[Dict[str, Any]] = None,
         prompts: Optional[Dict[str, PromptTemplateAsset]] = None,
+        agent_backends: Optional[Dict[str, Any]] = None,
+        sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
+        mcp_clients: Optional[Dict[str, Any]] = None,
     ) -> Any:
         adapter_cls = self._resolve_role_class(spec)
         adapter_kwargs = dict(spec.params)
@@ -91,6 +94,25 @@ class ConfigRegistry:
                 )
             prompt_renderer = prompts[spec.prompt_id].instantiate(spec.prompt_params)
             adapter_kwargs.setdefault("prompt_renderer", prompt_renderer)
+        agent_backend_obj: Any = None
+        if spec.agent_backend is not None:
+            agent_backend_obj = self._build_inline_agent_backend(spec.agent_backend)
+        elif spec.agent_backend_id:
+            if not agent_backends or spec.agent_backend_id not in agent_backends:
+                raise KeyError(
+                    f"Agent backend '{spec.agent_backend_id}' referenced by adapter '{spec.adapter_id}' is not defined"
+                )
+            agent_backend_obj = agent_backends[spec.agent_backend_id]
+        if agent_backend_obj is not None:
+            adapter_kwargs.setdefault("agent_backend", agent_backend_obj)
+        if spec.mcp_client_id:
+            adapter_kwargs.setdefault("mcp_client_id", spec.mcp_client_id)
+            if mcp_clients and spec.mcp_client_id in mcp_clients:
+                adapter_kwargs.setdefault("mcp_client", mcp_clients[spec.mcp_client_id])
+        if spec.role_type == "dut_agent" and sandbox_profiles is not None:
+            adapter_kwargs.setdefault("sandbox_profiles", sandbox_profiles)
+        if spec.role_type == "dut_agent" and mcp_clients is not None:
+            adapter_kwargs.setdefault("mcp_clients", mcp_clients)
         adapter = adapter_cls(
             adapter_id=spec.adapter_id,
             role_type=spec.role_type,
@@ -123,12 +145,22 @@ class ConfigRegistry:
         config: PipelineConfig,
         backends: Optional[Dict[str, Any]] = None,
         prompts: Optional[Dict[str, PromptTemplateAsset]] = None,
+        agent_backends: Optional[Dict[str, Any]] = None,
+        sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
+        mcp_clients: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Instantiate all role adapters declared in the pipeline config."""
 
         instances: Dict[str, Any] = {}
         for spec in config.role_adapters:
-            instances[spec.adapter_id] = self.resolve_role_adapter(spec, backends=backends, prompts=prompts)
+            instances[spec.adapter_id] = self.resolve_role_adapter(
+                spec,
+                backends=backends,
+                prompts=prompts,
+                agent_backends=agent_backends,
+                sandbox_profiles=sandbox_profiles,
+                mcp_clients=mcp_clients,
+            )
         return instances
 
     def materialize_backends(self, config: PipelineConfig) -> Dict[str, Any]:
@@ -139,6 +171,55 @@ class ConfigRegistry:
         instances: Dict[str, Any] = {}
         for spec in config.backends:
             instances[spec.backend_id] = build_backend({"type": spec.type, "config": spec.config})
+        return instances
+
+    def materialize_agent_backends(
+        self,
+        config: PipelineConfig,
+        *,
+        backends: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Instantiate agent backend objects declared at the pipeline level."""
+
+        from gage_eval.role.agent.backends import build_agent_backend
+
+        instances: Dict[str, Any] = {}
+        for spec in config.agent_backends:
+            config_payload = dict(spec.config or {})
+            backend_id = spec.backend_id or config_payload.pop("backend_id", None)
+            if spec.backend_id:
+                config_payload.pop("backend_id", None)
+            if spec.type == "model_backend" and backend_id:
+                if not backends or backend_id not in backends:
+                    raise KeyError(
+                        f"Agent backend '{spec.agent_backend_id}' references unknown backend '{backend_id}'"
+                    )
+                config_payload["backend"] = backends[backend_id]
+            instances[spec.agent_backend_id] = build_agent_backend(
+                {"type": spec.type, "config": config_payload}
+            )
+        return instances
+
+    def materialize_sandbox_profiles(self, config: PipelineConfig) -> Dict[str, Dict[str, Any]]:
+        profiles: Dict[str, Dict[str, Any]] = {}
+        for spec in config.sandbox_profiles:
+            profiles[spec.sandbox_id] = spec.to_dict()
+        return profiles
+
+    def materialize_mcp_clients(self, config: PipelineConfig) -> Dict[str, Any]:
+        """Instantiate MCP clients declared at the pipeline level."""
+
+        instances: Dict[str, Any] = {}
+        for spec in config.mcp_clients:
+            client_cls = _resolve_mcp_client_class(spec.transport)
+            instances[spec.mcp_client_id] = client_cls(
+                mcp_client_id=spec.mcp_client_id,
+                transport=spec.transport,
+                endpoint=spec.endpoint,
+                timeout_s=spec.timeout_s,
+                allowlist=list(spec.allowlist or ()),
+                params=spec.params,
+            )
         return instances
 
     def materialize_prompts(self, config: PipelineConfig) -> Dict[str, PromptTemplateAsset]:
@@ -202,6 +283,26 @@ class ConfigRegistry:
         backend_payload.setdefault("config", backend_payload.get("config", {}) or {})
         return build_backend(backend_payload)
 
+    def _build_inline_agent_backend(self, spec: Dict[str, Any]) -> Any:
+        from gage_eval.role.agent.backends import build_agent_backend
+
+        backend_payload: Dict[str, Any] = dict(spec)
+        backend_type = backend_payload.get("type")
+        if not backend_type:
+            raise ValueError("Inline agent backend must declare field 'type'")
+        backend_payload.setdefault("config", backend_payload.get("config", {}) or {})
+        return build_agent_backend(backend_payload)
+
     # ------------------------------------------------------------------
     # Convenience utilities
     # ------------------------------------------------------------------
+
+
+def _resolve_mcp_client_class(transport: Optional[str]) -> Any:
+    if transport == "streamable_http":
+        from gage_eval.sandbox.integrations.appworld.mcp_client import AppWorldStreamableMcpClient
+
+        return AppWorldStreamableMcpClient
+    from gage_eval.mcp import McpClient
+
+    return McpClient

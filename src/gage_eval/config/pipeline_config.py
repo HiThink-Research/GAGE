@@ -30,6 +30,56 @@ class BackendSpec:
 
 
 @dataclass(frozen=True)
+class AgentBackendSpec:
+    """Describes a reusable agent backend instance."""
+
+    agent_backend_id: str
+    type: str
+    config: Dict[str, Any] = field(default_factory=dict)
+    backend_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SandboxProfileSpec:
+    """Describes a reusable sandbox profile template."""
+
+    sandbox_id: str
+    runtime: Optional[str] = None
+    image: Optional[str] = None
+    resources: Dict[str, Any] = field(default_factory=dict)
+    runtime_configs: Dict[str, Any] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = dict(self.extra)
+        payload.update(
+            {
+                "sandbox_id": self.sandbox_id,
+                "runtime": self.runtime,
+                "image": self.image,
+                "resources": self.resources,
+                "runtime_configs": self.runtime_configs,
+            }
+        )
+        if self.params:
+            payload.update(self.params)
+        return {k: v for k, v in payload.items() if v is not None}
+
+
+@dataclass(frozen=True)
+class McpClientSpec:
+    """Describes an MCP client definition."""
+
+    mcp_client_id: str
+    transport: Optional[str] = None
+    endpoint: Optional[str] = None
+    timeout_s: Optional[int] = None
+    allowlist: Sequence[str] = field(default_factory=tuple)
+    params: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RoleAdapterSpec:
     """Declarative description of a role adapter.
 
@@ -51,6 +101,9 @@ class RoleAdapterSpec:
     params: Dict[str, Any] = field(default_factory=dict)
     backend_id: Optional[str] = None
     backend: Optional[Dict[str, Any]] = None
+    agent_backend_id: Optional[str] = None
+    agent_backend: Optional[Dict[str, Any]] = None
+    mcp_client_id: Optional[str] = None
     prompt_id: Optional[str] = None
     prompt_params: Dict[str, Any] = field(default_factory=dict)
 
@@ -170,6 +223,9 @@ class PipelineConfig:
     datasets: Sequence[DatasetSpec] = field(default_factory=tuple)
     models: Sequence[ModelSpec] = field(default_factory=tuple)
     backends: Sequence[BackendSpec] = field(default_factory=tuple)
+    agent_backends: Sequence[AgentBackendSpec] = field(default_factory=tuple)
+    sandbox_profiles: Sequence[SandboxProfileSpec] = field(default_factory=tuple)
+    mcp_clients: Sequence[McpClientSpec] = field(default_factory=tuple)
     prompts: Sequence[PromptTemplateSpec] = field(default_factory=tuple)
     role_adapters: Sequence[RoleAdapterSpec] = field(default_factory=tuple)
     metrics: Sequence[MetricSpec] = field(default_factory=tuple)
@@ -255,6 +311,52 @@ class PipelineConfig:
             for item in normalized.get("backends", [])
         )
 
+        agent_backends = tuple(
+            AgentBackendSpec(
+                agent_backend_id=item.get("agent_backend_id"),
+                type=item.get("type"),
+                config=item.get("config", {}),
+                backend_id=item.get("backend_id"),
+            )
+            for item in normalized.get("agent_backends", [])
+        )
+
+        sandbox_profiles = tuple(
+            SandboxProfileSpec(
+                sandbox_id=item.get("sandbox_id") or item.get("template_name"),
+                runtime=item.get("runtime"),
+                image=item.get("image"),
+                resources=item.get("resources") or {},
+                runtime_configs=item.get("runtime_configs") or {},
+                params=item.get("params") or {},
+                extra=_strip_known_keys(
+                    item,
+                    {
+                        "sandbox_id",
+                        "template_name",
+                        "runtime",
+                        "image",
+                        "resources",
+                        "runtime_configs",
+                        "params",
+                    },
+                ),
+            )
+            for item in normalized.get("sandbox_profiles", [])
+        )
+
+        mcp_clients = tuple(
+            McpClientSpec(
+                mcp_client_id=item.get("mcp_client_id"),
+                transport=item.get("transport"),
+                endpoint=item.get("endpoint"),
+                timeout_s=item.get("timeout_s"),
+                allowlist=tuple(item.get("allowlist", [])),
+                params=item.get("params") or {},
+            )
+            for item in normalized.get("mcp_clients", [])
+        )
+
         prompts = tuple(
             PromptTemplateSpec(
                 prompt_id=item.get("prompt_id"),
@@ -277,6 +379,9 @@ class PipelineConfig:
                 params=item.get("params") or {},
                 backend_id=item.get("backend_id"),
                 backend=dict(item.get("backend", {})) if item.get("backend") else None,
+                agent_backend_id=item.get("agent_backend_id"),
+                agent_backend=dict(item.get("agent_backend", {})) if item.get("agent_backend") else None,
+                mcp_client_id=item.get("mcp_client_id"),
                 prompt_id=item.get("prompt_id"),
                 prompt_params=item.get("prompt_params") or item.get("prompt_args", {}),
             )
@@ -320,6 +425,9 @@ class PipelineConfig:
             datasets=datasets,
             models=models,
             backends=backends,
+            agent_backends=agent_backends,
+            sandbox_profiles=sandbox_profiles,
+            mcp_clients=mcp_clients,
             prompts=prompts,
             role_adapters=role_adapters,
             metrics=metrics,
@@ -338,6 +446,10 @@ def _normalize_summary_generator_entry(entry: Any) -> str:
             raise ValueError(f"Summary generator entry missing name: {entry!r}")
         return str(name)
     raise ValueError(f"Unsupported summary generator entry: {entry!r}")
+
+
+def _strip_known_keys(item: Dict[str, Any], keys: set[str]) -> Dict[str, Any]:
+    return {k: v for k, v in item.items() if k not in keys}
 
 
 def _normalize_metric_entry(entry: Any) -> Dict[str, Any]:

@@ -1,0 +1,199 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+# Pipeline metadata used by reporting and run summaries.
+metadata:
+  name: appworld_official_jsonl
+  description: AppWorld official JSONL evaluation via MCP + judge_extend.
+
+# System prompt injected into the DUT agent.
+prompts:
+  - prompt_id: appworld_minimal_system
+    renderer: jinja_chat
+    template: |
+      You are an autonomous AI agent acting as a digital assistant for the user. Your goal is to solve tasks in the AppWorld environment using the provided tools.
+
+      # Strategy & Thinking
+      1. **Plan First**: Before taking action, briefly analyze the task and list the steps you need to take.
+      2. **Check Prerequisites**: Does this task need a date? Call `phone.get_current_date_and_time` first. Does it need a login? Check `supervisor` for credentials first.
+      3. **Loop for Data**: If you need to count items, search, or find a specific one, you MUST fetch ALL pages. Start at `page_index=0` and increment until you get an empty list `[]`. Do NOT assume you have all data from just page 0.
+
+      # Critical Rules
+      1. **Credentials**: All usernames and passwords are stored in the `supervisor` app. 
+         - Step 1: Call `supervisor.show_account_passwords` (or similar) to get credentials.
+         - Step 2: Call `<app>.login(username=..., password=...)` to get an `access_token`.
+         - Step 3: Use the app APIs.
+      2. **Meta-Tool Syntax**: 
+         - You use meta-tools like `call_spotify`, `call_amazon`.
+         - `endpoint` argument: MUST be JUST the name of the API (e.g., "search_songs"). NO '?' or query parameters.
+         - `params` argument: Dictionary containing all API arguments.
+         - **Correct**: `call_spotify(endpoint="search_songs", params={"query": "rock", "page_index": 0})`
+         - **Incorrect**: `call_spotify(endpoint="search_songs?query=rock")`
+      3. **No Guessing**: Never make up IDs, names, or dates. Look them up via tools.
+      4. **Final Answer**: When finished, call `supervisor.complete_task(answer=...)`. 
+         - Keep the answer minimal and strictly formatted (e.g., comma-separated list of strings, or a single number). No conversational filler.
+
+      # App-wise API Descriptions
+      {{ tool_documentation }}
+
+# JSONL dataset source exported from the AppWorld image.
+datasets:
+  - dataset_id: appworld_dev
+    loader: jsonl
+    params:
+      # Default subset is dev; update path + subset for train/test_normal/test_challenge.
+      path: local-datasets/appworld/dev.jsonl
+      # Missing hint shown when the JSONL file is not found.
+      missing_hint: "Run: gage-eval-main/docker/appworld/export_datasets.sh --image appworld-mcp:latest --output local-datasets/appworld"
+      # Normalize AppWorld records into standardized Sample objects.
+      preprocess: appworld_preprocessor
+      preprocess_kwargs:
+        # Keep subset aligned with the dataset file.
+        subset: dev
+        # Use full for train/dev; test subsets auto-downgrade to minimal.
+        ground_truth_mode: full
+      streaming: false
+
+backends:
+  - backend_id: gpt52_openai_http
+    type: openai_http
+    config:
+      # Use a stable OpenAI-compatible endpoint for the demo workflow.
+      base_url: https://api.openai.com/v1
+      model: gpt-5.2
+      require_api_key: true
+      max_retries: 6        
+
+agent_backends:
+  - agent_backend_id: agent_model_main
+    type: model_backend
+    backend_id: gpt52_openai_http
+    config:
+      # Force tool calls early so AppWorld actions are exercised in the demo.
+      force_tool_choice: first_turn
+
+sandbox_profiles:
+  - sandbox_id: appworld_local
+    # Docker-based AppWorld runtime profile.
+    runtime: docker
+    image: appworld-mcp:latest
+    resources:
+      cpu: 2
+      memory: 4g
+    runtime_configs:
+      # Startup health checks and port wiring for AppWorld services.
+      startup_timeout_s: 180
+      startup_interval_s: 0.5
+      ports: ["8000:8000", "9000:9000", "5001:5001"]
+      # Force amd64 for Apple Silicon hosts.
+      platform: linux/amd64
+      network_mode: bridge_host
+      # Explicit endpoints passed into AppWorld hooks and MCP clients.
+      env_endpoint: http://127.0.0.1:8000
+      apis_endpoint: http://127.0.0.1:9000
+      mcp_endpoint: http://127.0.0.1:5001
+      wait_for_http_endpoints:
+        - http://127.0.0.1:5001/mcp
+      # Start the container automatically for each task.
+      start_container: true
+      entrypoint: /usr/local/bin/appworld
+      env:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      command:
+        - serve
+        - multiple
+        - --environment
+        - "--port 8000"
+        - --apis
+        - "--port 9000"
+        - --mcp
+        - "http --port 5001 --output-type structured_data_only"
+        - --root
+        - /run
+
+mcp_clients:
+  - mcp_client_id: appworld_env
+    # Streamable MCP client for AppWorld tool discovery and tool calls.
+    transport: streamable_http
+    endpoint: http://127.0.0.1:5001
+    timeout_s: 180
+    params:
+      output_type: structured_data_only
+      session_retry_delay_s: 2
+      session_retry_timeout_s: 180
+
+metrics:
+  # For test_normal/test_challenge, prefer appworld_tgc; other fields are redacted unless judge redaction is disabled.
+  - metric_id: appworld_tgc
+    implementation: appworld_tgc
+  - metric_id: appworld_sgc
+    implementation: appworld_sgc
+  - metric_id: appworld_pass_count
+    implementation: appworld_pass_count
+  - metric_id: appworld_fail_count
+    implementation: appworld_fail_count
+  - metric_id: appworld_difficulty
+    implementation: appworld_difficulty
+    aggregation: categorical_count
+    params:
+      category_field: difficulty
+
+role_adapters:
+  - adapter_id: toolchain_main
+    role_type: toolchain
+    mcp_client_id: appworld_env
+    params:
+      # Enable Meta-Tools to avoid the 128-tool limit.
+      meta_tool_mode: true
+      # Inject tool documentation into the system prompt.
+      tool_doc_enabled: true
+      # "text" includes parameter signatures; switch to "app_kv" for app_name: endpoint: description.
+      tool_doc_format: text
+
+  - adapter_id: dut_agent_main
+    role_type: dut_agent
+    agent_backend_id: agent_model_main
+    prompt_id: appworld_minimal_system
+    sandbox:
+      sandbox_id: appworld_local
+      # Create an isolated container per task.
+      lifecycle: per_task
+    params:
+      # Safety net for runaway tool loops.
+      max_turns: 50
+      pre_hooks:
+        # Initialize AppWorld task state before the agent starts.
+        - type: appworld_initialize
+      post_hooks:
+        # Persist AppWorld task outputs after the agent finishes.
+        - type: appworld_save
+
+  - adapter_id: appworld_judge
+    role_type: judge_extend
+    params:
+      implementation: appworld_evaluate
+      implementation_params:
+        # AppWorld data root inside the container.
+        appworld_root: /run
+        # Export container outputs to runs/<run_id>/appworld_artifacts.
+        export_outputs: true
+
+tasks:
+  - task_id: appworld_dev_eval
+    dataset_id: appworld_dev
+    steps:
+      - step: support
+        adapter_id: toolchain_main
+      - step: inference
+        adapter_id: dut_agent_main
+      - step: judge
+        adapter_id: appworld_judge
+      - step: auto_eval
+    # Keep concurrency low for deterministic AppWorld env usage.
+    concurrency: 1
+    # Smoke-test size; remove or raise for full runs.
+    max_samples: 5
+    reporting:
+      sinks:
+        - type: console

@@ -10,6 +10,7 @@ from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.sample_envelope import append_predict_result, update_eval_result
+from gage_eval.sandbox.provider import SandboxProvider
 
 if TYPE_CHECKING:  # pragma: no cover
     from gage_eval.evaluation.task_plan import TaskPlanSpec
@@ -31,7 +32,14 @@ class TaskPlan:
     auto_eval_enabled: bool = False
     steps: Sequence[Any] = field(default_factory=tuple)
 
-    def create_context(self, sample: dict, trace: ObservabilityTrace, role_manager):
+    def create_context(
+        self,
+        sample: dict,
+        trace: ObservabilityTrace,
+        role_manager,
+        *,
+        sandbox_provider: Optional[SandboxProvider] = None,
+    ):
         from gage_eval.pipeline.steps.support import SupportStep
         from gage_eval.pipeline.steps.inference import InferenceStep
         from gage_eval.pipeline.steps.arena import ArenaStep
@@ -52,6 +60,7 @@ class TaskPlan:
             role_manager,
             metadata=self.metadata,
             auto_eval_enabled=self.auto_eval_enabled,
+            sandbox_provider=sandbox_provider,
         )
 
 
@@ -189,6 +198,7 @@ class StepExecutionContext:
         role_manager,
         metadata: Optional[Dict[str, Any]] = None,
         auto_eval_enabled: bool = False,
+        sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
         self.sample = sample
         self.support = support
@@ -200,6 +210,7 @@ class StepExecutionContext:
         self.trace = trace
         self.role_manager = role_manager
         self.metadata = metadata or {}
+        self.sandbox_provider = sandbox_provider
         self._model_output: Optional[dict] = None
         self._judge_output: Optional[dict] = None
         self.sample.setdefault("predict_result", self.sample.get("predict_result") or [])
@@ -208,28 +219,49 @@ class StepExecutionContext:
     def execute_support(self) -> None:
         support_steps = getattr(self.support, "_steps", ())
         logger.trace("Executing support step with {} entries", len(support_steps))
-        self.support.execute(self.sample, self.role_manager, self.trace)
+        self.support.execute(self.sample, self.role_manager, self.trace, sandbox_provider=self.sandbox_provider)
 
     def execute_support_step(self, step) -> None:
         logger.trace("Executing support entry adapter={}", step.get("adapter_id") if hasattr(step, "get") else None)
         if hasattr(self.support, "execute_single"):
-            self.support.execute_single(step, self.sample, self.role_manager, self.trace)
+            self.support.execute_single(
+                step,
+                self.sample,
+                self.role_manager,
+                self.trace,
+                sandbox_provider=self.sandbox_provider,
+            )
         else:
-            self.support.execute(self.sample, self.role_manager, self.trace)
+            self.support.execute(self.sample, self.role_manager, self.trace, sandbox_provider=self.sandbox_provider)
 
     def execute_inference(self) -> None:
         logger.trace("Executing inference step adapter={}", getattr(self.inference, "_adapter_id", None))
-        self._model_output = self.inference.execute(self.sample, self.role_manager, self.trace)
+        self._model_output = self.inference.execute(
+            self.sample,
+            self.role_manager,
+            self.trace,
+            sandbox_provider=self.sandbox_provider,
+        )
         append_predict_result(self.sample, self._model_output)
 
     def execute_arena(self) -> None:
         logger.trace("Executing arena step adapter={}", getattr(self.arena, "_adapter_id", None))
-        self._model_output = self.arena.execute(self.sample, self.role_manager, self.trace)
+        self._model_output = self.arena.execute(
+            self.sample,
+            self.role_manager,
+            self.trace,
+            sandbox_provider=self.sandbox_provider,
+        )
         append_predict_result(self.sample, self._model_output)
 
     def execute_judge(self) -> None:
         logger.trace("Executing judge step adapter={}", getattr(self.judge, "_adapter_id", None))
-        payload = {"sample": self.sample, "model_output": self._model_output or {}, "trace": self.trace}
+        payload = {
+            "sample": self.sample,
+            "model_output": self._model_output or {},
+            "trace": self.trace,
+            "sandbox_provider": self.sandbox_provider,
+        }
         self._judge_output = self.judge.execute(payload, self.role_manager, self.trace)
         update_eval_result(self.sample, self._judge_output)
 
