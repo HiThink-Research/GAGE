@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional, Callable, Literal, List, NamedTuple
+
+import random
+import string
+import textwrap
 
 from loguru import logger
 
@@ -187,7 +191,24 @@ def get_first_reference(sample_dict):
         logger.warning(f'[warning]{e}')
         return None
 
+def strip_punctuation(s: str) -> str:
+    return s.strip(string.whitespace + string.punctuation)
+
+def strip_numeric_punctuation(s: str) -> str:
+    # strip $, €, £, and ,
+    # *,_ to string formatting characters sometimes added by LLMs
+    stripped = re.sub(r"[$,£,€,*,_]", "", s)
+
+    # strip . if it's followed by a space, the end of the string,
+    # or a non-digit character
+    stripped = re.sub(r"\.(?=\s|$|\D)", "", stripped)
+    return stripped
+
+
+
 __all__ = [
+    "strip_punctuation",
+    "strip_numeric_punctuation",
     "get_text_content_of_first_predict_result",
     "get_sample_label",
     "get_sample_options",
