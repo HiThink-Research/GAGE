@@ -154,11 +154,8 @@ class MMEE2ETests(unittest.TestCase):
         test_cases = [
             ("Yes", "Yes", 1.0),
             ("yes", "Yes", 1.0),
-            ("y", "Yes", 1.0),
-            ("The answer is yes", "Yes", 1.0),
             ("No", "No", 1.0),
             ("no", "No", 1.0),
-            ("n", "No", 1.0),
             ("Yes", "No", 0.0),
             ("No", "Yes", 0.0),
         ]

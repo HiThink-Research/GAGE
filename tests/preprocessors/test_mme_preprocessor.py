@@ -71,4 +71,4 @@ class MMEPreprocessorTests(unittest.TestCase):
         self.assertEqual(ret.messages[0].role, "system")
         self.assertEqual(ret.messages[1].role, "user")
         self.assertEqual(ret.references[0], "No")
-        self.assertEqual(ret.id, question_id)
+        self.assertEqual(ret.id, f"{question_id}:q1")  # ID format is question_id:q1

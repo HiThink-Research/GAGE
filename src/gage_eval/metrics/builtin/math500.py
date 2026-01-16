@@ -72,10 +72,12 @@ def _extract_answer_from_text(text: str) -> Optional[str]:
     
     Tries multiple strategies:
     1. Extract from "the answer is ..." phrases
-    2. Extract last LaTeX math expression \(...\) or \[...\] or \left(...\right)
-    3. Extract content after equals sign in coordinate context: (r, θ) = (3, 0)
-    4. Extract content after equals sign in math context: = \frac{1}{2}
-    5. Extract last line if it contains math-like content
+    2. Extract \left(...\right) expressions (handles nested parentheses)
+    3. Extract last LaTeX math expression \(...\) or \[...\] or \left(...\right)
+    4. Extract content after equals sign in coordinate context: (r, θ) = (3, 0)
+    5. Extract content after equals sign in math context: = \frac{1}{2}
+    6. If text is a pure LaTeX expression, return as-is
+    7. Extract last line if it contains math-like content
     """
     if not text:
         return None
@@ -85,14 +87,34 @@ def _extract_answer_from_text(text: str) -> Optional[str]:
         c = re.sub(r'[\.\,\;\:]+$', '', c.strip())
         return c if c and len(c) < 500 else None
     
-    # Strategy 1: Coordinate pattern
+    # Strategy 1: Extract \left(...\right) with balanced parentheses
+    # Find all \left( and \right) pairs
+    left_pattern = r'\\left\s*\('
+    right_pattern = r'\\right\)'
+    left_matches = list(re.finditer(left_pattern, text, re.IGNORECASE))
+    right_matches = list(re.finditer(right_pattern, text, re.IGNORECASE))
+    
+    if left_matches and right_matches:
+        # Find the last matching pair
+        for left_match in reversed(left_matches):
+            left_end = left_match.end()
+            for right_match in reversed(right_matches):
+                if right_match.start() > left_end:
+                    # Extract content between \left( and \right)
+                    content = text[left_end:right_match.start()].strip()
+                    candidate = _clean_candidate(content)
+                    if candidate:
+                        # Return the full expression including \left( and \right)
+                        return text[left_match.start():right_match.end()].strip()
+    
+    # Strategy 2: Coordinate pattern
     coord_match = _COORDINATE_PATTERN.search(text)
     if coord_match:
         candidate = _clean_candidate(coord_match.group(1))
         if candidate:
             return candidate
     
-    # Strategy 2: Answer phrases
+    # Strategy 3: Answer phrases
     answer_matches = _ANSWER_PHRASE_PATTERN.findall(text)
     if answer_matches:
         candidate = _clean_candidate(re.sub(r"^(?:is|are|equals?|=\s*)", "", 
@@ -100,17 +122,24 @@ def _extract_answer_from_text(text: str) -> Optional[str]:
         if candidate:
             return candidate
     
-    # Strategy 3: LaTeX math expressions
+    # Strategy 4: LaTeX math expressions
     latex_matches = _LATEX_MATH_PATTERN.findall(text)
     if latex_matches:
         candidate = _clean_candidate(latex_matches[-1])
         if candidate:
             return candidate
     
-    # Strategy 4: Equals pattern
+    # Strategy 5: Equals pattern
     equals_matches = _EQUALS_PATTERN.findall(text)
     if equals_matches:
         candidate = _clean_candidate(equals_matches[-1])
+        if candidate:
+            return candidate
+    
+    # Strategy 6: If text is a pure LaTeX expression (starts with \ and contains LaTeX commands)
+    text_stripped = text.strip()
+    if text_stripped.startswith('\\') and any(cmd in text_stripped for cmd in ['\\left', '\\frac', '\\boxed', '\\sqrt', '\\pi', '\\alpha', '\\beta']):
+        candidate = _clean_candidate(text_stripped)
         if candidate:
             return candidate
     

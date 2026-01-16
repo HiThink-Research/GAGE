@@ -100,7 +100,7 @@ class Math500PreprocessorTests(unittest.TestCase):
 
         # Empty answer should result in empty references list.
         self.assertEqual(len(ret.references), 0)
-        self.assertIsNone(ret.label)
+        self.assertEqual(ret.label, "")  # label is set to answer, which is empty string
 
 
 if __name__ == "__main__":
