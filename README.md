@@ -9,7 +9,7 @@
 
 **English** · [中文](README_zh.md)
 
-[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Agent Eval](docs/guide/agent_evaluation.md) · [Benchmark](docs/guide/benchmark.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
 
 </div>
 
@@ -95,11 +95,12 @@ runs/<run_id>/
 
 | Scenario | Config Example | Description |
 | :--- | :--- | :--- |
-| **Basic QA** | `config/custom/piqa_qwen3.yaml` | Text multiple-choice (PIQA) |
+| **Game Arena** | `config/custom/doudizhu_human_vs_llm.yaml` | Doudizhu Human vs LLM match |
+| **Agent Evaluation** | `config/custom/appworld_official_jsonl.yaml` | Use Appworld Sandbox |
+| **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (Requires Docker, experimental) |
+| **Text** | `config/custom/aime2024_chat.yaml` | Related: AIME 2024, AIME 2025, GPQA, Math500 |
+| **Multimodal** | `config/custom/mathvista_vllm_async_chat.yaml` | Related: MME, HLE, MathVista |
 | **LLM Judge** | `config/custom/single_task_local_judge_qwen.yaml` | Use local LLM for grading |
-| **Game Arena** | `config/custom/gomoku_human_vs_llm.yaml` | Gomoku Human vs LLM match |
-| **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (requires Docker, experimental) |
-
 
 ## 🗺️ Roadmap
 
