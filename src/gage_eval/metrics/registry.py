@@ -32,6 +32,7 @@ class MetricRegistry:
             MeanAggregator,
             WeightedMeanAggregator,
             CategoricalCountAggregator,
+            OmniDocLazyCalcAggregator,
         )
 
         self._aggregators: Dict[str, AggregatorFactory] = {}
@@ -39,7 +40,8 @@ class MetricRegistry:
         self.register_aggregator("weighted_mean", lambda spec: WeightedMeanAggregator(spec))
         self.register_aggregator("identity", lambda spec: IdentityAggregator(spec))
         self.register_aggregator("categorical_count", lambda spec: CategoricalCountAggregator(spec))
-
+        self.register_aggregator("omnidoclazycalc", lambda spec: OmniDocLazyCalcAggregator(spec))
+        
     # ------------------------------------------------------------------ #
     # Registration API
     # ------------------------------------------------------------------ #

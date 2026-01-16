@@ -7,6 +7,7 @@ from gage_eval.metrics.builtin.gomoku import (
 )
 from gage_eval.metrics.builtin.multi_choice import MultiChoiceAccuracyMetric
 from gage_eval.metrics.builtin.docvqa_anls import DocVQAANLSMetric
+from gage_eval.metrics.builtin.ominidoc_all_metric import OmniDocBenchMetric
 from gage_eval.metrics.builtin.mmmu import MMMUAccuracyMetric
 from gage_eval.metrics.builtin.likelihood import LikelihoodMetric
 from gage_eval.metrics.builtin.ranking import RankingMetric
@@ -38,4 +39,5 @@ __all__ = [
     "MathVistaAccuracyMetric",
     "LikelihoodMetric",
     "RankingMetric",
+    "OmniDocBenchMetric",
 ]

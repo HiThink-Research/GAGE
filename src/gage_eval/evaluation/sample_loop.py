@@ -117,7 +117,6 @@ class SampleLoop:
             daemon=True,
         )
         producer.start()
-
         if ff_mode:
             self._run_fire_and_forget(
                 sample_queue,
