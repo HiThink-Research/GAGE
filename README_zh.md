@@ -14,6 +14,19 @@
 
 **GAGE** 是面向大语言模型、多模态（全模态、机器人）模型、音频模型与扩散模型的统一可扩展评测框架。它是一套高性能评测引擎，强调极致执行效率、可扩展性与灵活性，为 AI 模型评测、Agent 基准与 Game Arena 对战评测提供统一底座。
 
+## 🎮 Game Arena 
+
+<table width="100%">
+  <tr>
+    <td align="center" width="40%">
+      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="max-width: 100%;">
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="max-width: 100%;">
+    </td>
+  </tr>
+</table>
+
 ## ✨ 为什么选择 GAGE？
 
 - 🚀 **极速评测引擎**：以性能为先，充分利用 GPU 与 CPU 资源，从单机测试到百万样本、多集群评测都能平滑扩展。
@@ -83,22 +96,6 @@ runs/<run_id>/
 | **LLM 裁判** | `config/custom/single_task_local_judge_qwen.yaml` | 使用本地 LLM 进行打分 |
 | **Game Arena** | `config/custom/gomoku_human_vs_llm.yaml` | 五子棋 Human vs LLM 对战 |
 | **代码能力** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (需 Docker 环境，实验性) |
-
-## 🎮 Game Arena 展示
-
-<table width="100%">
-  <tr>
-    <td align="center" width="40%">
-      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="max-width:100%;">
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="max-width: 100%;">
-    </td>
-  </tr>
-</table>
-
-
-
 
 ## 🗺️ 近期计划
 
