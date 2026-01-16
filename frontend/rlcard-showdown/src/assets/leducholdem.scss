@@ -1,0 +1,199 @@
+@import "cards.css";
+.leduc-holdem-wrapper {
+    width: 100%;
+    height: 100%;
+    //background-color: #C3CDFF;
+    background-image: url("./images/gameboard.png");
+    background-repeat: no-repeat;
+    background-size: 100% 132%;
+    background-position: bottom;
+    position: relative;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+
+    .played-card-area {
+        font-size: 12px;
+        width: 40%;
+        margin-left: 65%;
+        position: relative;
+        display: flex;
+        justify-content: center;
+
+        .timer.fade-in {
+            visibility: hidden;
+            opacity: 0;
+        }
+
+        .timer.fade-out {
+            visibility: hidden;
+            transition: visibility 0.1s, opacity 0.05s;
+            opacity: 0;
+        }
+
+        .timer {
+            visibility: visible;
+            transition: visibility 0s, opacity 0.2s, transform 0.3s;
+            opacity: 1;
+            width: 51px;
+            height: 60px;
+            .timer-text {
+                color: #303133;
+                margin-top: 5px;
+                font-size: 23px;
+                font-weight: bold;
+                text-shadow: 0 2px 2px #909399;
+                line-height: 55px;
+            }
+            text-align: center;
+            background-image: url("./images/timer.png");
+            background-repeat: no-repeat;
+            background-size: 100% 100%;
+        }
+
+        .non-card {
+            display: table;
+            width: 80px;
+            height: 60px;
+            .action-text {
+                text-transform:uppercase;
+                display: table-cell;
+                vertical-align: middle;
+                text-align: center;
+                font-size: 23px;
+                font-weight: bold;
+                text-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                color: #F2F6FC;
+            }
+        }
+    }
+
+    .player-hand-placeholder {
+        font-size: 16px;
+        display: table;
+
+        span {
+            display: table-cell;
+            vertical-align: middle;
+            text-align: center;
+        }
+    }
+
+    .player-info {
+        font-size: 16px;
+        width: 130px;
+        height: 130px;
+        div {
+            text-align: center;
+        }
+        span {
+            white-space: pre;
+            text-align: center;
+        }
+        .bet-value {
+            color: whitesmoke;
+            position: relative;
+            text-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+            top: -120px;
+            left: 120px;
+            font-weight: bold;
+        }
+        .token-container{
+            position: relative;
+            top: -115px;
+            left: 120px;
+            width: 120px;
+            height: 80px;
+            display: flex;
+            flex-direction: row;
+            .pile-placeholder{
+                width: 24px;
+                margin-top: 0;
+                .token-img {
+                    box-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                    -moz-box-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                    -webkit-box-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                    -o-box-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                    border-radius: 15px;
+                }
+            }
+            div {
+                position: relative;
+                margin-top: -15px;
+            }
+            .pile-placeholder > :first-child { margin-top: 0 !important;}
+        }
+    }
+
+    .player-main-area {
+        background-color: initial;
+        width: 300px;
+        height: 130px;
+        position: relative;
+
+        .player-hand {
+            position: absolute;
+            top: 15px;
+            left: 65px;
+            padding-left: 20px;
+            margin-left: 130px;
+            width: 75px;
+            height: 110px;
+        }
+
+        .player-hand-placeholder {
+            width: 150px;
+            height: 130px;
+            position: absolute;
+            top: 0;
+            padding-left: 20px;
+            margin-left: 130px;
+        }
+    }
+
+    #top-player {
+        position: absolute;
+        top: 10px;
+        left: 40%;
+        margin-left: -190px;
+    }
+
+    #bottom-player {
+        position: absolute;
+        bottom: 10px;
+        left: 40%;
+        margin-left: -190px;
+    }
+
+    #public-card-area {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        margin-top: -75px;
+        width: 130px;
+        height: 150px;
+        display: table;
+
+        .info-area {
+            display: table-cell;
+            vertical-align: middle;
+            text-align: center;
+            span.round-number {
+                font-size: 20px;
+                font-weight: bold;
+                text-shadow: 0 2px 2px rgba(0, 0, 0, 0.87);
+                color: #F2F6FC;
+            }
+        }
+        .playingCards {
+            transform: translate(3px, 10px);
+        }
+    }
+
+    .playingCards {
+        a.card.selected {
+            bottom: 1em;
+        }
+    }
+}
+

@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from gage_eval.registry import ensure_async, registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
+from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -41,6 +42,10 @@ class JudgeExtendAdapter(RoleAdapter):
 
     async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
         impl_payload = dict(payload or {})
+        sandbox_provider = impl_payload.get("sandbox_provider")
+        if isinstance(sandbox_provider, SandboxProvider) and "runtime_handle" not in impl_payload:
+            handle = sandbox_provider.get_handle()
+            impl_payload["runtime_handle"] = handle.runtime_handle if handle else {}
         impl_payload["params"] = self._merge_params(payload)
         impl_payload.setdefault("implementation", self._implementation)
         impl_payload.setdefault("adapter_id", self.adapter_id)

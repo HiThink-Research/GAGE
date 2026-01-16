@@ -37,7 +37,11 @@ class JSONLDatasetLoader(DatasetLoader):
             raise ValueError(f"Dataset '{self.spec.dataset_id}' missing JSONL 'path' argument")
         filesystem_path = Path(path).expanduser().resolve()
         if not filesystem_path.exists():
-            raise FileNotFoundError(f"Dataset '{self.spec.dataset_id}' JSONL file not found: {filesystem_path}")
+            message = f"Dataset '{self.spec.dataset_id}' JSONL file not found: {filesystem_path}"
+            hint = _build_missing_hint(self.spec, filesystem_path)
+            if hint:
+                message = f"{message}\n{hint}"
+            raise FileNotFoundError(message)
 
         limit = self.spec.params.get("limit")
         streaming = _should_stream_jsonl(self.spec, filesystem_path, hub_handle)
@@ -140,3 +144,10 @@ def _should_stream_jsonl(
         if spec.params.get("limit") in (None, 0):
             return True
     return False
+
+
+def _build_missing_hint(spec: DatasetSpec, path: Path) -> Optional[str]:
+    hint = spec.params.get("missing_hint")
+    if hint:
+        return str(hint)
+    return None

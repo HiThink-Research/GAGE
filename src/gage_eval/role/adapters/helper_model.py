@@ -42,6 +42,9 @@ class HelperModelAdapter(ModelRoleAdapter):
         sample = payload.get("sample", {})
         step = payload.get("step", {})
         rendered = self.render_prompt(payload)
+        messages = rendered.messages
+        if rendered.prompt and not messages:
+            messages = [{"role": "user", "content": rendered.prompt}]
         sampling_params = self._compose_sampling_params(
             sample_params=sample.get("sampling_params"),
             runtime_params=payload.get("sampling_params"),
@@ -52,7 +55,7 @@ class HelperModelAdapter(ModelRoleAdapter):
             "step": step,
             "mode": step.get("mode") or self.mode,
             "prompt": rendered.prompt or sample.get("prompt") or sample.get("text"),
-            "messages": rendered.messages,
+            "messages": messages,
             "inputs": sample.get("inputs"),
             "sampling_params": sampling_params,
             "prompt_meta": rendered.metadata or {},

@@ -71,6 +71,7 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4):
         trace=trace,
         cache_store=cache,
         resource_profile=ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]),
+        sandbox_profiles={},
     )
 
     rm = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]))

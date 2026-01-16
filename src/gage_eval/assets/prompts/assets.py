@@ -5,13 +5,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from gage_eval.assets.prompts.renderers import JinjaPromptRenderer, PassthroughPromptRenderer, PromptRenderer
+from gage_eval.assets.prompts.renderers import (
+    JinjaChatPromptRenderer,
+    JinjaPromptRenderer,
+    PassthroughPromptRenderer,
+    PromptRenderer,
+)
 
 
 def build_prompt_renderer(renderer_type: str, *, template: Optional[str], params: Dict[str, Any]) -> PromptRenderer:
     kind = (renderer_type or "").lower()
     if kind in {"jinja", "jinja2"}:
         return JinjaPromptRenderer(template or "", variables=params)
+    if kind in {"jinja_chat", "chat_jinja", "chat"}:
+        role = params.get("role", "system")
+        include_existing = params.get("include_existing", True)
+        return JinjaChatPromptRenderer(
+            template or "",
+            variables=params,
+            role=role,
+            include_existing=bool(include_existing),
+        )
     if kind in {"passthrough", "raw"}:
         fields = params.get("fields")
         default = params.get("default", "")

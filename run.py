@@ -1091,6 +1091,8 @@ def _validate_config_wiring(config: PipelineConfig) -> list[str]:
 def main() -> None:
     wall_clock_start = time.perf_counter()
     args = parse_args()
+    if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
+        os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
 
     if args.init:
         try:

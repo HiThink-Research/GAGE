@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Dict, Sequence
+from typing import Dict, Optional, Sequence
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
+from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -24,21 +25,48 @@ class SupportStep(SampleStep):
         super().__init__("SupportStep")
         self._steps = steps
 
-    def execute(self, sample: dict, role_manager, trace: ObservabilityTrace) -> None:
+    def execute(
+        self,
+        sample: dict,
+        role_manager,
+        trace: ObservabilityTrace,
+        *,
+        sandbox_provider: Optional[SandboxProvider] = None,
+    ) -> None:
         for step in self._steps:
-            self._execute_single(step, sample, role_manager, trace)
+            self._execute_single(step, sample, role_manager, trace, sandbox_provider=sandbox_provider)
 
-    def execute_single(self, step, sample: dict, role_manager, trace: ObservabilityTrace) -> None:
-        self._execute_single(step, sample, role_manager, trace)
+    def execute_single(
+        self,
+        step,
+        sample: dict,
+        role_manager,
+        trace: ObservabilityTrace,
+        *,
+        sandbox_provider: Optional[SandboxProvider] = None,
+    ) -> None:
+        self._execute_single(step, sample, role_manager, trace, sandbox_provider=sandbox_provider)
 
-    def _execute_single(self, step, sample: dict, role_manager, trace: ObservabilityTrace) -> None:
+    def _execute_single(
+        self,
+        step,
+        sample: dict,
+        role_manager,
+        trace: ObservabilityTrace,
+        *,
+        sandbox_provider: Optional[SandboxProvider] = None,
+    ) -> None:
         adapter_id = step.get("adapter_id")
         logger.debug("Support step start adapter_id={}", adapter_id)
         trace.emit("support_start", payload={"step": _serialize_step(step)})
         if adapter_id:
             with role_manager.borrow_role(adapter_id) as role:
-                output = role.invoke({"sample": sample, "step": step}, trace) if role else {}
+                payload = {"sample": sample, "step": step}
+                if sandbox_provider is not None:
+                    payload["sandbox_provider"] = sandbox_provider
+                output = role.invoke(payload, trace) if role else {}
                 sample.setdefault("support_outputs", []).append(output)
+                _emit_tool_doc_metrics(trace, adapter_id, sample, output)
                 logger.trace("Support step output appended keys={}", list(output.keys()))
         trace.emit("support_end", payload={"step": _serialize_step(step)})
         logger.debug("Support step end adapter_id={}", adapter_id)
@@ -52,3 +80,16 @@ def _serialize_step(step):
         if hasattr(step, key):
             attrs[key] = getattr(step, key)
     return attrs or str(step)
+
+
+def _emit_tool_doc_metrics(trace: ObservabilityTrace, adapter_id: Optional[str], sample: dict, output: dict) -> None:
+    if not isinstance(output, dict):
+        return
+    meta = output.get("tool_documentation_meta")
+    if not isinstance(meta, dict) or not meta:
+        return
+    payload = dict(meta)
+    if adapter_id:
+        payload.setdefault("adapter_id", adapter_id)
+    sample_id = sample.get("id") if isinstance(sample, dict) else None
+    trace.emit_tool_documentation(payload, sample_id=sample_id)
