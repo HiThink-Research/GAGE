@@ -87,6 +87,19 @@ runs/<run_id>/
 | **Game Arena** | `config/custom/gomoku_human_vs_llm.yaml` | Gomoku Human vs LLM match |
 | **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (requires Docker, experimental) |
 
+## 🎮 Game Arena Showcase
+
+<table width="100%">
+  <tr>
+    <td align="center" width="40%">
+      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="max-width: 100%;">
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="max-width: 100%;">
+    </td>
+  </tr>
+</table>
+
 ## 🗺️ Roadmap
 
 - 🤖 **Agent Evaluation**: Add native agent benchmarking support with tool-use traces, trajectory scoring, and safety checks.
