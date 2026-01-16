@@ -7,6 +7,19 @@ import threading
 from typing import Callable, Dict, Type, TYPE_CHECKING
 
 from gage_eval.config.pipeline_config import MetricSpec
+from gage_eval.metrics.aggregators import (
+    IdentityAggregator,
+    MeanAggregator,
+    MetricAggregator,
+    WeightedMeanAggregator,
+    CategoricalCountAggregator,
+)
+# Import MME-specific aggregator from builtin module
+try:
+    from gage_eval.metrics.builtin.mme_aggregator import MMEAccPlusAggregator
+except ImportError:
+    MMEAccPlusAggregator = None
+from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
 
 if TYPE_CHECKING:
@@ -39,6 +52,9 @@ class MetricRegistry:
         self.register_aggregator("weighted_mean", lambda spec: WeightedMeanAggregator(spec))
         self.register_aggregator("identity", lambda spec: IdentityAggregator(spec))
         self.register_aggregator("categorical_count", lambda spec: CategoricalCountAggregator(spec))
+        # Register MME-specific aggregator if available
+        if MMEAccPlusAggregator is not None:
+            self.register_aggregator("mme_acc_plus", lambda spec: MMEAccPlusAggregator(spec))
 
     # ------------------------------------------------------------------ #
     # Registration API
