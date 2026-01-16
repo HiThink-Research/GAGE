@@ -26,6 +26,7 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
     GpqaPreprocessor as NewGpqa,
     GpqaStructOnlyPreprocessor as NewGpqaStructOnly,
 )
+from gage_eval.assets.datasets.preprocessors.appworld_preprocessor import AppWorldPreprocessor as NewAppWorld
 from gage_eval.registry import registry
 
 # 1.benchmark GPQA-diamond
@@ -116,6 +117,18 @@ class GpqaPreprocessor(NewGpqa):
     tags=("gpqa", "multiple-choice", "struct_only"),
 )
 class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "appworld_preprocessor",
+    desc="AppWorld JSONL preprocessor (task metadata + Sample envelope)",
+    tags=("appworld", "agent"),
+)
+class AppWorldPreprocessor(NewAppWorld):
+    """Standardize AppWorld JSONL records into the Sample schema."""
+
     pass
 
 

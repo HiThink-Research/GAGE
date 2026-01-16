@@ -13,6 +13,7 @@ gage-eval is an extensible evaluation framework for large language models. It is
 - Example configs: [`config/custom/`](../../config/custom/), [`config/builtin_templates/`](../../config/builtin_templates/), [`config/run_configs/`](../../config/run_configs/)
 - Support module (experimental, will be replaced by gage-client): [`support_cli.md`](support_cli.md)
 - Sample schema: [`sample.md`](sample.md)
+- Agent evaluation: [`agent_evaluation.md`](agent_evaluation.md)
 - Game Arena: [`game_arena.md`](game_arena.md)
 
 ## 1. Project Overview
@@ -35,6 +36,7 @@ gage-eval is an extensible evaluation framework for large language models. It is
 | High-throughput concurrency | Bounded-buffer SampleLoop with backpressure (`prefetch_factor/max_inflight`) | `src/gage_eval/evaluation/sample_loop.py` |
 | Unified artifacts | `events.jsonl`, `samples.jsonl`, `summary.json` | `src/gage_eval/observability/trace.py`, `src/gage_eval/evaluation/cache.py`, `src/gage_eval/pipeline/steps/report.py` |
 | SWE-bench dock | `context_provider` + `judge_extend` for reproducible offline judging | `src/gage_eval/role/adapters/context_provider.py`, `src/gage_eval/role/adapters/judge_extend.py` |
+| Agent evaluation | DUTAgent + Toolchain + Sandbox execution for tool-using agents | `src/gage_eval/role/adapters/dut_agent.py`, `src/gage_eval/role/adapters/toolchain.py`, `src/gage_eval/sandbox/` |
 | Game Arena | Turn-based game evaluation with human interaction | `src/gage_eval/role/arena/`, `src/gage_eval/role/adapters/arena.py` |
 
 ### 1.3 End-to-end flow
@@ -189,6 +191,34 @@ Execution highlights:
 - `support`: inject game rules and the initial board via `context_provider`
 - `arena`: run the game loop across environment, players, and parser; push UI updates when enabled; output to `model_output` and `predict_result`
 - `auto_eval`: compute metrics from `model_output` and write cache
+
+#### 1.4.5 Agent evaluation example
+
+Agent evaluation runs `support -> inference -> judge -> auto_eval`, where `dut_agent` executes AgentLoop, Toolchain injects tools, and Sandbox isolates side effects.
+
+Example config: `gage-eval-main/config/custom/appworld_official_jsonl.yaml`
+
+```mermaid
+flowchart LR
+  classDef fixed fill:#F5F5F5,stroke:#9E9E9E,stroke-dasharray: 4 2,color:#666
+  classDef step fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#000
+  classDef role fill:#FFF8E1,stroke:#FF8F00,stroke-width:2px,color:#000
+  classDef impl fill:#E8F5E9,stroke:#2E7D32,stroke-width:1px,color:#000
+  classDef out fill:#E8F5E9,stroke:#2E7D32,stroke-width:1px,color:#000
+
+  Pre[Preprocess]:::fixed --> Sup[Support]:::step --> Inf[Inference]:::step --> Jdg[Judge]:::step --> AE[AutoEval]:::step --> Rep[Report]:::fixed
+
+  Sup -. adapter_id .-> Toolchain[Role Toolchain]:::role --> Tools[MCP Tools]:::impl
+  Inf -. adapter_id .-> Dut[Role DutAgent]:::role --> Loop[AgentLoop]:::impl --> Backend[AgentBackend]:::impl
+  Loop --> Sandbox[Sandbox]:::impl
+  Jdg -. adapter_id .-> JExt[Role JudgeExtend]:::role --> Eval[AppWorld Evaluate]:::impl
+
+  AE --> Cache[EvalCache]:::impl
+  Cache --> Rep
+
+  Cache --> Samp[samples jsonl]:::out
+  Rep --> Sum[summary json]:::out
+```
 
 ## 2. Quickstart
 

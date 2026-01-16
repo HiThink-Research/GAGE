@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence
 import time
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from gage_eval.config.registry import ConfigRegistry
 
 from loguru import logger
-from gage_eval.config.pipeline_config import PipelineConfig
+from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.assets.datasets.manager import DataManager, DataSource
 from gage_eval.assets.datasets.validation import SampleValidator
 from gage_eval.evaluation.cache import EvalCache
@@ -146,6 +147,7 @@ def _build_single_runtime(
     trace: ObservabilityTrace,
     cache_store: EvalCache,
 ) -> PipelineRuntime:
+    sandbox_profiles = registry.materialize_sandbox_profiles(config)
     selected_dataset_id = _select_dataset_id(dataset_id, config, datasets)
     selected_source = data_manager.get(selected_dataset_id)
     logger.info(
@@ -170,11 +172,18 @@ def _build_single_runtime(
     )
 
     concurrency = _resolve_concurrency(None, resource_profile)
+    concurrency = _apply_fixed_port_guard(
+        scope=f"pipeline '{config.pipeline_id or selected_dataset_id}'",
+        concurrency=concurrency,
+        role_bindings={spec.adapter_id: spec for spec in config.role_adapters},
+        sandbox_profiles=sandbox_profiles,
+    )
     role_manager.update_concurrency_hint(concurrency)
     sample_loop = SampleLoop(
         samples,
         streaming=selected_source.streaming,
         concurrency=concurrency,
+        sandbox_profiles=sandbox_profiles,
     )
     task_planner = TaskPlanner()
     runtime = factory.create_runtime(
@@ -205,6 +214,7 @@ def _build_task_orchestrator_runtime(
     concurrency_hint = _max_concurrency_from_tasks(task_plan_specs, resource_profile)
     role_manager.update_concurrency_hint(concurrency_hint)
     _materialize_role_adapters(config, registry, role_manager)
+    sandbox_profiles = registry.materialize_sandbox_profiles(config)
 
     task_entries = _prepare_task_entries(
         task_plans=task_plan_specs,
@@ -214,6 +224,7 @@ def _build_task_orchestrator_runtime(
         trace=trace,
         cache_store=cache_store,
         resource_profile=resource_profile,
+        sandbox_profiles=sandbox_profiles,
     )
     logger.info("Prepared {} task runtime entries", len(task_entries))
     trace.emit(
@@ -282,11 +293,20 @@ def _materialize_role_adapters(
     role_manager: RoleManager,
 ) -> None:
     backend_instances = registry.materialize_backends(config)
+    agent_backend_instances = registry.materialize_agent_backends(
+        config,
+        backends=backend_instances,
+    )
+    sandbox_profiles = registry.materialize_sandbox_profiles(config)
+    mcp_clients = registry.materialize_mcp_clients(config)
     prompt_assets = registry.materialize_prompts(config)
     adapters = registry.materialize_role_adapters(
         config,
         backends=backend_instances,
         prompts=prompt_assets,
+        agent_backends=agent_backend_instances,
+        sandbox_profiles=sandbox_profiles,
+        mcp_clients=mcp_clients,
     )
     for adapter_id, adapter in adapters.items():
         role_manager.register_role_adapter(adapter_id, adapter)
@@ -318,6 +338,7 @@ class TaskOrchestratorRuntime:
         self._trace = trace
         self._report_step = report_step
         self._wall_clock_start: Optional[float] = None
+        self._shutdown_called = False
 
     def run(self) -> None:
         # Summaries accumulate per-task metadata so the ReportStep can emit a global view.
@@ -403,12 +424,22 @@ class TaskOrchestratorRuntime:
             )
         finally:
             try:
-                self._role_manager.shutdown()
+                self.shutdown()
             finally:
                 self._trace.flush()
 
     def attach_report_step(self, step: ReportStep) -> None:
         self._report_step = step
+
+    def shutdown(self) -> None:
+        if self._shutdown_called:
+            return
+        self._shutdown_called = True
+        try:
+            for entry in self._tasks:
+                entry.sample_loop.shutdown()
+        finally:
+            self._role_manager.shutdown()
 
     def set_wall_clock_start(self, start_s: float) -> None:
         self._wall_clock_start = start_s
@@ -456,6 +487,7 @@ def _prepare_task_entries(
     trace: ObservabilityTrace,
     cache_store: EvalCache,
     resource_profile: ResourceProfile,
+    sandbox_profiles: Dict[str, Dict[str, Any]],
 ) -> Sequence[_TaskRuntimeEntry]:
     entries: List[_TaskRuntimeEntry] = []
     for plan in task_plans:
@@ -470,16 +502,24 @@ def _prepare_task_entries(
             dataset_id=dataset_id,
             trace=trace,
         )
+        concurrency = _resolve_concurrency(plan.runtime_policy.concurrency, resource_profile)
+        concurrency = _apply_fixed_port_guard(
+            scope=f"task '{plan.task_id}'",
+            concurrency=concurrency,
+            role_bindings=plan.role_bindings,
+            sandbox_profiles=sandbox_profiles,
+        )
         sample_loop = SampleLoop(
             samples,
             shuffle=plan.runtime_policy.shuffle,
             shuffle_seed=plan.runtime_policy.shuffle_seed,
             max_samples=plan.runtime_policy.max_samples,
-            concurrency=_resolve_concurrency(plan.runtime_policy.concurrency, resource_profile),
+            concurrency=concurrency,
             prefetch_factor=plan.runtime_policy.prefetch_factor,
             max_inflight=plan.runtime_policy.max_inflight,
             streaming=source.streaming,
             task_id=plan.task_id,
+            sandbox_profiles=sandbox_profiles,
         )
         metric_specs = plan.metrics or config.metrics
         metric_registry = MetricRegistry()
@@ -515,6 +555,141 @@ def _resolve_concurrency(explicit: Optional[int], resource_profile: ResourceProf
     cpu_default = os.cpu_count() or 1
     total_cpus = total_cpus or cpu_default
     return max(1, min(total_cpus, 4))
+
+
+_SANDBOX_ENDPOINT_KEYS: Set[str] = {
+    "env_endpoint",
+    "environment_endpoint",
+    "env_url",
+    "environment_url",
+    "apis_endpoint",
+    "apis_url",
+    "mcp_endpoint",
+    "mcp_url",
+}
+
+
+def _apply_fixed_port_guard(
+    *,
+    scope: str,
+    concurrency: int,
+    role_bindings: Dict[str, RoleAdapterSpec],
+    sandbox_profiles: Dict[str, Dict[str, Any]],
+) -> int:
+    if concurrency <= 1:
+        return concurrency
+    reasons = _find_fixed_port_sandboxes(role_bindings, sandbox_profiles)
+    if not reasons:
+        return concurrency
+    logger.warning(
+        "Fixed sandbox ports detected for {} ({}); forcing concurrency from {} to 1.",
+        scope,
+        ", ".join(sorted(reasons)),
+        concurrency,
+    )
+    return 1
+
+
+def _find_fixed_port_sandboxes(
+    role_bindings: Dict[str, RoleAdapterSpec],
+    sandbox_profiles: Dict[str, Dict[str, Any]],
+) -> Set[str]:
+    reasons: Set[str] = set()
+    for adapter_id, spec in role_bindings.items():
+        sandbox_config = dict(spec.sandbox or {})
+        if not sandbox_config:
+            continue
+        effective = _merge_sandbox_config(sandbox_config, sandbox_profiles)
+        fixed_ports = _extract_fixed_ports(effective)
+        if not fixed_ports:
+            continue
+        sandbox_id = effective.get("sandbox_id") or sandbox_config.get("sandbox_id") or adapter_id
+        reasons.add(f"{sandbox_id}:{sorted(fixed_ports)}")
+    return reasons
+
+
+def _merge_sandbox_config(
+    sandbox_config: Dict[str, Any],
+    sandbox_profiles: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    base = dict(sandbox_config or {})
+    sandbox_id = base.get("sandbox_id") or base.get("template_name")
+    if sandbox_id and sandbox_id in sandbox_profiles:
+        return _deep_merge(dict(sandbox_profiles[sandbox_id]), base)
+    return base
+
+
+def _extract_fixed_ports(sandbox_config: Dict[str, Any]) -> Set[int]:
+    fixed_ports: Set[int] = set()
+    runtime_configs = dict(sandbox_config.get("runtime_configs") or {})
+    for mapping in _normalize_ports(runtime_configs.get("ports")):
+        port = _extract_host_port(str(mapping))
+        if port and port > 0:
+            fixed_ports.add(port)
+    for key in _SANDBOX_ENDPOINT_KEYS:
+        endpoint = runtime_configs.get(key) or sandbox_config.get(key)
+        if not endpoint:
+            continue
+        port = _parse_endpoint_port(str(endpoint))
+        if port and port > 0:
+            fixed_ports.add(port)
+    return fixed_ports
+
+
+def _normalize_ports(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return [
+            f"{host}:{container}" if container is not None else str(host)
+            for host, container in raw.items()
+        ]
+    if isinstance(raw, (list, tuple)):
+        entries: List[str] = []
+        for item in raw:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                entries.append(f"{item[0]}:{item[1]}")
+            else:
+                entries.append(str(item))
+        return entries
+    return [str(raw)]
+
+
+def _extract_host_port(mapping: str) -> Optional[int]:
+    raw = mapping
+    if not raw:
+        return None
+    if "/" in raw:
+        raw = raw.split("/", 1)[0]
+    parts = raw.split(":")
+    if len(parts) == 1:
+        candidate = parts[0]
+    elif len(parts) >= 3:
+        candidate = parts[-2]
+    else:
+        candidate = parts[0]
+    try:
+        return int(candidate)
+    except ValueError:
+        return None
+
+
+def _parse_endpoint_port(endpoint: str) -> Optional[int]:
+    raw = endpoint.strip()
+    if "://" not in raw:
+        raw = f"http://{raw}"
+    parsed = urlparse(raw)
+    return parsed.port
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _max_concurrency_from_tasks(

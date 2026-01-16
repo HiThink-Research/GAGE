@@ -40,6 +40,7 @@ class PipelineRuntime:
         self.trace = trace
         self.report_step = report_step
         self.wall_clock_start: Optional[float] = None
+        self._shutdown_called = False
 
     def run(self) -> None:
         """Kick off execution for every sample."""
@@ -88,10 +89,22 @@ class PipelineRuntime:
                 total_elapsed,
             )
         finally:
-            self.trace.flush()
+            try:
+                self.shutdown()
+            finally:
+                self.trace.flush()
 
     def attach_report_step(self, step: ReportStep) -> None:
         self.report_step = step
+
+    def shutdown(self) -> None:
+        if self._shutdown_called:
+            return
+        self._shutdown_called = True
+        try:
+            self.sample_loop.shutdown()
+        finally:
+            self.role_manager.shutdown()
 
     def set_wall_clock_start(self, start_s: float) -> None:
         self.wall_clock_start = start_s
@@ -176,6 +189,12 @@ class PipelineFactory:
         task_planner.configure_metrics(config.metrics, metric_registry, cache_store=cache_store)
         report_step = ReportStep(task_planner.get_auto_eval_step(), cache_store)
         backend_instances = self._registry.materialize_backends(config)
+        agent_backend_instances = self._registry.materialize_agent_backends(
+            config,
+            backends=backend_instances,
+        )
+        sandbox_profiles = self._registry.materialize_sandbox_profiles(config)
+        mcp_clients = self._registry.materialize_mcp_clients(config)
         prompt_assets = self._registry.materialize_prompts(config)
         backend_specs = [
             {
@@ -218,6 +237,9 @@ class PipelineFactory:
             config,
             backends=backend_instances,
             prompts=prompt_assets,
+            agent_backends=agent_backend_instances,
+            sandbox_profiles=sandbox_profiles,
+            mcp_clients=mcp_clients,
         )
         for adapter_id, adapter in adapters.items():
             role_manager.register_role_adapter(adapter_id, adapter)
