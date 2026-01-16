@@ -17,6 +17,25 @@ arena_impls:
   - tictactoe
   - arena
   version: v1
+- desc: RLCard Doudizhu arena environment
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.env:GenericCardArena
+  kind: arena_impls
+  name: doudizhu_rlcard_v1
+  tags:
+  - doudizhu
+  - arena
+  - card
+  version: v1
+- desc: Arena environment adapter for RLCard Doudizhu
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.env:DoudizhuArenaEnvironment
+  kind: arena_impls
+  name: doudizhu_arena_v1
+  tags:
+  - doudizhu
+  - arena
+  version: v1
 backends:
 - desc: Load a custom EngineBackend from an external Python file
   extra: {}
@@ -285,6 +304,16 @@ backends:
   - asr
   - local
   version: v1
+bundles:
+- desc: mathvista benchmark resource providers
+  extra: {}
+  impl: gage_eval.assets.datasets.bundles.builtin:MathVistaBundle
+  kind: bundles
+  name: mathvista
+  tags:
+  - caption
+  - ocr
+  version: v1
 context_impls:
 - desc: Gomoku rules and board context provider
   extra: {}
@@ -437,6 +466,15 @@ dataset_preprocessors:
   name: grid_game_preprocessor
   tags:
   - grid
+  - game
+  version: v1
+- desc: Card game preprocessor (player metadata + sample envelope)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:CardGamePreprocessor
+  kind: dataset_preprocessors
+  name: card_game_preprocessor
+  tags:
+  - card
   - game
   version: v1
 - desc: PIQA multiple-choice prompt wrapper
@@ -776,6 +814,16 @@ observability_plugins:
   - http
   version: v1
 parser_impls:
+- desc: Doudizhu move parser (RLCard action strings)
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.parsers.doudizhu:DoudizhuMoveParser
+  kind: parser_impls
+  name: doudizhu_v1
+  tags:
+  - doudizhu
+  - parser
+  - card
+  version: v1
 - desc: Gomoku move parser (configurable coordinate scheme)
   extra: {}
   impl: gage_eval.role.arena.parsers.gomoku_parser:GomokuParser
@@ -794,7 +842,26 @@ parser_impls:
   - grid
   - parser
   version: v1
+- desc: Doudizhu move parser for arena text actions
+  extra: {}
+  impl: gage_eval.role.arena.parsers.doudizhu_parser:DoudizhuParser
+  kind: parser_impls
+  name: doudizhu_arena_parser_v1
+  tags:
+  - doudizhu
+  - parser
+  - arena
+  version: v1
 pipeline_steps:
+- desc: Global step that aggregates evaluation results and writes reports
+  extra:
+    step_kind: global
+  impl: gage_eval.pipeline.steps.report:ReportStep
+  kind: pipeline_steps
+  name: report
+  tags:
+  - report
+  version: v1
 - desc: Pipeline step that runs arena game loops
   extra:
     step_kind: sample
@@ -830,15 +897,6 @@ pipeline_steps:
   name: judge
   tags:
   - judge
-  version: v1
-- desc: Global step that aggregates evaluation results and writes reports
-  extra:
-    step_kind: global
-  impl: gage_eval.pipeline.steps.report:ReportStep
-  kind: pipeline_steps
-  name: report
-  tags:
-  - report
   version: v1
 - desc: Pipeline step that runs helper/toolchain roles
   extra:
@@ -898,6 +956,36 @@ renderer_impls:
   tags:
   - tictactoe
   - renderer
+  version: v1
+- desc: Doudizhu text renderer for Gradio visualizer
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.renderers.board_renderer:DoudizhuTextRenderer
+  kind: renderer_impls
+  name: doudizhu_text_v1
+  tags:
+  - doudizhu
+  - renderer
+  - card
+  version: v1
+- desc: Doudizhu replay renderer (JSON payloads)
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.renderers.doudizhu:DoudizhuRenderer
+  kind: renderer_impls
+  name: doudizhu_replay_v1
+  tags:
+  - doudizhu
+  - renderer
+  - card
+  version: v1
+- desc: Showdown-style Doudizhu renderer for Gradio visualizer
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.renderers.showdown_board:DoudizhuShowdownRenderer
+  kind: renderer_impls
+  name: doudizhu_showdown_v1
+  tags:
+  - doudizhu
+  - renderer
+  - card
   version: v1
 reporting_sinks:
 - desc: In-memory event recorder (tests)

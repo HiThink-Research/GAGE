@@ -41,3 +41,4 @@ class GameResult:
     rule_profile: Optional[str] = None
     win_direction: Optional[str] = None
     line_length: Optional[int] = None
+    replay_path: Optional[str] = None

@@ -5,7 +5,7 @@ __pycache__/
 
 small_models/all-mpnet-base-v2
 small_models/gte-large-zh
-core*
+# core*
 
 # C extensions
 *.so
@@ -198,6 +198,8 @@ demo_hf_backend.py
 .vscode/
 
 runs/
+node_modules/
+frontend/rlcard-showdown/build/
 scripts/oneclick/.generated/
 scripts/oneclick/.env.example
 .venv311/
