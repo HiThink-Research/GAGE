@@ -1,29 +1,11 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import Avatar from '@material-ui/core/Avatar';
 import Chip from '@material-ui/core/Chip';
 import MahjongTile from './MahjongTile';
 import '../../assets/mahjong.scss';
 import PlaceHolderPlayer from '../../assets/images/Portrait/Player.png';
 
-const MahjongGameBoard = ({
-    hands,
-    piles,
-    discards,
-    chatBubbles,
-    currentPlayer,
-    showAllHands,
-    lastAction,
-    isTsumogiri: propsIsTsumogiri,
-    lastPlayedTile: propsLastPlayedTile,
-    selectedTileKey,
-    selectableTiles,
-    onTileClick,
-    onTileDoubleClick,
-    interactivePlayerId = 0,
-    playerLabels = [],
-    playerAvatars = [],
-    drawTileByPlayer,
-}) => {
+const MahjongGameBoard = ({ hands, piles, discards, chatBubbles, currentPlayer, showAllHands, lastAction, isTsumogiri: propsIsTsumogiri, lastPlayedTile: propsLastPlayedTile }) => {
     
     const lastDrawRef = useRef(null);
     const normalizeTileCode = (rawCode) => {
@@ -126,14 +108,12 @@ const MahjongGameBoard = ({
     }
 
     // --- RENDER HELPERS ---
-    const selectableSet = selectableTiles instanceof Set ? selectableTiles : new Set(selectableTiles || []);
 
     const renderHand = (playerId) => {
         const handData = hands[playerId] || [];
         const pileData = piles ? (piles[playerId] || []) : [];
         const position = getPositionClass(playerId);
         const bubbleText = chatBubbles ? chatBubbles[playerId] : "";
-        const isInteractive = Boolean(onTileClick) && playerId === interactivePlayerId;
 
         // Debug Log
         if (playerId === 0 && (lastPlayedCard || drawingCard)) {
@@ -146,24 +126,7 @@ const MahjongGameBoard = ({
         let newDrawCard = null;
         let showGap = false;
 
-        const drawOverride = drawTileByPlayer
-            ? (drawTileByPlayer[playerId] ?? drawTileByPlayer[String(playerId)])
-            : null;
-        if (drawOverride) {
-            const target = normalizeTileCode(drawOverride);
-            let removeIdx = -1;
-            for (let i = mainHand.length - 1; i >= 0; i--) {
-                const c = mainHand[i];
-                if (normalizeTileCode(c) === target) {
-                    removeIdx = i;
-                    break;
-                }
-            }
-            if (removeIdx !== -1) {
-                newDrawCard = mainHand[removeIdx];
-                mainHand.splice(removeIdx, 1);
-            }
-        } else if (drawingCard && drawingPlayerPos === position) {
+        if (drawingCard && drawingPlayerPos === position) {
             let removeIdx = -1;
             // Priority 1: Exact Match (Search backwards)
             for (let i = mainHand.length - 1; i >= 0; i--) {
@@ -206,16 +169,11 @@ const MahjongGameBoard = ({
                 <div className={`player-info pos-${position}`}>
                     {bubbleText && <div className={`player-chat-bubble bubble-${position}`}>{bubbleText}</div>}
                     <div>
-                        <img
-                            src={playerAvatars[playerId] || PlaceHolderPlayer}
-                            alt={'Player'}
-                            height="50px"
-                            width="50px"
-                        />
+                        <img src={PlaceHolderPlayer} alt={'Player'} height="50px" width="50px" />
                         <Chip 
                             style={{marginTop: 5, backgroundColor: 'rgba(255,255,255,0.8)'}}
                             avatar={<Avatar>{playerId}</Avatar>} 
-                            label={playerLabels[playerId] || `Player ${playerId}`} 
+                            label={`玩家 ${playerId}`} 
                             size="small"
                         />
                     </div>
@@ -236,60 +194,26 @@ const MahjongGameBoard = ({
 
                     {/* Active Hand (Remaining Cards) */}
                     <div className="active-hand">
-                        {mainHand.map((code, idx) => {
-                            const tileKey = `hand-${playerId}-${idx}`;
-                            const tileCode = String(code || "");
-                            const isHidden = tileCode === 'Back' || tileCode === 'back';
-                            const normalized = tileCode.toLowerCase();
-                            const isSelectable = isInteractive && !isHidden && selectableSet.has(normalized);
-                            const isSelected = selectedTileKey === tileKey;
-                            const handleClick = isSelectable
-                                ? () => onTileClick(tileCode, tileKey)
-                                : undefined;
-                            const handleDoubleClick = isSelectable && onTileDoubleClick
-                                ? () => onTileDoubleClick(tileCode, tileKey)
-                                : undefined;
-                            return (
-                                <MahjongTile 
-                                    key={idx} 
-                                    tile={code} 
-                                    isHidden={isHidden} 
-                                    isSelected={isSelected}
-                                    isSelectable={isSelectable}
-                                    onClick={handleClick}
-                                    onDoubleClick={handleDoubleClick}
-                                />
-                            );
-                        })}
+                        {mainHand.map((code, idx) => (
+                            <MahjongTile 
+                                key={idx} 
+                                tile={code} 
+                                isHidden={code === 'Back' || code === 'back'} 
+                                isSelected={false}
+                            />
+                        ))}
                     </div>
 
                     {/* New Draw Slot (Real or Ghost Gap) */}
                     {(newDrawCard || showGap) && (
                         <div className={`new-card-slot ${newDrawCard ? 'new-card-highlight' : ''}`} style={{marginLeft: '12px', position: 'relative'}}>
-                            {newDrawCard ? (() => {
-                                const tileKey = `draw-${playerId}`;
-                                const tileCode = String(newDrawCard || "");
-                                const isHidden = tileCode === 'Back' || tileCode === 'back';
-                                const normalized = tileCode.toLowerCase();
-                                const isSelectable = isInteractive && !isHidden && selectableSet.has(normalized);
-                                const isSelected = selectedTileKey === tileKey;
-                                const handleClick = isSelectable
-                                    ? () => onTileClick(tileCode, tileKey)
-                                    : undefined;
-                                const handleDoubleClick = isSelectable && onTileDoubleClick
-                                    ? () => onTileDoubleClick(tileCode, tileKey)
-                                    : undefined;
-                                return (
-                                    <MahjongTile 
-                                        tile={newDrawCard} 
-                                        isHidden={isHidden} 
-                                        isSelected={isSelected}
-                                        isSelectable={isSelectable}
-                                        onClick={handleClick}
-                                        onDoubleClick={handleDoubleClick}
-                                    />
-                                );
-                            })() : (
+                            {newDrawCard ? (
+                                <MahjongTile 
+                                    tile={newDrawCard} 
+                                    isHidden={newDrawCard === 'Back' || newDrawCard === 'back'} 
+                                    isSelected={false}
+                                />
+                            ) : (
                                 // Ghost Tile for visual gap
                                 <div style={{width: 30, height: 42, opacity: 0}} />
                             )}

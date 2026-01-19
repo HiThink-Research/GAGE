@@ -3,13 +3,14 @@ import { BrowserRouter as Router, Redirect, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import LeaderBoard from './view/LeaderBoard';
 import { PvEDoudizhuDemoView } from './view/PvEView';
-import { DoudizhuReplayView, LeducHoldemReplayView } from './view/ReplayView';
+import { DoudizhuReplayView, LeducHoldemReplayView, MahjongReplayView } from './view/ReplayView';
 
 const navbarSubtitleMap = {
     '/leaderboard': '',
     '/replay/doudizhu': 'Doudizhu',
     '/replay/leduc-holdem': "Leduc Hold'em",
     '/pve/doudizhu-demo': 'Doudizhu PvE Demo',
+    '/replay/mahjong': 'Mahjong Replay',
 };
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
                 <Route path="/leaderboard" component={LeaderBoard} />
                 <Route path="/replay/doudizhu" component={DoudizhuReplayView} />
                 <Route path="/replay/leduc-holdem" component={LeducHoldemReplayView} />
+                <Route path="/replay/mahjong" component={MahjongReplayView} />
                 <Route path="/pve/doudizhu-demo" component={PvEDoudizhuDemoView} />
             </div>
         </Router>
