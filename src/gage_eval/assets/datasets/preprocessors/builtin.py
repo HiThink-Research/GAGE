@@ -53,6 +53,10 @@ from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 # benchmark MME
 from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 
+# benchmark LiveCodeBench
+from gage_eval.assets.datasets.preprocessors.live_code_bench.live_code_converter import LiveCodeBenchConverter
+
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -296,4 +300,14 @@ class MMEPreprocessorProvider(MMEPreprocessor):
     tags=("vision", "mme", "multi-modal"),
 )
 class MMEPreprocessorProviderAlias(MMEPreprocessor):
+    pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "live_code_bench_chat_preprocessor",
+    desc="Live Code Bench prompt wrapper",
+    tags=("prompt", "live code bench"),
+)
+class LiveCodeBenchPreprocessor(LiveCodeBenchConverter):
     pass
