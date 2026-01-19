@@ -112,7 +112,7 @@ def get_codeqwen_question_template_answer(question: dict):
     prompt += f"Question: {question.get('question_content')}\n\n"
     if question.get('starter_code'):
         prompt += f"{PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
-        prompt += f"```python\n{question.starter_code}\n```\n\n"
+        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
     else:
         prompt += f"{PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
         prompt += f"```python\n# YOUR CODE HERE\n```\n\n"
@@ -138,7 +138,7 @@ def get_deepseek_r1_question_template_answer(question: dict):
     prompt += f"Question: {question.get('question_content')}\n\n"
     if question.get('starter_code'):
         prompt += f"{PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
-        prompt += f"```python\n{question.starter_code}\n```\n\n"
+        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
     else:
         prompt += f"{PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
         prompt += f"```python\n# YOUR CODE HERE\n```\n\n"

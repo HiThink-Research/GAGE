@@ -31,13 +31,14 @@ backends:
   - backend_id: mmlu_pro_vllm_backend
     type: vllm
     config:
-      model_path: /mnt/model/qwen2_5_05B
-      tokenizer_path: /mnt/model/qwen2_5_05B
+      model_path: /mnt/model/qwen2_5_1.5B
+      tokenizer_path: /mnt/model/qwen2_5_1.5B
       force_tokenize_prompt: true
       tensor_parallel_size: 1
       max_tokens: 512
       sampling_params:
-        temperature: 0.0
+        n: 5
+        temperature: 0.8
       max_batch_size: 1
       max_model_len: 8192
       gpu_memory_utilization: 0.9
@@ -52,8 +53,8 @@ role_adapters:
       - chat_completion
 
 metrics:
-  - metric_id: mmlu_pro_acc
-    implementation: mmlu_pro_acc 
+  - metric_id: live_code_bench_pass
+    implementation: live_code_bench_pass 
 
 tasks:
   - task_id: live_code_bench_eval
