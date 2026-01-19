@@ -284,6 +284,11 @@ class ArenaRoleAdapter(RoleAdapter):
         chat_mode = env_cfg.get("chat_mode", metadata.get("chat_mode"))
 
         impl = env_cfg.get("impl", "gomoku_local_v1")
+        if "mahjong" in str(impl).lower():
+            try:
+                import gage_eval.role.arena.games.mahjong.env
+            except ImportError:
+                pass
         env_cls = registry.get("arena_impls", impl)
         env_kwargs = {
             "board_size": board_size,
@@ -299,6 +304,21 @@ class ArenaRoleAdapter(RoleAdapter):
         }
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
+        if "mahjong" in str(impl).lower():
+            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            if run_id:
+                env_kwargs["run_id"] = str(run_id)
+            if sample_id:
+                env_kwargs["sample_id"] = str(sample_id)
+            if env_cfg.get("chat_every_n") is not None:
+                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
+            if env_cfg.get("replay_live") is not None:
+                env_kwargs["replay_live"] = env_cfg.get("replay_live")
+            if env_cfg.get("replay_output_dir") is not None:
+                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
+            if env_cfg.get("replay_filename") is not None:
+                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
         if "doudizhu" in str(impl).lower():
             run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
             sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")

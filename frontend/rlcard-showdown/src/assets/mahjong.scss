@@ -1,0 +1,433 @@
+@import "cards.css";
+
+.mahjong-replay-container {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background-color: #f0f2f5;
+    overflow: hidden;
+
+    .replay-header {
+        padding: 10px 20px;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #dcdfe6;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+
+        h2 { margin: 0; color: #303133; font-size: 1.2rem; }
+        .header-actions { display: flex; gap: 10px; }
+    }
+
+    .replay-main-content {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+    }
+
+    .board-section {
+        flex: 1;
+        position: relative;
+        background: #2c3e50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    }
+
+    .sidebar-section {
+        width: 300px;
+        background: #fff;
+        border-left: 1px solid #dcdfe6;
+        display: flex;
+        flex-direction: column;
+        
+        .player-status-box {
+            padding: 15px;
+            border-bottom: 1px solid #ebeef5;
+            
+            .player-item {
+                margin-bottom: 10px;
+                padding: 10px;
+                background: #f8f9fa;
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                
+                &.active {
+                    border: 2px solid #409eff;
+                    background: #ecf5ff;
+                }
+            }
+        }
+    }
+
+    .replay-bottom-section {
+        height: 320px;
+        background: #fff;
+        border-top: 1px solid #dcdfe6;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .record-panels {
+        flex: 1;
+        display: flex;
+        padding: 10px;
+        gap: 15px;
+        overflow: hidden;
+
+        .record-box {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+            border: 1px solid #ebeef5;
+            border-radius: 4px;
+            overflow: hidden;
+
+            .box-title {
+                padding: 8px 12px;
+                background: #fdf6ec;
+                color: #e6a23c;
+                font-weight: bold;
+                border-bottom: 1px solid #ebeef5;
+            }
+
+            .box-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 10px;
+                font-size: 14px;
+            }
+        }
+    }
+
+    .control-bar {
+        height: 60px;
+        padding: 0 20px;
+        background: #fff;
+        border-top: 1px solid #ebeef5;
+        display: flex;
+        align-items: center;
+        gap: 20px;
+
+        .playback-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            
+            // Removed generic button styling to allow Material UI styles to take precedence
+
+            .pause-btn {
+                background-color: #f56c6c !important;
+                color: white !important;
+                border-color: #f56c6c !important;
+                min-width: 100px;
+                border-radius: 20px;
+                font-weight: bold;
+            }
+        }
+
+        .progress-slider {
+            flex: 1;
+        }
+
+        .speed-control {
+            width: 200px;
+            display: flex;
+            align-items: center;
+        }
+    }
+}
+
+.mahjong-board {
+    width: 95%;
+    height: 95%;
+    position: relative;
+    background-image: url("./images/gameboard.png");
+    background-size: cover;
+    background-position: bottom;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+
+    .player-area {
+        position: absolute;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        z-index: 5;
+    }
+
+    .player-bottom { bottom: 10px; left: 50%; transform: translateX(-50%); }
+    .player-top { top: 10px; left: 50%; transform: translateX(-50%); }
+    .player-left { left: 10px; top: 50%; transform: translateY(-50%) rotate(90deg); }
+    .player-right { right: 10px; top: 50%; transform: translateY(-50%) rotate(-90deg); }
+
+    .player-info {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+        margin-bottom: 5px;
+
+        &.pos-left {
+            transform: rotate(-90deg);
+            transform-origin: center;
+        }
+
+        &.pos-right {
+            transform: rotate(90deg);
+            transform-origin: center;
+        }
+        
+        .player-chat-bubble {
+            position: absolute;
+            background: linear-gradient(135deg, #fffdf8 0%, #f6eddf 100%);
+            padding: 8px 12px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-size: 13px;
+            white-space: normal;
+            word-break: break-word;
+            z-index: 20;
+            border: 1px solid rgba(0,0,0,0.1);
+            max-width: 220px;
+            max-height: 120px;
+            overflow: hidden;
+
+            &::after {
+                content: '';
+                position: absolute;
+                border: 6px solid transparent;
+            }
+        }
+
+        .bubble-bottom {
+            bottom: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+
+            &::after {
+                top: 100%;
+                left: 50%;
+                margin-left: -6px;
+                border-top-color: #f6eddf;
+            }
+        }
+
+        .bubble-top {
+            top: 110%;
+            left: 50%;
+            transform: translateX(-50%);
+
+            &::after {
+                bottom: 100%;
+                left: 50%;
+                margin-left: -6px;
+                border-bottom-color: #f6eddf;
+            }
+        }
+
+        .bubble-left {
+            left: 110%;
+            top: 50%;
+            transform: translateY(-50%);
+
+            &::after {
+                left: -12px;
+                top: 50%;
+                margin-top: -6px;
+                border-right-color: #f6eddf;
+            }
+        }
+
+        .bubble-right {
+            right: 110%;
+            top: 50%;
+            transform: translateY(-50%);
+
+            &::after {
+                right: -12px;
+                top: 50%;
+                margin-top: -6px;
+                border-left-color: #f6eddf;
+            }
+        }
+    }
+
+    .hand-container {
+        display: flex;
+        gap: 5px;
+        align-items: flex-end;
+    }
+
+    .melds-area {
+        display: flex;
+        gap: 8px;
+        margin-right: 15px; // 确保吃碰区域与手牌有明显间距
+        
+        .meld-group {
+            display: flex;
+            gap: 1px; // 单组吃/碰内部紧凑排列
+            padding: 2px;
+            border-radius: 4px;
+        }
+    }
+
+    .active-hand {
+        display: flex;
+        gap: 2px;
+    }
+
+    .mahjong-tile {
+        width: 30px;
+        height: 42px;
+        border-radius: 2px;
+        font-size: 12px;
+        transition: transform 0.2s;
+        box-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+        
+        &:hover { transform: translateY(-3px); }
+        &.back-tile { background: linear-gradient(135deg, #1e522e 0%, #163d22 100%); }
+    }
+
+    .center-area {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 760px;
+        height: 330px;
+        background: rgba(0, 0, 0, 0.25);
+        border-radius: 15px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 10px;
+        z-index: 10;
+        // ENABLE pointer-events to allow scrolling
+        pointer-events: auto;
+    }
+
+    .discard-pool {
+        display: grid;
+        grid-template-columns: repeat(22, 1fr);
+        gap: 2px;
+        width: 100%;
+        max-height: 100%;
+        overflow: hidden; // Cancel scrollbar as requested
+        
+        .mahjong-tile {
+            width: 30px !important;
+            height: 42px !important;
+        }
+    }
+}
+
+// Reuse Animations
+@keyframes slideInFromBottom { from { bottom: 0; opacity: 0; } to { bottom: 100px; opacity: 1; } }
+@keyframes slideInFromTop { from { top: 0; opacity: 0; } to { top: 100px; opacity: 1; } }
+@keyframes slideInFromLeft { from { left: 0; opacity: 0; } to { left: 100px; opacity: 1; } }
+@keyframes slideInFromRight { from { right: 0; opacity: 0; } to { right: 100px; opacity: 1; } }
+
+// Animation for last played card
+.last-played-card {
+    position: absolute;
+    z-index: 100;
+    width: 44px;
+    height: 60px;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+    background: #fff;
+    border-radius: 4px;
+}
+.last-card-pos-bottom { animation: moveFromBottom 0.8s ease-out forwards; }
+.last-card-pos-bottom-tsumo { animation: moveFromBottomTsumo 0.8s ease-out forwards; }
+@keyframes moveFromBottom { 0% { top: 88%; left: 50%; opacity: 1; } 25% { top: 78%; left: 50%; opacity: 1; } 35% { top: 78%; left: 50%; opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+@keyframes moveFromBottomTsumo { 0% { top: 88%; left: calc(50% + 180px); opacity: 1; } 25% { top: 78%; left: calc(50% + 180px); opacity: 1; } 35% { top: 78%; left: calc(50% + 180px); opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+
+.last-card-pos-right { animation: moveFromRight 0.8s ease-out forwards; }
+.last-card-pos-right-tsumo { animation: moveFromRightTsumo 0.8s ease-out forwards; }
+@keyframes moveFromRight { 0% { top: 50%; left: 92%; opacity: 1; } 25% { top: 50%; left: 84%; opacity: 1; } 35% { top: 50%; left: 84%; opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+@keyframes moveFromRightTsumo { 0% { top: calc(50% - 180px); left: 92%; opacity: 1; } 25% { top: calc(50% - 180px); left: 84%; opacity: 1; } 35% { top: calc(50% - 180px); left: 84%; opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+
+.last-card-pos-top { animation: moveFromTop 0.8s ease-out forwards; }
+.last-card-pos-top-tsumo { animation: moveFromTopTsumo 0.8s ease-out forwards; }
+@keyframes moveFromTop { 0% { top: 8%; left: 50%; opacity: 1; } 25% { top: 18%; left: 50%; opacity: 1; } 35% { top: 18%; left: 50%; opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+@keyframes moveFromTopTsumo { 0% { top: 8%; left: calc(50% - 180px); opacity: 1; } 25% { top: 18%; left: calc(50% - 180px); opacity: 1; } 35% { top: 18%; left: calc(50% - 180px); opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+
+.last-card-pos-left { animation: moveFromLeft 0.8s ease-out forwards; }
+.last-card-pos-left-tsumo { animation: moveFromLeftTsumo 0.8s ease-out forwards; }
+@keyframes moveFromLeft { 0% { top: 50%; left: 8%; opacity: 1; } 25% { top: 50%; left: 16%; opacity: 1; } 35% { top: 50%; left: 16%; opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+@keyframes moveFromLeftTsumo { 0% { top: calc(50% + 180px); left: 8%; opacity: 1; } 25% { top: calc(50% + 180px); left: 16%; opacity: 1; } 35% { top: calc(50% + 180px); left: 16%; opacity: 1; } 100% { top: 50%; left: 50%; opacity: 0; } }
+
+// Animation for drawing card (Moving from center/deck to hand)
+// Adjusted to land at the "New Card" position (Right end of the hand/rack)
+// Bottom: Lands on Right. Top: Lands on Left (inverted). Left: Lands on Bottom. Right: Lands on Top.
+@keyframes drawToBottom { 
+    from { top: 50%; left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 
+    to { top: 88%; left: calc(50% + 180px); opacity: 1; transform: translate(-50%, -50%) scale(1); } 
+}
+@keyframes drawToTop { 
+    from { top: 50%; left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 
+    to { top: 12%; left: calc(50% - 180px); opacity: 1; transform: translate(-50%, -50%) scale(1); } 
+}
+@keyframes drawToLeft { 
+    from { top: 50%; left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 
+    to { top: calc(50% + 180px); left: 10%; opacity: 1; transform: translate(-50%, -50%) scale(1); } 
+}
+@keyframes drawToRight { 
+    from { top: 50%; left: 50%; opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 
+    to { top: calc(50% - 180px); right: 10%; opacity: 1; transform: translate(50%, -50%) scale(1); } // translate(50%, -50%) for Right
+}
+
+.drawing-card {
+    position: absolute;
+    z-index: 100;
+    width: 30px;
+    height: 42px;
+    background: #fff;
+    border-radius: 2px;
+    box-shadow: 0 0 10px rgba(255,255,255,0.5);
+}
+
+.draw-pos-bottom { animation: drawToBottom 0.5s ease-out forwards; }
+.new-card-highlight {
+    border: 2px solid #FFD700;
+    box-shadow: 0 0 8px #FFD700;
+    border-radius: 2px;
+}
+.draw-pos-left { animation: drawToLeft 0.5s ease-out forwards; }
+.draw-pos-right { animation: drawToRight 0.5s ease-out forwards; }
+
+@keyframes drawToBottom { from { top: 50%; left: 50%; opacity: 1; } to { top: 88%; left: calc(50% + 180px); opacity: 1; } }
+@keyframes drawToTop { from { top: 50%; left: 50%; opacity: 1; } to { top: 8%; left: calc(50% - 180px); opacity: 1; } }
+@keyframes drawToLeft { from { top: 50%; left: 50%; opacity: 1; } to { top: calc(50% + 180px); left: 8%; opacity: 1; } }
+@keyframes drawToRight { from { top: 50%; left: 50%; opacity: 1; } to { top: calc(50% - 180px); left: 92%; opacity: 1; } }
+
+@keyframes delayShow {
+    0%, 90% { opacity: 0; }
+    100% { opacity: 1; }
+}
+
+
+.last-discard-highlight {
+    animation: delayShow 0.75s linear forwards; 
+    box-shadow: 0 0 8px #FFD700;
+    border: 2px solid #FFD700;
+    position: relative;
+    z-index: 10;
+}
+
+.highlight-new-draw {
+    box-shadow: 0 0 6px #FFD700; 
+    border: 2px solid #FFD700;
+    border-radius: 2px;
+}
