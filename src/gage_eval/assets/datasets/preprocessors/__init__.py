@@ -1,3 +1,4 @@
 """Preprocessor utilities."""
+from . import builtin
 
-__all__ = []
+__all__ = ["builtin"]

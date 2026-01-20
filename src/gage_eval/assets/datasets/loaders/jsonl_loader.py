@@ -54,6 +54,8 @@ class JSONLDatasetLoader(DatasetLoader):
         doc_to_text = resolve_doc_to_callable(self.spec, "doc_to_text")
         doc_to_visual = resolve_doc_to_callable(self.spec, "doc_to_visual")
         doc_to_audio = resolve_doc_to_callable(self.spec, "doc_to_audio")
+        from gage_eval.assets.datasets import preprocessors 
+        # apply_preprocess need registered preprocessors but fail to import preprocessors.builtin.py at begin due to cross registry
         records = apply_preprocess(
             raw_records,
             self.spec,

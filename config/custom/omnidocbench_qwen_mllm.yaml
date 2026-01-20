@@ -1,0 +1,64 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: omnidocbench_qwen_mllm
+  description: A multi-modal evaluation for OmniDocBench using a Qwen MLLM.
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+# 1. Dataset Configuration
+datasets:
+  - dataset_id: omnidocbench_val
+    loader: jsonl
+    params:
+      path: /mnt/sdb1/ywt/OmniDocBench-main/OmniDocBench1_5/omnidocbench15_gage_r.jsonl
+      preprocess: omnidoc_image_standardizer
+      preprocess_kwargs:
+        question_field: prompt
+        content_field: image
+        content_root: /mnt/sdb1/ywt/OmniDocBench-main/OmniDocBench1_5/images
+      doc_to_visual: gage_eval.assets.datasets.utils.multimodal:embed_local_message_images
+      # doc_to_visual_kwargs 自动继承 preprocess_kwargs 的同名字段
+
+backends:
+  - backend_id: omnidocbench_qwen_mllm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: http://127.0.0.1:8685/v1  # 替换为实际 Vision-LLM 服务地址
+      model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+      generation_parameters:
+        max_new_tokens: 4096 # 输出尽量短，避免内存/延迟
+        temperature: 0.1
+      async_max_concurrency: 2  # MacBook 本地轻量并发
+
+role_adapters:
+  - adapter_id: omnidocbench_qwen_vl
+    role_type: dut_model
+    backend_id: omnidocbench_qwen_mllm_backend
+    # Capability must match what the backend/adapter supports for multi-modal input
+    capabilities:
+      - vision_chat
+
+# 4. Metric Configuration
+metrics:
+  - metric_id: omnidocbench_all_metric
+    # This implementation needs to be created as per test-1113.md
+    implementation: gage_eval.metrics.builtin.ominidoc_all_metric:OmniDocBenchMetric
+    # implementation: OmniDocBenchMetric
+    aggregation: omnidoclazycalc
+
+# 5. Task Configuration
+tasks:
+  - task_id: doc_parsing_eval
+    dataset_id: omnidocbench_val
+    max_samples: 20 # MacBook 快速 smoke，可 CLI 覆盖
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/omnidocbench_events.jsonl
