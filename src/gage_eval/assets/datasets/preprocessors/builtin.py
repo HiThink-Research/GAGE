@@ -56,6 +56,8 @@ from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 # benchmark LiveCodeBench
 from gage_eval.assets.datasets.preprocessors.live_code_bench.live_code_converter import LiveCodeBenchConverter
 
+# benchmark global piqa
+from gage_eval.assets.datasets.preprocessors.global_piqa.global_piqa_converter import GlobalPIQAConverter
 
 @registry.asset(
     "dataset_preprocessors",
@@ -310,4 +312,16 @@ class MMEPreprocessorProviderAlias(MMEPreprocessor):
     tags=("prompt", "live code bench"),
 )
 class LiveCodeBenchPreprocessor(LiveCodeBenchConverter):
+    pass
+
+
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "global_piqa_chat_preprocessor",
+    desc="Global PIQA prompt wrapper",
+    tags=("prompt", "global PIQA"),
+)
+class GlobalPIQAPreprocessor(GlobalPIQAConverter):
     pass
