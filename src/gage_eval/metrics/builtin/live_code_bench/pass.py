@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+import json
 from typing import Any, Dict, Optional, Literal
 
 from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore, LMStyle, LanguageModel
 from gage_eval.assets.datasets.loaders.live_code_bench.scenarios import Scenario
+
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
 
@@ -14,6 +16,7 @@ from gage_eval.metrics.filter.base import RegexFilter
 from gage_eval.metrics.numeric import extract_numeric_answer
 from gage_eval.metrics.match import match_str
 from gage_eval.metrics.choice import extract_single_choice_letter
+from gage_eval.metrics.builtin.live_code_bench.router import combine_results
 
 from gage_eval.metrics.utils import (
     ensure_list_of_strings, extract_field, normalize_text_advanced,
@@ -37,6 +40,21 @@ def get_results(sample_dict):
         return results
     return results
 
+def get_eval_sample(ref_list, fn_name=None):
+    return {
+        "input_output": json.dumps(
+            {
+                "inputs": [
+                    t.get('input') for t in ref_list
+                ],
+                "output":[
+                    t.get('output') for t in ref_list
+                ],
+                "fn_name": fn_name
+            }
+        )
+    }
+
 
 @registry.asset(
     "metrics",
@@ -49,18 +67,35 @@ class LiveCodeBenchPassMetric(SimpleMetric):
     value_key = "pass@K"
     regex_pattern =  r"the answer is \s*(.+?)\s*\r?\n\s*"
     def compute(self, context: MetricContext) -> MetricResult:
+        k_list = self.args.get("ks") or [1]
+        cot_code_execution = self.args.get("cot_code_execution") or False
+        timeout = self.args.get('timeout') or 6        
         # STEP 1: extract sample/predict /groud truth
         sample_dict = extract_field(context, 'sample')
         metadata = sample_dict.get('metadata')
+        fn_name = None
+        dataset_meta =  metadata.get('metadata')
+        if dataset_meta is not None:
+            meta = json.loads(dataset_meta)
+            fn_name = meta.get("func_name")
         model_dict = metadata.get('model')
         _scenario_str = metadata.get('scenario')
         scenario = Scenario(_scenario_str)
-
+        ref = sample_dict.get("references")
         model = LanguageModel.from_dict(model_dict)
-        print("sample_dict", sample_dict)
+        #print("sample_dict", sample_dict)
         results = get_results(sample_dict)
+        combined_results = combine_results(scenario, results, model, cot_code_execution)
+        eval_samples = [get_eval_sample(ref, fn_name)]
+        generations = [extracted for _, extracted in combined_results]
+        print("ref:", ref)
         print("results:", results)
-  
+        print("self.spec", self.spec)
+        print("sef.args", self.args)
+        print("eval_samples", eval_samples)
+        print("generation:", generations)
+        
+        exit(0)
 
         # STEP 3: compute score
         final_pred, score = match_str(pred, str(answer), location="exact")

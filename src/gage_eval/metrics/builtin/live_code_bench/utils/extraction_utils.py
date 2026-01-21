@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles
+from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LMStyle
 
 def extract_code(model_output: str, lmstyle: LMStyle):
     outputlines = model_output.split("\n")

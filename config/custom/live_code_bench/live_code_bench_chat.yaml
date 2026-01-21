@@ -54,7 +54,13 @@ role_adapters:
 
 metrics:
   - metric_id: live_code_bench_pass
-    implementation: live_code_bench_pass 
+    implementation: live_code_bench_pass
+    params:
+      ks:
+        - 1
+        - 5
+      cot_code_execution: false
+      timeout: 6
 
 tasks:
   - task_id: live_code_bench_eval

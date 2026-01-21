@@ -43,7 +43,7 @@ def convert_enum_to_str(obj: Any) -> Any:
     elif isinstance(obj, tuple):
         return tuple(convert_enum_to_str(item) for item in obj)
     else:
-        return obj
+        return obj or []
 
 def normalize_tests(test_list):
     ret_list = []
@@ -82,9 +82,9 @@ class LiveCodeBenchConverter(BasePreprocessor):
 
 
         sample_id = '_'.join([sample.get('question_id'), sample.get("contest_id")])
-        ref = [
-            {k: normalize_tests(sample[k])} for k in ['public_test_cases', 'private_test_cases']
-        ]
+        ref = normalize_tests(sample.get('public_test_cases')) + \
+            normalize_tests(sample.get('private_test_cases'))  or []
+        
         self_metadata = str(sample.get('metadata')) or '{}'
         metadata = {
             'scenario': _scenario_str,
@@ -98,7 +98,6 @@ class LiveCodeBenchConverter(BasePreprocessor):
             references = ref,
             metadata = metadata
         )
-        # print("ret_sample:", ret_sample)
         return ret_sample
 
 
