@@ -48,6 +48,7 @@ class MahjongArena:
         core_config: Optional[dict[str, Any]] = None,
         player_ids: Optional[Sequence[str]] = None,
         player_names: Optional[dict[str, str]] = None,
+        player_models: Optional[dict[str, str]] = None,
         seat_mode: str = "fixed",
         illegal_policy: Optional[dict[str, str | int]] = None,
         illegal_action_policy: str = "reject",
@@ -74,6 +75,7 @@ class MahjongArena:
             core_config: Optional configuration for the core factory.
             player_ids: Optional list of external player ids.
             player_names: Optional mapping from player id to display name.
+            player_models: Optional mapping from player id to backend model label.
             seat_mode: Seat layout mode ("fixed" or "relative").
             illegal_policy: Policy controlling illegal move retries and outcome.
             illegal_action_policy: Legacy fallback policy when illegal_policy is absent.
@@ -95,6 +97,7 @@ class MahjongArena:
         resolved_ids = list(player_ids or self._default_player_ids(self._core))
         self._player_ids = [str(player_id) for player_id in resolved_ids]
         self._player_names = self._normalize_player_names(self._player_ids, player_names)
+        self._player_models = self._normalize_player_models(self._player_ids, player_models)
         self._player_id_map = {idx: player_id for idx, player_id in enumerate(self._player_ids)}
         self._player_index_map = {player_id: idx for idx, player_id in self._player_id_map.items()}
         self._formatter = formatter or StandardMahjongFormatter()
@@ -208,6 +211,7 @@ class MahjongArena:
             "player_id": player_id,
             "player_ids": list(self._player_ids),
             "player_names": dict(self._player_names),
+            "player_models": dict(self._player_models),
             "active_player_id": self.get_active_player(),
             "active_player": self.get_active_player(),
             "chat_log": chat_log,
@@ -495,6 +499,7 @@ class MahjongArena:
         return {
             "player_ids": list(self._player_ids),
             "player_names": dict(self._player_names),
+            "player_models": dict(self._player_models),
             "winner": winner,
             "result": self._final_result.result if self._final_result else None,
             "result_reason": self._final_result.reason if self._final_result else None,
@@ -678,3 +683,11 @@ class MahjongArena:
     ) -> dict[str, str]:
         names = dict(player_names or {})
         return {player_id: names.get(player_id, player_id) for player_id in player_ids}
+
+    @staticmethod
+    def _normalize_player_models(
+        player_ids: Sequence[str],
+        player_models: Optional[dict[str, str]],
+    ) -> dict[str, str]:
+        models = dict(player_models or {})
+        return {player_id: str(models[player_id]) for player_id in player_ids if models.get(player_id)}

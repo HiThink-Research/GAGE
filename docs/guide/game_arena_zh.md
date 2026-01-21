@@ -154,6 +154,9 @@ role_adapters:
           ref: tictactoe_human
 ```
 
+命名兜底：
+- 若未显式提供 `player_names`，或值等于原始 `player_id`，或为通用 `Player N` 形式，Arena 会使用玩家的适配器 id（`ref`）作为显示名称，避免 UI 中出现 `player_0` / `Player 0` 之类的占位名。
+
 Demo 测试集放在 `tests/data/`：
 
 - `tests/data/Test_Gomoku_LiteLLM.jsonl`

@@ -494,6 +494,92 @@ class MahjongReplayView extends React.Component {
         const remainingTilesValue = Number(remainingTiles);
         const noTilesLeft = Number.isFinite(remainingTilesValue) && remainingTilesValue <= 0;
         const gameOver = Boolean(endReason || resultLabel || replayData.winner || noTilesLeft);
+        const playerNamesRaw = replayData.player_names || replayData.playerNames || {};
+        const resolvePlayerLabel = (pid) => {
+            const playerKey = `player_${pid}`;
+            if (Array.isArray(playerNamesRaw)) {
+                return playerNamesRaw[pid] || `Player ${pid}`;
+            }
+            if (playerNamesRaw && typeof playerNamesRaw === 'object') {
+                return playerNamesRaw[playerKey] || playerNamesRaw[String(pid)] || `Player ${pid}`;
+            }
+            return `Player ${pid}`;
+        };
+        const resolveProviderKey = (label) => {
+            if (!label) {
+                return null;
+            }
+            const lowered = String(label).toLowerCase();
+            if (/(human|agent|dummy|player)/.test(lowered)) return null;
+            if (/(openai|gpt|o1|o3)/.test(lowered)) return 'openai';
+            if (/(anthropic|claude)/.test(lowered)) return 'anthropic';
+            if (/(google|gemini)/.test(lowered)) return 'google';
+            if (/(meta|llama)/.test(lowered)) return 'meta';
+            if (/(xai|grok)/.test(lowered)) return 'xai';
+            if (/mistral/.test(lowered)) return 'mistral';
+            if (/deepseek/.test(lowered)) return 'deepseek';
+            if (/(qwen|tongyi|alibaba)/.test(lowered)) return 'qwen';
+            if (/bytedance|doubao/.test(lowered)) return 'bytedance';
+            if (/(zhipu|glm)/.test(lowered)) return 'zhipu';
+            return null;
+        };
+        const providerAvatarMap = {
+            openai: 'https://upload.wikimedia.org/wikipedia/commons/6/66/OpenAI_logo_2025_%28symbol%29.svg',
+            anthropic: 'https://upload.wikimedia.org/wikipedia/commons/b/b0/Claude_AI_symbol.svg',
+            google: 'https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg',
+            meta: 'https://upload.wikimedia.org/wikipedia/commons/7/7b/Meta_Platforms_Inc._logo.svg',
+            xai: 'https://upload.wikimedia.org/wikipedia/commons/5/57/XAI-Logo.svg',
+            mistral: 'https://upload.wikimedia.org/wikipedia/commons/e/e6/Mistral_AI_logo_%282025%E2%80%93%29.svg',
+            deepseek: 'https://upload.wikimedia.org/wikipedia/commons/e/ec/DeepSeek_logo.svg',
+            qwen: 'https://upload.wikimedia.org/wikipedia/commons/6/69/Qwen_logo.svg',
+            bytedance: 'https://upload.wikimedia.org/wikipedia/commons/5/55/Bytedance_logo_English.svg',
+            zhipu: 'https://upload.wikimedia.org/wikipedia/commons/b/b4/Z.ai_logo.svg',
+        };
+        const playerAvatarOverrides = replayData.player_avatars || replayData.playerAvatars || {};
+        const playerModelsRaw = replayData.player_models || replayData.playerModels || {};
+        const resolvePlayerModel = (pid) => {
+            const playerKey = `player_${pid}`;
+            if (playerModelsRaw && typeof playerModelsRaw === 'object') {
+                return playerModelsRaw[playerKey] || playerModelsRaw[String(pid)] || '';
+            }
+            if (Array.isArray(playerModelsRaw)) {
+                return playerModelsRaw[pid] || '';
+            }
+            return '';
+        };
+        const playerModels = [0, 1, 2, 3].map((pid) => resolvePlayerModel(pid));
+        const isGenericLabel = (label, pid) => {
+            if (!label) {
+                return true;
+            }
+            const trimmed = String(label).trim();
+            if (trimmed.toLowerCase() === `player_${pid}`) {
+                return true;
+            }
+            return /^player\s*\d+$/i.test(trimmed);
+        };
+        const playerLabels = [0, 1, 2, 3].map((pid) => {
+            const label = resolvePlayerLabel(pid);
+            if (isGenericLabel(label, pid)) {
+                if (playerModels[pid]) {
+                    return playerModels[pid];
+                }
+                if (pid === 0) {
+                    return 'Human';
+                }
+            }
+            return label;
+        });
+        const playerAvatars = [0, 1, 2, 3].map((pid) => {
+            if (playerAvatarOverrides && typeof playerAvatarOverrides === 'object') {
+                const override = playerAvatarOverrides[`player_${pid}`] || playerAvatarOverrides[String(pid)];
+                if (override) {
+                    return override;
+                }
+            }
+            const providerKey = resolveProviderKey(playerModels[pid] || playerLabels[pid]);
+            return providerKey ? providerAvatarMap[providerKey] : null;
+        });
         const activePlayerIdx = this.resolvePlayerIndex(activePlayerId);
         const legalMovesList = Array.isArray(legalMoves) ? legalMoves.map(String) : [];
         const legalTileMoves = legalMovesList.filter((move) => this.isTileAction(move));
@@ -954,6 +1040,8 @@ class MahjongReplayView extends React.Component {
                             onTileDoubleClick={(tile) => this.handleTileDoubleClick(tile)}
                             interactivePlayerId={0}
                             drawTileByPlayer={drawTileByPlayer}
+                            playerLabels={playerLabels}
+                            playerAvatars={playerAvatars}
                         />
                     </div>
 
@@ -965,7 +1053,7 @@ class MahjongReplayView extends React.Component {
                                 <div key={pid} className={"player-item " + (pid === activePlayerIdx ? "active" : "")}>
                                     <Avatar>{pid}</Avatar>
                                     <div style={{textAlign: 'left'}}>
-                                        <div style={{fontWeight: 'bold'}}>Player {pid}</div>
+                                        <div style={{fontWeight: 'bold'}}>{playerLabels[pid] || `Player ${pid}`}</div>
                                         <div style={{fontSize: '12px', color: '#666'}}>
                                             {pid === 0 ? "Human Player" : "AI Agent"}
                                         </div>

@@ -154,6 +154,9 @@ role_adapters:
           ref: tictactoe_human
 ```
 
+Naming fallback:
+- If `player_names` is not provided, equals the raw `player_id`, or matches a generic `Player N` label, the arena will fall back to the player adapter id (`ref`) for display. This avoids UI labels like `player_0` or `Player 0` when a backend adapter is configured.
+
 Datasets for demos are stored under `tests/data/`:
 
 - `tests/data/Test_Gomoku_LiteLLM.jsonl`
