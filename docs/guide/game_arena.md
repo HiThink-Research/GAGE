@@ -195,3 +195,44 @@ Related tests:
 2. Register environment, context, parser, and renderer to their registries.
 3. Add demo configs and tests under `config/custom/` and `tests/unit/`.
 4. Validate via `run.py` with a small `max_samples`.
+
+## 10. Mahjong quickstart (showdown)
+
+Prereqs:
+- Python deps installed (`pip install -r requirements.txt`)
+- Node.js + npm ready for frontend replay
+- Model keys configured (e.g. `OPENAI_API_KEY`)
+
+One-click scripts:
+```bash
+bash scripts/oneclick/run_mahjong_real_ai.sh
+```
+
+```bash
+bash scripts/oneclick/run_mahjong_showdown_human.sh
+```
+
+```bash
+bash scripts/oneclick/run_mahjong_showdown_human_dummy.sh
+```
+
+Replay server + game only (no frontend):
+```bash
+bash scripts/oneclick/run_mahjong_replay_and_game.sh
+```
+
+Endpoints:
+- Replay Server: `http://127.0.0.1:<replay_port>`
+- Frontend (AI mode): `http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=ai`
+- Frontend (Human mode): `http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=human&play=1&action_url=http%3A%2F%2F127.0.0.1%3A8004`
+
+URL params (Human/AI):
+- `replay_path`: replay filename (default `mahjong_replay.json`)
+- `mode`: `ai`/`human`
+- `play`: `1` to enable human mode
+- `action_url`: backend action endpoint (URL-encoded)
+
+Common env vars:
+- `REPLAY_PORT` / `FRONTEND_PORT`
+- `GAGE_EVAL_SAVE_DIR`
+- `OPENAI_API_KEY`

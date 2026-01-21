@@ -80,11 +80,11 @@ class ArenaRoleAdapter(RoleAdapter):
         # STEP 1: Build core components for the game loop.
         player_specs, player_ids, player_names, start_player_id = self._normalize_player_specs(sample)
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
-        if "doudizhu" in str(env_impl).lower():
+        if "doudizhu" in str(env_impl).lower() or "mahjong" in str(env_impl).lower():
             model_labels = self._resolve_player_labels(player_specs, role_manager)
             for player_id in player_ids:
                 label = model_labels.get(player_id)
-                if label:
+                if label and player_id not in player_names:
                     player_names[player_id] = label
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)

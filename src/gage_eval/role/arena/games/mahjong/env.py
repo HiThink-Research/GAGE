@@ -493,6 +493,8 @@ class MahjongArena:
         end_reason = self._resolve_end_reason()
         remaining_tiles = self._resolve_remaining_tiles()
         return {
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
             "winner": winner,
             "result": self._final_result.result if self._final_result else None,
             "result_reason": self._final_result.reason if self._final_result else None,
