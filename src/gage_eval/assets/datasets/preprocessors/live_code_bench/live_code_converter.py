@@ -30,8 +30,28 @@ from gage_eval.assets.datasets.loaders.live_code_bench.scenarios import Scenario
 from gage_eval.assets.datasets.preprocessors.live_code_bench.code_generation import format_prompt_generation
 from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore
 from gage_eval.assets.datasets.preprocessors.live_code_bench.utils import normalize_messages
+from enum import Enum
+from typing import Any, Dict, List, Union
 
+def convert_enum_to_str(obj: Any) -> Any:
+    if isinstance(obj, Enum):
+        return str(obj)          # 或 obj.value，看你要的是 name 还是 value
+    elif isinstance(obj, dict):
+        return {k: convert_enum_to_str(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_enum_to_str(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_enum_to_str(item) for item in obj)
+    else:
+        return obj
 
+def normalize_tests(test_list):
+    ret_list = []
+    for d in test_list:
+        tmp = convert_enum_to_str(d)
+        ret_list.append(tmp)
+    return ret_list
+    
 
 class LiveCodeBenchConverter(BasePreprocessor):
     """Preprocesses LiveCodeBench records into the Sample schema."""
@@ -50,30 +70,35 @@ class LiveCodeBenchConverter(BasePreprocessor):
             A Sample with the gage-eval Sample schema.
         """
         sample: Dict[str, Any] = dict(record)
-        scenario = scenario or sample.get('scenario')
+        _scenario_str = scenario or sample.get('scenario')
+
+        scenario = Scenario(_scenario_str)
 
         model = LanguageModelStore[model_name]
 
-        if scenario == Scenario.codegeneration.value:
+        if scenario == Scenario.codegeneration:
             dict_messages = format_prompt_generation(sample, model.model_style)
             final_messages = normalize_messages(dict_messages)
 
 
         sample_id = '_'.join([sample.get('question_id'), sample.get("contest_id")])
         ref = [
-            {k: sample[k]} for k in ['public_test_cases', 'private_test_cases']
+            {k: normalize_tests(sample[k])} for k in ['public_test_cases', 'private_test_cases']
         ]
-        self_metadata = sample.get('metadata') or {}
+        self_metadata = str(sample.get('metadata')) or '{}'
         metadata = {
-            'scenario': scenario,
-            'metadata': self_metadata
+            'scenario': _scenario_str,
+            'metadata': self_metadata,
+            'model': model.to_dict()
         }
         ret_sample = Sample(
             id = sample_id,
             schema_version = schema_version,
             messages = final_messages,
-            references = ref
+            references = ref,
+            metadata = metadata
         )
+        # print("ret_sample:", ret_sample)
         return ret_sample
 
 

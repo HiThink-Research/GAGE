@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
+from datetime import datetime, timezone
 
 class LMStyle(Enum):
     OpenAIChat = "OpenAIChat"
@@ -53,6 +56,26 @@ class LanguageModel:
             "link": self.link,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "LanguageModel":
+        # 处理 release_date：从毫秒时间戳转回 datetime
+        release_date = None
+        if data.get("release_date") is not None:
+            # 毫秒 → 秒
+            timestamp_sec = data["release_date"] / 1000.0
+            # 建议使用 UTC 时间（与你注释中的疑问一致）
+            release_date = datetime.fromtimestamp(timestamp_sec, tz=timezone.utc)
+
+        # 处理 model_style：从字符串 value 转回 Enum
+        model_style = LMStyle(data["model_style"])
+
+        return cls(
+            model_name=data["model_name"],
+            model_repr=data["model_repr"],
+            model_style=model_style,
+            release_date=release_date,
+            link=data.get("link"),
+        )
 
 LanguageModelList: list[LanguageModel] = [
     ## LLama3 Base (8B and 70B)

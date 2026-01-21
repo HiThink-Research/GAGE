@@ -119,20 +119,19 @@ def load_live_code_bench_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[
         streaming_override if streaming_override is not None else False,
         "auto",
     )
-    print("in dataloader")
     local_dir = snapshot_download(
         repo_id = hub_id,
         repo_type = "dataset",
         local_dir=local_dir
     )
-    print(f'saved to local_dir: {local_dir}')
+    logger.info(f'saved to local_dir: {local_dir}')
 
     scenario = loader_params.get("scenario")    
     not_fast = loader_params.get("not_fast")
     start_date = str(loader_params.get("start_date"))
     end_date = str(loader_params.get("end_date"))
     release_version = loader_params.get("release_version")
-    print(scenario, not_fast, start_date, end_date, release_version)
+    logger.info(scenario, not_fast, start_date, end_date, release_version)
     filename_list  = get_filename_list(release_version)
     if scenario == Scenario.codegeneration.value:
         if not_fast:
@@ -140,7 +139,7 @@ def load_live_code_bench_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[
         else:
             benchmark = load_code_generation_dataset(local_dir, filename_list, start_date, end_date)
     else:
-        print(f"not supported: {scenario}")
+        logger.info(f"not supported: {scenario}")
     
     limit = loader_params.get("limit")
     if limit is not None:

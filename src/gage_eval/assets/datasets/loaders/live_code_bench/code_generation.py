@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import zlib
 import pickle
@@ -13,18 +15,21 @@ class Platform(Enum):
     LEETCODE = "leetcode"
     CODEFORCES = "codeforces"
     ATCODER = "atcoder"
-
+    def __str__(self):
+        return self.value
 
 class Difficulty(Enum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
-
+    def __str__(self):
+        return self.value
 
 class TestType(Enum):
     STDIN = "stdin"
     FUNCTIONAL = "functional"
-
+    def __str__(self):
+        return self.value
 
 @dataclass
 class Test:

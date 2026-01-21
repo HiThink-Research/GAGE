@@ -1,9 +1,12 @@
-""" HLE accuracy metric (Local)"""
+""" Live Code Bench pass metric"""
 
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, Optional, Literal
+
+from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore, LMStyle, LanguageModel
+from gage_eval.assets.datasets.loaders.live_code_bench.scenarios import Scenario
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
 
@@ -21,6 +24,20 @@ from gage_eval.metrics.utils import (
 
 from gage_eval.registry import registry
 
+def get_results(sample_dict):
+    results = []
+    try:
+        this_pred = []
+        predict_result = sample_dict['predict_result']
+        for pred in predict_result:
+            this_pred.append(pred['message']['content'][0]['text'])
+        results.append(this_pred)
+    except Exception as e:
+        logger.warning(f'[warning]{e}')        
+        return results
+    return results
+
+
 @registry.asset(
     "metrics",
     "live_code_bench_pass", 
@@ -34,17 +51,16 @@ class LiveCodeBenchPassMetric(SimpleMetric):
     def compute(self, context: MetricContext) -> MetricResult:
         # STEP 1: extract sample/predict /groud truth
         sample_dict = extract_field(context, 'sample')
+        metadata = sample_dict.get('metadata')
+        model_dict = metadata.get('model')
+        _scenario_str = metadata.get('scenario')
+        scenario = Scenario(_scenario_str)
+
+        model = LanguageModel.from_dict(model_dict)
         print("sample_dict", sample_dict)
-        answer = get_first_reference(sample_dict)     
-        prediction_raw = get_text_content_of_first_predict_result(sample_dict)
-
-        # STEP 2: pretty prediction
-        rf = RegexFilter(regex_pattern=self.regex_pattern, group_select=-1, ignore_case=True)
-
+        results = get_results(sample_dict)
+        print("results:", results)
   
-        pred = rf.apply(prediction_raw)
-
-        pred = extract_single_choice_letter(pred)
 
         # STEP 3: compute score
         final_pred, score = match_str(pred, str(answer), location="exact")
