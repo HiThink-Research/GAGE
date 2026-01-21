@@ -154,6 +154,9 @@ role_adapters:
           ref: tictactoe_human
 ```
 
+命名兜底：
+- 若未显式提供 `player_names`，或值等于原始 `player_id`，或为通用 `Player N` 形式，Arena 会使用玩家的适配器 id（`ref`）作为显示名称，避免 UI 中出现 `player_0` / `Player 0` 之类的占位名。
+
 Demo 测试集放在 `tests/data/`：
 
 - `tests/data/Test_Gomoku_LiteLLM.jsonl`
@@ -465,3 +468,44 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 2. 注册环境、Context、Parser、Renderer 四类组件。
 3. 增加 demo 配置与测试用例。
 4. 使用 `run.py` 小样本验证联通。
+
+## 10. 麻将快速上手（showdown）
+
+前置条件：
+- Python 依赖已安装（`pip install -r requirements.txt`）
+- Node.js + npm 已就绪（前端回放）
+- 模型密钥已配置（如 `OPENAI_API_KEY`）
+
+一键脚本：
+```bash
+bash scripts/oneclick/run_mahjong_real_ai.sh
+```
+
+```bash
+bash scripts/oneclick/run_mahjong_showdown_human.sh
+```
+
+```bash
+bash scripts/oneclick/run_mahjong_showdown_human_dummy.sh
+```
+
+仅启动 replay server + 运行对局（无前端）：
+```bash
+bash scripts/oneclick/run_mahjong_replay_and_game.sh
+```
+
+访问地址：
+- Replay Server：`http://127.0.0.1:<replay_port>`
+- 前端回放（AI 模式）：`http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=ai`
+- 前端回放（Human 模式）：`http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=human&play=1&action_url=http%3A%2F%2F127.0.0.1%3A8004`
+
+URL 参数（Human / AI）：
+- `replay_path`：回放文件名（默认 `mahjong_replay.json`）
+- `mode`：`ai`/`human`
+- `play`：`1` 启用人类交互模式
+- `action_url`：Human 模式动作与聊天提交的后端地址（URL 编码）
+
+常用环境变量：
+- `REPLAY_PORT` / `FRONTEND_PORT`
+- `GAGE_EVAL_SAVE_DIR`
+- `OPENAI_API_KEY`
