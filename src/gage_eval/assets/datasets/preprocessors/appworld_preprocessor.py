@@ -9,6 +9,7 @@ from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
 
 _TEST_SUBSETS = {"test_normal", "test_challenge"}
 _GROUND_TRUTH_MODES = {"full", "partial", "minimal"}
+_DEFAULT_HELPER_APPS = ("api_docs", "supervisor")
 
 
 class AppWorldPreprocessor(BasePreprocessor):
@@ -129,7 +130,11 @@ def _normalize_messages(raw_messages: Any, instruction: str) -> List[Dict[str, A
 def _resolve_allowed_apps(record: Dict[str, Any], meta: Dict[str, Any]) -> Optional[List[str]]:
     allowed = meta.get("allowed_apps") or record.get("allowed_apps")
     if isinstance(allowed, list):
-        return [str(item) for item in allowed if item]
+        merged = [str(item) for item in allowed if item]
+        for helper in _DEFAULT_HELPER_APPS:
+            if helper not in merged:
+                merged.append(helper)
+        return merged
     return None
 
 

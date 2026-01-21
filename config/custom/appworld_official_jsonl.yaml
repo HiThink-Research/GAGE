@@ -6,36 +6,6 @@ metadata:
   name: appworld_official_jsonl
   description: AppWorld official JSONL evaluation via MCP + judge_extend.
 
-# System prompt injected into the DUT agent.
-prompts:
-  - prompt_id: appworld_minimal_system
-    renderer: jinja_chat
-    template: |
-      You are an autonomous AI agent acting as a digital assistant for the user. Your goal is to solve tasks in the AppWorld environment using the provided tools.
-
-      # Strategy & Thinking
-      1. **Plan First**: Before taking action, briefly analyze the task and list the steps you need to take.
-      2. **Check Prerequisites**: Does this task need a date? Call `phone.get_current_date_and_time` first. Does it need a login? Check `supervisor` for credentials first.
-      3. **Loop for Data**: If you need to count items, search, or find a specific one, you MUST fetch ALL pages. Start at `page_index=0` and increment until you get an empty list `[]`. Do NOT assume you have all data from just page 0.
-
-      # Critical Rules
-      1. **Credentials**: All usernames and passwords are stored in the `supervisor` app. 
-         - Step 1: Call `supervisor.show_account_passwords` (or similar) to get credentials.
-         - Step 2: Call `<app>.login(username=..., password=...)` to get an `access_token`.
-         - Step 3: Use the app APIs.
-      2. **Meta-Tool Syntax**: 
-         - You use meta-tools like `call_spotify`, `call_amazon`.
-         - `endpoint` argument: MUST be JUST the name of the API (e.g., "search_songs"). NO '?' or query parameters.
-         - `params` argument: Dictionary containing all API arguments.
-         - **Correct**: `call_spotify(endpoint="search_songs", params={"query": "rock", "page_index": 0})`
-         - **Incorrect**: `call_spotify(endpoint="search_songs?query=rock")`
-      3. **No Guessing**: Never make up IDs, names, or dates. Look them up via tools.
-      4. **Final Answer**: When finished, call `supervisor.complete_task(answer=...)`. 
-         - Keep the answer minimal and strictly formatted (e.g., comma-separated list of strings, or a single number). No conversational filler.
-
-      # App-wise API Descriptions
-      {{ tool_documentation }}
-
 # JSONL dataset source exported from the AppWorld image.
 datasets:
   - dataset_id: appworld_dev
@@ -140,28 +110,55 @@ metrics:
       category_field: difficulty
 
 role_adapters:
+  - adapter_id: api_descriptions_context
+    role_type: context_provider
+    mcp_client_id: appworld_env
+    params:
+      implementation: appworld_api_docs
+      implementation_params:
+        mode: api_descriptions
+        auto_discover_apps: true
+        include_app_descriptions: true
+        max_chars: 200000
+
+  - adapter_id: api_predictor
+    role_type: helper_model
+    backend_id: gpt52_openai_http
+    prompt_id: helper/appworld_api_predictor@v1
+    params:
+      implementation: appworld_api_predictor
+      implementation_params:
+        max_apis: 16
+        always_include_apps:
+          - api_docs
+          - supervisor
+        always_include_tools:
+          - supervisor.complete_task
+
   - adapter_id: toolchain_main
     role_type: toolchain
     mcp_client_id: appworld_env
     params:
-      # Enable Meta-Tools to avoid the 128-tool limit.
-      meta_tool_mode: true
-      # Inject tool documentation into the system prompt.
-      tool_doc_enabled: true
-      # "text" includes parameter signatures; switch to "app_kv" for app_name: endpoint: description.
-      tool_doc_format: text
+      # Disable Meta-Tools to align with AppWorld doc-first flow.
+      meta_tool_mode: false
+      # Keep ApiDocs-driven behavior aligned with the paper baselines.
+      tool_doc_enabled: false
+      # Use schema_yaml to include constraints/response schemas with truncation.
+      tool_doc_format: schema_yaml
+      tool_doc_max_endpoints: 60
+      tool_doc_max_chars: 12000
 
   - adapter_id: dut_agent_main
     role_type: dut_agent
     agent_backend_id: agent_model_main
-    prompt_id: appworld_minimal_system
+    prompt_id: dut/appworld@v1
     sandbox:
       sandbox_id: appworld_local
       # Create an isolated container per task.
       lifecycle: per_task
     params:
       # Safety net for runaway tool loops.
-      max_turns: 50
+      max_turns: 120
       pre_hooks:
         # Initialize AppWorld task state before the agent starts.
         - type: appworld_initialize
@@ -184,6 +181,10 @@ tasks:
     dataset_id: appworld_dev
     steps:
       - step: support
+        adapter_id: api_descriptions_context
+      - step: support
+        adapter_id: api_predictor
+      - step: support
         adapter_id: toolchain_main
       - step: inference
         adapter_id: dut_agent_main
@@ -193,7 +194,7 @@ tasks:
     # Keep concurrency low for deterministic AppWorld env usage.
     concurrency: 1
     # Smoke-test size; remove or raise for full runs.
-    max_samples: 5
+    max_samples: 20
     reporting:
       sinks:
         - type: console

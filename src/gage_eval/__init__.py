@@ -11,9 +11,10 @@ ensure_loguru()
 
 _AUTO_DISCOVERY_PACKAGES = {
     "backends": ("gage_eval.role.model.backends",),
-    "roles": ("gage_eval.role.adapters", "gage_eval.role.model"),
+    "roles": ("gage_eval.role.adapters", "gage_eval.role.model", "gage_eval.role.toolchain"),
     "context_impls": ("gage_eval.role.context",),
     "judge_impls": ("gage_eval.role.judge",),
+    "helper_impls": ("gage_eval.role.helper",),
     "arena_impls": ("gage_eval.role.arena.games",),
     "parser_impls": ("gage_eval.role.arena.parsers",),
     "renderer_impls": ("gage_eval.role.arena.games",),

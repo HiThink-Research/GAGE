@@ -7,7 +7,7 @@ import pytest
 
 from gage_eval.mcp import McpClient
 from gage_eval.role.adapters.base import RoleAdapterState
-from gage_eval.role.adapters.toolchain import ToolchainAdapter
+from gage_eval.role.toolchain import ToolchainAdapter
 from gage_eval.role.agent.loop import AgentLoop
 from gage_eval.role.agent.tool_router import ToolRouter
 

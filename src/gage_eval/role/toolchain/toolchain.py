@@ -8,12 +8,13 @@ from loguru import logger
 
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
-from gage_eval.role.adapters.tool_docs import (
+from gage_eval.role.toolchain.tool_docs import (
     build_app_catalog,
     build_meta_tools,
     build_tool_documentation,
 )
 from gage_eval.mcp import McpClient
+from gage_eval.mcp.utils import sync_mcp_endpoint
 from gage_eval.sandbox.provider import SandboxProvider
 
 
@@ -77,11 +78,17 @@ class ToolchainAdapter(RoleAdapter):
         if self._mcp_client and isinstance(sandbox_provider, SandboxProvider):
             handle = sandbox_provider.get_handle()
             runtime_handle = handle.runtime_handle if handle else {}
-            _sync_mcp_endpoint(self._mcp_client, runtime_handle)
+            sync_mcp_endpoint(self._mcp_client, runtime_handle)
         if self._mcp_client:
             raw_mcp_tools = list(self._mcp_client.list_tools())
+        dynamic = _resolve_dynamic_filters(sample)
+        tool_allowlist = dynamic.allowlist or self._tool_allowlist
+        tool_prefixes = dynamic.prefixes or self._tool_prefixes
+        max_tools = dynamic.max_tools if dynamic.max_tools is not None else self._max_tools
+        doc_allowed_apps = dynamic.doc_allowed_apps or self._tool_doc_allowed_apps
+
         if self._meta_tool_mode and raw_mcp_tools:
-            allowed_apps = _resolve_allowed_apps(sample, self._tool_doc_allowed_apps)
+            allowed_apps = _resolve_allowed_apps(sample, doc_allowed_apps)
             catalog = build_app_catalog(raw_mcp_tools, allowed_apps=allowed_apps)
             documentation = build_tool_documentation(
                 catalog,
@@ -103,16 +110,16 @@ class ToolchainAdapter(RoleAdapter):
             }
         if raw_mcp_tools:
             mcp_tools = _map_mcp_tools(raw_mcp_tools, self._mcp_client_id)
-        if self._tool_allowlist or self._tool_prefixes or self._max_tools:
+        if tool_allowlist or tool_prefixes or max_tools:
             mcp_tools = _filter_tools(
                 mcp_tools,
-                allowlist=self._tool_allowlist,
-                prefixes=self._tool_prefixes,
-                max_tools=self._max_tools,
+                allowlist=tool_allowlist,
+                prefixes=tool_prefixes,
+                max_tools=max_tools,
             )
         tool_docs_payload: Dict[str, Any] = {}
         if raw_mcp_tools and mcp_tools and self._tool_doc_enabled:
-            allowed_apps = _resolve_allowed_apps(sample, self._tool_doc_allowed_apps)
+            allowed_apps = _resolve_allowed_apps(sample, doc_allowed_apps)
             doc_tools = _select_raw_tools(raw_mcp_tools, mcp_tools)
             catalog = build_app_catalog(doc_tools, allowed_apps=allowed_apps)
             documentation = build_tool_documentation(
@@ -133,27 +140,6 @@ class ToolchainAdapter(RoleAdapter):
         }
         payload.update(tool_docs_payload)
         return payload
-
-
-def _sync_mcp_endpoint(mcp_client: McpClient, runtime_handle: Dict[str, Any]) -> None:
-    endpoint = _extract_mcp_endpoint(runtime_handle)
-    if not endpoint:
-        return
-    current = getattr(mcp_client, "endpoint", None)
-    if current == endpoint:
-        return
-    disconnect = getattr(mcp_client, "disconnect", None)
-    if callable(disconnect):
-        disconnect()
-    setattr(mcp_client, "endpoint", endpoint)
-
-
-def _extract_mcp_endpoint(runtime_handle: Dict[str, Any]) -> Optional[str]:
-    for key in ("mcp_endpoint", "mcp_url", "remote_mcp_url"):
-        value = runtime_handle.get(key)
-        if value:
-            return str(value).rstrip("/")
-    return None
 
 
 def _map_mcp_tools(raw_tools: Sequence[Dict[str, Any]], mcp_client_id: Optional[str]) -> List[Dict[str, Any]]:
@@ -184,6 +170,44 @@ def _resolve_allowed_apps(sample: Dict[str, Any], fallback: Sequence[str]) -> Li
     if isinstance(allowed, list) and allowed:
         return [str(item) for item in allowed if item]
     return list(fallback)
+
+
+class _DynamicToolFilters:
+    def __init__(
+        self,
+        *,
+        allowlist: List[str],
+        prefixes: List[str],
+        doc_allowed_apps: List[str],
+        max_tools: Optional[int],
+    ) -> None:
+        self.allowlist = allowlist
+        self.prefixes = prefixes
+        self.doc_allowed_apps = doc_allowed_apps
+        self.max_tools = max_tools
+
+
+def _resolve_dynamic_filters(sample: Dict[str, Any]) -> _DynamicToolFilters:
+    allowlist: List[str] = []
+    prefixes: List[str] = []
+    doc_allowed_apps: List[str] = []
+    max_tools: Optional[int] = None
+    if isinstance(sample, dict):
+        for output in sample.get("support_outputs") or []:
+            if not isinstance(output, dict):
+                continue
+            allowlist.extend(_normalize_tool_filter(output.get("tool_allowlist")))
+            prefixes.extend(_normalize_tool_filter(output.get("tool_prefixes")))
+            doc_allowed_apps.extend(_normalize_tool_filter(output.get("tool_doc_allowed_apps")))
+            candidate = _coerce_int(output.get("tool_max_tools"))
+            if candidate is not None:
+                max_tools = candidate if max_tools is None else min(max_tools, candidate)
+    return _DynamicToolFilters(
+        allowlist=allowlist,
+        prefixes=prefixes,
+        doc_allowed_apps=doc_allowed_apps,
+        max_tools=max_tools,
+    )
 
 
 def _merge_tools(default_tools: List[Dict[str, Any]], sample_tools: Any) -> List[Dict[str, Any]]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -170,4 +171,104 @@ class JinjaChatPromptRenderer(PromptRenderer):
             existing = context.payload.get("messages") or context.sample.get("messages") or []
             if isinstance(existing, list):
                 messages.extend(copy.deepcopy(existing))
+        return PromptRenderResult(messages=messages)
+
+
+def _load_delimited_prompt_messages(
+    prompt: str,
+    *,
+    skip_system_message: bool = False,
+    only_header: bool = False,
+    only_body: bool = False,
+    start_at: int = 0,
+    end_at: int = -1,
+) -> List[Dict[str, str]]:
+    if only_header and only_body:
+        raise ValueError("only_header and only_body cannot be both True.")
+    prompt = (prompt or "").strip()
+    if only_header or only_body:
+        prompt_parts = [part.strip() for part in re.split(r"===+", prompt)]
+        if len(prompt_parts) != 2:
+            raise ValueError(
+                f"Invalid delimited prompt. Expected 2 parts for header and body, found {len(prompt_parts)}."
+            )
+        prompt = prompt_parts[0] if only_header else prompt_parts[1]
+    message_contents = [part.strip() for part in re.split(r"---+", prompt) if part.strip()]
+    messages: List[Dict[str, str]] = []
+    if not skip_system_message:
+        if not message_contents:
+            return messages
+        messages.append({"role": "system", "content": message_contents[0]})
+        message_contents = message_contents[1:]
+    if end_at < 0:
+        end_at = len(message_contents) + end_at + 1
+    for index, content in enumerate(message_contents):
+        if index < start_at:
+            continue
+        if index >= end_at:
+            break
+        role = "user" if (index + 1) % 2 == 1 else "assistant"
+        messages.append({"role": role, "content": content})
+    return messages
+
+
+class JinjaDelimitedChatPromptRenderer(PromptRenderer):
+    """Render delimited prompts into chat-style messages."""
+
+    def __init__(
+        self,
+        template: str,
+        variables: Optional[Dict[str, Any]] = None,
+        *,
+        mode: str = "full",
+        include_system: bool = True,
+    ) -> None:
+        try:
+            from jinja2 import Environment, StrictUndefined
+        except ImportError as exc:  # pragma: no cover - exercised in runtime
+            raise RuntimeError(
+                "JinjaDelimitedChatPromptRenderer requires the 'jinja2' package. "
+                "Please install it via 'pip install jinja2'."
+            ) from exc
+        self._env = Environment(autoescape=False, undefined=StrictUndefined)
+        self._template = self._env.from_string(template or "")
+        self._defaults = variables or {}
+        self._mode = str(mode or "full")
+        self._include_system = bool(include_system)
+
+    def render(self, context: PromptContext) -> PromptRenderResult:
+        mapping = context.to_mapping()
+        mapping.update(self._defaults)
+        prompt = self._template.render(mapping).strip()
+        if self._mode == "header_body_first_user":
+            header_messages = _load_delimited_prompt_messages(
+                prompt,
+                skip_system_message=not self._include_system,
+                only_header=True,
+            )
+            body_messages = _load_delimited_prompt_messages(
+                prompt,
+                skip_system_message=True,
+                only_body=True,
+                end_at=1,
+            )
+            return PromptRenderResult(messages=header_messages + body_messages)
+        if self._mode == "header":
+            messages = _load_delimited_prompt_messages(
+                prompt,
+                skip_system_message=not self._include_system,
+                only_header=True,
+            )
+            return PromptRenderResult(messages=messages)
+        if self._mode == "body":
+            messages = _load_delimited_prompt_messages(
+                prompt,
+                skip_system_message=not self._include_system,
+                only_body=True,
+            )
+            return PromptRenderResult(messages=messages)
+        messages = _load_delimited_prompt_messages(
+            prompt,
+            skip_system_message=not self._include_system,
+        )
         return PromptRenderResult(messages=messages)

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from gage_eval.role.adapters.toolchain import ToolchainAdapter
+from gage_eval.role.toolchain import ToolchainAdapter
 from gage_eval.role.adapters.base import RoleAdapterState
 
 
