@@ -29,7 +29,7 @@ try {
     console.warn("Mahjong assets not found or require.context failed", e);
 }
 
-const MahjongTile = ({ tile, isHidden, isSelected, onClick, style }) => {
+const MahjongTile = ({ tile, isHidden, isSelected, isSelectable, onClick, onDoubleClick, style }) => {
   // Map tile code to file name key
   // B1 -> B1 (if saved as B1.svg)
   let key = tile;
@@ -39,8 +39,9 @@ const MahjongTile = ({ tile, isHidden, isSelected, onClick, style }) => {
 
   return (
     <div 
-      className={`mahjong-tile ${isSelected ? 'selected' : ''}`} 
+      className={`mahjong-tile ${isSelected ? 'selected' : ''} ${isSelectable ? 'selectable' : ''}`} 
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       style={{
           width: 40, height: 56, 
           background: isHidden ? '#2c3e50' : '#f0f0f0',

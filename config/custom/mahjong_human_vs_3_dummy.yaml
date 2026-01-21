@@ -1,0 +1,110 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: mahjong_human_vs_3_dummy
+  description: Mahjong arena (Human vs 3 dummy agents).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: mahjong_arena
+
+datasets:
+  - dataset_id: mahjong_dummy
+    loader: jsonl
+    params:
+      path: tests/data/Test_Mahjong_Dummy.jsonl
+      preprocess: card_game_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: mahjong_dummy_backend
+    type: dummy
+    config:
+      responses:
+        - pass
+      cycle: true
+
+role_adapters:
+  - adapter_id: mahjong_human
+    role_type: human
+    params:
+      source: queue
+
+  - adapter_id: mahjong_dummy_player_1
+    role_type: dut_model
+    backend_id: mahjong_dummy_backend
+    capabilities:
+      - chat_completion
+
+  - adapter_id: mahjong_dummy_player_2
+    role_type: dut_model
+    backend_id: mahjong_dummy_backend
+    capabilities:
+      - chat_completion
+
+  - adapter_id: mahjong_dummy_player_3
+    role_type: dut_model
+    backend_id: mahjong_dummy_backend
+    capabilities:
+      - chat_completion
+
+  - adapter_id: mahjong_arena
+    role_type: arena
+    params:
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: ${MAHJONG_ACTION_PORT:-8001}
+        allow_origin: "*"
+      environment:
+        impl: mahjong_rlcard_v1
+        game_type: mahjong
+        chat_mode: all
+        chat_every_n: 1
+        replay_live: true
+      rules:
+        illegal_policy:
+          retry: 0
+          on_fail: random
+      scheduler:
+        type: turn
+        max_turns: 500
+      parser:
+        impl: mahjong_v1
+      players:
+        - name: player_0
+          player_id: player_0
+          type: human
+          ref: mahjong_human
+        - name: player_1
+          player_id: player_1
+          type: backend
+          ref: mahjong_dummy_player_1
+          max_retries: 0
+          fallback_policy: first_legal
+        - name: player_2
+          player_id: player_2
+          type: backend
+          ref: mahjong_dummy_player_2
+          max_retries: 0
+          fallback_policy: first_legal
+        - name: player_3
+          player_id: player_3
+          type: backend
+          ref: mahjong_dummy_player_3
+          max_retries: 0
+          fallback_policy: first_legal
+
+tasks:
+  - task_id: mahjong_human_vs_3_dummy_game
+    dataset_id: mahjong_dummy
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mahjong_human_vs_3_dummy_events.jsonl

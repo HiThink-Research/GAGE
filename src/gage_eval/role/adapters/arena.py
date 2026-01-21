@@ -319,6 +319,8 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
             if env_cfg.get("replay_filename") is not None:
                 env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
+            if chat_queue is not None:
+                env_kwargs["chat_queue"] = chat_queue
         if "doudizhu" in str(impl).lower():
             run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
             sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")

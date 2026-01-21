@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import time
+from queue import Empty, Queue
+from threading import Event, Thread
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
@@ -50,6 +53,7 @@ class MahjongArena:
         illegal_action_policy: str = "reject",
         chat_mode: str = "off",
         chat_every_n: int = 1,
+        chat_queue: Optional[Queue[dict[str, str]]] = None,
         ai_persona: Optional[dict[str, Any]] = None,
         rng_seed: Optional[int] = None,
         run_id: Optional[str] = None,
@@ -98,6 +102,9 @@ class MahjongArena:
         self._renderer = renderer or StandardMahjongRenderer()
         self._chat_mode = str(chat_mode or "off")
         self._chat_every_n = max(1, int(chat_every_n))
+        self._chat_queue = chat_queue
+        self._chat_stop_event = Event()
+        self._chat_thread: Optional[Thread] = None
         self._ai_persona = dict(ai_persona or {"enabled": False, "prompt": ""})
         self._rng = random.Random(rng_seed)
         self._rule_profile = "mahjong"
@@ -159,6 +166,7 @@ class MahjongArena:
             self._hand_history.append(hands)
         if self._replay_live:
             self._save_replay(winner=None)
+        self._start_chat_worker()
 
     def get_all_hands(self) -> Optional[dict[int, Any]]:
         """Return the current hands for all players, if available."""
@@ -172,6 +180,8 @@ class MahjongArena:
 
     def observe(self, player_id: str) -> ArenaObservation:
         """Return an observation for the given player."""
+
+        self._drain_chat_queue()
 
         # STEP 1: Resolve raw observation and legal actions.
         player_index = self._resolve_player_index(player_id)
@@ -219,6 +229,8 @@ class MahjongArena:
 
         if self._final_result is not None:
             return self._final_result
+
+        self._drain_chat_queue()
 
         # STEP 1: Resolve the acting player and legal actions.
         player_id = self._resolve_action_player_id(action)
@@ -280,6 +292,7 @@ class MahjongArena:
             line_length=None,
             replay_path=replay_path,
         )
+        self._stop_chat_worker()
         return self._final_result
 
     def _execute_action(
@@ -390,6 +403,7 @@ class MahjongArena:
             line_length=None,
             replay_path=replay_path,
         )
+        self._stop_chat_worker()
         return self._final_result
 
     def _resolve_illegal_winner(self, offender_id: str) -> Optional[str]:
@@ -475,13 +489,23 @@ class MahjongArena:
 
     def _build_replay_payload(self, *, winner: Optional[str]) -> dict[str, Any]:
         current_hands = self.get_all_hands() or {}
+        active_player_id, active_player_idx, legal_moves = self._current_legal_snapshot()
+        end_reason = self._resolve_end_reason()
+        remaining_tiles = self._resolve_remaining_tiles()
         return {
             "winner": winner,
+            "result": self._final_result.result if self._final_result else None,
+            "result_reason": self._final_result.reason if self._final_result else None,
+            "end_reason": end_reason,
+            "remaining_tiles": remaining_tiles,
             "moves": list(self._move_log),
             "current_hands": current_hands,
             "hand_history": list(self._hand_history),
             "chat_log": list(self._chat_log),
             "start_time_ms": self._start_time_ms,
+            "active_player_id": active_player_id,
+            "active_player_idx": active_player_idx,
+            "legal_moves": list(legal_moves),
         }
 
     def _resolve_replay_output_path(self) -> Optional[Path]:
@@ -499,7 +523,123 @@ class MahjongArena:
             return
         if self._chat_every_n > 1 and (self._move_count - 1) % self._chat_every_n != 0:
             return
-        self._chat_log.append({"player_id": player_id, "text": chat_text})
+        if player_type != "human":
+            chat_text = self._format_chat_text(chat_text)
+        self._chat_log.append(
+            {
+                "player_id": player_id,
+                "text": chat_text,
+                "timestamp_ms": int(time.time() * 1000),
+            }
+        )
+
+    def _resolve_remaining_tiles(self) -> Optional[int]:
+        try:
+            core_env = getattr(self._core, "_env", None)
+            game = getattr(core_env, "game", None)
+            dealer = getattr(game, "dealer", None)
+            deck = getattr(dealer, "deck", None)
+            if isinstance(deck, (list, tuple)):
+                return len(deck)
+            cards = getattr(deck, "cards", None)
+            if isinstance(cards, (list, tuple)):
+                return len(cards)
+        except Exception:
+            return None
+        return None
+
+    def _format_chat_text(self, chat_text: str) -> str:
+        text = str(chat_text)
+        honor_map = {
+            "east": "东",
+            "south": "南",
+            "west": "西",
+            "north": "北",
+            "red": "红中",
+            "green": "发财",
+            "white": "白板",
+        }
+        for key, value in honor_map.items():
+            text = re.sub(rf"\\b{key}\\b", value, text, flags=re.IGNORECASE)
+        def replace_tile(match: re.Match) -> str:
+            suit = match.group(1).upper()
+            rank = match.group(2)
+            rank_map = {
+                "1": "一",
+                "2": "二",
+                "3": "三",
+                "4": "四",
+                "5": "五",
+                "6": "六",
+                "7": "七",
+                "8": "八",
+                "9": "九",
+            }
+            suit_map = {"B": "条", "C": "万", "D": "筒"}
+            return f"{rank_map.get(rank, rank)}{suit_map.get(suit, suit)}"
+        text = re.sub(r"\\b([BCD])([1-9])\\b", replace_tile, text, flags=re.IGNORECASE)
+        return text
+
+    def _resolve_end_reason(self) -> Optional[str]:
+        if self._final_result is None:
+            return None
+        if self._final_result.winner:
+            return "hu"
+        if self._final_result.result:
+            return str(self._final_result.result)
+        return None
+
+    def _start_chat_worker(self) -> None:
+        if self._chat_queue is None:
+            return
+        if self._chat_thread and self._chat_thread.is_alive():
+            return
+        self._chat_thread = Thread(target=self._chat_worker, daemon=True)
+        self._chat_thread.start()
+
+    def _stop_chat_worker(self) -> None:
+        if not self._chat_thread:
+            return
+        self._chat_stop_event.set()
+        self._chat_thread.join(timeout=1)
+
+    def _chat_worker(self) -> None:
+        while not self._chat_stop_event.is_set():
+            had_updates = self._drain_chat_queue()
+            if had_updates and self._replay_live:
+                self._save_replay(winner=None)
+            self._chat_stop_event.wait(0.2)
+
+    def _drain_chat_queue(self) -> bool:
+        if self._chat_queue is None:
+            return False
+        drained = False
+        while True:
+            try:
+                payload = self._chat_queue.get_nowait()
+            except Empty:
+                break
+            if not isinstance(payload, dict):
+                continue
+            chat_text = payload.get("text") or payload.get("chat") or payload.get("message")
+            if not chat_text:
+                continue
+            player_id = payload.get("player_id") or payload.get("player") or payload.get("playerId")
+            if not player_id:
+                player_id = self.get_active_player()
+            self._record_chat(str(player_id), str(chat_text), "human")
+            drained = True
+        return drained
+
+    def _current_legal_snapshot(self) -> tuple[Optional[str], Optional[int], list[str]]:
+        try:
+            active_player_id = self.get_active_player()
+            player_index = self._resolve_player_index(active_player_id)
+            legal_action_ids = self._core.get_legal_actions(player_index)
+            legal_moves = [self._formatter.format_action(action_id) for action_id in legal_action_ids]
+            return active_player_id, player_index, legal_moves
+        except Exception:
+            return None, None, []
 
     @staticmethod
     def _format_board_text(
