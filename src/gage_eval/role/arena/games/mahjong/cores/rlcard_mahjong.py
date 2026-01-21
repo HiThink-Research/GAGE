@@ -14,6 +14,7 @@ from gage_eval.role.arena.games.mahjong.mapping import (
     rlcard_action_to_display,
     rlcard_card_to_code,
 )
+from gage_eval.role.arena.games.mahjong.rlcard_patches import patch_rlcard_game
 
 
 class RLCardCore(RLCardCore):
@@ -25,6 +26,12 @@ class RLCardCore(RLCardCore):
         self._action_id_to_text = action_id_to_text
         self._action_text_to_id = action_text_to_id
         self._action_id_to_raw = action_id_to_raw
+
+    def reset(self) -> None:
+        """Reset the RLCard environment and apply local patches."""
+
+        super().reset()
+        patch_rlcard_game(getattr(self._env, "game", None))
 
     def decode_action(self, action_id: int) -> str:
         """Decode a Mahjong action id to string."""
