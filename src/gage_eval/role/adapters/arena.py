@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
+import re
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -84,12 +85,16 @@ class ArenaRoleAdapter(RoleAdapter):
         # STEP 1: Build core components for the game loop.
         player_specs, player_ids, player_names, start_player_id = self._normalize_player_specs(sample)
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
-        if "doudizhu" in str(env_impl).lower() or "mahjong" in str(env_impl).lower():
+        env_impl_lower = str(env_impl).lower()
+        model_labels: Dict[str, str] = {}
+        if "doudizhu" in env_impl_lower:
             model_labels = self._resolve_player_labels(player_specs, role_manager)
             for player_id in player_ids:
                 label = model_labels.get(player_id)
                 if label and player_id not in player_names:
                     player_names[player_id] = label
+        elif "mahjong" in env_impl_lower:
+            model_labels = self._resolve_player_labels(player_specs, role_manager)
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
         visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
@@ -337,6 +342,8 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
             if chat_queue is not None:
                 env_kwargs["chat_queue"] = chat_queue
+            if resolved_player_models:
+                env_kwargs["player_models"] = resolved_player_models
         if "doudizhu" in str(impl).lower():
             run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
             sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")

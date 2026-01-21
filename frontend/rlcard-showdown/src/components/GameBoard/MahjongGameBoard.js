@@ -20,6 +20,8 @@ const MahjongGameBoard = ({
     onTileClick,
     onTileDoubleClick,
     interactivePlayerId = 0,
+    playerLabels = [],
+    playerAvatars = [],
     drawTileByPlayer,
 }) => {
     
@@ -204,11 +206,16 @@ const MahjongGameBoard = ({
                 <div className={`player-info pos-${position}`}>
                     {bubbleText && <div className={`player-chat-bubble bubble-${position}`}>{bubbleText}</div>}
                     <div>
-                        <img src={PlaceHolderPlayer} alt={'Player'} height="50px" width="50px" />
+                        <img
+                            src={playerAvatars[playerId] || PlaceHolderPlayer}
+                            alt={'Player'}
+                            height="50px"
+                            width="50px"
+                        />
                         <Chip 
                             style={{marginTop: 5, backgroundColor: 'rgba(255,255,255,0.8)'}}
                             avatar={<Avatar>{playerId}</Avatar>} 
-                            label={`玩家 ${playerId}`} 
+                            label={playerLabels[playerId] || `Player ${playerId}`} 
                             size="small"
                         />
                     </div>
