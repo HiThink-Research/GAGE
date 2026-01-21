@@ -24,7 +24,8 @@ backends:
       tensor_parallel_size: 1
       max_tokens: 96
       sampling_params:
-        temperature: 0.0
+        n: 5    
+        temperature: 0.2
       max_batch_size: 32
       max_model_len: 2048
       gpu_memory_utilization: 0.9
