@@ -79,23 +79,23 @@ role_adapters:
       parser:
         impl: mahjong_v1
       players:
-        - name: Human
+        - name: player_0
           player_id: player_0
           type: human
           ref: mahjong_human
-        - name: gpt-5-mini-1
+        - name: player_1
           player_id: player_1
           type: backend
           ref: mahjong_player_1
           max_retries: 3
           fallback_policy: first_legal
-        - name: gpt-5-mini-2
+        - name: player_2
           player_id: player_2
           type: backend
           ref: mahjong_player_2
           max_retries: 3
           fallback_policy: first_legal
-        - name: gpt-5-mini-3
+        - name: player_3
           player_id: player_3
           type: backend
           ref: mahjong_player_3

@@ -1,6 +1,7 @@
 @import "cards.css";
 
 .mahjong-replay-container {
+    // PAGE LAYOUT: header + board + sidebar + bottom panels.
     width: 100%;
     height: 100vh;
     display: flex;
@@ -9,6 +10,7 @@
     overflow: hidden;
 
     .replay-header {
+        // HEADER BAR: title and control chips/buttons.
         padding: 10px 20px;
         background: #fff;
         display: flex;
@@ -22,12 +24,14 @@
     }
 
     .replay-main-content {
+        // MAIN REGION: board (left) and sidebar (right).
         flex: 1;
         display: flex;
         overflow: hidden;
     }
 
     .board-section {
+        // BOARD WRAPPER: centers the mahjong table.
         flex: 1;
         position: relative;
         background: #2c3e50;
@@ -37,7 +41,57 @@
         overflow: hidden;
     }
 
+    .mahjong-action-overlay {
+        position: absolute;
+        bottom: 140px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(255, 255, 255, 0.92);
+        border-radius: 10px;
+        padding: 10px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+        z-index: 40;
+        pointer-events: auto;
+
+        .overlay-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #303133;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .overlay-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+    }
+
+    .mahjong-end-banner {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        padding: 14px 26px;
+        background: rgba(16, 24, 40, 0.85);
+        color: #ffffff;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        border-radius: 999px;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+        z-index: 45;
+        pointer-events: none;
+        white-space: nowrap;
+    }
+
     .sidebar-section {
+        // SIDEBAR: player status and summary info.
         width: 300px;
         background: #fff;
         border-left: 1px solid #dcdfe6;
@@ -61,11 +115,70 @@
                     border: 2px solid #409eff;
                     background: #ecf5ff;
                 }
+
+                .player-timer {
+                    margin-top: 4px;
+                    font-size: 11px;
+                    color: #909399;
+                }
+            }
+        }
+
+        .human-control-box {
+            padding: 15px;
+            border-bottom: 1px solid #ebeef5;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+
+            h3 {
+                margin: 0;
+                font-size: 14px;
+                color: #303133;
+            }
+
+            .action-status {
+                font-size: 12px;
+                color: #909399;
+
+                &.active {
+                    color: #409eff;
+                    font-weight: 600;
+                }
+            }
+
+            .action-row {
+                display: flex;
+                justify-content: space-between;
+                font-size: 12px;
+                color: #606266;
+            }
+
+            .action-buttons {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .tile-action-bar {
+                display: flex;
+                gap: 10px;
+            }
+
+            .action-hint {
+                font-size: 11px;
+                color: #909399;
+            }
+
+            .action-muted {
+                font-size: 12px;
+                color: #c0c4cc;
             }
         }
     }
 
     .replay-bottom-section {
+        // BOTTOM PANELS: chat + move history + controls.
         height: 320px;
         background: #fff;
         border-top: 1px solid #dcdfe6;
@@ -74,6 +187,7 @@
     }
 
     .record-panels {
+        // LOG PANELS: table talk and move history blocks.
         flex: 1;
         display: flex;
         padding: 10px;
@@ -103,10 +217,28 @@
                 padding: 10px;
                 font-size: 14px;
             }
+
+            .tabletalk-input {
+                display: flex;
+                gap: 8px;
+                padding: 10px;
+                border-top: 1px solid #ebeef5;
+                background: #fafafa;
+
+                input {
+                    flex: 1;
+                    border: 1px solid #dcdfe6;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-size: 13px;
+                    outline: none;
+                }
+            }
         }
     }
 
     .control-bar {
+        // PLAYBACK: prev/next, progress, and speed.
         height: 60px;
         padding: 0 20px;
         background: #fff;
@@ -145,6 +277,7 @@
 }
 
 .mahjong-board {
+    // BOARD SURFACE: background texture and seat layout.
     width: 95%;
     height: 95%;
     position: relative;
@@ -158,19 +291,60 @@
     user-select: none;
 
     .player-area {
+        // PLAYER SEAT: avatar/bubble + hand stack.
         position: absolute;
         display: flex;
         flex-direction: column;
         align-items: center;
+        gap: 12px;
         z-index: 5;
     }
 
+    // SEAT ANCHORS: adjust these to move each player around the board.
     .player-bottom { bottom: 10px; left: 50%; transform: translateX(-50%); }
-    .player-top { top: 10px; left: 50%; transform: translateX(-50%); }
-    .player-left { left: 10px; top: 50%; transform: translateY(-50%) rotate(90deg); }
+    .player-top { top: 28px; left: 50%; transform: translateX(-50%); }
+    .player-left { left: 40px; top: 50%; transform: translateY(-50%) rotate(90deg); }
     .player-right { right: 10px; top: 50%; transform: translateY(-50%) rotate(-90deg); }
 
+    // SEAT TUNING: move avatar away from the hand stack for each seat.
+    .player-area.player-bottom {
+        gap: 18px;
+    }
+
+    .player-area.player-bottom .player-info {
+        margin-bottom: 8px;
+    }
+
+    .player-area.player-top {
+        gap: 34px;
+    }
+
+    .player-area.player-top .player-info {
+        margin-bottom: 8px;
+        transform: translateX(60px);
+    }
+
+    .player-area.player-right {
+        gap: 28px;
+        align-items: flex-start;
+    }
+
+    .player-area.player-right .player-info.pos-right {
+        transform: rotate(90deg) translateX(-28px);
+        transform-origin: center;
+    }
+
+    .player-area.player-left {
+        gap: 28px;
+        align-items: flex-start;
+    }
+
+    .player-area.player-left .player-info.pos-left {
+        transform: rotate(-90deg) translateX(28px);
+    }
+
     .player-info {
+        // AVATAR BLOCK: portrait, name chip, and bubble anchor.
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -188,9 +362,10 @@
         }
         
         .player-chat-bubble {
+            // CHAT BUBBLE: speech text box near avatar.
             position: absolute;
             background: linear-gradient(135deg, #fffdf8 0%, #f6eddf 100%);
-            padding: 8px 12px;
+            padding: 8px 14px;
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             font-size: 13px;
@@ -198,8 +373,9 @@
             word-break: break-word;
             z-index: 20;
             border: 1px solid rgba(0,0,0,0.1);
-            max-width: 220px;
-            max-height: 120px;
+            min-width: 140px;
+            max-width: 280px;
+            max-height: 190px;
             overflow: hidden;
 
             &::after {
@@ -209,34 +385,23 @@
             }
         }
 
+
         .bubble-bottom {
-            bottom: 110%;
-            left: 50%;
-            transform: translateX(-50%);
+            // BUBBLE POSITION: bottom player.
+            bottom: 80%;
+            right: 100%;
+            transform: translateX(0);
 
             &::after {
-                top: 100%;
-                left: 50%;
-                margin-left: -6px;
+                top: 10%;
+                right: -120px;
                 border-top-color: #f6eddf;
             }
         }
 
         .bubble-top {
-            top: 110%;
-            left: 50%;
-            transform: translateX(-50%);
-
-            &::after {
-                bottom: 100%;
-                left: 50%;
-                margin-left: -6px;
-                border-bottom-color: #f6eddf;
-            }
-        }
-
-        .bubble-left {
-            left: 110%;
+            // BUBBLE POSITION: top player (to the right of avatar).
+            left: calc(100% + 12px);
             top: 50%;
             transform: translateY(-50%);
 
@@ -245,10 +410,25 @@
                 top: 50%;
                 margin-top: -6px;
                 border-right-color: #f6eddf;
+                border-bottom-color: transparent;
+            }
+        }
+
+        .bubble-left {
+            // BUBBLE POSITION: left player.
+            left: calc(50% + 5px);
+            top: -50%;
+            transform: translateY(-20%);
+
+            &::after {
+                left: -6px;
+                top: 20px;
+                border-right-color: #f6eddf;
             }
         }
 
         .bubble-right {
+            // BUBBLE POSITION: right player.
             right: 110%;
             top: 50%;
             transform: translateY(-50%);
@@ -262,13 +442,23 @@
         }
     }
 
+    // PLAYER LABEL: keep the chip directly under the avatar.
+    .player-info > div {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+
     .hand-container {
+        // HAND ROW: melds + active hand + draw slot.
         display: flex;
         gap: 5px;
         align-items: flex-end;
     }
 
     .melds-area {
+        // MELD STACKS: chow/pong/gong display.
         display: flex;
         gap: 8px;
         margin-right: 15px; // 确保吃碰区域与手牌有明显间距
@@ -282,6 +472,7 @@
     }
 
     .active-hand {
+        // ACTIVE HAND: current tiles in the rack.
         display: flex;
         gap: 2px;
     }
@@ -296,9 +487,13 @@
         
         &:hover { transform: translateY(-3px); }
         &.back-tile { background: linear-gradient(135deg, #1e522e 0%, #163d22 100%); }
+        &.selectable { cursor: pointer; }
+        &.selectable:hover { transform: translateY(-6px); box-shadow: 0 6px 12px rgba(0,0,0,0.25); }
+        &.selected { transform: translateY(-10px); border: 2px solid #f5c542; box-shadow: 0 0 10px rgba(245, 197, 66, 0.8); }
     }
 
     .center-area {
+        // DISCARD CENTER: shared discard pool.
         position: absolute;
         top: 50%;
         left: 50%;
@@ -318,6 +513,7 @@
     }
 
     .discard-pool {
+        // DISCARD GRID: tile matrix layout.
         display: grid;
         grid-template-columns: repeat(22, 1fr);
         gap: 2px;
