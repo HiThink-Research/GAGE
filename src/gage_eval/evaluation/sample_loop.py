@@ -8,13 +8,15 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED, ALL_COMPLETED
 from queue import Queue, Full
-from typing import Callable, Iterable, Iterator, List, Optional, Sequence, Tuple, Set, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Set, Union
 
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
+from gage_eval.sandbox.manager import SandboxManager
+from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 from gage_eval.assets.datasets.sample import (
     Sample,
     Message,
@@ -36,6 +38,8 @@ class SampleLoop:
         task_id: Optional[str] = None,
         prefetch_factor: Optional[int] = None,
         max_inflight: Optional[int] = None,
+        sandbox_manager: Optional[SandboxManager] = None,
+        sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         self._samples = samples
         self._hooks: List[Callable[[dict], None]] = []
@@ -74,6 +78,8 @@ class SampleLoop:
         self._task_id = task_id
         self._processed_count = 0
         self._processed_lock = threading.Lock()
+        self._sandbox_profiles = sandbox_profiles or {}
+        self._sandbox_manager = sandbox_manager or SandboxManager(profiles=self._sandbox_profiles)
         logger.info(
             "SampleLoop initialized (shuffle={}, max_samples={}, concurrency={}, streaming={}, task_id={})",
             self._shuffle,
@@ -164,6 +170,10 @@ class SampleLoop:
             if producer_errors:
                 raise producer_errors[0]
 
+    def shutdown(self) -> None:
+        if self._sandbox_manager:
+            self._sandbox_manager.shutdown()
+
     def _execute_plan(
         self,
         sample: dict,
@@ -172,43 +182,51 @@ class SampleLoop:
         trace: ObservabilityTrace,
         sample_identifier: str,
     ) -> None:
-        per_sample_ctx = plan.create_context(sample, trace, role_manager)
-        with trace.use_sample(sample_identifier), role_manager.per_sample_session(per_sample_ctx) as session:
-            if plan.steps:
-                for step in plan.steps:
-                    step_type = _resolve_step_type(step)
-                    if step_type == "support":
-                        if plan.support_steps:
-                            session.execute_support_step(step)
-                        continue
-                    if step_type == "inference":
-                        if plan.inference_role:
-                            session.execute_inference()
-                        continue
-                    if step_type == "arena":
-                        if plan.arena_role:
-                            session.execute_arena()
-                        continue
-                    if step_type == "judge":
-                        if plan.judge_role:
-                            session.execute_judge()
-                        continue
-                    if step_type == "auto_eval":
-                        if plan.auto_eval_enabled:
-                            session.execute_auto_eval(sample_identifier)
-                        continue
-                    logger.debug("Unknown step type '{}' skipped during execution", step_type)
-            else:
-                if plan.support_steps:
-                    session.execute_support()
-                if plan.inference_role:
-                    session.execute_inference()
-                if plan.arena_role:
-                    session.execute_arena()
-                if plan.judge_role:
-                    session.execute_judge()
-                if plan.auto_eval_enabled:
-                    session.execute_auto_eval(sample_identifier)
+        # STEP 1: Build sample-scoped sandbox provider
+        sandbox_provider = self._build_sandbox_provider(plan, sample, role_manager, trace, sample_identifier)
+        # STEP 2: Execute plan within a per-sample session
+        try:
+            per_sample_ctx = plan.create_context(sample, trace, role_manager, sandbox_provider=sandbox_provider)
+            with trace.use_sample(sample_identifier), role_manager.per_sample_session(per_sample_ctx) as session:
+                if plan.steps:
+                    for step in plan.steps:
+                        step_type = _resolve_step_type(step)
+                        if step_type == "support":
+                            if plan.support_steps:
+                                session.execute_support_step(step)
+                            continue
+                        if step_type == "inference":
+                            if plan.inference_role:
+                                session.execute_inference()
+                            continue
+                        if step_type == "arena":
+                            if plan.arena_role:
+                                session.execute_arena()
+                            continue
+                        if step_type == "judge":
+                            if plan.judge_role:
+                                session.execute_judge()
+                            continue
+                        if step_type == "auto_eval":
+                            if plan.auto_eval_enabled:
+                                session.execute_auto_eval(sample_identifier)
+                            continue
+                        logger.debug("Unknown step type '{}' skipped during execution", step_type)
+                else:
+                    if plan.support_steps:
+                        session.execute_support()
+                    if plan.inference_role:
+                        session.execute_inference()
+                    if plan.arena_role:
+                        session.execute_arena()
+                    if plan.judge_role:
+                        session.execute_judge()
+                    if plan.auto_eval_enabled:
+                        session.execute_auto_eval(sample_identifier)
+        finally:
+            # STEP 3: Release sandbox resources
+            if sandbox_provider is not None:
+                sandbox_provider.release()
 
     def _iter_samples(self) -> Iterator[Tuple[int, dict]]:
         if self._shuffle:
@@ -417,6 +435,58 @@ class SampleLoop:
         if self._task_id:
             metadata["task_id"] = self._task_id
         return metadata
+
+    def _build_sandbox_provider(
+        self,
+        plan: TaskPlan,
+        sample: dict,
+        role_manager: RoleManager,
+        trace: ObservabilityTrace,
+        sample_identifier: str,
+    ) -> Optional[SandboxProvider]:
+        config = self._resolve_sandbox_config(plan, sample, role_manager)
+        if not config:
+            return None
+        scope = SandboxScope(
+            run_id=trace.run_id,
+            task_id=plan.metadata.get("task_id") or self._task_id,
+            sample_id=sample_identifier,
+        )
+        return SandboxProvider(self._sandbox_manager, config, scope, trace=trace)
+
+    def _resolve_sandbox_config(
+        self,
+        plan: TaskPlan,
+        sample: dict,
+        role_manager: RoleManager,
+    ) -> Optional[Dict[str, Any]]:
+        sample_config = sample.get("sandbox") if isinstance(sample.get("sandbox"), dict) else None
+        adapter_config = self._resolve_adapter_sandbox_config(plan, role_manager)
+        if not adapter_config and not sample_config:
+            return None
+        return self._sandbox_manager.resolve_config(adapter_config or {}, sample_config)
+
+    def _resolve_adapter_sandbox_config(self, plan: TaskPlan, role_manager: RoleManager) -> Dict[str, Any]:
+        adapter_ids: List[str] = []
+        if plan.inference_role:
+            adapter_ids.append(plan.inference_role)
+        if plan.arena_role:
+            adapter_ids.append(plan.arena_role)
+        if plan.judge_role:
+            adapter_ids.append(plan.judge_role)
+        for step in plan.support_steps or []:
+            if isinstance(step, dict):
+                adapter_id = step.get("adapter_id") or step.get("role_ref")
+                if adapter_id:
+                    adapter_ids.append(str(adapter_id))
+        for adapter_id in adapter_ids:
+            adapter = role_manager.get_adapter(adapter_id)
+            if adapter is None:
+                continue
+            sandbox_config = getattr(adapter, "sandbox_config", None)
+            if isinstance(sandbox_config, dict) and sandbox_config:
+                return dict(sandbox_config)
+        return {}
 
 
 def _env_flag(var: str, *, default: bool) -> bool:

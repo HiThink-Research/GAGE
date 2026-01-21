@@ -9,6 +9,7 @@ from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
+from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -23,10 +24,19 @@ class InferenceStep(SampleStep):
         super().__init__("InferenceStep")
         self._adapter_id = adapter_id
 
-    def execute(self, sample: dict, role_manager, trace: ObservabilityTrace):
+    def execute(
+        self,
+        sample: dict,
+        role_manager,
+        trace: ObservabilityTrace,
+        *,
+        sandbox_provider: Optional[SandboxProvider] = None,
+    ):
         trace.emit("inference_start", payload={"adapter_id": self._adapter_id})
         logger.debug("Inference step started adapter_id={}", self._adapter_id)
         payload = {"sample": sample}
+        if sandbox_provider is not None:
+            payload["sandbox_provider"] = sandbox_provider
         with role_manager.borrow_role(self._adapter_id) as role:
             output = role.invoke(payload, trace) if role else {}
         trace.emit("inference_end", payload={"adapter_id": self._adapter_id})

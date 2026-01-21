@@ -1,0 +1,158 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: appworld_agent_demo
+  description: Minimal AppWorld agent demo with MCP tools.
+
+datasets:
+  - dataset_id: appworld_demo
+    loader: jsonl
+    params:
+      # Keep the demo dataset local and deterministic for offline runs.
+      path: tests/data/samples/appworld_demo.jsonl
+      streaming: false
+
+backends:
+  - backend_id: gpt52_openai_http
+    type: openai_http
+    config:
+      # Use a stable OpenAI-compatible endpoint for the demo workflow.
+      base_url: https://api.openai.com/v1
+      model: gpt-5-mini
+      require_api_key: true
+      max_retries: 6        
+
+agent_backends:
+  - agent_backend_id: agent_model_main
+    type: model_backend
+    backend_id: gpt52_openai_http
+    config:
+      # Force tool calls early so AppWorld actions are exercised in the demo.
+      force_tool_choice: first_turn
+
+sandbox_profiles:
+  - sandbox_id: appworld_local
+    runtime: docker
+    image: appworld-mcp:latest
+    resources:
+      cpu: 2
+      memory: 4g
+    runtime_configs:
+      # The container exposes fixed ports; this is required by the AppWorld MCP server.
+      startup_timeout_s: 180
+      startup_interval_s: 0.5
+      ports: ["8000:8000", "9000:9000", "5001:5001"]
+      platform: linux/amd64
+      network_mode: bridge_host
+      env_endpoint: http://127.0.0.1:8000
+      apis_endpoint: http://127.0.0.1:9000
+      mcp_endpoint: http://127.0.0.1:5001
+      wait_for_http_endpoints:
+        # Gate startup until the MCP health endpoint responds.
+        - http://127.0.0.1:5001/mcp
+      start_container: true
+      entrypoint: /usr/local/bin/appworld
+      env:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      command:
+        # Keep the AppWorld services aligned with the fixed port mappings above.
+        - serve
+        - multiple
+        - --environment
+        - "--port 8000"
+        - --apis
+        - "--port 9000"
+        - --mcp
+        - "http --port 5001 --output-type structured_data_only"
+        - --root
+        - /run
+
+mcp_clients:
+  - mcp_client_id: appworld_env
+    transport: streamable_http
+    endpoint: http://127.0.0.1:5001
+    timeout_s: 180
+    params:
+      # Use bounded retries to cover slow MCP startups without hanging forever.
+      output_type: structured_data_only
+      session_retry_delay_s: 2
+      session_retry_timeout_s: 180
+
+metrics:
+  - metric_id: latency
+    implementation: latency
+
+role_adapters:
+  - adapter_id: toolchain_main
+    role_type: toolchain
+    mcp_client_id: appworld_env
+    params:
+      # Restrict tools to stable prefixes/allowlist for repeatable evals.
+      tool_prefixes:
+        - supervisor
+        - spotify
+      tool_allowlist:
+        - phone__show_account
+        - phone__login
+        - phone__logout
+        - phone__show_profile
+        - phone__show_text_message_window
+        - phone__search_text_messages
+        - phone__show_text_message
+        - phone__send_text_message
+        - phone__show_voice_message_window
+        - phone__search_voice_messages
+        - phone__show_voice_message
+        - phone__get_current_date_and_time
+        - file_system__show_account
+        - file_system__login
+        - file_system__logout
+        - file_system__show_profile
+        - file_system__show_directory
+        - file_system__directory_exists
+        - file_system__show_file
+        - file_system__file_exists
+        - file_system__create_directory
+        - file_system__delete_directory
+        - file_system__create_file
+        - file_system__update_file
+        - file_system__delete_file
+        - file_system__copy_file
+        - file_system__move_file
+        - file_system__copy_directory
+        - file_system__move_directory
+        - file_system__decompress_file
+      max_tools: 128
+
+  - adapter_id: dut_agent_main
+    role_type: dut_agent
+    agent_backend_id: agent_model_main
+    sandbox:
+      sandbox_id: appworld_local
+      # Keep a single container per task to preserve state across samples.
+      lifecycle: per_task
+    params:
+      max_turns: 16
+      # Initialize and persist AppWorld state around each sample.
+      pre_hooks:
+        - type: appworld_initialize
+      post_hooks:
+        - type: appworld_save
+
+tasks:
+  - task_id: appworld_agent_demo
+    dataset_id: appworld_demo
+    steps:
+      - step: support
+        adapter_id: toolchain_main
+      - step: inference
+        adapter_id: dut_agent_main
+      - step: auto_eval
+    concurrency: 2
+    # Fixed ports force sequential execution; runtime will clamp concurrency to 1.
+    max_samples: 2
+    reporting:
+      sinks:
+        - type: console

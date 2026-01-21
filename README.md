@@ -9,13 +9,32 @@
 
 **English** · [中文](README_zh.md)
 
-[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [AGENTS](AGENTS.md)
+<div align="center">
+
+📧 **Contact:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
+
+</div>
+
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Agent Eval](docs/guide/agent_evaluation.md) · [Benchmark](docs/guide/benchmark.md) · [Support CLI](docs/guide/support_cli.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
 
 </div>
 
 ---
 
 **GAGE** is a unified, extensible evaluation framework designed for large language models, multimodal (omni, robot) models, audio models and diffusion models. It is a high-performance evaluation engine built for ultra-fast execution, scalability, and flexibility, providing a unified framework for AI model evaluation, agent-based benchmarking, and game arena evaluation.
+
+## 🎮 Game Arena Showcase
+
+<table width="100%">
+  <tr>
+    <td align="center" width="40%">
+      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="max-width: 100%;">
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="max-width: 100%;">
+    </td>
+  </tr>
+</table>
 
 ## ✨ Why GAGE？
 
@@ -82,10 +101,12 @@ runs/<run_id>/
 
 | Scenario | Config Example | Description |
 | :--- | :--- | :--- |
-| **Basic QA** | `config/custom/piqa_qwen3.yaml` | Text multiple-choice (PIQA) |
+| **Game Arena** | `config/custom/doudizhu_human_vs_llm.yaml` | Doudizhu Human vs LLM match |
+| **Agent Evaluation** | `config/custom/appworld_official_jsonl.yaml` | Use Appworld Sandbox |
+| **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (Requires Docker, experimental) |
+| **Text** | `config/custom/aime2024_chat.yaml` | Related: AIME 2024, AIME 2025, GPQA, Math500 |
+| **Multimodal** | `config/custom/mathvista_vllm_async_chat.yaml` | Related: MME, HLE, MathVista |
 | **LLM Judge** | `config/custom/single_task_local_judge_qwen.yaml` | Use local LLM for grading |
-| **Game Arena** | `config/custom/gomoku_human_vs_llm.yaml` | Gomoku Human vs LLM match |
-| **Code Gen** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (requires Docker, experimental) |
 
 ## 🗺️ Roadmap
 
