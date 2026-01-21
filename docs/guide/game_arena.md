@@ -201,7 +201,7 @@ Related tests:
 
 Prerequisites:
 - Node.js + npm
-- First time setup: `cd frontend/rlcard-showdown && npm install`
+- First time setup: `cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - Set API Key: `OPENAI_API_KEY` (or `LITELLM_API_KEY`)
 - Ensure `PYTHON_BIN` in `run_doudizhu_showdown` points to the correct environment
 

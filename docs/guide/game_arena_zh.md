@@ -201,7 +201,7 @@ python run.py -c config/custom/gomoku_human_vs_llm.yaml
 
 前置条件：
 - Node.js + npm
-- 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install`
+- 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - 设置密钥：`OPENAI_API_KEY`（或 `LITELLM_API_KEY`）
 - `run_doudizhu_showdown` 中 `PYTHON_BIN` 指向对应环境
 
