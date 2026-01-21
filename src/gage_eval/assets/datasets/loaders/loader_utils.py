@@ -168,6 +168,7 @@ def apply_bundle(
         def default_generator():
             for record in records:
                 yield record
+        return default_generator()
 
     def generator():
         for record in records:
@@ -353,4 +354,3 @@ def _validate_doc_to_signature(func: Callable[..., Any], field: str, provided_kw
         raise TypeError(
             f"doc_to field '{field}' requires keyword arguments {missing}; provide them via {field}_kwargs"
         )
-
