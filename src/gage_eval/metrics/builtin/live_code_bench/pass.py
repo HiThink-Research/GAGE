@@ -17,6 +17,15 @@ from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_test_output_pr
 from gage_eval.assets.datasets.preprocessors.live_code_bench.test_output_prediction import (
     TestOutputPredictionProblem, 
 )
+
+# code exec:
+from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_code_execution_metrics import (
+    code_execution_metrics,
+)
+from gage_eval.assets.datasets.preprocessors.live_code_bench.code_execution import (
+    CodeExecutionProblem,
+)
+
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
 
 from gage_eval.metrics.filter.base import RegexFilter
@@ -127,6 +136,23 @@ class LiveCodeBenchPassMetric(SimpleMetric):
         )
         return self.make_ret(sample_id, scenario, k_list, metrics)
 
+    def code_execution(self, sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution):
+        model_dict = metadata.get('model')
+        ref = sample_dict.get("references")[0]
+        model = LanguageModel.from_dict(model_dict)
+        #print("sample_dict", sample_dict)
+        results = get_results(sample_dict)
+        combined_results = combine_results(scenario, results, model, cot_code_execution)
+        benchmark = [CodeExecutionProblem(**ref)]
+        eval_samples = [instance.get_evaluation_sample() for instance in benchmark]
+        generations = [extracted for _, extracted in combined_results]
+
+        metrics = test_output_metrics(
+            eval_samples,
+            generations,
+            k_list=k_list,
+        )
+        return self.make_ret(sample_id, scenario, k_list, metrics)
     def make_ret(self, sample_id, scenario, k_list, metrics):
         metadata = {"scenario": scenario.value}
         pass_key = [
@@ -138,17 +164,19 @@ class LiveCodeBenchPassMetric(SimpleMetric):
         return MetricResult(sample_id=sample_id, values=values, metadata=metadata)            
     def compute(self, context: MetricContext) -> MetricResult:
         k_list = self.args.get("ks") or [1]
-        cot_code_execution = self.args.get("cot_code_execution") or False
         timeout = self.args.get('timeout') or 6        
         # STEP 1: extract sample/predict /groud truth
         sample_dict = extract_field(context, 'sample')
         metadata = sample_dict.get('metadata')
+        cot_code_execution = metadata.get("cot_code_execution") or False
         _scenario_str = metadata.get('scenario')
         scenario = Scenario(_scenario_str)
         if scenario == Scenario.codegeneration:
             return self.codegen(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution)
         elif scenario == Scenario.testoutputprediction:
-            return self.test_output(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution)                
+            return self.test_output(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution)
+        elif scenario == Scenario.codeexecution:
+            return self.code_execution(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution)                
 
 __all__ = ["LiveCodeBenchPassMetric", ]
 
