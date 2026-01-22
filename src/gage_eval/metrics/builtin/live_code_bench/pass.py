@@ -51,7 +51,7 @@ def get_eval_sample(ref_list, fn_name=None):
                 "inputs": [
                     t.get('input') for t in ref_list
                 ],
-                "output":[
+                "outputs":[
                     t.get('output') for t in ref_list
                 ],
                 "fn_name": fn_name
@@ -68,8 +68,7 @@ def get_eval_sample(ref_list, fn_name=None):
     default_aggregation="mean",
 )
 class LiveCodeBenchPassMetric(SimpleMetric):
-    value_key = "pass@K"
-    regex_pattern =  r"the answer is \s*(.+?)\s*\r?\n\s*"
+    value_key = "pass@1"
     def compute(self, context: MetricContext) -> MetricResult:
         k_list = self.args.get("ks") or [1]
         cot_code_execution = self.args.get("cot_code_execution") or False
@@ -80,8 +79,11 @@ class LiveCodeBenchPassMetric(SimpleMetric):
         fn_name = None
         dataset_meta =  metadata.get('metadata')
         if dataset_meta is not None:
-            meta = json.loads(dataset_meta)
-            fn_name = meta.get("func_name")
+            try:
+                meta = json.loads(dataset_meta)
+                fn_name = meta.get("func_name")
+            except:
+                fn_name = None
         model_dict = metadata.get('model')
         _scenario_str = metadata.get('scenario')
         scenario = Scenario(_scenario_str)
@@ -90,33 +92,36 @@ class LiveCodeBenchPassMetric(SimpleMetric):
         #print("sample_dict", sample_dict)
         results = get_results(sample_dict)
         combined_results = combine_results(scenario, results, model, cot_code_execution)
-        #eval_samples = [get_eval_sample(ref, fn_name)]
-        eval_samples = [get_eval_sample(ref)]
+        eval_samples = [get_eval_sample(ref, fn_name)]
         generations = [extracted for _, extracted in combined_results]
         if scenario == Scenario.codegeneration:
-            print('herre')
-            metrics = codegen_metrics(
-                eval_samples,
-                generations,
-                num_process_evaluate=1,
-                timeout=timeout,
-            )
-            print("metrics", metrics)
-
+            try:
+                metrics = codegen_metrics(
+                    eval_samples,
+                    generations,
+                    num_process_evaluate=5,
+                    timeout=timeout,
+                )
+            except:
+                pass
         #print("ref:", ref)
         #print("results:", results)
         #print("self.spec", self.spec)
         #print("sef.args", self.args)
         #print("eval_samples", eval_samples)
-        print("generation:", generations)
+        #print("generation:", generations)
 
-        exit(0)
+        #exit(0)
 
         # STEP 3: compute score
-        final_pred, score = match_str(pred, str(answer), location="exact")
-        score = float(score)
-        metadata = {"prediction": final_pred, "references": answer}
-        return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
+        metadata = {"scenario": _scenario_str}
+        pass_key = [
+            f'pass@{k}' for k in k_list
+        ]
+        values = {
+            key: metrics[0][key] for key in pass_key
+        }
+        return MetricResult(sample_id=context.sample_id, values=values, metadata=metadata)
 
 __all__ = ["LiveCodeBenchPassMetric", ]
 

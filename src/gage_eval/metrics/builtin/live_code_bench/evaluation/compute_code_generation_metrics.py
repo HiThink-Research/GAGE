@@ -30,8 +30,8 @@ def check_correctness(sample, generation, timeout, debug=True):
     """Check correctness of code generation with a global timeout.
     The global timeout is to catch some extreme/rare cases not handled by the timeouts
     inside `run_test`"""
-    print("chksamlpe", sample)
-    print("chkgeneration", generation)
+    #print("chksamlpe", sample)
+    #print("chkgeneration", generation)
     manager = multiprocessing.Manager()
     result = manager.list()
     metadata_list = manager.list()
@@ -65,9 +65,12 @@ def evaluate_generations_by_problem(args):
     for o_idx, o in enumerate(problem_generations):
         curr_res = [-2]
         try:
-            curr_res, curr_metadata = check_correctness(
-                sample, o, timeout=timeout, debug=debug
-            )
+            try:
+                curr_res, curr_metadata = check_correctness(
+                    sample, o, timeout=timeout, debug=debug
+                )
+            except (TypeError, AttributeError):
+                pass
             if debug:
                 print(f"\nSuccessful compilation of task {o_idx}!")
             fixed = []
@@ -130,7 +133,6 @@ def evaluate_generations(
         [(generations_list[index], samples_list[index], debug, timeout), index]
         for index in range(len(generations_list))
     ]
-    print("inputs", inputs)
     with tqdm(total=len(inputs)) as pbar:
         with ProcessPoolExecutor(
             max_workers=1 if debug else num_process_evaluate
@@ -180,23 +182,26 @@ def codegen_metrics(
             remap_index.append(idx)
 
     print(f"Evaluating {len(samples_linear)}...")
-
-    results_linear, metadatas_linear = evaluate_generations(
-        samples_linear,
-        generations_linear,
-        debug=debug,
-        num_process_evaluate=num_process_evaluate,
-        timeout=timeout,
-    )
+    try:
+        results_linear, metadatas_linear = evaluate_generations(
+            samples_linear,
+            generations_linear,
+         debug=debug,
+            num_process_evaluate=num_process_evaluate,
+            timeout=timeout,
+        )
+    except (TypeError, AttributeError):
+        pass    
 
     for idx, sub_results in sorted(results_linear.items(), key=lambda x: x[0]):
         results[remap_index[idx]].append(sub_results[0])
 
     for idx, sub_metadatas in sorted(metadatas_linear.items(), key=lambda x: x[0]):
         metadatas[remap_index[idx]].append(sub_metadatas[0])
-
-    metrics = compute_metrics_from_results(results, k_list=k_list)
-
+    try:
+        metrics = compute_metrics_from_results(results, k_list=k_list)
+    except (TypeError, AttributeError):
+        pass
     final_metadata = []
     for key in sorted(list(metadatas.keys())):
         final_metadata.append(metadatas[key])
