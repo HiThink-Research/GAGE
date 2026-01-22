@@ -8,7 +8,11 @@ from typing import Any, Dict, Optional, Literal
 
 from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore, LMStyle, LanguageModel
 from gage_eval.assets.datasets.loaders.live_code_bench.scenarios import Scenario
-
+from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_code_generation_metrics import codegen_metrics
+from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_code_execution_metrics import code_execution_metrics
+from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_test_output_prediction_metrics import (
+    test_output_metrics,
+)
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
 
@@ -86,15 +90,26 @@ class LiveCodeBenchPassMetric(SimpleMetric):
         #print("sample_dict", sample_dict)
         results = get_results(sample_dict)
         combined_results = combine_results(scenario, results, model, cot_code_execution)
-        eval_samples = [get_eval_sample(ref, fn_name)]
+        #eval_samples = [get_eval_sample(ref, fn_name)]
+        eval_samples = [get_eval_sample(ref)]
         generations = [extracted for _, extracted in combined_results]
-        print("ref:", ref)
-        print("results:", results)
-        print("self.spec", self.spec)
-        print("sef.args", self.args)
-        print("eval_samples", eval_samples)
+        if scenario == Scenario.codegeneration:
+            print('herre')
+            metrics = codegen_metrics(
+                eval_samples,
+                generations,
+                num_process_evaluate=1,
+                timeout=timeout,
+            )
+            print("metrics", metrics)
+
+        #print("ref:", ref)
+        #print("results:", results)
+        #print("self.spec", self.spec)
+        #print("sef.args", self.args)
+        #print("eval_samples", eval_samples)
         print("generation:", generations)
-        
+
         exit(0)
 
         # STEP 3: compute score

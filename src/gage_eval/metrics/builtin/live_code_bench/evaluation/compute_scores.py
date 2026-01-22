@@ -3,12 +3,12 @@ import argparse
 import numpy as np
 from datetime import datetime
 
-from gage_eval.metrics.builtin.live_code_bench.lm_styles import LanguageModelStore
+from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore
 from gage_eval.metrics.builtin.live_code_bench.evaluation.pass_k_utils import (
     estimate_pass_at_k,
     compute_metrics_from_results,
 )
-from gage_eval.metrics.builtin.live_code_bench.utils.scenarios import Scenario
+from gage_eval.assets.datasets.loaders.live_code_bench.scenarios import Scenario
 from gage_eval.metrics.builtin.live_code_bench.utils.path_utils import get_eval_all_output_path
 
 

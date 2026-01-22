@@ -30,7 +30,8 @@ def check_correctness(sample, generation, timeout, debug=True):
     """Check correctness of code generation with a global timeout.
     The global timeout is to catch some extreme/rare cases not handled by the timeouts
     inside `run_test`"""
-
+    print("chksamlpe", sample)
+    print("chkgeneration", generation)
     manager = multiprocessing.Manager()
     result = manager.list()
     metadata_list = manager.list()
@@ -129,7 +130,7 @@ def evaluate_generations(
         [(generations_list[index], samples_list[index], debug, timeout), index]
         for index in range(len(generations_list))
     ]
-
+    print("inputs", inputs)
     with tqdm(total=len(inputs)) as pbar:
         with ProcessPoolExecutor(
             max_workers=1 if debug else num_process_evaluate
