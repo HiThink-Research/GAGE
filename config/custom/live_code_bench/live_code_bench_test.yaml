@@ -13,19 +13,15 @@ datasets:
   - dataset_id: live_code_bench_ds
     hub: huggingface
     hub_params:
-      hub_id: livecodebench/code_generation_lite
-    loader: hf_hub_live_code_bench
+      hub_id: livecodebench/test_generation
+      split: test
+    loader: hf_hub
     params:
-      scenario: codegeneration
-      not_fast: true
-      limit: 10
-      #start_date: 1990-01-01
-      #end_date: 2027-01-01
-      release_version: release_v1
-      local_dir: /home/tione/notebook/zhuwenqiao_ssd/GAGE_workspace/data/my_local_data         
+      #scenario: testoutputprediction
       preprocess: live_code_bench_chat_preprocessor
       preprocess_kwargs:
-        n_few_shot: 5
+        scenario: testoutputprediction
+        #model_name: gpt-4-1106-preview
 
 backends:
   - backend_id: live_code_vllm_backend
