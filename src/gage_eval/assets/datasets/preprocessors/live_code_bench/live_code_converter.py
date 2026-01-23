@@ -64,6 +64,8 @@ def dump_sample(sample):
     for k, v in sample.items():
         if isinstance(v, (dict, list)):
             sample[k] = json.dumps(v)
+        elif not isinstance(v, str):
+            sample[k] = str(v)
     return sample
 
 def normalize_tests(test_list):
@@ -104,7 +106,8 @@ class LiveCodeBenchConverter(BasePreprocessor):
                 sample.pop(key, None)
             sample = convert_enum_to_str(sample)
             sample = dump_sample(sample)
-            # print("sample: ", sample)
+            #print("sample: ", sample)
+            #exit(0)
             codegen_problem = CodeGenerationProblem(**sample)
             dict_messages = format_prompt_generation(codegen_problem, model.model_style)
             final_messages = normalize_messages(dict_messages)
