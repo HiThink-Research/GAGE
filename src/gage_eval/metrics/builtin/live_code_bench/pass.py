@@ -10,6 +10,12 @@ from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import La
 from gage_eval.assets.datasets.loaders.live_code_bench.scenarios import Scenario
 from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_code_generation_metrics import codegen_metrics
 from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_code_execution_metrics import code_execution_metrics
+
+# code generation:
+from gage_eval.assets.datasets.loaders.live_code_bench.code_generation import (
+    CodeGenerationProblem, 
+)
+
 # test output:
 from gage_eval.metrics.builtin.live_code_bench.evaluation.compute_test_output_prediction_metrics import (
     test_output_metrics,
@@ -81,32 +87,22 @@ def get_eval_sample(ref_list, fn_name=None):
 )
 class LiveCodeBenchPassMetric(SimpleMetric):
     value_key = "pass@1"
-    def codegen(self, sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution):
-        fn_name = None
-        dataset_meta =  metadata.get('metadata')
-        if dataset_meta is not None:
-            try:
-                meta = json.loads(dataset_meta)
-                fn_name = meta.get("func_name")
-            except:
-                fn_name = None
+    def codegen(self, sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution, timeout):
         model_dict = metadata.get('model')
-        ref = sample_dict.get("references")
+        ref = sample_dict.get("references")[0]
         model = LanguageModel.from_dict(model_dict)
         #print("sample_dict", sample_dict)
         results = get_results(sample_dict)
         combined_results = combine_results(scenario, results, model, cot_code_execution)
-        eval_samples = [get_eval_sample(ref, fn_name)]
-        generations = [extracted for _, extracted in combined_results]
-        try:
-            metrics = codegen_metrics(
-                eval_samples,
-                generations,
-                num_process_evaluate=5,
-                timeout=timeout,
-            )
-        except:
-            pass
+        benchmark = [CodeGenerationProblem(**ref)]
+        eval_samples = [instance.get_evaluation_sample() for instance in benchmark]
+        generations = [extracted for _, extracted in combined_results]        
+        metrics = codegen_metrics(
+            eval_samples,
+            generations,
+            num_process_evaluate=5,
+            timeout=timeout,
+        )
         #print("ref:", ref)
         #print("results:", results)
         #print("self.spec", self.spec)
@@ -172,7 +168,7 @@ class LiveCodeBenchPassMetric(SimpleMetric):
         _scenario_str = metadata.get('scenario')
         scenario = Scenario(_scenario_str)
         if scenario == Scenario.codegeneration:
-            return self.codegen(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution)
+            return self.codegen(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution, timeout)
         elif scenario == Scenario.testoutputprediction:
             return self.test_output(context.sample_id, sample_dict, metadata, k_list, scenario, cot_code_execution)
         elif scenario == Scenario.codeexecution:

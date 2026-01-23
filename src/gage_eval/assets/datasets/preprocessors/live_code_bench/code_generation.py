@@ -1,12 +1,9 @@
 import os
 import json
-try:
-    from anthropic import HUMAN_PROMPT, AI_PROMPT
-except ImportError:
-    HUMAN_PROMPT = None
-    AI_PROMPT = None
-from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore, LMStyle, LanguageModel
-
+from gage_eval.assets.datasets.loaders.live_code_bench.code_generation import (
+    CodeGenerationProblem, 
+)
+from gage_eval.assets.datasets.preprocessors.live_code_bench.lm_styles import LanguageModelStore, LMStyle
 class PromptConstants:
     SYSTEM_MESSAGE_GENERIC = f"You are an expert Python programmer. You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests."
 
@@ -34,13 +31,13 @@ class PromptConstants:
     FORMATTING_WITHOUT_STARTER_CODE = "Read the inputs from stdin solve the problem and write the answer to stdout (do not directly test on the sample inputs). Enclose your code within delimiters as follows. Ensure that when the python program runs, it reads the inputs, runs the algorithm and writes output to STDOUT."
 
 
-def get_generic_question_template_answer(question: dict):
-    prompt = f"### Question:\n{question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+def get_generic_question_template_answer(question: CodeGenerationProblem):
+    prompt = f"### Question:\n{question.question_content}\n\n"
+    if question.starter_code:
         prompt += (
             f"### Format: {PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
         )
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"### Format: {PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
         prompt += "```python\n# YOUR CODE HERE\n```\n\n"
@@ -48,13 +45,13 @@ def get_generic_question_template_answer(question: dict):
     return prompt
 
 
-def get_oaireason_question_template_answer(question: dict):
-    prompt = f"### Question:\n{question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+def get_oaireason_question_template_answer(question: CodeGenerationProblem):
+    prompt = f"### Question:\n{question.question_content}\n\n"
+    if question.starter_code:
         prompt += (
             f"### Format: {PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
         )
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"### Format: Implement a function called `main()` which orchastrates the solution by reading inputs from stdin and writing the answer to stdout. Feel free to use additional functions as necessary. Next do NOT forget to call `main` function at the end of the program otherwise you will not be awarded any points.\n"
         prompt += "```python\n# YOUR CODE HERE\n```\n\n"
@@ -62,13 +59,13 @@ def get_oaireason_question_template_answer(question: dict):
     return prompt
 
 
-def get_geminithinking_question_template_answer(question: dict):
-    prompt = f"### Question:\n{question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+def get_geminithinking_question_template_answer(question: CodeGenerationProblem):
+    prompt = f"### Question:\n{question.question_content}\n\n"
+    if question.starter_code:
         prompt += (
             f"### Format: {PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
         )
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"### Format: {PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
         prompt += "```python\n# YOUR CODE HERE\n```\n\n"
@@ -76,14 +73,14 @@ def get_geminithinking_question_template_answer(question: dict):
     return prompt
 
 
-def get_deepseekcode_question_template_answer(question: dict):
+def get_deepseekcode_question_template_answer(question: CodeGenerationProblem):
     prompt = f"### Instruction: You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\n"
-    prompt += f"Question:\n{question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+    prompt += f"Question:\n{question.question_content}\n\n"
+    if question.starter_code:
         prompt += (
             f"### Instruction: {PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
         )
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += (
             f"### Instruction: {PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
@@ -93,52 +90,67 @@ def get_deepseekcode_question_template_answer(question: dict):
     return prompt
 
 
-def get_qwen_question_template_answer(question: dict):
+def get_qwen_question_template_answer(question: CodeGenerationProblem):
+    from transformers import AutoTokenizer
 
+    tokenizer = AutoTokenizer.from_pretrained(
+        "/abacus/models/Qwen1.5-72B-Chat/", padding_side="left", use_fast=False
+    )
     prompt = "You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\n"
-    prompt += f"Question:\n{question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+    prompt += f"Question:\n{question.question_content}\n\n"
+    if question.starter_code:
         prompt += f"{PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"{PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n\n"
         prompt += f"```python\n# YOUR CODE HERE\n```\n\n"
 
+    messages = [
+        {"role": "system", "content": PromptConstants.SYSTEM_MESSAGE_GENERIC},
+        {"role": "user", "content": prompt},
+    ]
+
+    prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        truncation=False,
+        padding=False,
+    )
     return prompt
 
 
-def get_codeqwen_question_template_answer(question: dict):
+def get_codeqwen_question_template_answer(question: CodeGenerationProblem):
     prompt = "You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\n"
-    prompt += f"Question: {question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+    prompt += f"Question: {question.question_content}\n\n"
+    if question.starter_code:
         prompt += f"{PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"{PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
         prompt += f"```python\n# YOUR CODE HERE\n```\n\n"
     return prompt
 
 
-def get_qwen_qwq_question_template_answer(question: dict):
+def get_qwen_qwq_question_template_answer(question: CodeGenerationProblem):
     prompt = "You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests.\n\n"
-    prompt += f"Question: {question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+    prompt += f"Question: {question.question_content}\n\n"
+    if question.starter_code:
         prompt += f"{PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n<|im_end|>\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"{PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
-        prompt += f"```python\n# YOUR CODE HERE\n```\n\n<|im_end|>\n"
-    prompt += f"<|im_start|>assistant\n"
+        prompt += f"```python\n# YOUR CODE HERE\n```\n\n"
     return prompt
 
 
-def get_deepseek_r1_question_template_answer(question: dict):
+def get_deepseek_r1_question_template_answer(question: CodeGenerationProblem):
     # Following modifications from: https://github.com/fanqiwan/FuseAI/blob/main/FuseO1-Preview/code_evaluation/lcb_runner_cq/prompts/code_generation.py
     prompt = "You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests.\n\n"
-    prompt += f"Question: {question.get('question_content')}\n\n"
-    if question.get('starter_code'):
+    prompt += f"Question: {question.question_content}\n\n"
+    if question.starter_code:
         prompt += f"{PromptConstants.FORMATTING_MESSAGE_WITH_STARTER_CODE}\n"
-        prompt += f"```python\n{question.get('starter_code')}\n```\n\n"
+        prompt += f"```python\n{question.starter_code}\n```\n\n"
     else:
         prompt += f"{PromptConstants.FORMATTING_WITHOUT_STARTER_CODE}\n"
         prompt += f"```python\n# YOUR CODE HERE\n```\n\n"
@@ -155,8 +167,8 @@ with open(os.path.join(_CUR_DIR, "few_shot_examples/generation/stdin.json")) as 
     stdin = json.load(f)
 
 
-def get_base_model_question_template_answer(question: dict):
-    if question.get('starter_code'):
+def get_base_model_question_template_answer(question: CodeGenerationProblem):
+    if question.starter_code:
         examples_json = func
     else:
         examples_json = stdin
@@ -166,7 +178,7 @@ def get_base_model_question_template_answer(question: dict):
         prompt += "### Question\n"
         prompt += example["question"]
         prompt += "\n\n"
-        if question.get('starter_code'):
+        if question.starter_code:
             prompt += "### Starter Code\n"
             prompt += example["sample_code"]
             prompt += "\n\n"
@@ -180,8 +192,8 @@ def get_base_model_question_template_answer(question: dict):
     prompt += get_example_prompt(examples_json[0])
     prompt += get_example_prompt(
         {
-            "question": question.get('question_content'),
-            "sample_code": question.get('starter_code'),
+            "question": question.question_content,
+            "sample_code": question.starter_code,
             "answer": "",
         }
     )
@@ -189,7 +201,7 @@ def get_base_model_question_template_answer(question: dict):
 
 
 def format_prompt_generation(
-    question: dict, LanguageModelStyle: LMStyle
+    question: CodeGenerationProblem, LanguageModelStyle: LMStyle
 ) -> str:
     if LanguageModelStyle in [
         LMStyle.OpenAIChat,
@@ -210,6 +222,17 @@ def format_prompt_generation(
             },
         ]
         return chat_messages
+    
+    if LanguageModelStyle == LMStyle.CodeQwenInstruct:
+        prompt = f"{get_codeqwen_question_template_answer(question)}"
+        chat_messages = [
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ]        
+        return chat_messages        
+    
     elif LanguageModelStyle in [LMStyle.OpenAIReasonPreview, LMStyle.Grok]:
         chat_messages = [
             {
@@ -244,20 +267,8 @@ def format_prompt_generation(
                 "content": get_generic_question_template_answer(question),
             },
         ]
-
-    if LanguageModelStyle == LMStyle.Claude:
-        prompt = f"{HUMAN_PROMPT}\n"
-        prompt += f"{PromptConstants.SYSTEM_MESSAGE_GENERIC}\n\n"
-        prompt += f"{get_generic_question_template_answer(question).rstrip()}\n"
-        prompt += f"{AI_PROMPT}"
-        chat_messages = [
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ]
-        
         return chat_messages
+        
 
     if LanguageModelStyle == LMStyle.Gemini:
         prompt = f"{PromptConstants.SYSTEM_MESSAGE_GEMINI}\n"
@@ -267,7 +278,7 @@ def format_prompt_generation(
                 "role": "user",
                 "content": prompt,
             },
-        ]        
+        ]
         return chat_messages
 
     if LanguageModelStyle == LMStyle.GeminiThinking:
@@ -278,7 +289,7 @@ def format_prompt_generation(
                 "role": "user",
                 "content": prompt,
             },
-        ]        
+        ]
         return chat_messages
 
     if LanguageModelStyle == LMStyle.MistralWeb:
@@ -303,20 +314,10 @@ def format_prompt_generation(
                 "content": prompt,
             },
         ]        
-        return chat_messages
-
-    if LanguageModelStyle == LMStyle.CodeQwenInstruct:
-        prompt = f"{get_codeqwen_question_template_answer(question)}"
-        chat_messages = [
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ]        
-        return chat_messages
+        return chat_messages        
 
     if LanguageModelStyle == LMStyle.QwQ:
-        prompt = f"{PromptConstants.SYSTEM_MESSAGE_GENERIC}\n\n"
+        prompt = f"{PromptConstants.SYSTEM_MESSAGE_QWEN_QWQ}\n\n"
         prompt += f"{get_qwen_qwq_question_template_answer(question)}"
         chat_messages = [
             {
@@ -325,6 +326,7 @@ def format_prompt_generation(
             },
         ]        
         return chat_messages        
+
 
     if LanguageModelStyle == LMStyle.DeepSeekR1:
         prompt = f"{PromptConstants.SYSTEM_MESSAGE_DEEPSEEK_R1}"
@@ -350,3 +352,5 @@ def format_prompt_generation(
     raise NotImplementedError(
         f"LanguageModelStyle {LanguageModelStyle} not implemented"
     )
+
+

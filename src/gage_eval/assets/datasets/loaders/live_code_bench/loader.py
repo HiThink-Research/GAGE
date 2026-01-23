@@ -138,6 +138,8 @@ def load_live_code_bench_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[
             benchmark = load_code_generation_dataset_not_fast(local_dir, filename_list)
         else:
             benchmark = load_code_generation_dataset(local_dir, filename_list, start_date, end_date)
+    elif scenario == Scenario.selfrepair.value:
+        benchmark = load_code_generation_dataset(local_dir, filename_list)
     else:
         logger.info(f"not supported: {scenario}")
     

@@ -33,6 +33,11 @@ from gage_eval.assets.datasets.preprocessors.live_code_bench.utils import normal
 from enum import Enum
 from typing import Any, Dict, List, Union
 
+# code generation:
+from gage_eval.assets.datasets.loaders.live_code_bench.code_generation import (
+    CodeGenerationProblem, 
+)
+
 # test output:
 from gage_eval.assets.datasets.preprocessors.live_code_bench.test_output_prediction import (
     TestOutputPredictionProblem, format_prompt_test_output
@@ -54,6 +59,12 @@ def convert_enum_to_str(obj: Any) -> Any:
         return tuple(convert_enum_to_str(item) for item in obj)
     else:
         return obj or []
+
+def dump_sample(sample):
+    for k, v in sample.items():
+        if isinstance(v, (dict, list)):
+            sample[k] = json.dumps(v)
+    return sample
 
 def normalize_tests(test_list):
     ret_list = []
@@ -88,18 +99,24 @@ class LiveCodeBenchConverter(BasePreprocessor):
         model = LanguageModelStore[model_name]
 
         if scenario == Scenario.codegeneration:
-            dict_messages = format_prompt_generation(sample, model.model_style)
+            key_to_remove = ['_dataset_id', '_dataset_metadata', 'scenario']
+            for key in key_to_remove:
+                sample.pop(key, None)
+            sample = convert_enum_to_str(sample)
+            sample = dump_sample(sample)
+            # print("sample: ", sample)
+            codegen_problem = CodeGenerationProblem(**sample)
+            dict_messages = format_prompt_generation(codegen_problem, model.model_style)
             final_messages = normalize_messages(dict_messages)
             sample_id = '_'.join([sample.get('question_id'), sample.get("contest_id")])
-            ref = normalize_tests(sample.get('public_test_cases')) + \
-                normalize_tests(sample.get('private_test_cases'))  or []
+            answer = sample
+            ref=[sample]
         
-            self_metadata = str(sample.get('metadata')) or '{}'
             metadata = {
                 'scenario': _scenario_str,
-                'metadata': self_metadata,
-                'model': model.to_dict()
-            }
+                'model': model.to_dict(),
+                'cot_code_execution': cot_code_execution
+            }            
             ret_sample = Sample(
                 id = sample_id,
                 schema_version = schema_version,
@@ -163,9 +180,9 @@ class LiveCodeBenchConverter(BasePreprocessor):
                 messages = final_messages,
                 references = ref,
                 metadata = metadata
-            ) 
-        #print("ret:", ret_sample)
-        #exit(0)              
+            )
+        else:
+            raise ValueError(f"Unsupported: {scenario.value}")
         return ret_sample
 
 
