@@ -1,6 +1,8 @@
+import subprocess
+
 import pytest
 
-from gage_eval.sandbox.docker_runtime import build_docker_run_command, normalize_runtime_configs
+from gage_eval.sandbox.docker_runtime import DockerSandbox, build_docker_run_command, normalize_runtime_configs
 
 
 def _arg_value(args: list[str], flag: str) -> str:
@@ -52,3 +54,22 @@ def test_build_docker_run_command_host_network_skips_ports() -> None:
         resources={},
     )
     assert "-p" not in args
+
+
+@pytest.mark.fast
+def test_docker_exec_decodes_binary_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout=b"\x89PNG", stderr=b"\xff")
+
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.subprocess.run", fake_run)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._ensure_docker_available", lambda _bin: None)
+
+    sandbox = DockerSandbox(runtime_configs={"docker_bin": "docker"})
+    sandbox._container_id = "cid"
+
+    result = sandbox.exec("cat /bin/ls")
+
+    assert result.exit_code == 0
+    assert isinstance(result.stdout, str)
+    assert isinstance(result.stderr, str)
+    assert result.stdout

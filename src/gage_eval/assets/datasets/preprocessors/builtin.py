@@ -151,6 +151,18 @@ class AppWorldPreprocessor(NewAppWorld):
 
 @registry.asset(
     "dataset_preprocessors",
+    "swebench_pro_standardizer",
+    desc="SWE-bench Pro preprocessor (prompt + sandbox metadata)",
+    tags=("swebench", "agent"),
+)
+class SwebenchProStandardizer(NewSwebenchPro):
+    """Standardize SWE-bench Pro records into the Sample schema."""
+
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
     "mmmu_multimodal_inputs",
     desc="MMMU multimodal inputs builder (messages -> inputs.multi_modal_data)",
     tags=("prompt", "vision", "mmmu"),

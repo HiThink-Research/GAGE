@@ -235,6 +235,7 @@ def _dedupe_tools(existing: List[Dict[str, Any]], tools: Any) -> List[Dict[str, 
 def _normalize_tool_entry(tool: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(tool, dict):
         return None
+    x_gage = tool.get("x-gage")
     if tool.get("type") == "function" and "function" in tool:
         normalized = dict(tool)
         function = normalized.get("function")
@@ -244,9 +245,11 @@ def _normalize_tool_entry(tool: Any) -> Optional[Dict[str, Any]]:
             if "parameters" in function:
                 function["parameters"] = _strip_nulls(function.get("parameters") or {})
             normalized["function"] = function
+        if x_gage is not None and "x-gage" not in normalized:
+            normalized["x-gage"] = x_gage
         return normalized
     if "name" in tool and "parameters" in tool:
-        return {
+        normalized = {
             "type": "function",
             "function": {
                 "name": tool.get("name"),
@@ -254,7 +257,13 @@ def _normalize_tool_entry(tool: Any) -> Optional[Dict[str, Any]]:
                 "parameters": _strip_nulls(tool.get("parameters") or {}),
             },
         }
-    return dict(tool)
+        if x_gage is not None:
+            normalized["x-gage"] = x_gage
+        return normalized
+    normalized = dict(tool)
+    if x_gage is not None and "x-gage" not in normalized:
+        normalized["x-gage"] = x_gage
+    return normalized
 
 
 def _strip_nulls(value: Any) -> Any:

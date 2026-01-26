@@ -7,11 +7,13 @@ speed up offline iterations.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
+from gage_eval.utils.swebench import get_dockerhub_image_uri
 
 
 def _coerce_list(value: Any) -> List[str]:
@@ -26,15 +28,35 @@ def _coerce_list(value: Any) -> List[str]:
     if value is None:
         return []
     if isinstance(value, list):
+        if len(value) == 1 and isinstance(value[0], str):
+            parsed = _parse_list_string(value[0])
+            if parsed is not None:
+                return parsed
         return [str(v) for v in value]
     if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return [str(v) for v in parsed]
-        except Exception:
-            pass
+        parsed = _parse_list_string(value)
+        if parsed is not None:
+            return parsed
     return [str(value)]
+
+
+def _parse_list_string(raw: str) -> Optional[List[str]]:
+    text = raw.strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(v) for v in parsed]
+    except Exception:
+        pass
+    try:
+        parsed = ast.literal_eval(text)
+        if isinstance(parsed, list):
+            return [str(v) for v in parsed]
+    except Exception:
+        pass
+    return None
 
 
 def _load_smoke_ids(path: Optional[str]) -> Optional[set[str]]:
@@ -54,6 +76,21 @@ def _load_smoke_ids(path: Optional[str]) -> Optional[set[str]]:
         return None
 
 
+def _format_problem_sections(problem: str, requirements: str, interface: str) -> str:
+    sections: List[str] = []
+    if problem:
+        sections.append(f"## Problem Statement\n{problem}")
+    if requirements:
+        sections.append(
+            "## Requirements\n"
+            "You MUST adhere to the following requirements to ensure your solution is correct:\n"
+            f"{requirements}"
+        )
+    if interface:
+        sections.append(f"## Interface Specification\n{interface}")
+    return "\n\n".join(sections).strip()
+
+
 class SwebenchProPreprocessor(BasePreprocessor):
     """Converts SWE-bench Pro records into the standardized Sample schema.
 
@@ -62,12 +99,27 @@ class SwebenchProPreprocessor(BasePreprocessor):
     touching the upstream dataset source.
     """
 
-    def __init__(self, *, smoke_ids_path: Optional[str] = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        smoke_ids_path: Optional[str] = None,
+        dockerhub_username: str = "jefzda",
+        registry_prefix: Optional[str] = None,
+        sandbox_id: str = "swebench_runtime",
+        sandbox_runtime: str = "docker",
+        sandbox_lifecycle: str = "per_sample",
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         # NOTE: In smoke mode we still load the full source dataset, then filter
         # locally by `smoke_instance_ids.txt` (if provided). This keeps the data
         # loading path identical to production runs.
         self._smoke_ids = _load_smoke_ids(smoke_ids_path)
+        self._dockerhub_username = dockerhub_username
+        self._registry_prefix = registry_prefix
+        self._sandbox_id = sandbox_id
+        self._sandbox_runtime = sandbox_runtime
+        self._sandbox_lifecycle = sandbox_lifecycle
 
     def transform(self, sample: Dict[str, Any], **kwargs: Any) -> Optional[Dict[str, Any]]:
         instance_id = str(sample.get("instance_id") or sample.get("id") or "").strip()
@@ -86,8 +138,7 @@ class SwebenchProPreprocessor(BasePreprocessor):
         problem = str(record.get("problem_statement") or record.get("problem") or "").strip()
         requirements = str(record.get("requirements") or "").strip()
         interface = str(record.get("interface") or "").strip()
-        text_parts = [part for part in (problem, requirements, interface) if part]
-        user_text = "\n\n".join(text_parts)
+        user_text = _format_problem_sections(problem, requirements, interface)
 
         # STEP 2: Apply dataset-specific normalization/hotfixes.
         # NOTE: Tutanota environment mismatch: upstream `pass_to_pass` expects
@@ -122,7 +173,25 @@ class SwebenchProPreprocessor(BasePreprocessor):
             }
         )
 
-        # STEP 4: Materialize fields expected by the pipeline (id/messages/inputs/metadata).
+        # STEP 4: Attach sandbox metadata for per-sample docker runtimes.
+        repo = metadata.get("repo") or record.get("repo") or record.get("repository")
+        image_uri = None
+        if instance_id and repo:
+            image_uri = get_dockerhub_image_uri(instance_id, self._dockerhub_username, str(repo))
+            if self._registry_prefix:
+                image_name = image_uri.split("/", 1)[-1]
+                image_uri = f"{self._registry_prefix.rstrip('/')}/{image_name}"
+            metadata.setdefault("image_uri", image_uri)
+
+        sandbox = dict(record.get("sandbox") or {})
+        sandbox.setdefault("sandbox_id", self._sandbox_id)
+        sandbox.setdefault("runtime", self._sandbox_runtime)
+        sandbox.setdefault("lifecycle", self._sandbox_lifecycle)
+        if image_uri:
+            sandbox.setdefault("image", image_uri)
+        record["sandbox"] = sandbox
+
+        # STEP 5: Materialize fields expected by the pipeline (id/messages/inputs/metadata).
         record["id"] = instance_id
         record["messages"] = [
             {

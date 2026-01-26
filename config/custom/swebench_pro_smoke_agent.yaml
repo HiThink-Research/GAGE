@@ -1,0 +1,245 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: swebench_pro_smoke_agent
+  # Smoke-only evaluation; the dataset is filtered to a small allowlist.
+  description: SWE-bench Pro 冒烟子集（Agent 评测）。
+
+custom:
+  steps:
+    - step: support
+      adapter_id: swebench_context_provider
+    - step: support
+      adapter_id: swebench_toolchain
+    - step: inference
+      adapter_id: swebench_dut_agent
+    - step: judge
+      adapter_id: swebench_docker_judge
+    - step: auto_eval
+
+prompts:
+  - prompt_id: swebench_pro_patch_prompt
+    renderer: jinja_delimited_chat
+    params:
+      mode: header_body_first_user
+      include_system: true
+      message_delimiter: "<<<MSG>>>"
+      section_delimiter: "<<<SECTION>>>"
+    template: |
+      You are an expert software engineer tasked with resolving a GitHub issue in a repository.
+      
+      GOAL:
+      Fix the bug described in the issue and generate a valid git patch.
+
+      TOOLS:
+      You have access to a Linux shell in the repository root.
+      - `run_shell`: Execute bash commands (ls, cat, grep, find, git, pytest, etc.).
+      - `read_file`: Read file contents.
+      - `write_file`: Overwrite file contents.
+      - `replace_in_file`: Replace text in a file.
+      - `submit_patch_tool`: Run `git diff` and return the unified diff in stdout. Set `stage_untracked` if new files were created.
+
+      WORKFLOW:
+      1. EXPLORE: Understand the codebase and the issue. Use `ls -R`, `grep`, or `find` to locate relevant files. Read them to understand the context.
+      2. REPRODUCE: Create a reproduction script (reproduce_issue.py) to confirm the bug. Run it to see it fail.
+      3. FIX: Modify the source code to fix the bug.
+      4. VERIFY: Run the reproduction script again to confirm it passes.
+      5. SUBMIT: Call `submit_patch_tool` exactly once to generate the patch. Immediately output the tool stdout as your final answer.
+      
+      IMPORTANT:
+      1. The final answer MUST be the unified diff text only. No Markdown, no extra words.
+      2. The diff MUST start with `diff --git` and include valid hunk headers.
+      3. Do NOT commit your changes; leave the repo dirty so `git diff` captures them.
+      4. If you create new files, either `git add` them or call `submit_patch_tool` with `stage_untracked: true`.
+      5. Do not call `submit_patch_tool` more than once.
+
+      <<<SECTION>>>
+      {% set content = sample.messages[0].content %}
+      {% if content is string %}
+      {{ content }}
+      {% else %}
+      {% for item in content %}
+      {% if item.get("type") == "text" and item.get("text") %}
+      {{ item.get("text") }}
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+
+datasets:
+  - dataset_id: swebench_pro_smoke
+    # Official SWE-bench Pro dataset source (filtered by the preprocessor below).
+    hub: huggingface
+    hub_params:
+      hub_id: ScaleAI/SWE-bench_Pro
+      split: test
+    loader: hf_hub
+    params:
+      # IMPORTANT: preprocessor filters to smoke-only instances.
+      preprocess: swebench_pro_standardizer
+      preprocess_kwargs:
+        # Smoke allowlist: only ids listed here are kept.
+        smoke_ids_path: gage-eval-main/third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
+      # Streaming keeps memory low; the smoke filter still applies.
+      streaming: true
+
+backends:
+  - backend_id: gpt52_openai_http
+    type: openai_http
+    config:
+      # Use a stable OpenAI-compatible endpoint for the demo workflow.
+      base_url: https://api.openai.com/v1
+      model: gpt-5.2
+      require_api_key: true
+      max_retries: 6    
+
+agent_backends:
+  - agent_backend_id: swebench_agent_main
+    # Agent backend delegates to the same OpenAI-compatible model.
+    type: model_backend
+    backend_id: gpt52_openai_http
+
+sandbox_profiles:
+  - sandbox_id: swebench_runtime
+    # Per-sample container lifecycle for SWE-bench Pro.
+    runtime: docker
+    resources:
+      cpu: 4
+      memory: 8g
+    runtime_configs:
+      start_container: true
+      auto_remove: true
+      network_mode: none
+      platform: linux/amd64
+      entrypoint: /bin/bash
+      command:
+        - -c
+        - sleep 3600
+      # Use repo root as exec working directory; /workspace is created later.
+      exec_workdir: /app
+      # Optional local volume fast-path for run_scripts (local Docker only).
+      # Disabled by default to avoid relative-path Docker errors; enable with an
+      # absolute host path if needed.
+      # volumes:
+      #   - /abs/path/to/gage-eval-main/third_party/swebench_pro/run_scripts:/run_scripts:ro
+
+role_adapters:
+  - adapter_id: swebench_context_provider
+    role_type: context_provider
+    sandbox:
+      sandbox_id: swebench_runtime
+      # Start sandbox before repo context extraction.
+      lifecycle: per_sample
+    params:
+      implementation: swebench_repo
+      implementation_params:
+        repo_source: docker_image
+        repo_root: /app
+        topk_files: 5
+        repo_map_max_files: 30
+        repo_map_max_lines: 120
+        repo_map_scan_lines: 400
+        repo_map_max_symbols_per_file: 4
+        max_tree_depth: 3
+        max_tree_lines: 200
+        max_file_lines: 500
+        max_file_chars: 20000
+        block_network: true
+
+  - adapter_id: swebench_dut_agent
+    role_type: dut_agent
+    agent_backend_id: swebench_agent_main
+    prompt_id: swebench_pro_patch_prompt
+    sandbox:
+      sandbox_id: swebench_runtime
+      # Agent interacts with the same per-sample sandbox.
+      lifecycle: per_sample
+    params:
+      max_turns: 40
+      # Tools are injected via the toolchain support step.
+
+  - adapter_id: swebench_toolchain
+    role_type: toolchain
+    params:
+      tools:
+        - name: run_shell
+          description: Run a shell command in the repo root.
+          parameters:
+            type: object
+            properties:
+              command: {type: string}
+              cmd: {type: string}
+              timeout_s: {type: integer}
+            required: []
+        - name: read_file
+          description: Read file content from a path.
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+            required: [path]
+        - name: write_file
+          description: Overwrite file content at a path.
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+              content: {type: string}
+            required: [path, content]
+        - name: replace_in_file
+          description: Replace text in a file.
+          parameters:
+            type: object
+            properties:
+              path: {type: string}
+              pattern: {type: string}
+              replacement: {type: string}
+              count: {type: integer}
+            required: [path, pattern, replacement]
+        - name: submit_patch_tool
+          description: Run git diff and return the unified diff.
+          x-gage:
+            final_answer_from: stdout
+          parameters:
+            type: object
+            properties:
+              timeout_s: {type: integer}
+              stage_untracked: {type: boolean}
+            required: []
+
+  - adapter_id: swebench_docker_judge
+    role_type: judge_extend
+    sandbox:
+      sandbox_id: swebench_runtime
+      # Judge runs inside the same per-sample sandbox.
+      lifecycle: per_sample
+    params:
+      implementation: swebench_docker
+      implementation_params:
+        scripts_dir: gage-eval-main/third_party/swebench_pro/run_scripts
+        # Required to export ENV vars from official Dockerfiles (PATH/tooling).
+        dockerfiles_dir: gage-eval-main/third_party/swebench_pro/dockerfiles
+        dockerhub_username: jefzda
+        block_network: true
+        test_timeout_s: 900
+        docker_platform: linux/amd64
+
+metrics:
+  - metric_id: swebench_resolve_rate
+    implementation: swebench_resolve_rate
+  - metric_id: swebench_failure_reason
+    implementation: swebench_failure_reason
+    aggregation: categorical_count
+
+tasks:
+  - task_id: swebench_pro_smoke_agent_eval
+    dataset_id: swebench_pro_smoke
+    # Fixed smoke subset size (same as allowlist count).
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/swebench_pro_smoke_agent_events.jsonl

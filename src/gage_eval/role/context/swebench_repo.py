@@ -12,7 +12,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from loguru import logger
 
 from gage_eval.registry import registry
-from gage_eval.utils.swebench import get_dockerhub_image_uri, resolve_docker_platform
 
 
 _DEFAULT_EXCLUDE_DIRS = {
@@ -47,6 +46,10 @@ class SwebenchRepoContext:
         repo_source: str = "docker_image",
         repo_root: str = "/app",
         topk_files: int = 20,
+        repo_map_max_files: int = 0,
+        repo_map_max_lines: int = 120,
+        repo_map_scan_lines: int = 400,
+        repo_map_max_symbols_per_file: int = 4,
         max_tree_depth: int = 3,
         max_tree_lines: int = 200,
         max_file_lines: int = 200,
@@ -56,10 +59,15 @@ class SwebenchRepoContext:
         docker_platform: Optional[str] = None,
         exclude_dirs: Optional[Sequence[str]] = None,
         block_network: bool = True,
+        exec_timeout_s: int = 30,
     ) -> None:
         self._repo_source = repo_source
         self._repo_root = repo_root
         self._topk_files = max(0, int(topk_files))
+        self._repo_map_max_files = max(0, int(repo_map_max_files))
+        self._repo_map_max_lines = max(1, int(repo_map_max_lines))
+        self._repo_map_scan_lines = max(1, int(repo_map_scan_lines))
+        self._repo_map_max_symbols_per_file = max(1, int(repo_map_max_symbols_per_file))
         self._max_tree_depth = max(1, int(max_tree_depth))
         self._max_tree_lines = max(1, int(max_tree_lines))
         self._max_file_lines = max(1, int(max_file_lines))
@@ -69,6 +77,7 @@ class SwebenchRepoContext:
         self._docker_platform = docker_platform
         self._exclude_dirs = set(exclude_dirs or _DEFAULT_EXCLUDE_DIRS)
         self._block_network = bool(block_network)
+        self._exec_timeout_s = max(1, int(exec_timeout_s))
 
     def provide(self, payload: Dict[str, Any], _state=None) -> Dict[str, Any]:
         sample = payload.get("sample") or {}
@@ -76,12 +85,18 @@ class SwebenchRepoContext:
         repo_source = params.get("repo_source", self._repo_source)
         repo_root = params.get("repo_root", self._repo_root)
         topk_files = int(params.get("topk_files", self._topk_files))
+        repo_map_max_files = int(params.get("repo_map_max_files", self._repo_map_max_files))
+        repo_map_max_lines = int(params.get("repo_map_max_lines", self._repo_map_max_lines))
+        repo_map_scan_lines = int(params.get("repo_map_scan_lines", self._repo_map_scan_lines))
+        repo_map_max_symbols_per_file = int(
+            params.get("repo_map_max_symbols_per_file", self._repo_map_max_symbols_per_file)
+        )
         max_tree_depth = int(params.get("max_tree_depth", self._max_tree_depth))
         max_tree_lines = int(params.get("max_tree_lines", self._max_tree_lines))
         max_file_lines = int(params.get("max_file_lines", self._max_file_lines))
         max_file_chars = int(params.get("max_file_chars", self._max_file_chars))
         exclude_dirs = set(params.get("exclude_dirs", self._exclude_dirs))
-        docker_platform = resolve_docker_platform(params.get("docker_platform", self._docker_platform))
+        exec_timeout_s = int(params.get("exec_timeout_s", self._exec_timeout_s))
 
         logger.debug("SWE-bench repo context repo_source={} repo_root={}", repo_source, repo_root)
 
@@ -91,26 +106,36 @@ class SwebenchRepoContext:
             all_files = list(_list_local_files(repo_path, exclude_dirs))
             file_reader = _LocalFileReader(repo_path)
         elif repo_source == "docker_image":
-            image_uri = _resolve_image_uri(sample, params, self._dockerhub_username, self._registry_prefix)
-            with _DockerRepoSession(
-                image_uri,
-                repo_root=repo_root,
-                block_network=self._block_network,
-                docker_platform=docker_platform,
-            ) as session:
-                tree_text = session.list_tree(max_tree_depth, max_tree_lines)
-                all_files = session.list_files(exclude_dirs)
-                file_reader = session
-                return _inject_context(
-                    sample,
-                    tree_text,
-                    _collect_file_snippets(
-                        file_reader,
-                        _select_files(sample, all_files, topk_files),
-                        max_file_lines,
-                        max_file_chars,
-                    ),
-                )
+            sandbox_provider = payload.get("sandbox_provider")
+            if sandbox_provider is None:
+                raise ValueError("swebench_repo requires sandbox_provider for repo_source=docker_image")
+            handle = sandbox_provider.get_handle()
+            if handle is None or handle.sandbox is None:
+                raise ValueError("swebench_repo sandbox handle missing for repo_source=docker_image")
+            session = _SandboxRepoSession(handle.sandbox, repo_root=repo_root, exec_timeout_s=exec_timeout_s)
+            tree_text = session.list_tree(max_tree_depth, max_tree_lines)
+            all_files = session.list_files(exclude_dirs)
+            file_reader = session
+            repo_map = _build_repo_map(
+                file_reader,
+                sample,
+                all_files,
+                max_files=repo_map_max_files,
+                max_lines=repo_map_max_lines,
+                scan_lines=repo_map_scan_lines,
+                max_symbols_per_file=repo_map_max_symbols_per_file,
+            )
+            return _inject_context(
+                sample,
+                tree_text,
+                _collect_file_snippets(
+                    file_reader,
+                    _select_files(sample, all_files, topk_files),
+                    max_file_lines,
+                    max_file_chars,
+                ),
+                repo_map,
+            )
         else:
             raise ValueError(f"Unsupported repo_source: {repo_source}")
 
@@ -120,7 +145,16 @@ class SwebenchRepoContext:
             max_file_lines,
             max_file_chars,
         )
-        return _inject_context(sample, tree_text, file_snippets)
+        repo_map = _build_repo_map(
+            file_reader,
+            sample,
+            all_files,
+            max_files=repo_map_max_files,
+            max_lines=repo_map_max_lines,
+            scan_lines=repo_map_scan_lines,
+            max_symbols_per_file=repo_map_max_symbols_per_file,
+        )
+        return _inject_context(sample, tree_text, file_snippets, repo_map)
 
 
 class _LocalFileReader:
@@ -142,43 +176,11 @@ class _LocalFileReader:
             return ""
 
 
-class _DockerRepoSession:
-    def __init__(
-        self,
-        image_uri: str,
-        repo_root: str,
-        block_network: bool,
-        docker_platform: Optional[str],
-    ) -> None:
-        try:
-            import docker  # type: ignore
-        except Exception as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError("docker SDK is required for repo_source=docker_image") from exc
-
-        self._client = docker.from_env()
+class _SandboxRepoSession:
+    def __init__(self, sandbox, repo_root: str, exec_timeout_s: int) -> None:
+        self._sandbox = sandbox
         self._repo_root = repo_root
-        self._container = self._client.containers.create(
-            image_uri,
-            command=["-c", "sleep 3600"],
-            entrypoint="/bin/bash",
-            detach=True,
-            network_mode="none" if block_network else None,
-            platform="linux/amd64",
-        )
-        self._container.start()
-
-    def __enter__(self) -> "_DockerRepoSession":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        try:
-            self._container.stop(timeout=3)
-        except Exception:
-            pass
-        try:
-            self._container.remove(force=True)
-        except Exception:
-            pass
+        self._exec_timeout_s = max(1, int(exec_timeout_s))
 
     def list_tree(self, max_depth: int, max_lines: int) -> str:
         exit_code, output = self._exec(f"find . -maxdepth {max_depth} -print")
@@ -210,26 +212,10 @@ class _DockerRepoSession:
         return output if exit_code == 0 else ""
 
     def _exec(self, cmd: str) -> Tuple[int, str]:
-        try:
-            result = self._container.exec_run(["bash", "-lc", cmd], workdir=self._repo_root)
-        except Exception as exc:
-            # Catch "Conflict: container is not running" and enrich error
-            is_conflict = "409" in str(exc) or "Conflict" in str(exc)
-            if is_conflict:
-                logs = ""
-                try:
-                    logs = self._container.logs().decode("utf-8", errors="replace")
-                except Exception:
-                    logs = "(failed to retrieve logs)"
-                raise RuntimeError(f"Container exited prematurely. Logs:\n{logs}") from exc
-            raise
-        exit_code = result.exit_code if hasattr(result, "exit_code") else result[0]
-        output = result.output if hasattr(result, "output") else result[1]
-        if isinstance(output, (bytes, bytearray)):
-            text = output.decode("utf-8", errors="replace")
-        else:
-            text = "" if output is None else str(output)
-        return int(exit_code or 0), text
+        full_cmd = f"cd {shlex.quote(self._repo_root)} && {cmd}"
+        result = self._sandbox.exec(full_cmd, timeout=self._exec_timeout_s)
+        output = result.stdout if isinstance(result.stdout, str) else str(result.stdout or "")
+        return int(result.exit_code or 0), output
 
 
 def _resolve_local_repo(sample: Dict[str, Any], params: Dict[str, Any]) -> Path:
@@ -245,28 +231,6 @@ def _resolve_local_repo(sample: Dict[str, Any], params: Dict[str, Any]) -> Path:
     raise ValueError("local repo path not provided (repo_source=local_path)")
 
 
-def _resolve_image_uri(
-    sample: Dict[str, Any],
-    params: Dict[str, Any],
-    dockerhub_username: str,
-    registry_prefix: Optional[str],
-) -> str:
-    metadata = sample.get("metadata") or {}
-    image_uri = (
-        params.get("image_uri")
-        or metadata.get("image_uri")
-        or sample.get("image_uri")
-    )
-    if not image_uri:
-        instance_id = metadata.get("instance_id") or sample.get("instance_id") or sample.get("id")
-        repo = metadata.get("repo") or sample.get("repo")
-        if not instance_id or not repo:
-            raise ValueError("Missing instance_id/repo for docker image resolution")
-        image_uri = get_dockerhub_image_uri(str(instance_id), dockerhub_username, str(repo))
-    if registry_prefix:
-        image_name = image_uri.split("/", 1)[-1]
-        image_uri = f"{registry_prefix.rstrip('/')}/{image_name}"
-    return image_uri
 
 
 def _build_tree_local(
@@ -360,7 +324,71 @@ def _collect_file_snippets(
     return snippets
 
 
-def _inject_context(sample: Dict[str, Any], tree_text: str, file_snippets: Dict[str, str]) -> Dict[str, Any]:
+_REPO_MAP_PATTERNS = [
+    re.compile(r"^\s*(class|interface|enum)\s+\w+"),
+    re.compile(r"^\s*(export\s+)?(class|function)\s+\w+"),
+    re.compile(r"^\s*(async\s+)?def\s+\w+"),
+    re.compile(r"^\s*func\s+\w+"),
+    re.compile(r"^\s*func\s*\([^)]*\)\s*\w+"),
+    re.compile(r"^\s*type\s+\w+\s+struct\b"),
+]
+
+
+def _build_repo_map(
+    reader,
+    sample: Dict[str, Any],
+    all_files: Sequence[str],
+    *,
+    max_files: int,
+    max_lines: int,
+    scan_lines: int,
+    max_symbols_per_file: int,
+) -> str:
+    if max_files <= 0 or max_lines <= 0:
+        return ""
+    selected = _select_files(sample, all_files, max_files)
+    lines: List[str] = []
+    line_count = 0
+    for rel_path in selected:
+        if line_count >= max_lines:
+            break
+        content = reader.read_file(rel_path, scan_lines)
+        symbols = _extract_symbols(content, max_symbols_per_file)
+        if not symbols:
+            continue
+        if line_count + 1 > max_lines:
+            break
+        lines.append(f"{rel_path}:")
+        line_count += 1
+        for symbol in symbols:
+            if line_count >= max_lines:
+                break
+            lines.append(f"  - {symbol}")
+            line_count += 1
+    return "\n".join(lines)
+
+
+def _extract_symbols(content: str, max_symbols: int) -> List[str]:
+    symbols: List[str] = []
+    if not content:
+        return symbols
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or "\x00" in stripped:
+            continue
+        if any(pattern.match(stripped) for pattern in _REPO_MAP_PATTERNS):
+            symbols.append(stripped)
+            if len(symbols) >= max_symbols:
+                break
+    return symbols
+
+
+def _inject_context(
+    sample: Dict[str, Any],
+    tree_text: str,
+    file_snippets: Dict[str, str],
+    repo_map: str,
+) -> Dict[str, Any]:
     context_blocks = []
     if tree_text:
         context_blocks.append("Repository Tree:\n" + tree_text)
@@ -369,12 +397,15 @@ def _inject_context(sample: Dict[str, Any], tree_text: str, file_snippets: Dict[
         for rel_path, content in file_snippets.items():
             rendered.append(f"### {rel_path}\n```\n{content}\n```")
         context_blocks.append("Relevant Files:\n" + "\n\n".join(rendered))
+    if repo_map:
+        context_blocks.append("Repo Map:\n" + repo_map)
     context_text = "\n\n".join(context_blocks)
     if context_text:
         _append_prompt(sample, context_text)
     return {
         "repo_tree": tree_text,
         "selected_files": list(file_snippets.keys()),
+        "repo_map": repo_map,
     }
 
 

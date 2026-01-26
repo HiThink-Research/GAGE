@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import uuid
+from pathlib import Path
 from http.client import HTTPException
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -113,17 +116,73 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
         completed = subprocess.run(
             exec_args,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=timeout,
             check=False,
         )
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         return ExecResult(
             exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=_decode_output(completed.stdout),
+            stderr=_decode_output(completed.stderr),
             duration_ms=elapsed_ms,
         )
+
+    def read_file(self, path: str) -> bytes:
+        target = self._container_id or self._container_name
+        if not target:
+            raise RuntimeError("docker_container_unavailable")
+        docker_bin = str(self._runtime_configs.get("docker_bin") or "docker")
+        _ensure_docker_available(docker_bin)
+        with tempfile.TemporaryDirectory(prefix="gage-docker-read-") as temp_dir:
+            dest = Path(temp_dir) / "payload"
+            completed = subprocess.run(
+                [docker_bin, "cp", f"{target}:{path}", str(dest)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                error = (completed.stderr or completed.stdout).strip()
+                raise RuntimeError(f"docker_cp_failed: {error}")
+            return dest.read_bytes()
+
+    def write_file(self, path: str, content: bytes) -> None:
+        target = self._container_id or self._container_name
+        if not target:
+            raise RuntimeError("docker_container_unavailable")
+        docker_bin = str(self._runtime_configs.get("docker_bin") or "docker")
+        _ensure_docker_available(docker_bin)
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        parent = os.path.dirname(path)
+        if parent:
+            subprocess.run(
+                [docker_bin, "exec", target, "mkdir", "-p", parent],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as handle:
+                handle.write(content)
+                temp_file = handle.name
+            completed = subprocess.run(
+                [docker_bin, "cp", temp_file, f"{target}:{path}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                error = (completed.stderr or completed.stdout).strip()
+                raise RuntimeError(f"docker_cp_failed: {error}")
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                except Exception:
+                    pass
 
     def teardown(self) -> None:
         docker_bin = str(self._runtime_configs.get("docker_bin") or "docker")
@@ -605,3 +664,13 @@ def _extract_container_identity(result: Any) -> Tuple[Optional[str], Optional[st
         cleaned = result.strip()
         return (cleaned or None), None
     return None, None
+
+
+def _decode_output(payload: Any) -> str:
+    """Decode subprocess output safely into text."""
+
+    if payload is None:
+        return ""
+    if isinstance(payload, bytes):
+        return payload.decode("utf-8", errors="replace")
+    return str(payload)
