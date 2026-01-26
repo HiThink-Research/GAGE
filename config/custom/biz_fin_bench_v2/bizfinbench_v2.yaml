@@ -1,0 +1,62 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: HiThink-Research/BizFinBench.v2_vllm_async
+  description: using vllm_backend eval BizFinBench.v2
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: stock_price_predict_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: stock_price_predict
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+
+backends:
+  - backend_id: mmlu_pro_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_5_05B
+      tokenizer_path: /mnt/model/qwen2_5_05B
+      force_tokenize_prompt: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 8192
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
+
+role_adapters:
+  - adapter_id: dut_mmlu_pro_vllm_qwen
+    role_type: dut_model
+    backend_id: mmlu_pro_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: stock_price_predict_short_term
+    implementation: stock_price_predict_short_term 
+
+tasks:
+  - task_id: mmlu_pro_eval
+    dataset_id: stock_price_predict_en_ds
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmlu_pro_vllm_events.jsonl
