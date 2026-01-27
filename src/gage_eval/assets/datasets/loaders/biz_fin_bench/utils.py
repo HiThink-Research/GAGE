@@ -14,6 +14,9 @@ def get_file_path(local_dir, split, subset):
         filename = 'financial_multi-turn_perception_en.jsonl'
     elif split == 'financial_quantitative_computation' and subset == 'en':
         filename = 'financial_quantitative_computation_en.jsonl'
+    elif split == 'user_sentiment_analysis' and subset == 'en':
+        filename = 'user_sentiment_analysis_en.jsonl'
+
     file_path = f'{local_dir}/{subset}/{filename}'
 
     return file_path

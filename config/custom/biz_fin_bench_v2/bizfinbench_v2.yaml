@@ -86,7 +86,18 @@ datasets:
     params:
       limit: 10
       local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
-      preprocess: bizfinbench_chat_preprocessor          
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: user_sentiment_analysis_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: user_sentiment_analysis
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor                 
 backends:
   - backend_id: mmlu_pro_vllm_backend
     type: vllm
@@ -124,6 +135,8 @@ metrics:
     implementation: fin_desc
   - metric_id: fin_multi_round_desc
     implementation: fin_multi_round_desc
+  - metric_id: eval_emotion
+    implementation: eval_emotion
 tasks:
 #  - task_id: stock_price_predict_en_eval
 #    dataset_id: stock_price_predict_en_ds
@@ -197,15 +210,27 @@ tasks:
 #        - type: file
 #          params:
 #            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/financial_multi_turn_perception_en.jsonl 
-  - task_id: financial_quantitative_computation_en
-    dataset_id: financial_quantitative_computation_en_ds
+#  - task_id: financial_quantitative_computation_en
+#    dataset_id: financial_quantitative_computation_en_ds
+#    metric_overrides: 
+#      - metric_id: fin_cal_2
+#        implementation: fin_cal_2
+#    max_samples: 10
+#    reporting:
+#      sinks:
+#        - type: console
+#        - type: file
+#          params:
+#            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/financial_quantitative_computation_en.jsonl 
+  - task_id: user_sentiment_analysis_en
+    dataset_id: user_sentiment_analysis_en_ds
     metric_overrides: 
-      - metric_id: fin_cal_2
-        implementation: fin_cal_2
+      - metric_id: eval_emotion
+        implementation: eval_emotion
     max_samples: 10
     reporting:
       sinks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/financial_quantitative_computation_en.jsonl 
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/user_sentiment_analysis_en.jsonl 
