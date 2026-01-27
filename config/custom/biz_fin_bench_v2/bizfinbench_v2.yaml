@@ -21,6 +21,17 @@ datasets:
       limit: 10
       local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
       preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: anomaly_information_tracing_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: anomaly_information_tracing
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
 
 backends:
   - backend_id: mmlu_pro_vllm_backend
@@ -49,14 +60,30 @@ role_adapters:
 metrics:
   - metric_id: stock_price_predict_short_term
     implementation: stock_price_predict_short_term 
-
+  - metric_id: aea2
+    implementation: aea2
 tasks:
-  - task_id: mmlu_pro_eval
+  - task_id: stock_price_predict_en_eval
     dataset_id: stock_price_predict_en_ds
+    metric_overrides:
+      - metric_id: stock_price_predict_short_term
+        implementation: stock_price_predict_short_term         
     max_samples: 10
     reporting:
       sinks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmlu_pro_vllm_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/stock_price_predict_en.jsonl
+  - task_id: anomaly_information_tracing_eval
+    dataset_id: anomaly_information_tracing_en_ds
+    metric_overrides: 
+      - metric_id: aea2
+        implementation: aea2
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/anomaly_information_tracing_en.jsonl            
