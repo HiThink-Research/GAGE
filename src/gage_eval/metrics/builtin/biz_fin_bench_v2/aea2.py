@@ -74,16 +74,12 @@ class AEA2AccuracyMetric(SimpleMetric):
         else:
             score = 0.0
             metadata['eval_result'] = {"result": "False"}
-            
-
-        # fix: 修改评分规则，当全符合的时候，得分为1；当部分符合的时候，分两种情况：
-        # 1.predicted_answers是correct_answers的子集，score为predicted_answers数量/correct_answers的数量 2.否则score为0
-            
+ 
         # STEP 3: compute score
         metadata.update({"prediction": predicted_answers, "references": correct_answers})
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
-__all__ = ["StockPricePredictAccuracyMetric", ]
+__all__ = ["AEA2AccuracyMetric", ]
 
 if __name__ ==  '__main__':
     from gage_eval.config.pipeline_config import MetricSpec

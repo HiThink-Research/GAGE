@@ -43,8 +43,16 @@ class BizFinBenchV2Converter(BasePreprocessor):
             A Sample with the gage-eval Sample schema.
         """
         sample: Dict[str, Any] = dict(record)
-        prompt = sample['messages'][0]['content'][0]['text']
-        ans = sample['choices'][0]['message']['content'][0]['text']
+        prompt = ""
+        try:
+            prompt = sample['messages'][0]['content'][0]['text']
+        except:
+            pass
+        ans = ""
+        try:
+            ans = sample['choices'][0]['message']['content'][0]['text']
+        except:
+            pass
         sample_id = str(hash(prompt))
         ref = [ans]
         final_messages = normalize_messages(sample["messages"])
