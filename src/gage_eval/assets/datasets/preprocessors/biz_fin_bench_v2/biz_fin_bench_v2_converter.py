@@ -25,7 +25,8 @@ from gage_eval.assets.datasets.sample import (
 from dataclasses import asdict
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
-from gage_eval.assets.datasets.preprocessors.live_code_bench.utils import normalize_messages
+
+#from gage_eval.assets.datasets.preprocessors.live_code_bench.utils import normalize_messages
 
 
 class BizFinBenchV2Converter(BasePreprocessor):
@@ -55,14 +56,15 @@ class BizFinBenchV2Converter(BasePreprocessor):
             pass
         sample_id = str(hash(prompt))
         ref = [ans]
-        final_messages = normalize_messages(sample["messages"])
+        message_content = MessageContent(type="text", text=prompt)
+        message = Message(role='user', content=[message_content])
+        final_messages = [message]        
         ret_sample = Sample(
             id = sample_id,
             schema_version = schema_version,
             messages = final_messages,
             references = ref
         )
-        
         return ret_sample
 
 if __name__ == '__main__':

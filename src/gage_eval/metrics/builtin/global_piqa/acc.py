@@ -28,7 +28,7 @@ from gage_eval.registry import registry
     tags=("Global PIQA",),
     default_aggregation="mean",
 )
-class GlobalAccuracyMetric(SimpleMetric):
+class GlobalPIQAAccuracyMetric(SimpleMetric):
     value_key = "acc"
     regex_pattern = r"The best answer is:\s*(.+?)"
     def compute(self, context: MetricContext) -> MetricResult:

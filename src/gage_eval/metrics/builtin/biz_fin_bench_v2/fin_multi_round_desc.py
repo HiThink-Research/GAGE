@@ -89,16 +89,15 @@ class FinMultiRoundDescAccuracyMetric(SimpleMetric):
                 result = "Partially Correct"
             else:
                 result = "False"
+            false_desc_ids = ','.join(str(x) for x in false_desc_id)
+            metadata['eval_result'] = {
+                "result": result,
+                "false_desc_id": false_desc_ids
+            }                   
         except Exception as e:
             score = 0
             result = "False"
-            metadata['eval_result'] = {"result": "False", "error": str(e)}
-        false_desc_ids = ','.join(str(x) for x in false_desc_id)
-        metadata['eval_result'] = {
-            "result": result,
-            "false_desc_id": false_desc_ids
-        }
-            
+            metadata['eval_result'] = {"result": "False", "error": str(e)}        
 
         # STEP 3: compute score
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)

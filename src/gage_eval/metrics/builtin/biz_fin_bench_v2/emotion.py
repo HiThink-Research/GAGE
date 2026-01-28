@@ -24,11 +24,11 @@ import json
 import re
 from typing import Optional, Tuple, Dict, Any
 
-# 兼容 { } 和 {{ }} 两种括号
+# { } and {{ }} 
 _OPEN_BRACE = r'\{\{?'
 _CLOSE_BRACE = r'\}\}?'
 
-_NUM = r'[-+]?\d+(?:\.\d+)?'  # 你的数据里目前只需要普通小数/整数
+_NUM = r'[-+]?\d+(?:\.\d+)?'  # number
 
 
 def _extract_float_from_text(text: str) -> Optional[float]:
@@ -78,7 +78,7 @@ def _extract_answer_boxed_value(predict_result: str) -> Optional[float]:
         except Exception:
             return None
 
-    # Fallback: last number near the end (尽量避免误抓，但保留兜底)
+    # Fallback: last number near the end
     tail2 = _tail(text, 300)
     nums = re.findall(r'[-+]?\d+(?:\.\d+)?', tail2)
     for s in reversed(nums):
@@ -298,8 +298,8 @@ class EvalEmotionAccuracyMetric(SimpleMetric):
             sample_dict = extract_field(context, 'sample')
             ans_text = get_first_reference(sample_dict)
             true_value = _extract_float_from_text(ans_text)
-
-            format_validation = _validate_output_format(predict_result)
+            predict_result_str = get_text_content_of_first_predict_result(sample_dict)
+            format_validation = _validate_output_format(predict_result_str)
             answer_value = format_validation["predicted_value"]  # 就是 answer_boxed 里的值
             interval = format_validation["interval"]
 
@@ -373,3 +373,18 @@ if __name__ ==  '__main__':
     from gage_eval.config.pipeline_config import MetricSpec
     spec = MetricSpec(metric_id='test', implementation='fake_acc')
     global_metric = EvalEmotionAccuracyMetric(spec=spec)
+    context = MetricContext(
+            sample_id="demo",
+            sample={"predict_result": [{"message": {"content": [{"text": 'answer_boxed{50.0}\ninterval_boxed{[45,55]}'
+}]}}],
+                    "references": ["50"]
+            },
+            model_output={
+            },
+            judge_output={},
+            args={},
+            trace=None,
+        )
+    ret = global_metric.compute(context)
+    print("ret:", ret)
+    

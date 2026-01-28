@@ -240,48 +240,55 @@ def _check_interval_is_0p99_1p01_of_answer(
 )
 class StockPricePredictAccuracyMetric(SimpleMetric):
     value_key = "acc"
-    regex_pattern = r"The best answer is:\s*(.+?)"
     def compute(self, context: MetricContext) -> MetricResult:
-        # STEP 1: extract sample/predict /groud truth
-        sample_dict = extract_field(context, 'sample')
-        answer = get_first_reference(sample_dict)
-        true_value = _extract_float_from_text(answer)
-        predict_result = get_text_content_of_first_predict_result(sample_dict)
+        metadata = {}
+        try:
+            # STEP 1: extract sample/predict /groud truth
+            sample_dict = extract_field(context, 'sample')
+            answer = get_first_reference(sample_dict)
+            true_value = _extract_float_from_text(answer)
+            predict_result = get_text_content_of_first_predict_result(sample_dict)
 
-        format_validation = _validate_output_format(predict_result)
-        answer_value = format_validation["predicted_value"]  # = answer_boxed{}
-        interval = format_validation["interval"]
+            format_validation = _validate_output_format(predict_result)
+            answer_value = format_validation["predicted_value"]  # = answer_boxed{}
+            interval = format_validation["interval"]
 
-        score = 0.0
-        result = "False"
+            score = 0.0
+            result = "False"
 
-        parse_successful = (
-            true_value is not None and
-            interval is not None and
-            answer_value is not None
-        )
+            parse_successful = (
+                true_value is not None and
+                interval is not None and
+                answer_value is not None
+            )
 
-        interval_check = {"ok": False, "errors": ["not_checked"], "expected_interval": None, "given_interval": None}
-        score = 0.0
-        if parse_successful:
-            # 1) enforce interval == [0.99*answer, 1.01*answer]
-            interval_check = _check_interval_is_0p99_1p01_of_answer(
+            interval_check = {"ok": False, "errors": ["not_checked"], "expected_interval": None, "given_interval": None}
+            score = 0.0
+            if parse_successful:
+                # 1) enforce interval == [0.99*answer, 1.01*answer]
+                interval_check = _check_interval_is_0p99_1p01_of_answer(
                     answer_value, interval,
                     lo_mul=0.99, hi_mul=1.01,
                     rel_tol=1e-9, abs_tol=1e-9
-            )
+                )
 
-            if interval_check["ok"]:
-                lower, upper = interval
-                if lower > upper:
-                    lower, upper = upper, lower
+                if interval_check["ok"]:
+                    lower, upper = interval
+                    if lower > upper:
+                        lower, upper = upper, lower
 
-                # 2) only if true_value is within the interval => score=1
-                if lower <= true_value <= upper:
-                    score = 1.0
+                    # 2) only if true_value is within the interval => score=1
+                    if lower <= true_value <= upper:
+                        score = 1.0
+            metadata = {"prediction": predict_result, "references": answer}            
+        except Exception as e:
+            score = 0.0
+            metadata["eval_result"] = {
+                "result": "False",
+                "error": str(e)
+            }
 
         # STEP 3: compute score
-        metadata = {"prediction": predict_result, "references": answer}
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
 __all__ = ["StockPricePredictAccuracyMetric", ]

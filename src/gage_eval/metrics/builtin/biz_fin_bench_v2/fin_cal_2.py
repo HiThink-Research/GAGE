@@ -56,42 +56,44 @@ class FinCal2AccuracyMetric(SimpleMetric):
     value_key = "acc"
     def compute(self, context: MetricContext) -> MetricResult:
         score = 0
-        # STEP 1: extract sample/predict /groud truth
-        sample_dict = extract_field(context, 'sample')
-        correct_answer = get_first_reference(sample_dict)
-        predicted_answer = None
-        predict_result_str = get_text_content_of_first_predict_result(sample_dict)        
-
         try:
-            j_paser = JsonPaser()
-            
-            predict_data = j_paser.extract_json_from_text(predict_result_str)
+            # STEP 1: extract sample/predict /groud truth
+            sample_dict = extract_field(context, 'sample')
+            correct_answer = get_first_reference(sample_dict)
+            predicted_answer = None
+            predict_result_str = get_text_content_of_first_predict_result(sample_dict)        
 
-            if predict_data:
-                predicted_answer = predict_data.get("answer", "")           
-        except json.JSONDecodeError:
             try:
-                json_pattern = r'"answer"\s*:\s*([^,}\s]+)'
-                match = re.search(json_pattern, predict_result_str)
-                if match:
-                    predicted_answer_str = match.group(1)
-                    if predicted_answer_str.startswith('"') and predicted_answer_str.endswith('"'):
-                        predicted_answer = predicted_answer_str[1:-1]
-                    else:
-                        predicted_answer = predicted_answer_str
-            except Exception as e:
-                print(f"Error extracting answer with regex: {e}")
+                j_paser = JsonPaser()
+            
+                predict_data = j_paser.extract_json_from_text(predict_result_str)
 
-        # extract number
-        correct_numeric = extract_numeric_value(correct_answer)
-        predicted_numeric = extract_numeric_value(predicted_answer)
+                if predict_data:
+                    predicted_answer = predict_data.get("answer", "")           
+            except json.JSONDecodeError:
+                try:
+                    json_pattern = r'"answer"\s*:\s*([^,}\s]+)'
+                    match = re.search(json_pattern, predict_result_str)
+                    if match:
+                        predicted_answer_str = match.group(1)
+                        if predicted_answer_str.startswith('"') and predicted_answer_str.endswith('"'):
+                            predicted_answer = predicted_answer_str[1:-1]
+                        else:
+                            predicted_answer = predicted_answer_str
+                except Exception as e:
+                    print(f"Error extracting answer with regex: {e}")
+
+            # extract number
+            correct_numeric = extract_numeric_value(correct_answer)
+            predicted_numeric = extract_numeric_value(predicted_answer)
         
-        # compare
-        if correct_numeric is not None and predicted_numeric is not None:
-            score = 1.0 if abs(predicted_numeric - correct_numeric) < 1e-4 else 0
-        else:
-            score = 1.0 if str(predicted_answer).strip() == str(correct_answer).strip() else 0
-
+            # compare
+            if correct_numeric is not None and predicted_numeric is not None:
+                score = 1.0 if abs(predicted_numeric - correct_numeric) < 1e-4 else 0
+            else:
+                score = 1.0 if str(predicted_answer).strip() == str(correct_answer).strip() else 0
+        except Exception as e:
+            socre = 0.0
         # STEP 3: compute score
         metadata = {"prediction": predicted_answer, "references": correct_answer}
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
