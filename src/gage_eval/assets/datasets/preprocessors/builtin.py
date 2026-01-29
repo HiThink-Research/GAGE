@@ -53,6 +53,17 @@ from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 # benchmark MME
 from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 
+# benchmark SimpleQA Verified
+from gage_eval.assets.datasets.preprocessors.simpleqa_verified import SimpleQAVerifiedPreprocessor
+
+# benchmark ARC-AGI-2
+from gage_eval.assets.datasets.preprocessors.arcagi2 import ARCAGI2Preprocessor
+
+# benchmark ScreenSpot-Pro
+from gage_eval.assets.datasets.preprocessors.screespot_pro import ScreenSpotProPreprocessor
+from gage_eval.assets.datasets.preprocessors.charxiv import CharXivReasoningPreprocessor
+
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -296,4 +307,46 @@ class MMEPreprocessorProvider(MMEPreprocessor):
     tags=("vision", "mme", "multi-modal"),
 )
 class MMEPreprocessorProviderAlias(MMEPreprocessor):
+    pass
+
+# benchmark SimpleQA Verified
+@registry.asset(
+    "dataset_preprocessors",
+    "simpleqa_verified",
+    desc="SimpleQA Verified dataset preprocessing logic",
+    tags=("factuality", "simpleqa_verified", "question_answering"),
+)
+class SimpleQAVerifiedPreprocessorProvider(SimpleQAVerifiedPreprocessor):
+    pass
+
+
+# benchmark ARC-AGI-2
+@registry.asset(
+    "dataset_preprocessors",
+    "arcagi2",
+    desc="ARC-AGI-2 dataset preprocessing logic (visual abstraction and reasoning)",
+    tags=("vision", "arcagi2", "reasoning", "pattern-recognition"),
+)
+class ARCAGI2PreprocessorProvider(ARCAGI2Preprocessor):
+    pass
+
+# benchmark ScreenSpot-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "screenspot_pro",
+    desc="ScreenSpot-Pro dataset preprocessing logic",
+    tags=("vision", "screenspot-pro", "gui-grounding"),
+)
+class ScreenSpotProPreprocessorProvider(ScreenSpotProPreprocessor):
+    pass
+
+
+# benchmark CharXiv (reasoning)
+@registry.asset(
+    "dataset_preprocessors",
+    "charxiv_reasoning",
+    desc="CharXiv reasoning dataset preprocessing logic",
+    tags=("vision", "charxiv", "reasoning", "chart-understanding"),
+)
+class CharXivReasoningPreprocessorProvider(CharXivReasoningPreprocessor):
     pass
