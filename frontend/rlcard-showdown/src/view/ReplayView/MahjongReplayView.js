@@ -377,6 +377,11 @@ class MahjongReplayView extends React.Component {
                 const legalMoves = this.resolveLegalMoves(newData);
                 const winnerId = newData.winner || null;
                 const endReason = newData.end_reason || newData.endReason || null;
+                const resultLabel = newData.result || newData.game_result || null;
+                const remainingTiles = newData.remaining_tiles ?? newData.remainingTiles ?? null;
+                const remainingTilesValue = Number(remainingTiles);
+                const noTilesLeft = Number.isFinite(remainingTilesValue) && remainingTilesValue <= 0;
+                const gameOver = Boolean(endReason || resultLabel || winnerId || noTilesLeft);
                 if (endReason && endReason !== this.lastEndReason) {
                     const winnerIdx = winnerId ? this.resolvePlayerIndex(winnerId) : null;
                     const winnerLabel = winnerId ? (winnerIdx !== null ? `P${winnerIdx}` : String(winnerId)) : '';
@@ -409,14 +414,12 @@ class MahjongReplayView extends React.Component {
                 // For now just update data.
                 this.setState(prevState => {
                     let nextStep = prevState.step;
-                    // If we want to auto-follow:
-                    // if (prevState.step === (prevState.replayData?.moves?.length || 0)) {
-                    //     nextStep = newMoves.length;
-                    // }
-                    // Actually, let's just keep step unless it's out of bounds?
-                    // Or if we specifically want to jump to end?
-                    // Let's just update data.
-                    if (this.liveFollowEnabled) {
+                    const prevMovesLength = prevState.replayData?.moves?.length || 0;
+                    const wasAtTail = prevState.step >= prevMovesLength;
+                    const isFirstLoad = !prevState.replayData;
+                    if (this.liveFollowEnabled && !gameOver && wasAtTail) {
+                        nextStep = newMoves.length;
+                    } else if (this.liveFollowEnabled && gameOver && isFirstLoad) {
                         nextStep = newMoves.length;
                     } else if (newMoves.length < prevState.step) {
                         nextStep = newMoves.length;
