@@ -2,6 +2,38 @@
 
 ## 启动方式
 
+### bizfinbench.v2
+```bash
+python GAGE_dev/run.py \
+  --config GAGE_dev/config/custom/biz_fin_bench_v2/bizfinbench_v2.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id bizfinbench_v2
+```  
+
+### MRCR v2
+```bash
+python GAGE_dev/run.py \
+  --config GAGE_dev/config/custom/mrcr/openai_mrcr.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id mrcr
+```
+
+### Global PIQA
+```bash
+python GAGE_dev/run.py \
+  --config GAGE_dev/config/custom/global_piqa/global_piqa_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id global_piqa
+```  
+
+### LiveCodeBench
+```bash
+python GAGE_dev/run.py \
+  --config GAGE_dev/config/custom/live_code_bench/live_code_bench_test.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id live_code_bench_test
+```
+
 ### GPQA-diamond
 
 ```bash
