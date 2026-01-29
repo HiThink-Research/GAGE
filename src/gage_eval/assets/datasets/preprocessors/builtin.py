@@ -53,6 +53,7 @@ from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 # benchmark MME
 from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 
+
 # benchmark SimpleQA Verified
 from gage_eval.assets.datasets.preprocessors.simpleqa_verified import SimpleQAVerifiedPreprocessor
 
@@ -62,6 +63,19 @@ from gage_eval.assets.datasets.preprocessors.arcagi2 import ARCAGI2Preprocessor
 # benchmark ScreenSpot-Pro
 from gage_eval.assets.datasets.preprocessors.screespot_pro import ScreenSpotProPreprocessor
 from gage_eval.assets.datasets.preprocessors.charxiv import CharXivReasoningPreprocessor
+
+# benchmark LiveCodeBench
+from gage_eval.assets.datasets.preprocessors.live_code_bench.live_code_converter import LiveCodeBenchConverter
+
+# benchmark global piqa
+from gage_eval.assets.datasets.preprocessors.global_piqa.global_piqa_converter import GlobalPIQAConverter
+
+# benchmark BizFinBench V2
+from gage_eval.assets.datasets.preprocessors.biz_fin_bench_v2.biz_fin_bench_v2_converter import BizFinBenchV2Converter
+
+# benchmark MRCR
+from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConverter
+
 
 
 @registry.asset(
@@ -309,6 +323,7 @@ class MMEPreprocessorProvider(MMEPreprocessor):
 class MMEPreprocessorProviderAlias(MMEPreprocessor):
     pass
 
+
 # benchmark SimpleQA Verified
 @registry.asset(
     "dataset_preprocessors",
@@ -350,3 +365,44 @@ class ScreenSpotProPreprocessorProvider(ScreenSpotProPreprocessor):
 )
 class CharXivReasoningPreprocessorProvider(CharXivReasoningPreprocessor):
     pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "live_code_bench_chat_preprocessor",
+    desc="Live Code Bench prompt wrapper",
+    tags=("prompt", "live code bench"),
+)
+class LiveCodeBenchPreprocessor(LiveCodeBenchConverter):
+    pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "global_piqa_chat_preprocessor",
+    desc="Global PIQA prompt wrapper",
+    tags=("prompt", "global PIQA"),
+)
+class GlobalPIQAPreprocessor(GlobalPIQAConverter):
+    pass
+
+# benchmark BizFinBench V2
+@registry.asset(
+    "dataset_preprocessors",
+    "bizfinbench_chat_preprocessor",
+    desc="BizFinBench V2 prompt wrapper",
+    tags=("prompt", "BizFinBench V2"),
+)
+class BizFinBenchV2Preprocessor(BizFinBenchV2Converter):
+    pass
+
+# benchmark MRCR
+@registry.asset(
+    "dataset_preprocessors",
+    "mrcr_chat_preprocessor",
+    desc="MRCR prompt wrapper",
+    tags=("prompt", "MRCR"),
+)
+class MRCRPreprocessor(MRCRConverter):
+    pass
+
