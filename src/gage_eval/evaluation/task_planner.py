@@ -266,13 +266,11 @@ class StepExecutionContext:
         update_eval_result(self.sample, self._judge_output)
 
     def execute_auto_eval(self, sample_id: str) -> None:
-        if (
-            not self.auto_eval_enabled
-            or not self.auto_eval_step
-            or not self.auto_eval_step.has_metrics()
-        ):
-            logger.debug("Auto-eval step skipped for sample_id={} (no metrics)", sample_id)
+        if not self.auto_eval_enabled or not self.auto_eval_step:
+            logger.debug("Auto-eval step skipped for sample_id={} (disabled)", sample_id)
             return
+        if not self.auto_eval_step.has_metrics():
+            logger.debug("Auto-eval requested without metrics for sample_id={}", sample_id)
         self.auto_eval_step.execute(
             sample_id=sample_id,
             sample=self.sample,
