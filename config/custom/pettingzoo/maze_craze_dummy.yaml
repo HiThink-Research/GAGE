@@ -1,0 +1,87 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: pettingzoo_maze_craze_dummy_demo
+  description: PettingZoo Atari maze_craze demo (Dummy Random Agents).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: pettingzoo_maze_craze_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: pettingzoo_maze_craze_dummy
+    loader: jsonl
+    params:
+      path: tests/data/pettingzoo_atari_demo.jsonl
+      streaming: false
+
+backends:
+  - backend_id: pz_dummy_player_0
+    type: dummy
+    config:
+      responses: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"]
+      cycle: true
+  - backend_id: pz_dummy_player_1
+    type: dummy
+    config:
+      responses: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"]
+      cycle: true
+
+role_adapters:
+  - adapter_id: pz_dummy_player_0
+    role_type: dut_model
+    backend_id: pz_dummy_player_0
+    capabilities: [chat_completion]
+  - adapter_id: pz_dummy_player_1
+    role_type: dut_model
+    backend_id: pz_dummy_player_1
+    capabilities: [chat_completion]
+
+  - adapter_id: pettingzoo_maze_craze_arena
+    role_type: arena
+    params:
+      # action_labels are now automatically resolved from env_id via constants.py
+      environment:
+        impl: pettingzoo_aec_v1
+        env_id: pettingzoo.atari.maze_craze_v3
+        env_kwargs:
+          render_mode: human
+          max_cycles: 300
+        seed: 1234
+        include_raw_obs: false
+        use_action_meanings: true
+      rules:
+        illegal_policy:
+          retry: 1
+          on_fail: loss
+      scheduler:
+        type: turn
+        max_turns: 300
+      parser:
+        impl: discrete_action_parser_v1
+      players:
+        - name: player_0
+          player_id: player_0
+          type: backend
+          ref: pz_dummy_player_0
+          max_retries: 1
+          fallback_policy: first_legal
+        - name: player_1
+          player_id: player_1
+          type: backend
+          ref: pz_dummy_player_1
+          max_retries: 1
+          fallback_policy: first_legal
+
+
+tasks:
+  - task_id: pettingzoo_maze_craze_dummy
+    dataset_id: pettingzoo_maze_craze_dummy
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console

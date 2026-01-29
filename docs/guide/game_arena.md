@@ -506,6 +506,24 @@ URL params (Human/AI):
 - `action_url`: backend action endpoint (URL-encoded)
 
 Common env vars:
-- `REPLAY_PORT` / `FRONTEND_PORT`
-- `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
+
+## 11. PettingZoo Atari Support (22 Games)
+
+GAGE has integrated PettingZoo Atari environments, supporting 22 classic two-player games (e.g. Space Invaders, Pong, Boxing).
+
+### Core Features
+1.  **Multi-game Support**: Unified access to 22 games via the `pettingzoo_aec_v1` adapter.
+2.  **AI Control**: LLMs play blindly based on Text Observations.
+3.  **Auto Replay**: Provides a "Run & Replay" tool to visualize matches smoothly, bypassing LLM inference latency.
+
+### Quick Start
+Refer to the full user guide for detailed instructions:
+
+> 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide.md)**
+>
+> Includes:
+> *   Quick Start
+> *   Full Game List (22 Games)
+> *   Dummy/AI Modes
+> *   FAQ

@@ -15,6 +15,34 @@ class ArenaObservation:
     active_player: str
     last_move: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    view: Optional[dict[str, Any]] = None
+    legal_actions: Optional[dict[str, Any]] = None
+    context: Optional[dict[str, Any]] = None
+
+    @property
+    def view_text(self) -> str:
+        view = self.view or {}
+        text = view.get("text")
+        if text is None:
+            return self.board_text
+        return str(text)
+
+    @property
+    def legal_actions_items(self) -> Sequence[str]:
+        legal_actions = self.legal_actions or {}
+        items = legal_actions.get("items")
+        if isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
+            return [str(item) for item in items]
+        return list(self.legal_moves)
+
+    @property
+    def last_action(self) -> Optional[str]:
+        if self.last_move:
+            return self.last_move
+        last_move = self.metadata.get("last_move")
+        if last_move is None:
+            return None
+        return str(last_move)
 
 
 @dataclass(frozen=True)

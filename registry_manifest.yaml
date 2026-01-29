@@ -852,6 +852,15 @@ parser_impls:
   - parser
   - arena
   version: v1
+- desc: Discrete action parser (numeric or labeled actions)
+  extra: {}
+  impl: gage_eval.role.arena.parsers.pettingzoo_actions:DiscreteActionParser
+  kind: parser_impls
+  name: discrete_action_parser_v1
+  tags:
+  - parser
+  - action
+  version: v1
 pipeline_steps:
 - desc: Global step that aggregates evaluation results and writes reports
   extra:
