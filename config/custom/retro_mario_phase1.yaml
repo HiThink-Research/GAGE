@@ -3,7 +3,7 @@ kind: PipelineConfig
 
 metadata:
   name: retro_mario_phase1
-  description: Phase 1 stable-retro demo (tick scheduler + temporal abstraction).
+  description: Stable-retro Mario demo with dummy LLM backend (single-player).
 
 custom:
   steps:
@@ -11,26 +11,27 @@ custom:
       adapter_id: retro_mario_arena
 
 datasets:
-  - dataset_id: retro_mario_single
+  - dataset_id: retro_mario_demo
     loader: jsonl
     params:
-      path: tests/data/Test_Retro_Mario.jsonl
+      path: config/custom/retro_mario_phase1.jsonl
       streaming: false
 
 backends:
-  - backend_id: retro_dummy_backend
+  - backend_id: retro_dummy
     type: dummy
     config:
-      responses:
-        - '{"move":"right","hold_ticks":6}'
-        - '{"move":"right_jump","hold_ticks":8}'
-        - '{"move":"noop","hold_ticks":4}'
       cycle: true
+      responses:
+        - '{"move":"right_run","hold_ticks":6}'
+        - '{"move":"right_run_jump","hold_ticks":6}'
+        - '{"move":"right","hold_ticks":4}'
+        - '{"move":"noop","hold_ticks":3}'
 
 role_adapters:
-  - adapter_id: retro_dummy_model
+  - adapter_id: retro_dummy_player
     role_type: dut_model
-    backend_id: retro_dummy_backend
+    backend_id: retro_dummy
     capabilities:
       - chat_completion
 
@@ -39,50 +40,42 @@ role_adapters:
     params:
       environment:
         impl: retro_env_v1
-        game: ${RETRO_GAME_ID}
-        state: ${RETRO_STATE:-Start}
-        # NOTE: ROMs are not tracked in this repo; provide a local path if you want it recorded as metadata.
-        rom_path: ${RETRO_ROM_PATH:-}
-        runtime_policy: persistent
+        game: SuperMarioBros3-Nes-v0
+        state: Start
         render: true
         render_every_n_ticks: 1
-        record_bk2: true
-        info_feeder:
-          impl: info_last_v1
+        render_sleep_ms: 33
+        record_bk2: false
+        legal_moves:
+          - noop
+          - right
+          - right_run
+          - right_jump
+          - right_run_jump
         action_schema:
           hold_ticks_min: 1
-          hold_ticks_max: 20
+          hold_ticks_max: 12
           hold_ticks_default: 6
-        frame_stride: 1
-        snapshot_stride: 1
+        info_feeder:
+          impl: info_last_v1
       scheduler:
-        type: tick
-        tick_ms: 100
-        max_ticks: 1800
-        decision_interval: 6
-        llm_wait:
-          mode: wait_then_fallback
-          max_wait_ms: 1500
-          on_timeout: repeat_last
-        control_strategy:
-          name: temporal_abstraction
-          params:
-            hold_ticks_min: 1
-            hold_ticks_max: 20
-            hold_ticks_default: 6
+        type: turn
+        max_turns: 600
       parser:
         impl: retro_action_v1
+        hold_ticks_min: 1
+        hold_ticks_max: 12
+        hold_ticks_default: 6
       players:
         - name: player_0
-          player_id: player_0
           type: backend
-          ref: retro_dummy_model
+          ref: retro_dummy_player
           max_retries: 0
           fallback_policy: first_legal
 
 tasks:
-  - task_id: retro_mario_phase1_demo
-    dataset_id: retro_mario_single
+  - task_id: retro_mario_demo
+    dataset_id: retro_mario_demo
     max_samples: 1
     concurrency: 1
     reporting:
@@ -90,4 +83,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_phase1_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_demo_events.jsonl

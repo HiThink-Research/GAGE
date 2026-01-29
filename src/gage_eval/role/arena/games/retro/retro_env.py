@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -46,6 +47,7 @@ class StableRetroArenaEnvironment:
         runtime_policy: str = "persistent",
         render: bool = False,
         render_every_n_ticks: int = 1,
+        render_sleep_ms: Optional[int] = None,
         record_bk2: bool = False,
         record_dir: Optional[str] = None,
         record_filename: Optional[str] = None,
@@ -73,6 +75,7 @@ class StableRetroArenaEnvironment:
             player_ids: Optional list of player ids.
             player_names: Optional mapping of player ids to display names.
             runtime_policy: Runtime reuse policy (persistent or fresh).
+            render_sleep_ms: Optional sleep duration after render, in milliseconds.
             action_mapping: Optional macro-to-button mapping.
             legal_moves: Optional list of exposed macro moves.
             info_feeder: Optional info feeder config.
@@ -98,6 +101,7 @@ class StableRetroArenaEnvironment:
         self._seed = seed
         self._render = bool(render)
         self._render_every_n_ticks = max(1, int(render_every_n_ticks))
+        self._render_sleep_ms = None if render_sleep_ms is None else max(0, int(render_sleep_ms))
         self._record_bk2 = bool(record_bk2)
         self._record_dir = str(record_dir) if record_dir else None
         self._record_filename = str(record_filename) if record_filename else None
@@ -197,16 +201,20 @@ class StableRetroArenaEnvironment:
         # STEP 2: Check terminal state.
         if terminated or truncated:
             self._terminal = True
-            result = self._derive_result(terminated, truncated, self._last_info)
+            status = self._derive_result(terminated, truncated, self._last_info)
             reason = "truncated" if truncated else "terminated"
-            self._final_result = self.build_result(result=result, reason=reason)
+            self._final_result = self.build_result(status=status, reason=reason)
             if self._replay_writer is not None:
                 replay_path = self._replay_writer.finalize(self._final_result)
                 if replay_path:
                     self._final_result = GameResult(
-                        winner=self._final_result.winner,
+                        status=self._final_result.status,
                         result=self._final_result.result,
+                        winner=self._final_result.winner,
                         reason=self._final_result.reason,
+                        replay_path=replay_path,
+                        scores=dict(self._final_result.scores or {}),
+                        metrics=dict(self._final_result.metrics or {}),
                         move_count=self._final_result.move_count,
                         illegal_move_count=self._final_result.illegal_move_count,
                         final_board=self._final_result.final_board,
@@ -214,9 +222,6 @@ class StableRetroArenaEnvironment:
                         rule_profile=self._final_result.rule_profile,
                         win_direction=self._final_result.win_direction,
                         line_length=self._final_result.line_length,
-                        replay_path=replay_path,
-                        metrics=dict(self._final_result.metrics or {}),
-
                     )
             return self._final_result
         return None
@@ -224,17 +229,25 @@ class StableRetroArenaEnvironment:
     def is_terminal(self) -> bool:
         return self._terminal
 
-    def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
+    def build_result(
+        self,
+        *,
+        status: Optional[str] = None,
+        result: Optional[str] = None,
+        reason: Optional[str],
+    ) -> GameResult:
         final_board = self._format_final_board()
+        resolved_status = str(status or result or "draw")
         return GameResult(
-            winner=self._active_player if result == "win" else None,
-            result=str(result),
+            status=resolved_status,
+            result=resolved_status,
+            winner=self._active_player if resolved_status == "win" else None,
             reason=reason,
+            replay_path=None,
             move_count=self._decision_count,
             illegal_move_count=self._illegal_move_count,
             final_board=final_board,
             move_log=list(self._move_log),
-            replay_path=None,
         )
 
     def finalize_replay(self, result: GameResult) -> GameResult:
@@ -253,9 +266,12 @@ class StableRetroArenaEnvironment:
         if not replay_path:
             return result
         return GameResult(
-            winner=result.winner,
+            status=result.status,
             result=result.result,
+            winner=result.winner,
+            scores=dict(result.scores or {}),
             reason=result.reason,
+            replay_path=replay_path,
             move_count=result.move_count,
             illegal_move_count=result.illegal_move_count,
             final_board=result.final_board,
@@ -263,7 +279,8 @@ class StableRetroArenaEnvironment:
             rule_profile=result.rule_profile,
             win_direction=result.win_direction,
             line_length=result.line_length,
-            replay_path=replay_path,
+            metrics=dict(result.metrics or {}),
+            extra=dict(result.extra or {}),
         )
 
     def record_decision(
@@ -278,8 +295,10 @@ class StableRetroArenaEnvironment:
         llm_wait_mode: Optional[str] = None,
     ) -> None:
         end_tick = max(start_tick, start_tick + hold_ticks - 1)
-        metadata = dict(action.metadata or {})
+        decision_index = self._decision_count
+        metadata = dict(action.extra or {})
         entry = {
+            "decision_index": decision_index,
             "move": action.move,
             "raw": action.raw,
             "start_tick": start_tick,
@@ -294,7 +313,12 @@ class StableRetroArenaEnvironment:
         self._decision_count += 1
         self._last_move = action.move
         if self._replay_writer is not None:
-            self._replay_writer.append_decision(action, start_tick=start_tick, end_tick=end_tick)
+            self._replay_writer.append_decision(
+                action,
+                decision_index=decision_index,
+                start_tick=start_tick,
+                end_tick=end_tick,
+            )
 
     def _ensure_env(self) -> None:
         if self._retro_env is None or self._runtime_policy == "fresh":
@@ -349,6 +373,8 @@ class StableRetroArenaEnvironment:
             )
 
     def _make_env(self):
+        if not self._render:
+            os.environ.setdefault("PYGLET_HEADLESS", "true")
         try:
             retro = importlib.import_module("retro")
         except ImportError as exc:
@@ -386,6 +412,8 @@ class StableRetroArenaEnvironment:
             return
         try:
             self._retro_env.render()
+            if self._render_sleep_ms:
+                time.sleep(self._render_sleep_ms / 1000.0)
         except Exception:
             return
 

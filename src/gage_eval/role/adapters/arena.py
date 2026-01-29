@@ -145,11 +145,11 @@ class ArenaRoleAdapter(RoleAdapter):
                 {
                     "adapter_id": self.adapter_id,
                     "winner": result.winner,
-                    "result": result.result,
+                    "status": result.status,
                     "move_count": result.move_count,
                 },
             )
-        logger.info("ArenaRoleAdapter {} finished result={}", self.adapter_id, result.result)
+        logger.info("ArenaRoleAdapter {} finished status={}", self.adapter_id, result.status)
         return output
 
     def _normalize_player_specs(
@@ -301,7 +301,8 @@ class ArenaRoleAdapter(RoleAdapter):
         chat_mode = env_cfg.get("chat_mode", metadata.get("chat_mode"))
 
         impl = env_cfg.get("impl", "gomoku_local_v1")
-        if "mahjong" in str(impl).lower():
+        impl_lower = str(impl).lower()
+        if "mahjong" in impl_lower:
             try:
                 import gage_eval.role.arena.games.mahjong.env
             except ImportError:
@@ -321,7 +322,7 @@ class ArenaRoleAdapter(RoleAdapter):
         }
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
-        if "mahjong" in str(impl).lower():
+        if "mahjong" in impl_lower:
             run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
             sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
             if run_id:
@@ -340,7 +341,7 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["chat_queue"] = chat_queue
             if resolved_player_models:
                 env_kwargs["player_models"] = resolved_player_models
-        if "doudizhu" in str(impl).lower():
+        if "doudizhu" in impl_lower:
             run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
             sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
             if run_id:
@@ -365,6 +366,17 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["fast_finish_human_only"] = env_cfg.get("fast_finish_human_only")
             if chat_queue is not None:
                 env_kwargs["chat_queue"] = chat_queue
+        if "retro" in impl_lower:
+            retro_kwargs = dict(env_cfg)
+            retro_kwargs.pop("impl", None)
+            retro_kwargs.setdefault("player_ids", resolved_player_ids or None)
+            retro_kwargs.setdefault("player_names", resolved_player_names or None)
+            retro_kwargs.setdefault("run_id", trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID"))
+            retro_kwargs.setdefault(
+                "sample_id",
+                sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID"),
+            )
+            env_kwargs = retro_kwargs
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
@@ -374,6 +386,13 @@ class ArenaRoleAdapter(RoleAdapter):
         board_size = int(metadata.get("board_size", cfg.get("board_size", 15)))
         coord_scheme = cfg.get("coord_scheme", metadata.get("coord_scheme", "A1"))
         parser_cls = registry.get("parser_impls", impl)
+        impl_lower = str(impl).lower()
+        if "retro" in impl_lower:
+            return parser_cls(
+                hold_ticks_min=int(cfg.get("hold_ticks_min", 1)),
+                hold_ticks_max=int(cfg.get("hold_ticks_max", 20)),
+                default_hold_ticks=int(cfg.get("hold_ticks_default", 6)),
+            )
         try:
             return parser_cls(board_size=board_size, coord_scheme=coord_scheme)
         except TypeError:
@@ -465,7 +484,8 @@ class ArenaRoleAdapter(RoleAdapter):
     def _format_result(result: GameResult) -> Dict[str, Any]:
         return {
             "winner": result.winner,
-            "result": result.result,
+            "status": result.status,
+            "result": result.status,
             "reason": result.reason,
             "move_count": result.move_count,
             "illegal_move_count": result.illegal_move_count,
@@ -474,6 +494,9 @@ class ArenaRoleAdapter(RoleAdapter):
             "rule_profile": result.rule_profile,
             "win_direction": result.win_direction,
             "line_length": result.line_length,
+            "replay_path": result.replay_path,
+            "scores": dict(result.scores or {}),
+            "metrics": dict(result.metrics or {}),
         }
 
     def _ensure_visualizer(self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]):
@@ -600,15 +623,15 @@ class _VisualizedEnvironment:
     def is_terminal(self) -> bool:
         return self._base.is_terminal()
 
-    def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
-        outcome = self._base.build_result(result=result, reason=reason)
+    def build_result(self, *, status: str, reason: Optional[str]) -> GameResult:
+        outcome = self._base.build_result(status=status, reason=reason)
         self._update(outcome, self._last_action)
         return outcome
 
     def _update(self, outcome: Optional[GameResult] = None, action=None) -> None:
         try:
             obs = self._base.observe(self._base.get_active_player())
-            player_names = obs.metadata.get("player_names")
+            player_names = obs.extra.get("player_names")
             if not isinstance(player_names, dict):
                 player_names = {}
             active_label = player_names.get(obs.active_player, obs.active_player)
@@ -617,7 +640,7 @@ class _VisualizedEnvironment:
                 winner_id = outcome.winner or "draw"
                 winner = player_names.get(winner_id, winner_id)
                 reason = outcome.reason or "unknown"
-                status = f"Result: {outcome.result} Winner: {winner} Reason: {reason}"
+                status = f"Result: {outcome.status} Winner: {winner} Reason: {reason}"
             else:
                 status = f"Turn: {active_label} Last: {obs.last_move or 'none'}"
             last_action_player = None
@@ -631,14 +654,14 @@ class _VisualizedEnvironment:
                 board_text=obs.board_text,
                 status_text=status,
                 last_move=obs.last_move,
-                winning_line=obs.metadata.get("winning_line"),
-                board_size=obs.metadata.get("board_size"),
-                coord_scheme=obs.metadata.get("coord_scheme"),
+                winning_line=obs.extra.get("winning_line"),
+                board_size=obs.extra.get("board_size"),
+                coord_scheme=obs.extra.get("coord_scheme"),
                 last_action_player=last_action_player,
                 last_action_raw=last_action_raw,
                 last_action_move=last_action_move,
                 active_player=obs.active_player,
-                chat_log=obs.metadata.get("chat_log"),
+                chat_log=obs.extra.get("chat_log"),
                 final_state=outcome is not None,
             )
         except Exception:

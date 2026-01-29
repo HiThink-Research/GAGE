@@ -1,0 +1,1 @@
+{"id":"retro_mario_demo","schema_version":"gage.v1","task_type":"agent","messages":[{"role":"system","content":[{"type":"text","text":"You control Mario. Output ONE JSON action on the last line: {\"move\":\"<legal_move>\",\"hold_ticks\":<int>}."}]}],"metadata":{}}

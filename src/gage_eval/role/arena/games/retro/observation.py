@@ -1,89 +1,95 @@
-"""Observation utilities for stable-retro environments."""
+"""Observation builders and info feeders for stable-retro environments."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Optional, Sequence
 
-from gage_eval.role.arena.games.retro.temporal.data_contract_v15 import build_observation_dict
 from gage_eval.role.arena.types import ArenaObservation
-
-
-class InfoFeeder:
-    """Base class for projecting tick info into a compact payload."""
-
-    def build(self, info_history: Sequence[dict[str, Any]]) -> dict[str, Any]:
-        """Build a compact info payload.
-
-        Args:
-            info_history: Ordered list of tick info dictionaries.
-
-        Returns:
-            Aggregated info payload.
-        """
-
-        return info_history[-1] if info_history else {}
-
-
-@dataclass(frozen=True)
-class InfoLastFeeder(InfoFeeder):
-    """Expose the last tick info snapshot."""
-
-    def build(self, info_history: Sequence[dict[str, Any]]) -> dict[str, Any]:
-        return dict(info_history[-1]) if info_history else {}
-
-
-@dataclass(frozen=True)
-class InfoDeltaFeeder(InfoFeeder):
-    """Expose the last tick and numeric deltas over the window."""
-
-    window_size: int = 8
-
-    def build(self, info_history: Sequence[dict[str, Any]]) -> dict[str, Any]:
-        if not info_history:
-            return {}
-        window = list(info_history[-self.window_size :])
-        last = dict(window[-1])
-        delta: dict[str, Any] = {}
-        if len(window) >= 2:
-            prev = window[-2]
-            for key, value in last.items():
-                if isinstance(value, (int, float)) and isinstance(prev.get(key), (int, float)):
-                    delta[key] = value - prev.get(key)
-        return {"last": last, "delta": delta, "window": window}
 
 
 @dataclass(frozen=True)
 class ActionSchema:
-    """Action schema description for retro prompts."""
+    """Defines the action schema constraints for retro moves."""
 
     hold_ticks_min: int = 1
     hold_ticks_max: int = 20
     default_hold_ticks: int = 6
 
+    def format_prompt(self, legal_moves: Sequence[str]) -> str:
+        """Format the action schema instructions for the player."""
 
-class ObservationBuilder:
-    """Builds arena observations from retro tick history."""
+        moves_hint = ", ".join([str(move) for move in legal_moves]) if legal_moves else "none"
+        return (
+            "Output ONE JSON object:\n"
+            '{ "move": "<legal_move>", "hold_ticks": <int> }\n'
+            f"hold_ticks range: {self.hold_ticks_min}-{self.hold_ticks_max} "
+            f"(default {self.default_hold_ticks}).\n"
+            f"Legal moves: {moves_hint}."
+        )
 
-    def __init__(
+
+class InfoFeeder:
+    """Base class for info projection strategies."""
+
+    def build(
         self,
         *,
-        info_feeder: InfoFeeder,
-        action_schema: ActionSchema,
-        token_budget: int = 200,
-    ) -> None:
-        """Initialize the builder.
+        info_history: Sequence[dict[str, Any]],
+        raw_info: dict[str, Any],
+        token_budget: int,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build info text and extra payload from raw info."""
 
-        Args:
-            info_feeder: Info feeder to aggregate tick info.
-            action_schema: Action schema descriptor.
-            token_budget: Approximate token budget for the info payload.
-        """
+        del info_history
+        del token_budget
+        return _truncate_text(_json_dumps(raw_info), token_budget), {}
 
+
+class InfoLastFeeder(InfoFeeder):
+    """Expose the last tick info payload."""
+
+    def build(
+        self,
+        *,
+        info_history: Sequence[dict[str, Any]],
+        raw_info: dict[str, Any],
+        token_budget: int,
+    ) -> tuple[str, dict[str, Any]]:
+        del info_history
+        text = _truncate_text(_json_dumps(raw_info), token_budget)
+        return text, {"info_last": dict(raw_info)}
+
+
+class InfoDeltaFeeder(InfoFeeder):
+    """Expose the delta between recent info payloads."""
+
+    def __init__(self, *, window_size: int = 8) -> None:
+        self._window_size = max(1, int(window_size))
+
+    def build(
+        self,
+        *,
+        info_history: Sequence[dict[str, Any]],
+        raw_info: dict[str, Any],
+        token_budget: int,
+    ) -> tuple[str, dict[str, Any]]:
+        history = list(info_history)[-self._window_size :]
+        previous = history[-2] if len(history) >= 2 else {}
+        delta = _numeric_delta(previous, raw_info)
+        payload = {"info_last": dict(raw_info), "info_delta": delta, "window_size": self._window_size}
+        text = _truncate_text(_json_dumps({"last": raw_info, "delta": delta}), token_budget)
+        return text, payload
+
+
+class ObservationBuilder:
+    """Builds retro observations aligned with the section-15 contracts."""
+
+    def __init__(self, *, info_feeder: InfoFeeder, action_schema: ActionSchema, token_budget: int) -> None:
         self._info_feeder = info_feeder
         self._action_schema = action_schema
-        self._token_budget = max(50, int(token_budget))
+        self._token_budget = max(1, int(token_budget))
 
     def build(
         self,
@@ -91,103 +97,124 @@ class ObservationBuilder:
         player_id: str,
         active_player: str,
         legal_moves: Sequence[str],
-        last_move: str | None,
+        last_move: Optional[str],
         tick: int,
         decision_count: int,
         info_history: Sequence[dict[str, Any]],
-        raw_info: dict[str, Any] | None,
+        raw_info: dict[str, Any],
         reward_total: float,
     ) -> ArenaObservation:
-        """Construct an ArenaObservation for the decision point.
+        """Build an ArenaObservation plus the section-15 dict payload."""
 
-        Args:
-            player_id: Player identifier.
-            active_player: Active player identifier.
-            legal_moves: List of legal macro moves.
-            last_move: Last decision move.
-            tick: Current tick index.
-            decision_count: Number of decisions taken.
-            info_history: Recent tick info history.
-            raw_info: Most recent tick info snapshot from the environment.
-            reward_total: Accumulated reward.
-
-        Returns:
-            ArenaObservation payload.
-        """
-
-        info_payload = self._info_feeder.build(info_history)
-        info_text = self._truncate_info(info_payload)
-        prompt_text = self._build_prompt_text(info_text, legal_moves)
-        board_text = self._build_board_text(info_text, legal_moves)
-        contract_v15 = build_observation_dict(
-            view_text=prompt_text,
-            legal_actions=legal_moves,
+        info_text, info_extra = self._info_feeder.build(
+            info_history=info_history,
+            raw_info=raw_info,
+            token_budget=self._token_budget,
+        )
+        view_text = self._format_view_text(
+            tick=tick,
+            decision_count=decision_count,
+            reward_total=reward_total,
+            info_text=info_text,
+        )
+        action_hint = self._action_schema.format_prompt(legal_moves)
+        observation_dict = _build_observation_dict(
+            view_text=view_text,
+            legal_actions=[str(move) for move in legal_moves],
             active_player=active_player,
             tick=tick,
             step=decision_count,
-            info=raw_info or {},
-            extra={
-                "board_text": board_text,
-                "player_id": str(player_id),
-                "last_move": last_move,
-                "reward_total": float(reward_total),
-                "info_projection": info_payload,
-                "action_schema": {
-                    "hold_ticks_default": int(self._action_schema.default_hold_ticks),
-                    "hold_ticks_min": int(self._action_schema.hold_ticks_min),
-                    "hold_ticks_max": int(self._action_schema.hold_ticks_max),
-                },
-            },
+            info=raw_info,
+            extra={"info_projection": info_extra, "action_schema": action_hint},
         )
         return ArenaObservation(
-            board_text=board_text,
+            board_text=view_text,
             legal_moves=list(legal_moves),
-            active_player=str(active_player),
+            active_player=active_player,
             last_move=last_move,
             metadata={
-                "player_id": str(player_id),
-                "tick": int(tick),
-                "decision_count": int(decision_count),
-                "reward_total": float(reward_total),
-                "info": dict(raw_info or {}),
-                "info_projection": info_payload,
-                "prompt_text": prompt_text,
-                "hold_ticks_default": int(self._action_schema.default_hold_ticks),
-                "hold_ticks_min": int(self._action_schema.hold_ticks_min),
-                "hold_ticks_max": int(self._action_schema.hold_ticks_max),
-                "contract_v15": contract_v15,
+                "player_id": player_id,
+                "observation_dict": observation_dict,
+                "action_schema": action_hint,
+                "token_budget": self._token_budget,
             },
+            view=observation_dict.get("view"),
+            context=observation_dict.get("context"),
+            extra=observation_dict.get("extra", {}),
         )
 
-    def _build_prompt_text(self, info_text: str, legal_moves: Sequence[str]) -> str:
-        legal_hint = ", ".join(list(legal_moves)[:40]) if legal_moves else "none"
-        schema = (
-            "{\"move\": \"<legal_move>\", \"hold_ticks\": <int>}"
-        )
+    @staticmethod
+    def _format_view_text(
+        *,
+        tick: int,
+        decision_count: int,
+        reward_total: float,
+        info_text: str,
+    ) -> str:
         lines = [
-            "You are controlling a real-time retro game at decision points.",
-            "Output ONE JSON object on the last line.",
-            f"Schema: {schema}",
-            f"Legal moves: {legal_hint}",
-            "hold_ticks must be an integer within the allowed range.",
-            "Latest info (JSON):",
-            info_text,
-        ]
-        return "\n".join(lines)
-
-    def _build_board_text(self, info_text: str, legal_moves: Sequence[str]) -> str:
-        legal_hint = ", ".join(list(legal_moves)[:40]) if legal_moves else "none"
-        lines = [
-            "Retro Observation:",
-            f"Legal moves: {legal_hint}",
+            f"Mode: tick",
+            f"Decision step: {decision_count}",
+            f"Tick: {tick}",
+            f"Reward total: {reward_total:.3f}",
             "Info:",
-            info_text,
+            info_text or "{}",
         ]
         return "\n".join(lines)
 
-    def _truncate_info(self, info_payload: Mapping[str, Any]) -> str:
-        text = json.dumps(info_payload, ensure_ascii=True)
-        max_chars = self._token_budget * 4
-        if len(text) <= max_chars:
-            return text
-        return text[: max_chars - 3] + "..."
+
+def _numeric_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, float]:
+    delta: dict[str, float] = {}
+    for key, value in current.items():
+        if key not in previous:
+            continue
+        if isinstance(value, (int, float)) and isinstance(previous[key], (int, float)):
+            diff = float(value) - float(previous[key])
+            if diff != 0.0:
+                delta[str(key)] = diff
+    return delta
+
+
+def _json_dumps(payload: Any) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return json.dumps(str(payload), ensure_ascii=False, sort_keys=True)
+
+
+def _truncate_text(text: str, token_budget: int) -> str:
+    if token_budget <= 0:
+        return ""
+    if len(text) <= token_budget * 4:
+        return text
+    return text[: token_budget * 4] + "..."
+
+
+def _build_observation_dict(
+    *,
+    view_text: str,
+    legal_actions: Sequence[str],
+    active_player: str,
+    tick: int,
+    step: int,
+    info: dict[str, Any],
+    extra: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    merged_extra: dict[str, Any] = {"info": dict(info)}
+    if extra:
+        merged_extra.update(extra)
+    return {
+        "view": {"text": str(view_text)},
+        "legal_actions": [str(item) for item in legal_actions],
+        "context": {"mode": "tick", "step": int(step), "tick": int(tick)},
+        "active_player": str(active_player),
+        "extra": merged_extra,
+    }
+
+
+__all__ = [
+    "ActionSchema",
+    "InfoDeltaFeeder",
+    "InfoFeeder",
+    "InfoLastFeeder",
+    "ObservationBuilder",
+]
