@@ -506,6 +506,24 @@ URL 参数（Human / AI）：
 - `action_url`：Human 模式动作与聊天提交的后端地址（URL 编码）
 
 常用环境变量：
-- `REPLAY_PORT` / `FRONTEND_PORT`
-- `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
+
+## 11. PettingZoo Atari 支持 (22 款游戏)
+
+GAGE 现已集成 PettingZoo Atari 环境，支持 22 款经典双人游戏（如 Space Invaders, Pong, Boxing 等）。
+
+### 核心特性
+1.  **多游戏支持**：统一通过 `pettingzoo_aec_v1` 适配器接入 22 款游戏。
+2.  **AI控制**：LLM 基于文本观测（Text Observation）进行盲玩决策。
+3.  **自动化回放**：提供“运行即回放”工具，解决 LLM 推理延迟导致的观感卡顿问题。
+
+### 快速上手
+推荐阅读完整的用户手册以获取详细指令：
+
+> 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide_zh.md)**
+>
+> 包含：
+> *   快速开始 (Quick Start)
+> *   完整游戏列表 (22 Games)
+> *   Dummy/AI 模式切换
+> *   常见问题 (FAQ)
