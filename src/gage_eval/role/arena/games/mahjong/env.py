@@ -220,12 +220,18 @@ class MahjongArena:
             "game_type": self._game_type,
             "last_move": self._last_move,
         }
+        view = {"text": board_text}
+        legal_actions = {"items": list(legal_moves)}
+        context = {"mode": "turn", "step": self._move_count}
         return ArenaObservation(
             board_text=board_text,
             legal_moves=legal_moves,
             active_player=self.get_active_player(),
             last_move=self._last_move,
             metadata=metadata,
+            view=view,
+            legal_actions=legal_actions,
+            context=context,
         )
 
     def apply(self, action: MahjongAction | ArenaAction | str) -> Optional[GameResult]:

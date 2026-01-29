@@ -518,6 +518,9 @@ class DoudizhuArenaEnvironment:
             include_public_state=self._context_include_public,
             include_private_state=True,
         )
+        view = {"text": board_text}
+        legal_actions = {"items": list(legal_moves)}
+        context = {"mode": "turn", "step": self._move_count}
         return ArenaObservation(
             board_text=board_text,
             legal_moves=legal_moves,
@@ -533,7 +536,11 @@ class DoudizhuArenaEnvironment:
                 "private_state": private_state,
                 "chat_log": list(self._chat_log),
                 "chat_mode": self._chat_mode,
+                "last_move": self._last_move,
             },
+            view=view,
+            legal_actions=legal_actions,
+            context=context,
         )
 
     def _drain_chat_queue(self, *, record: bool = True) -> None:

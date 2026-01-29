@@ -49,7 +49,7 @@ class LLMPlayer:
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
-        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_moves)
+        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
 
         # STEP 2: Retry with rethink prompts when parsing fails or is illegal.
         retries = 0
@@ -57,14 +57,14 @@ class LLMPlayer:
             rethink_prompt = self._parser.build_rethink_prompt(
                 last_output=raw_text,
                 reason=parse_result.error,
-                legal_moves=self._truncate_legal_moves(observation.legal_moves),
+                legal_moves=self._truncate_legal_moves(observation.legal_actions_items),
             )
             raw_text = self._invoke_model(self._base_messages + [self._build_user_message(rethink_prompt)])
-            parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_moves)
+            parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             retries += 1
 
-        if parse_result.error and observation.legal_moves and self._fallback_policy == "first_legal":
-            fallback_move = observation.legal_moves[0]
+        if parse_result.error and observation.legal_actions_items and self._fallback_policy == "first_legal":
+            fallback_move = observation.legal_actions_items[0]
             logger.warning(
                 "LLMPlayer {} fallback to legal move {} due to {}",
                 self.name,
@@ -112,15 +112,15 @@ class LLMPlayer:
         return self._format_grid_observation(observation)
 
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_moves)
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
         legal_hint = ", ".join(legal_moves) if legal_moves else "none"
         active_player = _format_player_label(observation, observation.active_player)
 
         lines = [
             f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_move or 'First move'}",
+            f"Opponent last move: {observation.last_action or 'First move'}",
             "\nCurrent Board:",
-            observation.board_text,
+            observation.view_text,
             "\nStatus:",
             f"- Legal moves (truncated): {legal_hint}",
             "\nInstructions:",
@@ -131,7 +131,7 @@ class LLMPlayer:
         return "\n".join(lines)
 
     def _format_card_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_moves)
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
         legal_hint = ", ".join(legal_moves) if legal_moves else "none"
         active_player = _format_player_label(observation, observation.active_player)
         chat_mode = str(observation.metadata.get("chat_mode", "off")).lower()
@@ -150,7 +150,7 @@ class LLMPlayer:
             instructions.append("- Output the action string only.")
         lines = [
             f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_move or 'First move'}",
+            f"Opponent last move: {observation.last_action or 'First move'}",
         ]
         team_hint = self._build_team_hint(observation)
         if team_hint:
@@ -158,7 +158,7 @@ class LLMPlayer:
         lines.extend(
             [
                 "\nCurrent State:",
-                observation.board_text,
+                observation.view_text,
                 "\nStatus:",
                 f"- Legal moves (preview): {legal_hint}",
                 "\nInstructions:",
@@ -174,7 +174,7 @@ class LLMPlayer:
             return True
         if isinstance(observation.metadata.get("public_state"), dict):
             return True
-        return "Public State:" in observation.board_text
+        return "Public State:" in observation.view_text
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
         metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
