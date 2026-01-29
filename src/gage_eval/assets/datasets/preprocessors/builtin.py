@@ -62,6 +62,10 @@ from gage_eval.assets.datasets.preprocessors.global_piqa.global_piqa_converter i
 # benchmark BizFinBench V2
 from gage_eval.assets.datasets.preprocessors.biz_fin_bench_v2.biz_fin_bench_v2_converter import BizFinBenchV2Converter
 
+# benchmark MRCR
+from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConverter
+
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -335,4 +339,14 @@ class GlobalPIQAPreprocessor(GlobalPIQAConverter):
     tags=("prompt", "BizFinBench V2"),
 )
 class BizFinBenchV2Preprocessor(BizFinBenchV2Converter):
+    pass
+
+# benchmark MRCR
+@registry.asset(
+    "dataset_preprocessors",
+    "mrcr_chat_preprocessor",
+    desc="MRCR prompt wrapper",
+    tags=("prompt", "MRCR"),
+)
+class MRCRPreprocessor(MRCRConverter):
     pass
