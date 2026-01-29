@@ -1,0 +1,1 @@
+{"schema_version": "0.0.1", "id": "pz_atari_demo_1", "messages": [{"role": "user", "content": [{"type": "text", "text": "Start the PettingZoo Atari demo."}]}], "metadata": {"player_ids": ["player_0", "player_1"], "player_names": {"player_0": "Player 1", "player_1": "Player 2"}, "game_id": "pettingzoo_atari_space_invaders_v2"}}

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Sequence
 from loguru import logger
 
 from gage_eval.registry import registry
-from gage_eval.role.arena.parsers.action_codec import DiscreteActionCodec
+from gage_eval.role.arena.parsers.pettingzoo_actions import DiscreteActionCodec
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 

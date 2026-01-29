@@ -36,3 +36,11 @@ jsonschema>=4.22.0
 docker>=7.0.0
 filelock>=3.13.0
 gradio>=4.43.0
+
+# PettingZoo Atari Integration
+pettingzoo[atari]>=1.24.3
+shimmy[atari]>=1.0.0
+AutoROM[accept-rom-license]>=0.6.1
+opencv-python-headless>=4.8.0
+pygame>=2.3.0
+

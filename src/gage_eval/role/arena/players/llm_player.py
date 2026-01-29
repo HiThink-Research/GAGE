@@ -63,23 +63,30 @@ class LLMPlayer:
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             retries += 1
 
-        if parse_result.error and observation.legal_actions_items and self._fallback_policy == "first_legal":
-            fallback_move = observation.legal_actions_items[0]
-            logger.warning(
-                "LLMPlayer {} fallback to legal move {} due to {}",
-                self.name,
-                fallback_move,
-                parse_result.error,
-            )
-            metadata = self._build_action_metadata(parse_result)
-            metadata["error"] = parse_result.error
-            metadata["fallback"] = "first_legal"
-            return ArenaAction(
-                player=self.name,
-                move=fallback_move,
-                raw=raw_text,
-                metadata=metadata,
-            )
+        if parse_result.error and observation.legal_actions_items:
+            fallback_move = None
+            if self._fallback_policy == "first_legal":
+                fallback_move = observation.legal_actions_items[0]
+            elif self._fallback_policy == "random":
+                import random
+                fallback_move = random.choice(observation.legal_actions_items)
+
+            if fallback_move is not None:
+                logger.warning(
+                    "LLMPlayer {} fallback to legal move {} due to {}",
+                    self.name,
+                    fallback_move,
+                    parse_result.error,
+                )
+                metadata = self._build_action_metadata(parse_result)
+                metadata["error"] = parse_result.error
+                metadata["fallback"] = self._fallback_policy
+                return ArenaAction(
+                    player=self.name,
+                    move=fallback_move,
+                    raw=raw_text,
+                    metadata=metadata,
+                )
 
         metadata = self._build_action_metadata(parse_result)
         if parse_result.error:
