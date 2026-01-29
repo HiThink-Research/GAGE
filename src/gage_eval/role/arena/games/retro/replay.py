@@ -72,24 +72,33 @@ class ReplaySchemaWriter:
         self._frame_index = 0
         self._replay_path: Optional[str] = None
 
-    def append_decision(self, action: ArenaAction, *, start_tick: int, end_tick: int) -> None:
+    def append_decision(
+        self,
+        action: ArenaAction,
+        *,
+        decision_index: int,
+        start_tick: int,
+        end_tick: int,
+    ) -> None:
         """Append a decision-level move entry.
 
         Args:
             action: ArenaAction from the player.
+            decision_index: Zero-based decision counter.
             start_tick: Tick index where the action started.
             end_tick: Tick index where the action ended.
         """
 
-        metadata = dict(action.metadata or {})
+        metadata = dict(action.extra or {})
         self._moves.append(
             {
+                "decision_index": decision_index,
                 "player": action.player,
                 "move": action.move,
                 "raw": action.raw,
                 "start_tick": start_tick,
                 "end_tick": end_tick,
-                "hold_ticks": metadata.get("hold_ticks"),
+                "hold_ticks": action.hold_ticks if action.hold_ticks is not None else metadata.get("hold_ticks"),
                 "error": metadata.get("error"),
                 "latency_ms": metadata.get("latency_ms"),
                 "timed_out": metadata.get("timed_out"),
@@ -149,10 +158,13 @@ class ReplaySchemaWriter:
             "snapshots": list(self._snapshots),
             "result": {
                 "winner": result.winner,
-                "result": result.result,
+                "status": result.status,
                 "reason": result.reason,
                 "move_count": result.move_count,
                 "illegal_move_count": result.illegal_move_count,
+                "replay_path": result.replay_path,
+                "scores": dict(result.scores or {}),
+                "metrics": dict(result.metrics or {}),
             },
         }
         try:

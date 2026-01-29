@@ -8,5 +8,13 @@ from gage_eval.role.arena.parsers.pettingzoo_actions import (
 )
 from gage_eval.role.arena.parsers.gomoku_parser import GomokuParseResult, GomokuParser
 from gage_eval.role.arena.parsers.doudizhu_parser import DoudizhuParseResult, DoudizhuParser
+from gage_eval.role.arena.parsers.retro_action_parser import RetroActionParser, RetroParseResult
 
-__all__ = ["DoudizhuParseResult", "DoudizhuParser", "GomokuParseResult", "GomokuParser"]
+__all__ = [
+    "DoudizhuParseResult",
+    "DoudizhuParser",
+    "GomokuParseResult",
+    "GomokuParser",
+    "RetroActionParser",
+    "RetroParseResult",
+]

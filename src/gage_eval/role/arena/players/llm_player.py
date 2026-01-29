@@ -79,6 +79,7 @@ class LLMPlayer:
                 move=fallback_move,
                 raw=raw_text,
                 metadata=metadata,
+                hold_ticks=getattr(parse_result, "hold_ticks", None),
             )
 
         metadata = self._build_action_metadata(parse_result)
@@ -89,6 +90,7 @@ class LLMPlayer:
             move=parse_result.coord or "",
             raw=raw_text,
             metadata=metadata,
+            hold_ticks=getattr(parse_result, "hold_ticks", None),
         )
 
     def _invoke_model(self, messages: Sequence[Dict[str, Any]]) -> str:

@@ -25,7 +25,7 @@ class ArenaEnvironment(Protocol):
     def is_terminal(self) -> bool:
         """Return True if the game has ended."""
 
-    def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
+    def build_result(self, *, status: str, reason: Optional[str]) -> GameResult:
         """Build a GameResult snapshot when the game ends."""
 
 

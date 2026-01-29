@@ -16,33 +16,8 @@ class ArenaObservation:
     last_move: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
     view: Optional[dict[str, Any]] = None
-    legal_actions: Optional[dict[str, Any]] = None
     context: Optional[dict[str, Any]] = None
-
-    @property
-    def view_text(self) -> str:
-        view = self.view or {}
-        text = view.get("text")
-        if text is None:
-            return self.board_text
-        return str(text)
-
-    @property
-    def legal_actions_items(self) -> Sequence[str]:
-        legal_actions = self.legal_actions or {}
-        items = legal_actions.get("items")
-        if isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
-            return [str(item) for item in items]
-        return list(self.legal_moves)
-
-    @property
-    def last_action(self) -> Optional[str]:
-        if self.last_move:
-            return self.last_move
-        last_move = self.metadata.get("last_move")
-        if last_move is None:
-            return None
-        return str(last_move)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -53,6 +28,13 @@ class ArenaAction:
     move: str
     raw: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    hold_ticks: Optional[int] = None
+
+    @property
+    def extra(self) -> dict[str, Any]:
+        """Expose metadata under the retro-friendly name."""
+
+        return self.metadata
 
 
 @dataclass(frozen=True)
@@ -66,7 +48,18 @@ class GameResult:
     illegal_move_count: int
     final_board: str
     move_log: Sequence[dict[str, Any]]
+    status: Optional[str] = None
     rule_profile: Optional[str] = None
     win_direction: Optional[str] = None
     line_length: Optional[int] = None
     replay_path: Optional[str] = None
+    scores: Optional[dict[str, float]] = None
+    metrics: Optional[dict[str, Any]] = None
+    extra: Optional[dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        resolved_status = self.status or self.result
+        if not self.status:
+            object.__setattr__(self, "status", resolved_status)
+        if not self.result:
+            object.__setattr__(self, "result", resolved_status)
