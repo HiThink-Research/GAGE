@@ -70,11 +70,7 @@ except Exception as exc:  # pragma: no cover - optional dependency guard
 from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 
 # benchmark MME
-try:
-    from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor as NewMMEPreprocessor
-except Exception as exc:  # pragma: no cover - optional dependency guard
-    NewMMEPreprocessor = None
-    warnings.warn(f"MME preprocessor unavailable: {exc}", RuntimeWarning)
+from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 
 
 # benchmark SimpleQA Verified
@@ -361,16 +357,6 @@ class Math500PreprocessorProviderAlias(Math500Preprocessor):
     tags=("vision", "mme", "multi-modal"),
 )
 class MMEPreprocessorProvider(MMEPreprocessor):
-    pass
-
-
-@registry.asset(
-    "dataset_preprocessors",
-    "mme_preprocessor",
-    desc="MME dataset preprocessing logic (alias)",
-    tags=("vision", "mme", "multi-modal"),
-)
-class MMEPreprocessorProviderAlias(MMEPreprocessor):
     pass
 
 
