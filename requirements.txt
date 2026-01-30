@@ -16,8 +16,7 @@ requests>=2.31.0
 mcp>=1.19.0
 PyYAML>=6.0
 jinja2>=3.1.0
-loguru>=0.7.2
-pydantic>=2.4.0,<3.0.0
+pydantic>=1.10.13
 huggingface_hub>=0.23.0
 
 # Model / backend integrations
@@ -37,3 +36,11 @@ jsonschema>=4.22.0
 docker>=7.0.0
 filelock>=3.13.0
 gradio>=4.43.0
+
+# PettingZoo Atari Integration
+pettingzoo[atari]>=1.24.3
+shimmy[atari]>=1.0.0
+AutoROM[accept-rom-license]>=0.6.1
+opencv-python-headless>=4.8.0
+pygame>=2.3.0
+
