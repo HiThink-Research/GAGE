@@ -19,6 +19,10 @@ try:
     from gage_eval.metrics.builtin.mme_aggregator import MMEAccPlusAggregator
 except ImportError:
     MMEAccPlusAggregator = None
+try:
+    from gage_eval.metrics.builtin.tau2_aggregator import Tau2PassHatAggregator
+except ImportError:
+    Tau2PassHatAggregator = None
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
 
@@ -55,6 +59,8 @@ class MetricRegistry:
         # Register MME-specific aggregator if available
         if MMEAccPlusAggregator is not None:
             self.register_aggregator("mme_acc_plus", lambda spec: MMEAccPlusAggregator(spec))
+        if Tau2PassHatAggregator is not None:
+            self.register_aggregator("tau2_pass_hat", lambda spec: Tau2PassHatAggregator(spec))
 
     # ------------------------------------------------------------------ #
     # Registration API

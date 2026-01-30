@@ -11,7 +11,6 @@ def test_swebench_legacy_configs_removed() -> None:
     swebench_configs = sorted(path.name for path in config_dir.glob("swebench*.yaml"))
     assert set(swebench_configs) == {
         "swebench_pro_smoke_agent.yaml",
-        "swebench_pro_smoke_model.yaml",
     }
 
     legacy_asset_dir = Path(__file__).resolve().parents[3] / "src" / "gage_eval" / "assets" / "judge" / "swebench"

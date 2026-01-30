@@ -17,6 +17,25 @@ arena_impls:
   - tictactoe
   - arena
   version: v1
+- desc: RLCard Doudizhu arena environment
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.env:GenericCardArena
+  kind: arena_impls
+  name: doudizhu_rlcard_v1
+  tags:
+  - doudizhu
+  - arena
+  - card
+  version: v1
+- desc: Arena environment adapter for RLCard Doudizhu
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.env:DoudizhuArenaEnvironment
+  kind: arena_impls
+  name: doudizhu_arena_v1
+  tags:
+  - doudizhu
+  - arena
+  version: v1
 backends:
 - desc: Load a custom EngineBackend from an external Python file
   extra: {}
@@ -288,12 +307,30 @@ backends:
 bundles:
 - desc: mathvista benchmark resource providers
   extra: {}
-  impl: gage_eval.assets.datasets.bundles.builtin:MathVistaBundle
+  impl: gage_eval.assets.datasets.bundles.builtin:MathVistaBundleProvider
   kind: bundles
   name: mathvista
   tags:
   - caption
   - ocr
+  version: v1
+- desc: MME benchmark resource providers
+  extra: {}
+  impl: gage_eval.assets.datasets.bundles.builtin:MMEBundleProvider
+  kind: bundles
+  name: mme
+  tags:
+  - vision
+  - mme
+  version: v1
+- desc: mmlu-pro benchmark resource providers
+  extra: {}
+  impl: gage_eval.assets.datasets.bundles.builtin:MMLUProBundleProvider
+  kind: bundles
+  name: mmlu_pro_hf
+  tags:
+  - mmlu-pro
+  - few-shot
   version: v1
 context_impls:
 - desc: Gomoku rules and board context provider
@@ -330,6 +367,15 @@ context_impls:
   name: swebench_repo
   tags:
   - swebench
+  - context
+  version: v1
+- desc: Tau2 bootstrap context provider (init env/user/tools)
+  extra: {}
+  impl: gage_eval.role.context.tau2_bootstrap:Tau2BootstrapContext
+  kind: context_impls
+  name: tau2_bootstrap
+  tags:
+  - tau2
   - context
   version: v1
 dataset_hubs:
@@ -429,6 +475,17 @@ dataset_loaders:
   - local
   - file
   version: v1
+- desc: Tau2 tasks loader (HF Hub + local data)
+  extra:
+    supports_streaming: false
+  impl: gage_eval.assets.datasets.loaders.tau2_hf_loader:Tau2TasksLoader
+  kind: dataset_loaders
+  name: tau2_tasks
+  tags:
+  - tau2
+  - huggingface
+  - local
+  version: v1
 dataset_preprocessors:
 - desc: Multiple-choice standardizer preprocessor (new)
   extra: {}
@@ -456,6 +513,15 @@ dataset_preprocessors:
   name: grid_game_preprocessor
   tags:
   - grid
+  - game
+  version: v1
+- desc: Card game preprocessor (player metadata + sample envelope)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:CardGamePreprocessor
+  kind: dataset_preprocessors
+  name: card_game_preprocessor
+  tags:
+  - card
   - game
   version: v1
 - desc: PIQA multiple-choice prompt wrapper
@@ -506,6 +572,24 @@ dataset_preprocessors:
   name: appworld_preprocessor
   tags:
   - appworld
+  - agent
+  version: v1
+- desc: SWE-bench Pro preprocessor (prompt + sandbox metadata)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:SwebenchProStandardizer
+  kind: dataset_preprocessors
+  name: swebench_pro_standardizer
+  tags:
+  - swebench
+  - agent
+  version: v1
+- desc: Tau2 task preprocessor (task metadata + Sample envelope)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:Tau2Preprocessor
+  kind: dataset_preprocessors
+  name: tau2_preprocessor
+  tags:
+  - tau2
   - agent
   version: v1
 - desc: MMMU multimodal inputs builder (messages -> inputs.multi_modal_data)
@@ -560,6 +644,82 @@ dataset_preprocessors:
   - vision
   - mathvista
   version: v1
+- desc: AIME 2024 prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:AIME2024Preprocessor
+  kind: dataset_preprocessors
+  name: aime2024_preprocessor
+  tags:
+  - prompt
+  - aime2024
+  version: v1
+- desc: AIME 2025 prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:AIME2025Preprocessor
+  kind: dataset_preprocessors
+  name: aime2025_preprocessor
+  tags:
+  - prompt
+  - aime2025
+  version: v1
+- desc: HLE prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:HLEPreprocessor
+  kind: dataset_preprocessors
+  name: hle_preprocessor
+  tags:
+  - prompt
+  - hle
+  version: v1
+- desc: MMLU Pro prompt wrapper
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MMLUPreprocessor
+  kind: dataset_preprocessors
+  name: mmlu_pro_chat_preprocessor
+  tags:
+  - prompt
+  - mmlu-pro
+  version: v1
+- desc: MATH-500 dataset preprocessing logic
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:Math500PreprocessorProvider
+  kind: dataset_preprocessors
+  name: math500
+  tags:
+  - math
+  - math500
+  - latex
+  version: v1
+- desc: MATH-500 dataset preprocessing logic (alias)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:Math500PreprocessorProviderAlias
+  kind: dataset_preprocessors
+  name: math500_preprocessor
+  tags:
+  - math
+  - math500
+  - latex
+  version: v1
+- desc: MME dataset preprocessing logic
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MMEPreprocessorProvider
+  kind: dataset_preprocessors
+  name: mme
+  tags:
+  - vision
+  - mme
+  - multi-modal
+  version: v1
+- desc: MME dataset preprocessing logic (alias)
+  extra: {}
+  impl: gage_eval.assets.datasets.preprocessors.builtin:MMEPreprocessorProviderAlias
+  kind: dataset_preprocessors
+  name: mme_preprocessor
+  tags:
+  - vision
+  - mme
+  - multi-modal
+  version: v1
 doc_converters: []
 helper_impls:
 - desc: AppWorld API predictor helper implementation
@@ -598,6 +758,15 @@ judge_impls:
   tags:
   - swebench
   - docker
+  version: v1
+- desc: Tau2 evaluation using tau2.evaluator.evaluate_simulation
+  extra: {}
+  impl: gage_eval.role.judge.tau2_eval:Tau2Evaluate
+  kind: judge_impls
+  name: tau2_eval
+  tags:
+  - tau2
+  - judge
   version: v1
 metrics:
 - desc: Win rate for a target player
@@ -820,6 +989,98 @@ metrics:
   tags:
   - latency
   version: v1
+- desc: Tau2 reward metric
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.tau2:Tau2RewardMetric
+  kind: metrics
+  name: tau2_reward
+  tags:
+  - tau2
+  version: v1
+- desc: Tau2 pass indicator (reward == 1)
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.tau2:Tau2PassMetric
+  kind: metrics
+  name: tau2_pass
+  tags:
+  - tau2
+  version: v1
+- desc: Tau2 pass-hat@k (pass^k) metric
+  extra:
+    default_aggregation: tau2_pass_hat
+  impl: gage_eval.metrics.builtin.tau2:Tau2PassHatMetric
+  kind: metrics
+  name: tau2_pass_hat_k
+  tags:
+  - tau2
+  version: v1
+- desc: Tau2 agent cost
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.tau2:Tau2AgentCostMetric
+  kind: metrics
+  name: tau2_agent_cost
+  tags:
+  - tau2
+  version: v1
+- desc: Tau2 user cost
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.tau2:Tau2UserCostMetric
+  kind: metrics
+  name: tau2_user_cost
+  tags:
+  - tau2
+  version: v1
+- desc: AIME2024 accuracy
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.aime:AIME2024AccuracyMetric
+  kind: metrics
+  name: aime2024_accuracy
+  tags:
+  - aime2024
+  version: v1
+- desc: HLE accuracy
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.hle.hle_local:HLEAccuracyLocalMetric
+  kind: metrics
+  name: hle_accuracy_local
+  tags:
+  - HLE
+  version: v1
+- desc: MATH-500 LaTeX answer accuracy with PRM800K grading logic
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.math500:Math500AccuracyMetric
+  kind: metrics
+  name: math500_accuracy
+  tags:
+  - math
+  - math500
+  version: v1
+- desc: MME accuracy metric for Yes/No questions (per-question and per-image accuracy)
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.mme:MMEAccuracyMetric
+  kind: metrics
+  name: mme_accuracy
+  tags:
+  - vision
+  - mme
+  version: v1
+- desc: MMLU-Pro accuracy
+  extra:
+    default_aggregation: mean
+  impl: gage_eval.metrics.builtin.mmlu_pro.acc:MMLUProAccuracyMetric
+  kind: metrics
+  name: mmlu_pro_acc
+  tags:
+  - MMLU-Pro
+  version: v1
 - desc: SWE-bench Pro Pass@1 (resolve rate)
   extra:
     default_aggregation: mean
@@ -877,6 +1138,16 @@ observability_plugins:
   - http
   version: v1
 parser_impls:
+- desc: Doudizhu move parser (RLCard action strings)
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.parsers.doudizhu:DoudizhuMoveParser
+  kind: parser_impls
+  name: doudizhu_v1
+  tags:
+  - doudizhu
+  - parser
+  - card
+  version: v1
 - desc: Gomoku move parser (configurable coordinate scheme)
   extra: {}
   impl: gage_eval.role.arena.parsers.gomoku_parser:GomokuParser
@@ -894,6 +1165,16 @@ parser_impls:
   tags:
   - grid
   - parser
+  version: v1
+- desc: Doudizhu move parser for arena text actions
+  extra: {}
+  impl: gage_eval.role.arena.parsers.doudizhu_parser:DoudizhuParser
+  kind: parser_impls
+  name: doudizhu_arena_parser_v1
+  tags:
+  - doudizhu
+  - parser
+  - arena
   version: v1
 pipeline_steps:
 - desc: Global step that aggregates evaluation results and writes reports
@@ -1094,6 +1375,36 @@ renderer_impls:
   tags:
   - tictactoe
   - renderer
+  version: v1
+- desc: Doudizhu text renderer for arena snapshots
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.renderers.board_renderer:DoudizhuTextRenderer
+  kind: renderer_impls
+  name: doudizhu_text_v1
+  tags:
+  - doudizhu
+  - renderer
+  - card
+  version: v1
+- desc: Doudizhu replay renderer (JSON payloads)
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.renderers.doudizhu:DoudizhuRenderer
+  kind: renderer_impls
+  name: doudizhu_replay_v1
+  tags:
+  - doudizhu
+  - renderer
+  - card
+  version: v1
+- desc: Showdown-style Doudizhu renderer for arena snapshots
+  extra: {}
+  impl: gage_eval.role.arena.games.doudizhu.renderers.showdown_board:DoudizhuShowdownRenderer
+  kind: renderer_impls
+  name: doudizhu_showdown_v1
+  tags:
+  - doudizhu
+  - renderer
+  - card
   version: v1
 reporting_sinks:
 - desc: In-memory event recorder (tests)

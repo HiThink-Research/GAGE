@@ -1,7 +1,11 @@
 from queue import Queue
 
+import pytest
+
 from gage_eval.role.arena.games.doudizhu.env import DoudizhuArenaEnvironment
 from gage_eval.role.arena.types import ArenaAction
+
+pytest.importorskip("rlcard")
 
 
 def test_doudizhu_fast_finish_human_action():

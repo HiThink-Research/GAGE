@@ -69,7 +69,10 @@ def _start_server(handler_cls):
     # Let's simplify: Just run serve_forever in a thread and daemonize it. 
     # We don't need clean shutdown for tests, just daemon thread killing on exit.
     
-    server = HTTPServer(("127.0.0.1", 0), handler_cls)
+    try:
+        server = HTTPServer(("127.0.0.1", 0), handler_cls)
+    except PermissionError as exc:
+        raise unittest.SkipTest("local HTTPServer bind not permitted in this environment") from exc
     port = server.server_address[1]
     
     thread = threading.Thread(target=server.serve_forever)

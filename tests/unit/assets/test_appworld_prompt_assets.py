@@ -13,7 +13,7 @@ def test_appworld_prompt_asset_renders_api_docs_context() -> None:
     asset = registry.get("prompts", "dut/appworld@v1")
     assert isinstance(asset, PromptTemplateAsset)
 
-    renderer = asset.instantiate()
+    renderer = asset.instantiate({"mode": "full"})
     sample = {
         "support_outputs": [
             {
@@ -22,10 +22,10 @@ def test_appworld_prompt_asset_renders_api_docs_context() -> None:
             }
         ]
     }
-    context = PromptContext(sample=sample, payload={})
+    context = PromptContext(sample=sample, payload={"instruction": "Book a flight"})
     result = renderer.render(context)
 
     assert result.messages is not None
     content = result.messages[0]["content"]
-    assert "# api_docs" in content
-    assert "TOOLS" in content
+    assert "I am your supervisor" in content
+    assert "Real Task Instruction" in content

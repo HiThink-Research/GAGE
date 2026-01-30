@@ -235,7 +235,7 @@ tasks:
   - task_id: swebench_pro_smoke_agent_eval
     dataset_id: swebench_pro_smoke
     # Fixed smoke subset size (same as allowlist count).
-    max_samples: 1
+    max_samples: 11
     concurrency: 1
     reporting:
       sinks:

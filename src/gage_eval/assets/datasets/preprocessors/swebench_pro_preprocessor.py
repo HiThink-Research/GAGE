@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
-from gage_eval.utils.swebench import get_dockerhub_image_uri
+from gage_eval.utils.benchmark_helpers.swebench import get_dockerhub_image_uri
 
 
 def _coerce_list(value: Any) -> List[str]:

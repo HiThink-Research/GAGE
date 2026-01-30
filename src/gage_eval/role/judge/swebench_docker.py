@@ -17,7 +17,10 @@ from loguru import logger
 from gage_eval.registry import registry
 from gage_eval.evaluation.sample_envelope import resolve_model_output
 from gage_eval.role.judge.base import JudgeImplementation
-from gage_eval.utils.swebench import get_dockerhub_image_uri, resolve_docker_platform
+from gage_eval.utils.benchmark_helpers.swebench import (
+    get_dockerhub_image_uri,
+    resolve_docker_platform,
+)
 
 
 class _SandboxFallback(RuntimeError):
