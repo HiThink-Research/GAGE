@@ -39,7 +39,7 @@ class ScreenSpotProPreprocessorTests(unittest.TestCase):
         self.assertEqual(len(ret.messages), 1)
         self.assertEqual(ret.messages[0].role, "user")
         self.assertEqual(len(ret.messages[0].content), 2)  # text + image
-        self.assertIn("I want to identify a UI element that best matches my instruction", ret.messages[0].content[0].text)
+        self.assertIn("What is the bounding box of the UI element corresponding to the user instruction", ret.messages[0].content[0].text)
         self.assertIsNotNone(ret.id)
         self.assertIsNotNone(ret.schema_version)
         self.assertIsNotNone(ret.references)
