@@ -23,12 +23,14 @@ backends:
     type: dummy
     config:
       responses: ["0", "1", "2", "3", "4", "5"]
-      cycle: true
+      random: true
+      seed: 1234
   - backend_id: pz_dummy_player_1
     type: dummy
     config:
       responses: ["0", "1", "2", "3", "4", "5"]
-      cycle: true
+      random: true
+      seed: 5678
 
 role_adapters:
   - adapter_id: pz_dummy_player_0
@@ -52,7 +54,7 @@ role_adapters:
           max_cycles: 3000
         seed: 1234
         include_raw_obs: false
-        use_action_meanings: true
+        use_action_meanings: false
       rules:
         illegal_policy:
           retry: 1

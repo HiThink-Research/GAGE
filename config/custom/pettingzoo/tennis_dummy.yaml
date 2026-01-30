@@ -52,7 +52,7 @@ role_adapters:
           max_cycles: 300
         seed: 1234
         include_raw_obs: false
-        use_action_meanings: true
+        use_action_meanings: false
       rules:
         illegal_policy:
           retry: 1

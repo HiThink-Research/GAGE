@@ -54,7 +54,9 @@ def replay_game(sample_path: str, delay_ms: int = 500):
     env_id = None
     if task_id and task_id.startswith("pettingzoo_"):
         # Extract game name from task_id: "pettingzoo_boxing_ai" -> "boxing"
-        parts = task_id.replace("pettingzoo_", "").replace("_ai", "").replace("_dummy", "")
+        parts = task_id.replace("pettingzoo_", "")
+        for suffix in ("_ai", "_dummy", "_litellm"):
+            parts = parts.replace(suffix, "")
         game_name = parts
         
         # Look up the correct version from known games

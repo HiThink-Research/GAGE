@@ -22,12 +22,12 @@ backends:
   - backend_id: pz_dummy_player_0
     type: dummy
     config:
-      responses: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"]
+      responses: ["0", "1", "2", "3", "4", "5"]
       cycle: true
   - backend_id: pz_dummy_player_1
     type: dummy
     config:
-      responses: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17"]
+      responses: ["0", "1", "2", "3", "4", "5"]
       cycle: true
 
 role_adapters:
@@ -52,7 +52,7 @@ role_adapters:
           max_cycles: 300
         seed: 1234
         include_raw_obs: false
-        use_action_meanings: true
+        use_action_meanings: false
       rules:
         illegal_policy:
           retry: 1
