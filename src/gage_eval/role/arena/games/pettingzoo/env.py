@@ -85,7 +85,7 @@ class PettingZooAecArenaEnvironment:
         
         # Resolve action labels: Explicit > Constant > Env-derived
         self._explicit_action_labels = [str(label) for label in action_labels or []]
-        if not self._explicit_action_labels and self._env_id:
+        if not self._explicit_action_labels and self._env_id and self._use_action_meanings:
             # Try to match game name from env_id (e.g. pettingzoo.atari.boxing_v2 -> boxing)
             # Strategy: check if any constant key is present in the env_id string
             for game_key, meanings in ACTION_MEANINGS.items():

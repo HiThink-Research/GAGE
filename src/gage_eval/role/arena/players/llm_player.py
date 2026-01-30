@@ -114,9 +114,39 @@ class LLMPlayer:
         return raw_text
 
     def _format_observation(self, observation: ArenaObservation) -> str:
+        if self._should_use_pettingzoo_prompt(observation):
+            return self._format_pettingzoo_observation(observation)
         if self._should_use_card_prompt(observation):
             return self._format_card_observation(observation)
         return self._format_grid_observation(observation)
+
+    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
+        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
+        active_player = _format_player_label(observation, observation.active_player)
+        last_action = observation.last_action or "None"
+
+        instructions = [
+            "- Choose exactly one action from the legal moves list.",
+            "- Output ONLY the action label or id on the last line.",
+            "- Do not output explanations or extra text.",
+        ]
+        if any(self._normalize_move(move) == "fire" for move in legal_moves):
+            instructions.append("- Prefer FIRE when available.")
+        elif any(self._normalize_move(move) == "noop" for move in legal_moves):
+            instructions.append("- Avoid NOOP unless it is the only legal move.")
+
+        lines = [
+            f"Active player: {active_player}",
+            f"Opponent last move: {last_action}",
+            "\nEnvironment:",
+            observation.view_text,
+            "\nLegal moves:",
+            legal_hint,
+            "\nInstructions:",
+            *instructions,
+        ]
+        return "\n".join(lines)
 
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
         legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
@@ -182,6 +212,15 @@ class LLMPlayer:
         if isinstance(observation.metadata.get("public_state"), dict):
             return True
         return "Public State:" in observation.view_text
+
+    def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
+        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
+        env_id = str(metadata.get("env_id", "")).lower()
+        return "pettingzoo" in env_id
+
+    @staticmethod
+    def _normalize_move(move: str) -> str:
+        return str(move).strip().lower()
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
         metadata = observation.metadata if isinstance(observation.metadata, dict) else {}

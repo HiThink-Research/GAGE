@@ -13,10 +13,10 @@ class DummyActionSpace:
 
 
 class FakeAecEnv:
-    def __init__(self, max_steps: int = 4) -> None:
+    def __init__(self, max_steps: int = 4, action_n: int = 3) -> None:
         self.possible_agents = ["agent_0", "agent_1"]
         self.agents = list(self.possible_agents)
-        self._action_spaces = {agent: DummyActionSpace(3) for agent in self.agents}
+        self._action_spaces = {agent: DummyActionSpace(action_n) for agent in self.agents}
         self._max_steps = max_steps
         self._step_count = 0
         self.reset()
@@ -98,3 +98,19 @@ def test_pettingzoo_env_illegal_action_loss():
     result = adapter.apply(ArenaAction(player=active_player, move="99", raw="99"))
     assert result is not None
     assert result.result in {"loss", "draw"}
+
+
+def test_pettingzoo_env_disable_action_meanings_uses_numeric_moves():
+    env = FakeAecEnv(max_steps=2, action_n=6)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        env_id="pettingzoo.atari.space_invaders_v2",
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+        use_action_meanings=False,
+    )
+    adapter.reset()
+    active_player = adapter.get_active_player()
+    observation = adapter.observe(active_player)
+    assert observation.legal_moves[:3] == ["0", "1", "2"]
+    assert "NOOP" not in observation.legal_moves
