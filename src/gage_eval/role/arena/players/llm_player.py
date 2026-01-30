@@ -49,7 +49,7 @@ class LLMPlayer:
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
-        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_moves)
+        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
 
         # STEP 2: Retry with rethink prompts when parsing fails or is illegal.
         retries = 0
@@ -57,29 +57,36 @@ class LLMPlayer:
             rethink_prompt = self._parser.build_rethink_prompt(
                 last_output=raw_text,
                 reason=parse_result.error,
-                legal_moves=self._truncate_legal_moves(observation.legal_moves),
+                legal_moves=self._truncate_legal_moves(observation.legal_actions_items),
             )
             raw_text = self._invoke_model(self._base_messages + [self._build_user_message(rethink_prompt)])
-            parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_moves)
+            parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             retries += 1
 
-        if parse_result.error and observation.legal_moves and self._fallback_policy == "first_legal":
-            fallback_move = observation.legal_moves[0]
-            logger.warning(
-                "LLMPlayer {} fallback to legal move {} due to {}",
-                self.name,
-                fallback_move,
-                parse_result.error,
-            )
-            metadata = self._build_action_metadata(parse_result)
-            metadata["error"] = parse_result.error
-            metadata["fallback"] = "first_legal"
-            return ArenaAction(
-                player=self.name,
-                move=fallback_move,
-                raw=raw_text,
-                metadata=metadata,
-            )
+        if parse_result.error and observation.legal_actions_items:
+            fallback_move = None
+            if self._fallback_policy == "first_legal":
+                fallback_move = observation.legal_actions_items[0]
+            elif self._fallback_policy == "random":
+                import random
+                fallback_move = random.choice(observation.legal_actions_items)
+
+            if fallback_move is not None:
+                logger.warning(
+                    "LLMPlayer {} fallback to legal move {} due to {}",
+                    self.name,
+                    fallback_move,
+                    parse_result.error,
+                )
+                metadata = self._build_action_metadata(parse_result)
+                metadata["error"] = parse_result.error
+                metadata["fallback"] = self._fallback_policy
+                return ArenaAction(
+                    player=self.name,
+                    move=fallback_move,
+                    raw=raw_text,
+                    metadata=metadata,
+                )
 
         metadata = self._build_action_metadata(parse_result)
         if parse_result.error:
@@ -107,20 +114,50 @@ class LLMPlayer:
         return raw_text
 
     def _format_observation(self, observation: ArenaObservation) -> str:
+        if self._should_use_pettingzoo_prompt(observation):
+            return self._format_pettingzoo_observation(observation)
         if self._should_use_card_prompt(observation):
             return self._format_card_observation(observation)
         return self._format_grid_observation(observation)
 
+    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
+        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
+        active_player = _format_player_label(observation, observation.active_player)
+        last_action = observation.last_action or "None"
+
+        instructions = [
+            "- Choose exactly one action from the legal moves list.",
+            "- Output ONLY the action label or id on the last line.",
+            "- Do not output explanations or extra text.",
+        ]
+        if any(self._normalize_move(move) == "fire" for move in legal_moves):
+            instructions.append("- Prefer FIRE when available.")
+        elif any(self._normalize_move(move) == "noop" for move in legal_moves):
+            instructions.append("- Avoid NOOP unless it is the only legal move.")
+
+        lines = [
+            f"Active player: {active_player}",
+            f"Opponent last move: {last_action}",
+            "\nEnvironment:",
+            observation.view_text,
+            "\nLegal moves:",
+            legal_hint,
+            "\nInstructions:",
+            *instructions,
+        ]
+        return "\n".join(lines)
+
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_moves)
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
         legal_hint = ", ".join(legal_moves) if legal_moves else "none"
         active_player = _format_player_label(observation, observation.active_player)
 
         lines = [
             f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_move or 'First move'}",
+            f"Opponent last move: {observation.last_action or 'First move'}",
             "\nCurrent Board:",
-            observation.board_text,
+            observation.view_text,
             "\nStatus:",
             f"- Legal moves (truncated): {legal_hint}",
             "\nInstructions:",
@@ -131,7 +168,7 @@ class LLMPlayer:
         return "\n".join(lines)
 
     def _format_card_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_moves)
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
         legal_hint = ", ".join(legal_moves) if legal_moves else "none"
         active_player = _format_player_label(observation, observation.active_player)
         chat_mode = str(observation.metadata.get("chat_mode", "off")).lower()
@@ -150,7 +187,7 @@ class LLMPlayer:
             instructions.append("- Output the action string only.")
         lines = [
             f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_move or 'First move'}",
+            f"Opponent last move: {observation.last_action or 'First move'}",
         ]
         team_hint = self._build_team_hint(observation)
         if team_hint:
@@ -158,7 +195,7 @@ class LLMPlayer:
         lines.extend(
             [
                 "\nCurrent State:",
-                observation.board_text,
+                observation.view_text,
                 "\nStatus:",
                 f"- Legal moves (preview): {legal_hint}",
                 "\nInstructions:",
@@ -174,7 +211,16 @@ class LLMPlayer:
             return True
         if isinstance(observation.metadata.get("public_state"), dict):
             return True
-        return "Public State:" in observation.board_text
+        return "Public State:" in observation.view_text
+
+    def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
+        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
+        env_id = str(metadata.get("env_id", "")).lower()
+        return "pettingzoo" in env_id
+
+    @staticmethod
+    def _normalize_move(move: str) -> str:
+        return str(move).strip().lower()
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
         metadata = observation.metadata if isinstance(observation.metadata, dict) else {}

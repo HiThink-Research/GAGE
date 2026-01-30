@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import os
+import re
+from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -30,6 +33,10 @@ from gage_eval.role.arena.types import GameResult
 )
 class ArenaRoleAdapter(RoleAdapter):
     """Role adapter that runs an arena game loop."""
+
+    _DEFAULT_GAME_LOG_INLINE_LIMIT = 1000
+    _DEFAULT_GAME_LOG_INLINE_BYTES = 200_000
+    _DEFAULT_GAME_LOG_PREVIEW_LIMIT = 50
 
     def __init__(
         self,
@@ -80,12 +87,16 @@ class ArenaRoleAdapter(RoleAdapter):
         # STEP 1: Build core components for the game loop.
         player_specs, player_ids, player_names, start_player_id = self._normalize_player_specs(sample)
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
-        if "doudizhu" in str(env_impl).lower():
+        env_impl_lower = str(env_impl).lower()
+        model_labels: Dict[str, str] = {}
+        if "doudizhu" in env_impl_lower:
             model_labels = self._resolve_player_labels(player_specs, role_manager)
             for player_id in player_ids:
                 label = model_labels.get(player_id)
-                if label:
+                if label and player_id not in player_names:
                     player_names[player_id] = label
+        elif "mahjong" in env_impl_lower:
+            model_labels = self._resolve_player_labels(player_specs, role_manager)
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
         visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
@@ -96,6 +107,7 @@ class ArenaRoleAdapter(RoleAdapter):
             sample,
             player_ids=player_ids,
             player_names=player_names,
+            player_models=model_labels if "mahjong" in env_impl_lower else None,
             start_player_id=start_player_id,
             chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
@@ -128,7 +140,7 @@ class ArenaRoleAdapter(RoleAdapter):
         finally:
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
             pass
-        output = self._format_result(result)
+        output = self._format_result(result, sample, trace)
 
         if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
             visualizer.wait_for_finish()
@@ -187,8 +199,17 @@ class ArenaRoleAdapter(RoleAdapter):
                 player_id = f"player_{idx}"
             normalized["player_id"] = str(player_id)
             normalized_specs.append(normalized)
-            display_name = normalized.get("name") or normalized["player_id"]
-            player_names.setdefault(normalized["player_id"], display_name)
+            existing_name = player_names.get(normalized["player_id"])
+            display_name = normalized.get("name") or existing_name or normalized["player_id"]
+            is_generic_name = False
+            if existing_name is not None:
+                normalized_existing = str(existing_name).strip()
+                is_generic_name = bool(re.match(r"^player\\s*\\d+$", normalized_existing, re.IGNORECASE))
+            if existing_name is None or existing_name == normalized["player_id"] or is_generic_name:
+                adapter_ref = normalized.get("ref")
+                if adapter_ref and not normalized.get("name"):
+                    display_name = str(adapter_ref)
+                player_names[normalized["player_id"]] = display_name
 
         if player_ids:
             ordered_ids = list(player_ids)
@@ -253,6 +274,7 @@ class ArenaRoleAdapter(RoleAdapter):
         *,
         player_ids: Optional[Sequence[str]] = None,
         player_names: Optional[Dict[str, str]] = None,
+        player_models: Optional[Dict[str, str]] = None,
         start_player_id: Optional[str] = None,
         chat_queue=None,
         trace: Optional[ObservabilityTrace] = None,
@@ -271,6 +293,7 @@ class ArenaRoleAdapter(RoleAdapter):
             or []
         )
         resolved_player_names = dict(player_names or metadata.get("player_names") or {})
+        resolved_player_models = dict(player_models or metadata.get("player_models") or {})
         resolved_start_player = start_player_id or metadata.get("start_player_id")
         token_map = metadata.get("token_map") or env_cfg.get("token_map")
         coord_scheme = metadata.get("coord_scheme", env_cfg.get("coord_scheme", "A1"))
@@ -284,6 +307,11 @@ class ArenaRoleAdapter(RoleAdapter):
         chat_mode = env_cfg.get("chat_mode", metadata.get("chat_mode"))
 
         impl = env_cfg.get("impl", "gomoku_local_v1")
+        if "mahjong" in str(impl).lower():
+            try:
+                import gage_eval.role.arena.games.mahjong.env
+            except ImportError:
+                pass
         env_cls = registry.get("arena_impls", impl)
         env_kwargs = {
             "board_size": board_size,
@@ -297,8 +325,42 @@ class ArenaRoleAdapter(RoleAdapter):
             "win_directions": win_directions,
             "illegal_policy": illegal_policy,
         }
+        if "pettingzoo" in str(impl).lower():
+            if env_cfg.get("env_id") is not None:
+                env_kwargs["env_id"] = env_cfg.get("env_id")
+            if env_cfg.get("env_kwargs") is not None:
+                env_kwargs["env_kwargs"] = env_cfg.get("env_kwargs")
+            if env_cfg.get("seed") is not None:
+                env_kwargs["seed"] = env_cfg.get("seed")
+            if env_cfg.get("action_labels") is not None:
+                env_kwargs["action_labels"] = env_cfg.get("action_labels")
+            if env_cfg.get("use_action_meanings") is not None:
+                env_kwargs["use_action_meanings"] = env_cfg.get("use_action_meanings")
+            if env_cfg.get("include_raw_obs") is not None:
+                env_kwargs["include_raw_obs"] = env_cfg.get("include_raw_obs")
+            if env_cfg.get("agent_map") is not None:
+                env_kwargs["agent_map"] = env_cfg.get("agent_map")
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
+        if "mahjong" in str(impl).lower():
+            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            if run_id:
+                env_kwargs["run_id"] = str(run_id)
+            if sample_id:
+                env_kwargs["sample_id"] = str(sample_id)
+            if env_cfg.get("chat_every_n") is not None:
+                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
+            if env_cfg.get("replay_live") is not None:
+                env_kwargs["replay_live"] = env_cfg.get("replay_live")
+            if env_cfg.get("replay_output_dir") is not None:
+                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
+            if env_cfg.get("replay_filename") is not None:
+                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
+            if chat_queue is not None:
+                env_kwargs["chat_queue"] = chat_queue
+            if resolved_player_models:
+                env_kwargs["player_models"] = resolved_player_models
         if "doudizhu" in str(impl).lower():
             run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
             sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
@@ -420,20 +482,145 @@ class ArenaRoleAdapter(RoleAdapter):
                 raise ValueError(f"Unsupported player type: {player_type}")
         return players
 
-    @staticmethod
-    def _format_result(result: GameResult) -> Dict[str, Any]:
-        return {
+    def _format_result(
+        self,
+        result: GameResult,
+        sample: Dict[str, Any],
+        trace: Optional[ObservabilityTrace],
+    ) -> Dict[str, Any]:
+        output = {
             "winner": result.winner,
             "result": result.result,
             "reason": result.reason,
             "move_count": result.move_count,
             "illegal_move_count": result.illegal_move_count,
             "final_board": result.final_board,
-            "game_log": list(result.move_log),
             "rule_profile": result.rule_profile,
             "win_direction": result.win_direction,
             "line_length": result.line_length,
         }
+        output.update(self._format_game_log(result.move_log, sample, trace))
+        if result.replay_path:
+            output["replay_path"] = result.replay_path
+        return output
+
+    def _format_game_log(
+        self,
+        move_log: Sequence[Dict[str, Any]],
+        sample: Dict[str, Any],
+        trace: Optional[ObservabilityTrace],
+    ) -> Dict[str, Any]:
+        move_log_entries = list(move_log)
+        if not move_log_entries:
+            return {"game_log": []}
+
+        if not self._should_externalize_game_log(move_log_entries):
+            return {"game_log": move_log_entries}
+
+        run_dir = self._resolve_run_dir(trace)
+        sample_id = self._resolve_sample_id(sample)
+        payload = {
+            "adapter_id": self.adapter_id,
+            "sample_id": sample_id,
+            "move_log": move_log_entries,
+        }
+        output_path = self._write_game_log(run_dir, sample_id, payload) if run_dir else None
+        if output_path is None:
+            logger.warning(
+                "Large game_log detected but could not persist to run dir; returning preview only."
+            )
+            return self._preview_game_log(move_log_entries)
+
+        preview = self._preview_game_log(move_log_entries)
+        return {"game_log_path": str(output_path), **preview}
+
+    def _should_externalize_game_log(self, move_log: Sequence[Dict[str, Any]]) -> bool:
+        max_entries = self._read_int_env(
+            "GAGE_EVAL_GAME_LOG_INLINE_LIMIT",
+            self._DEFAULT_GAME_LOG_INLINE_LIMIT,
+        )
+        if max_entries >= 0 and len(move_log) > max_entries:
+            return True
+
+        max_bytes = self._read_int_env(
+            "GAGE_EVAL_GAME_LOG_INLINE_BYTES",
+            self._DEFAULT_GAME_LOG_INLINE_BYTES,
+        )
+        if max_bytes <= 0:
+            return False
+        payload_bytes = self._estimate_game_log_bytes(move_log)
+        if payload_bytes is None:
+            return True
+        return payload_bytes > max_bytes
+
+    def _preview_game_log(self, move_log: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        preview_limit = self._read_int_env(
+            "GAGE_EVAL_GAME_LOG_PREVIEW_LIMIT",
+            self._DEFAULT_GAME_LOG_PREVIEW_LIMIT,
+        )
+        preview = list(move_log[: max(preview_limit, 0)])
+        return {
+            "game_log_preview": preview,
+            "game_log_truncated": len(move_log) > len(preview),
+            "game_log_total": len(move_log),
+        }
+
+    @staticmethod
+    def _estimate_game_log_bytes(move_log: Sequence[Dict[str, Any]]) -> Optional[int]:
+        try:
+            payload = json.dumps(move_log, ensure_ascii=True, default=str)
+        except (TypeError, ValueError):
+            return None
+        return len(payload.encode("utf-8"))
+
+    def _resolve_run_dir(self, trace: Optional[ObservabilityTrace]) -> Optional[Path]:
+        run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+        if not run_id:
+            return None
+        base_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")).expanduser().resolve()
+        return base_dir / str(run_id)
+
+    @staticmethod
+    def _resolve_sample_id(sample: Dict[str, Any]) -> str:
+        sample_id = sample.get("id") or sample.get("sample_id") or "sample"
+        return str(sample_id)
+
+    def _write_game_log(
+        self,
+        run_dir: Path,
+        sample_id: str,
+        payload: Dict[str, Any],
+    ) -> Optional[Path]:
+        safe_sample_id = self._sanitize_filename(sample_id)
+        safe_adapter_id = self._sanitize_filename(self.adapter_id)
+        target_dir = run_dir / "artifacts" / "arena"
+        filename = f"{safe_sample_id}_{safe_adapter_id}_game_log.json"
+        output_path = target_dir / filename
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("Failed to write game_log to {}: {}", output_path, exc)
+            return None
+        return output_path
+
+    @staticmethod
+    def _sanitize_filename(value: str) -> str:
+        sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
+        return sanitized or "unknown"
+
+    @staticmethod
+    def _read_int_env(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default
 
     def _ensure_visualizer(self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]):
         if self._shared_visualizer is not None:
@@ -578,7 +765,7 @@ class _VisualizedEnvironment:
                 reason = outcome.reason or "unknown"
                 status = f"Result: {outcome.result} Winner: {winner} Reason: {reason}"
             else:
-                status = f"Turn: {active_label} Last: {obs.last_move or 'none'}"
+                status = f"Turn: {active_label} Last: {obs.last_action or 'none'}"
             last_action_player = None
             last_action_raw = None
             last_action_move = None
@@ -587,9 +774,9 @@ class _VisualizedEnvironment:
                 last_action_raw = getattr(action, "raw", None)
                 last_action_move = getattr(action, "move", None)
             self._visualizer.update(
-                board_text=obs.board_text,
+                board_text=obs.view_text,
                 status_text=status,
-                last_move=obs.last_move,
+                last_move=obs.last_action,
                 winning_line=obs.metadata.get("winning_line"),
                 board_size=obs.metadata.get("board_size"),
                 coord_scheme=obs.metadata.get("coord_scheme"),

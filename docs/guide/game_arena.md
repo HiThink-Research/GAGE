@@ -154,6 +154,9 @@ role_adapters:
           ref: tictactoe_human
 ```
 
+Naming fallback:
+- If `player_names` is not provided, equals the raw `player_id`, or matches a generic `Player N` label, the arena will fall back to the player adapter id (`ref`) for display. This avoids UI labels like `player_0` or `Player 0` when a backend adapter is configured.
+
 Datasets for demos are stored under `tests/data/`:
 
 - `tests/data/Test_Gomoku_LiteLLM.jsonl`
@@ -198,7 +201,7 @@ Related tests:
 
 Prerequisites:
 - Node.js + npm
-- First time setup: `cd frontend/rlcard-showdown && npm install`
+- First time setup: `cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - Set API Key: `OPENAI_API_KEY` (or `LITELLM_API_KEY`)
 - Ensure `PYTHON_BIN` in `run_doudizhu_showdown` points to the correct environment
 
@@ -465,3 +468,62 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 2. Register environment, context, parser, and renderer to their registries.
 3. Add demo configs and tests under `config/custom/` and `tests/unit/`.
 4. Validate via `run.py` with a small `max_samples`.
+
+## 10. Mahjong quickstart (showdown)
+
+Prereqs:
+- Python deps installed (`pip install -r requirements.txt`)
+- Node.js + npm ready for frontend replay
+- Model keys configured (e.g. `OPENAI_API_KEY`)
+
+One-click scripts:
+```bash
+bash scripts/oneclick/run_mahjong_real_ai.sh
+```
+
+```bash
+bash scripts/oneclick/run_mahjong_showdown_human.sh
+```
+
+```bash
+bash scripts/oneclick/run_mahjong_showdown_human_dummy.sh
+```
+
+Replay server + game only (no frontend):
+```bash
+bash scripts/oneclick/run_mahjong_replay_and_game.sh
+```
+
+Endpoints:
+- Replay Server: `http://127.0.0.1:<replay_port>`
+- Frontend (AI mode): `http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=ai`
+- Frontend (Human mode): `http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=human&play=1&action_url=http%3A%2F%2F127.0.0.1%3A8004`
+
+URL params (Human/AI):
+- `replay_path`: replay filename (default `mahjong_replay.json`)
+- `mode`: `ai`/`human`
+- `play`: `1` to enable human mode
+- `action_url`: backend action endpoint (URL-encoded)
+
+Common env vars:
+- `OPENAI_API_KEY`
+
+## 11. PettingZoo Atari Support (22 Games)
+
+GAGE has integrated PettingZoo Atari environments, supporting 22 classic two-player games (e.g. Space Invaders, Pong, Boxing).
+
+### Core Features
+1.  **Multi-game Support**: Unified access to 22 games via the `pettingzoo_aec_v1` adapter.
+2.  **AI Control**: LLMs play blindly based on Text Observations.
+3.  **Auto Replay**: Provides a "Run & Replay" tool to visualize matches smoothly, bypassing LLM inference latency.
+
+### Quick Start
+Refer to the full user guide for detailed instructions:
+
+> 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide.md)**
+>
+> Includes:
+> *   Quick Start
+> *   Full Game List (22 Games)
+> *   Dummy/AI Modes
+> *   FAQ
