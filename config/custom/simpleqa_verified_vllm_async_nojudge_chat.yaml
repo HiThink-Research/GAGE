@@ -1,0 +1,72 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: simpleqa_verified_vllm_async_nojudge
+  description: Run SimpleQA Verified with vllm DUT and direct (non-judge) accuracy scoring.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_simpleqa_verified_vllm_qwen
+    - step: auto_eval
+
+datasets:
+  - dataset_id: simpleqa_verified_eval
+    hub: huggingface
+    hub_params:
+      hub_id: google/simpleqa-verified
+      split: eval
+    loader: hf_hub
+    params:
+      streaming: false
+      preprocess: simpleqa_verified
+      preprocess_kwargs:
+        system_prompt: >
+          You are a factual QA assistant. Answer with a short, direct answer only.
+          Do not add explanations. Do not guess. If you are not sure, say "I don't know".
+        # NOTE: `answer_type` will be appended per sample by the preprocessor.
+        instruction: >
+          Give the final answer only. No extra words, no punctuation beyond what is required.
+
+backends:
+  - backend_id: simpleqa_verified_vllm_backend
+    type: vllm
+    config:
+      model_path: ${SIMPLEQA_VERIFIED_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${SIMPLEQA_VERIFIED_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true
+      tensor_parallel_size: 1
+      max_tokens: 256
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.75
+      enforce_eager: false
+      async_max_concurrency: 32
+      output_type: text
+
+role_adapters:
+  - adapter_id: dut_simpleqa_verified_vllm_qwen
+    role_type: dut_model
+    backend_id: simpleqa_verified_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: simpleqa_verified_acc
+    implementation: simpleqa_verified_accuracy
+
+tasks:
+  - task_id: simpleqa_verified_eval
+    dataset_id: simpleqa_verified_eval
+    max_samples: 5
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/simpleqa_verified_nojudge_vllm_events.jsonl
+

@@ -75,6 +75,31 @@ except Exception as exc:  # pragma: no cover - optional dependency guard
     NewMMEPreprocessor = None
     warnings.warn(f"MME preprocessor unavailable: {exc}", RuntimeWarning)
 
+
+# benchmark SimpleQA Verified
+from gage_eval.assets.datasets.preprocessors.simpleqa_verified import SimpleQAVerifiedPreprocessor
+
+# benchmark ARC-AGI-2
+from gage_eval.assets.datasets.preprocessors.arcagi2 import ARCAGI2Preprocessor
+
+# benchmark ScreenSpot-Pro
+from gage_eval.assets.datasets.preprocessors.screespot_pro import ScreenSpotProPreprocessor
+from gage_eval.assets.datasets.preprocessors.charxiv import CharXivReasoningPreprocessor
+
+# benchmark LiveCodeBench
+from gage_eval.assets.datasets.preprocessors.live_code_bench.live_code_converter import LiveCodeBenchConverter
+
+# benchmark global piqa
+from gage_eval.assets.datasets.preprocessors.global_piqa.global_piqa_converter import GlobalPIQAConverter
+
+# benchmark BizFinBench V2
+from gage_eval.assets.datasets.preprocessors.biz_fin_bench_v2.biz_fin_bench_v2_converter import BizFinBenchV2Converter
+
+# benchmark MRCR
+from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConverter
+
+
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -304,21 +329,106 @@ class Math500PreprocessorProviderAlias(Math500Preprocessor):
     pass
 
 # benchmark MME
-if NewMMEPreprocessor is not None:
-    @registry.asset(
-        "dataset_preprocessors",
-        "mme",
-        desc="MME dataset preprocessing logic",
-        tags=("vision", "mme", "multi-modal"),
-    )
-    class MMEPreprocessorProvider(NewMMEPreprocessor):
-        pass
+@registry.asset(
+    "dataset_preprocessors",
+    "mme",
+    desc="MME dataset preprocessing logic",
+    tags=("vision", "mme", "multi-modal"),
+)
+class MMEPreprocessorProvider(MMEPreprocessor):
+    pass
 
-    @registry.asset(
-        "dataset_preprocessors",
-        "mme_preprocessor",
-        desc="MME dataset preprocessing logic (alias)",
-        tags=("vision", "mme", "multi-modal"),
-    )
-    class MMEPreprocessorProviderAlias(NewMMEPreprocessor):
-        pass
+
+@registry.asset(
+    "dataset_preprocessors",
+    "mme_preprocessor",
+    desc="MME dataset preprocessing logic (alias)",
+    tags=("vision", "mme", "multi-modal"),
+)
+class MMEPreprocessorProviderAlias(MMEPreprocessor):
+    pass
+
+
+# benchmark SimpleQA Verified
+@registry.asset(
+    "dataset_preprocessors",
+    "simpleqa_verified",
+    desc="SimpleQA Verified dataset preprocessing logic",
+    tags=("factuality", "simpleqa_verified", "question_answering"),
+)
+class SimpleQAVerifiedPreprocessorProvider(SimpleQAVerifiedPreprocessor):
+    pass
+
+
+# benchmark ARC-AGI-2
+@registry.asset(
+    "dataset_preprocessors",
+    "arcagi2",
+    desc="ARC-AGI-2 dataset preprocessing logic (visual abstraction and reasoning)",
+    tags=("vision", "arcagi2", "reasoning", "pattern-recognition"),
+)
+class ARCAGI2PreprocessorProvider(ARCAGI2Preprocessor):
+    pass
+
+# benchmark ScreenSpot-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "screenspot_pro",
+    desc="ScreenSpot-Pro dataset preprocessing logic",
+    tags=("vision", "screenspot-pro", "gui-grounding"),
+)
+class ScreenSpotProPreprocessorProvider(ScreenSpotProPreprocessor):
+    pass
+
+
+# benchmark CharXiv (reasoning)
+@registry.asset(
+    "dataset_preprocessors",
+    "charxiv_reasoning",
+    desc="CharXiv reasoning dataset preprocessing logic",
+    tags=("vision", "charxiv", "reasoning", "chart-understanding"),
+)
+class CharXivReasoningPreprocessorProvider(CharXivReasoningPreprocessor):
+    pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "live_code_bench_chat_preprocessor",
+    desc="Live Code Bench prompt wrapper",
+    tags=("prompt", "live code bench"),
+)
+class LiveCodeBenchPreprocessor(LiveCodeBenchConverter):
+    pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "global_piqa_chat_preprocessor",
+    desc="Global PIQA prompt wrapper",
+    tags=("prompt", "global PIQA"),
+)
+class GlobalPIQAPreprocessor(GlobalPIQAConverter):
+    pass
+
+# benchmark BizFinBench V2
+@registry.asset(
+    "dataset_preprocessors",
+    "bizfinbench_chat_preprocessor",
+    desc="BizFinBench V2 prompt wrapper",
+    tags=("prompt", "BizFinBench V2"),
+)
+class BizFinBenchV2Preprocessor(BizFinBenchV2Converter):
+    pass
+
+# benchmark MRCR
+@registry.asset(
+    "dataset_preprocessors",
+    "mrcr_chat_preprocessor",
+    desc="MRCR prompt wrapper",
+    tags=("prompt", "MRCR"),
+)
+class MRCRPreprocessor(MRCRConverter):
+    pass
+
+

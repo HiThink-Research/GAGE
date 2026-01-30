@@ -82,6 +82,18 @@ def parse_args() -> argparse.Namespace:
         help="Override task max_samples (>=0) and sets env GAGE_EVAL_MAX_SAMPLES.",
     )
     parser.add_argument(
+        "--metric-ids",
+        help=(
+            "Comma-separated metric_id allowlist. When set, only these metrics will be kept in the config "
+            "(useful for toggling judge vs non-judge scoring in a single PipelineConfig)."
+        ),
+    )
+    parser.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="Skip the judge step by removing it from custom.steps at runtime.",
+    )
+    parser.add_argument(
         "--distill",
         "-d",
         action="store_true",
@@ -124,6 +136,27 @@ def parse_args() -> argparse.Namespace:
     if args.init and args.distill:
         parser.error("--init and --distill cannot be used together.")
     return args
+
+
+def _apply_cli_metric_filter(payload: dict, metric_ids_csv: str) -> None:
+    """Filter payload metrics by metric_id (in-place)."""
+    wanted = {m.strip() for m in (metric_ids_csv or "").split(",") if m.strip()}
+    if not wanted:
+        return
+    metrics = payload.get("metrics") or []
+    if isinstance(metrics, list):
+        payload["metrics"] = [m for m in metrics if isinstance(m, dict) and m.get("metric_id") in wanted]
+
+
+def _apply_cli_skip_judge(payload: dict) -> None:
+    """Remove judge step from payload custom.steps (in-place)."""
+    custom = payload.get("custom")
+    if not isinstance(custom, dict):
+        return
+    steps = custom.get("steps")
+    if not isinstance(steps, list):
+        return
+    custom["steps"] = [s for s in steps if not (isinstance(s, dict) and s.get("step") == "judge")]
 
 
 def _normalize_version_tag(version: str) -> str:
@@ -1177,11 +1210,19 @@ def main() -> None:
             sys.exit(1)
         if args.max_samples is not None:
             _apply_cli_max_samples_override(compiled_payload, args.max_samples)
+        if args.metric_ids:
+            _apply_cli_metric_filter(compiled_payload, args.metric_ids)
+        if args.skip_judge:
+            _apply_cli_skip_judge(compiled_payload)
         config = PipelineConfig.from_dict(compiled_payload)
         config_source_desc = f"{args.config} (template: {template_path})"
     else:
         if args.max_samples is not None:
             _apply_cli_max_samples_override(config_payload, args.max_samples)
+        if args.metric_ids:
+            _apply_cli_metric_filter(config_payload, args.metric_ids)
+        if args.skip_judge:
+            _apply_cli_skip_judge(config_payload)
         config = PipelineConfig.from_dict(config_payload)
 
     registry = build_default_registry()

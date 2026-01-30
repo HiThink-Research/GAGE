@@ -163,6 +163,10 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         sampling_base = build_sampling_params_base(
             self._default_sampling, prepared.get("sampling_params") or {}, max_tokens=self._max_tokens
         )
+        sample_n_override = _resolve_sample_n_override(sampling_base)
+        if sample_n_override is not None and int(prepared.get("sample_n") or 1) <= 1:
+            prepared["sample_n"] = sample_n_override
+        sampling_base = _strip_sample_n_params(sampling_base)
         sampling = build_sampling_params(
             ctx.output_type,
             sampling_base,
@@ -708,3 +712,21 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
 
     def _load_multimodal_payload(self, mm: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return load_multimodal_payload(mm, getattr(self, "_processor", None), logger_prefix="vllm_backend")
+
+
+def _resolve_sample_n_override(sampling_base: Dict[str, Any]) -> Optional[int]:
+    candidate = sampling_base.get("n") or sampling_base.get("num_samples")
+    if candidate is None:
+        return None
+    try:
+        value = int(candidate)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 1 else None
+
+
+def _strip_sample_n_params(sampling_base: Dict[str, Any]) -> Dict[str, Any]:
+    stripped = dict(sampling_base)
+    stripped.pop("n", None)
+    stripped.pop("num_samples", None)
+    return stripped

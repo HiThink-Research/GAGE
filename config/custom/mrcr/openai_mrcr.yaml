@@ -1,0 +1,75 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: openai_mrcr
+  description: openai_mrcr
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: openai_mrcr_ds
+    hub: huggingface
+    hub_params:
+      hub_id: openai/mrcr
+      split: train
+    loader: openai_mrcr_loader
+    params:
+      needle_type: 2needle
+      max_content_window: 32768 # 131072
+      tokenizer_type: not_local
+      #tokenizer_name_or_path: /mnt/model/qwen2_5_05B
+      tokenizer_name_or_path: o200k_base
+      limit: 100
+      #local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/mrcr
+      preprocess: mrcr_chat_preprocessor
+backends:
+  - backend_id: mrcr_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_5_05B
+      tokenizer_path: /mnt/model/qwen2_5_05B
+      force_tokenize_prompt: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 8192
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
+  - backend_id: mrcr_litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 4096
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+role_adapters:
+  - adapter_id: dut_mmlu_pro_vllm_qwen
+    role_type: dut_model
+    backend_id: mrcr_litellm_backend
+    #backend_id: mrcr_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: mrcr_grade
+    implementation: mrcr_grade
+tasks:
+  - task_id: openai_mrcr_eval
+    dataset_id: openai_mrcr_ds
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/openai_mrcr.jsonl
