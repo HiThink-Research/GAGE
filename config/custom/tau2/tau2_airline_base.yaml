@@ -1,0 +1,152 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: tau2_airline_base
+  description: Tau2 airline base split (local runtime)
+
+custom:
+  steps:
+    - step: support
+      adapter_id: tau2_bootstrap
+    - step: support
+      adapter_id: tau2_toolchain
+    - step: inference
+      adapter_id: tau2_agent
+    - step: judge
+      adapter_id: tau2_judge
+    - step: auto_eval
+
+prompts:
+  - prompt_id: dut/tau2@v1
+    renderer: jinja_chat
+    template: |
+      <instructions>
+      {{ sample.metadata.tau2.agent_instruction }}
+      {{ sample.metadata.tau2.gage_instruction }}
+      </instructions>
+      <policy>
+      {{ sample.metadata.tau2.policy }}
+      </policy>
+    params:
+      role: system
+      include_existing: true
+
+datasets:
+  - dataset_id: tau2_airline_base
+    loader: tau2_tasks
+    params:
+      domain: airline
+      task_split: base
+      num_tasks: 1
+      num_trials: 4
+      seed: ${TAU2_SEED:-300}
+      hub_id: HuggingFaceH4/tau2-bench-data
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      preprocess: tau2_preprocessor
+
+backends:
+  - backend_id: tau2_openai_http
+    type: openai_http
+    config:
+      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
+      require_api_key: true
+      max_retries: 6
+      generation_parameters:
+        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+
+agent_backends:
+  - agent_backend_id: tau2_agent_backend
+    type: model_backend
+    backend_id: tau2_openai_http
+    config:
+      force_tool_choice: first_turn
+
+sandbox_profiles:
+  - sandbox_id: tau2_local
+    runtime: tau2
+    runtime_configs:
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      max_steps: ${TAU2_MAX_STEPS:-200}
+      max_errors: ${TAU2_MAX_ERRORS:-10}
+      respond_tool_name: respond
+      user_model: ${TAU2_USER_MODEL:-gpt-4.1}
+      user_model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+
+role_adapters:
+  - adapter_id: tau2_bootstrap
+    role_type: context_provider
+    params:
+      implementation: tau2_bootstrap
+
+  - adapter_id: tau2_toolchain
+    role_type: toolchain
+    params:
+      tools:
+        - type: function
+          function:
+            name: respond
+            description: Send a message to the user and receive the user's reply.
+            parameters:
+              type: object
+              properties:
+                message:
+                  type: string
+                  description: Message text to send to the user.
+              required:
+                - message
+          x-gage:
+            final_answer_from: final_answer
+
+  - adapter_id: tau2_agent
+    role_type: dut_agent
+    agent_backend_id: tau2_agent_backend
+    prompt_id: dut/tau2@v1
+    sandbox:
+      sandbox_id: tau2_local
+      lifecycle: per_sample
+    params:
+      max_turns: ${TAU2_MAX_TURNS:-200}
+
+  - adapter_id: tau2_judge
+    role_type: judge_extend
+    params:
+      implementation: tau2_eval
+
+metrics:
+  - metric_id: tau2_reward
+    implementation: tau2_reward
+  - metric_id: tau2_pass
+    implementation: tau2_pass
+  - metric_id: tau2_pass_hat_k
+    implementation: tau2_pass_hat_k
+    aggregation: tau2_pass_hat
+  - metric_id: tau2_agent_cost
+    implementation: tau2_agent_cost
+  - metric_id: tau2_user_cost
+    implementation: tau2_user_cost
+
+summary_generators:
+  - tau2_summary
+
+tasks:
+  - task_id: tau2_airline_base
+    dataset_id: tau2_airline_base
+    steps:
+      - step: support
+        adapter_id: tau2_bootstrap
+      - step: support
+        adapter_id: tau2_toolchain
+      - step: inference
+        adapter_id: tau2_agent
+      - step: judge
+        adapter_id: tau2_judge
+      - step: auto_eval
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_airline_base_summary.json

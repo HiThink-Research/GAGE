@@ -17,6 +17,7 @@ from gage_eval.sandbox.local_runtime import LocalSubprocessSandbox
 from gage_eval.sandbox.opensandbox_runtime import OpenSandbox
 from gage_eval.sandbox.pool import SandboxPool
 from gage_eval.sandbox.remote_runtime import RemoteSandbox
+from gage_eval.sandbox.tau2_runtime import Tau2Runtime
 
 
 @dataclass
@@ -42,6 +43,7 @@ class SandboxManager:
             "appworld": AppWorldRuntime,
             "llm": LlmSandbox,
             "opensandbox": OpenSandbox,
+            "tau2": Tau2Runtime,
         }
         self._pools: Dict[str, SandboxPool] = {}
         self._active: Dict[int, BaseSandbox] = {}

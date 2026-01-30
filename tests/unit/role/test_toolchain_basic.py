@@ -21,3 +21,22 @@ def test_toolchain_passthrough_schema():
     names = [tool["function"]["name"] for tool in result["tools_schema"]]
     assert "default_tool" in names
     assert "sample_tool" in names
+
+
+@pytest.mark.fast
+def test_toolchain_preserves_x_gage_metadata():
+    adapter = ToolchainAdapter(
+        adapter_id="toolchain_main",
+        tools=[
+            {
+                "name": "submit_patch_tool",
+                "parameters": {"type": "object", "properties": {}},
+                "x-gage": {"final_answer_from": "stdout"},
+            }
+        ],
+    )
+    payload = {"sample": {}}
+    result = asyncio.run(adapter.ainvoke(payload, RoleAdapterState()))
+
+    tool = next(entry for entry in result["tools_schema"] if entry["function"]["name"] == "submit_patch_tool")
+    assert tool.get("x-gage", {}).get("final_answer_from") == "stdout"

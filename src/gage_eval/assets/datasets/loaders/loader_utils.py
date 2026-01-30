@@ -162,12 +162,8 @@ def apply_bundle(
 ) -> Iterable[Dict[str, Any]]:
     config = observability_config or get_observability_config()
     ctx = build_bundle_context(spec, data_path=data_path)
-    # NOTE: If no explicit preprocess is configured, fall back to DefaultPreprocessor
-    # (llm-eval compatible defaults + fallback prompt templating).
     if not ctx:
-        def default_generator():
-            for record in records:
-                yield record
+        return records
 
     def generator():
         for record in records:
@@ -353,4 +349,3 @@ def _validate_doc_to_signature(func: Callable[..., Any], field: str, provided_kw
         raise TypeError(
             f"doc_to field '{field}' requires keyword arguments {missing}; provide them via {field}_kwargs"
         )
-

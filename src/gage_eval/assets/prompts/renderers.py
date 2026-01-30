@@ -174,9 +174,19 @@ class JinjaChatPromptRenderer(PromptRenderer):
         return PromptRenderResult(messages=messages)
 
 
+def _split_prompt(prompt: str, delimiter: str) -> List[str]:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return []
+    pattern = rf"^\s*{re.escape(delimiter)}\s*$"
+    return [part.strip() for part in re.split(pattern, prompt, flags=re.MULTILINE) if part.strip()]
+
+
 def _load_delimited_prompt_messages(
     prompt: str,
     *,
+    message_delimiter: str = "---",
+    section_delimiter: str = "===",
     skip_system_message: bool = False,
     only_header: bool = False,
     only_body: bool = False,
@@ -187,13 +197,13 @@ def _load_delimited_prompt_messages(
         raise ValueError("only_header and only_body cannot be both True.")
     prompt = (prompt or "").strip()
     if only_header or only_body:
-        prompt_parts = [part.strip() for part in re.split(r"===+", prompt)]
+        prompt_parts = _split_prompt(prompt, section_delimiter)
         if len(prompt_parts) != 2:
             raise ValueError(
                 f"Invalid delimited prompt. Expected 2 parts for header and body, found {len(prompt_parts)}."
             )
         prompt = prompt_parts[0] if only_header else prompt_parts[1]
-    message_contents = [part.strip() for part in re.split(r"---+", prompt) if part.strip()]
+    message_contents = _split_prompt(prompt, message_delimiter)
     messages: List[Dict[str, str]] = []
     if not skip_system_message:
         if not message_contents:
@@ -222,6 +232,8 @@ class JinjaDelimitedChatPromptRenderer(PromptRenderer):
         *,
         mode: str = "full",
         include_system: bool = True,
+        message_delimiter: str = "---",
+        section_delimiter: str = "===",
     ) -> None:
         try:
             from jinja2 import Environment, StrictUndefined
@@ -235,6 +247,8 @@ class JinjaDelimitedChatPromptRenderer(PromptRenderer):
         self._defaults = variables or {}
         self._mode = str(mode or "full")
         self._include_system = bool(include_system)
+        self._message_delimiter = str(message_delimiter or "---")
+        self._section_delimiter = str(section_delimiter or "===")
 
     def render(self, context: PromptContext) -> PromptRenderResult:
         mapping = context.to_mapping()
@@ -245,12 +259,16 @@ class JinjaDelimitedChatPromptRenderer(PromptRenderer):
                 prompt,
                 skip_system_message=not self._include_system,
                 only_header=True,
+                message_delimiter=self._message_delimiter,
+                section_delimiter=self._section_delimiter,
             )
             body_messages = _load_delimited_prompt_messages(
                 prompt,
                 skip_system_message=True,
                 only_body=True,
                 end_at=1,
+                message_delimiter=self._message_delimiter,
+                section_delimiter=self._section_delimiter,
             )
             return PromptRenderResult(messages=header_messages + body_messages)
         if self._mode == "header":
@@ -258,6 +276,8 @@ class JinjaDelimitedChatPromptRenderer(PromptRenderer):
                 prompt,
                 skip_system_message=not self._include_system,
                 only_header=True,
+                message_delimiter=self._message_delimiter,
+                section_delimiter=self._section_delimiter,
             )
             return PromptRenderResult(messages=messages)
         if self._mode == "body":
@@ -265,10 +285,14 @@ class JinjaDelimitedChatPromptRenderer(PromptRenderer):
                 prompt,
                 skip_system_message=not self._include_system,
                 only_body=True,
+                message_delimiter=self._message_delimiter,
+                section_delimiter=self._section_delimiter,
             )
             return PromptRenderResult(messages=messages)
         messages = _load_delimited_prompt_messages(
             prompt,
             skip_system_message=not self._include_system,
+            message_delimiter=self._message_delimiter,
+            section_delimiter=self._section_delimiter,
         )
         return PromptRenderResult(messages=messages)

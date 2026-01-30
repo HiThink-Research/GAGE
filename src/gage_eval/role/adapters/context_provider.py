@@ -28,10 +28,18 @@ class ContextProviderAdapter(RoleAdapter):
         role_type: str = "context_provider",
         mcp_client_id: Optional[str] = None,
         mcp_client: Optional[Any] = None,
+        resource_requirement: Optional[Dict[str, Any]] = None,
+        sandbox_config: Optional[Dict[str, Any]] = None,
         **_,
     ) -> None:
         resolved_caps = tuple(capabilities) if capabilities else ("text",)
-        super().__init__(adapter_id=adapter_id, role_type=role_type, capabilities=resolved_caps)
+        super().__init__(
+            adapter_id=adapter_id,
+            role_type=role_type,
+            capabilities=resolved_caps,
+            resource_requirement=resource_requirement,
+            sandbox_config=sandbox_config,
+        )
         if not implementation:
             raise ValueError("ContextProviderAdapter requires non-empty implementation")
         self._implementation = implementation

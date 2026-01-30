@@ -18,7 +18,10 @@ def test_appworld_preprocessor_builds_sample() -> None:
     assert sample.metadata["appworld"]["task_id"] == "calendar_001"
     assert sample.metadata["appworld"]["subset"] == "dev"
     assert sample.metadata["appworld"]["ground_truth_mode"] == "full"
-    assert sample.metadata["appworld"]["allowed_apps"] == ["calendar"]
+    allowed_apps = sample.metadata["appworld"]["allowed_apps"]
+    assert "calendar" in allowed_apps
+    assert "api_docs" in allowed_apps
+    assert "supervisor" in allowed_apps
     assert sample.metadata["appworld"]["experiment_name"] == "appworld_dev"
     assert sample.messages[0].content[0].text == "Create an event"
 

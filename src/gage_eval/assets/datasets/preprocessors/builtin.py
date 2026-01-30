@@ -27,6 +27,7 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
     GpqaStructOnlyPreprocessor as NewGpqaStructOnly,
 )
 from gage_eval.assets.datasets.preprocessors.appworld_preprocessor import AppWorldPreprocessor as NewAppWorld
+from gage_eval.assets.datasets.preprocessors.tau2_preprocessor import Tau2Preprocessor as NewTau2
 from gage_eval.registry import registry
 
 # benchmark GPQA-diamond
@@ -145,6 +146,30 @@ class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
 )
 class AppWorldPreprocessor(NewAppWorld):
     """Standardize AppWorld JSONL records into the Sample schema."""
+
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "swebench_pro_standardizer",
+    desc="SWE-bench Pro preprocessor (prompt + sandbox metadata)",
+    tags=("swebench", "agent"),
+)
+class SwebenchProStandardizer(NewSwebenchPro):
+    """Standardize SWE-bench Pro records into the Sample schema."""
+
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "tau2_preprocessor",
+    desc="Tau2 task preprocessor (task metadata + Sample envelope)",
+    tags=("tau2", "agent"),
+)
+class Tau2Preprocessor(NewTau2):
+    """Standardize Tau2 task records into the Sample schema."""
 
     pass
 

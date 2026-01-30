@@ -11,6 +11,7 @@ from gage_eval.sandbox.opensandbox_runtime import OpenSandbox
 from gage_eval.sandbox.pool import SandboxPool
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 from gage_eval.sandbox.remote_runtime import RemoteSandbox
+from gage_eval.sandbox.tau2_runtime import Tau2Runtime
 
 __all__ = [
     "BaseSandbox",
@@ -24,6 +25,7 @@ __all__ = [
     "AppWorldRuntime",
     "LlmSandbox",
     "OpenSandbox",
+    "Tau2Runtime",
     "SandboxHandle",
     "SandboxManager",
     "SandboxPool",
