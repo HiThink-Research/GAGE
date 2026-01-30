@@ -1,0 +1,63 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: arcagi2_vllm_async
+  description: 使用 vllm_backend 运行 ARC-AGI-2 测试集评测 (visual abstraction and reasoning benchmark)。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: arcagi2_evaluation
+    hub: inline
+    loader: arcagi2
+    params:
+      path: ${ARCAGI2_DATA_PATH:-/mnt/aime_data_ssd/user_workspace/zhangyiwei2/GAGE/ARC-AGI-2/data/evaluation}
+      preprocess: arcagi2
+      preprocess_kwargs:
+        # system_prompt: "You are an AI assistant specialized in visual pattern recognition and abstract reasoning."
+        # instruction: "Provide your answer as a 2D JSON array of integers (0-9). Do not include any other text or formatting."
+
+backends:
+  - backend_id: arcagi2_vllm_backend
+    type: vllm
+    config:
+      model_path: ${ARCAGI2_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${ARCAGI2_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true
+      tensor_parallel_size: 1
+      max_tokens: 4096
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 8192
+      gpu_memory_utilization: 0.75
+      enforce_eager: false
+      async_max_concurrency: 32
+      output_type: text
+
+role_adapters:
+  - adapter_id: dut_arcagi2_vllm_qwen
+    role_type: dut_model
+    backend_id: arcagi2_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: arcagi2_accuracy
+    implementation: arcagi2_accuracy
+
+tasks:
+  - task_id: arcagi2_eval_eval
+    dataset_id: arcagi2_evaluation
+    max_samples: 5
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/arcagi2_vllm_events.jsonl

@@ -181,10 +181,13 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
         params = dict(self.default_params)
         params.update(sample.get("sampling_params") or {})
         params.update(payload.get("sampling_params") or {})
+        max_completion_tokens = params.get("max_completion_tokens")
+        max_tokens = params.get("max_new_tokens") or params.get("max_tokens")
         mapped = {
             "temperature": params.get("temperature"),
             "top_p": params.get("top_p"),
-            "max_tokens": params.get("max_new_tokens") or params.get("max_tokens"),
+            "max_tokens": None if max_completion_tokens is not None else max_tokens,
+            "max_completion_tokens": max_completion_tokens,
             "presence_penalty": params.get("presence_penalty"),
             "frequency_penalty": params.get("frequency_penalty"),
             "stop": params.get("stop"),

@@ -14,3 +14,5 @@ class DummyBackendConfig(BackendConfigBase):
     cycle: bool = Field(default=True, description="耗尽后是否循环使用 responses")
     echo_prompt: bool = Field(default=False, description="若无预设响应时是否回显 prompt")
     metadata: Optional[dict] = Field(default=None, description="写回到结果中的 metadata")
+    random: bool = Field(default=False, description="随机选择 responses 中的文本")
+    seed: Optional[int] = Field(default=None, description="随机模式的固定种子（可复现）")

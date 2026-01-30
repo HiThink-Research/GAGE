@@ -1,0 +1,86 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: pettingzoo_double_dunk_ai_demo
+  description: PettingZoo Atari double_dunk demo (LLM vs LLM).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: pettingzoo_double_dunk_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: pettingzoo_double_dunk_demo
+    loader: jsonl
+    params:
+      path: tests/data/pettingzoo_atari_demo.jsonl
+      streaming: false
+
+backends:
+  - backend_id: pz_openai_http
+    type: openai_http
+    config:
+      base_url: https://api.openai.com/v1
+      model: gpt-4o-mini
+      require_api_key: true
+      default_params:
+        temperature: 0.2
+        max_tokens: 64
+
+role_adapters:
+  - adapter_id: pz_openai_player_0
+    role_type: dut_model
+    backend_id: pz_openai_http
+    capabilities: [chat_completion]
+  - adapter_id: pz_openai_player_1
+    role_type: dut_model
+    backend_id: pz_openai_http
+    capabilities: [chat_completion]
+
+  - adapter_id: pettingzoo_double_dunk_arena
+    role_type: arena
+    params:
+      # action_labels are now automatically resolved from env_id via constants.py
+      environment:
+        impl: pettingzoo_aec_v1
+        env_id: pettingzoo.atari.double_dunk_v3
+        env_kwargs:
+          render_mode: human
+          max_cycles: 300
+        seed: 1234
+        include_raw_obs: false
+        use_action_meanings: true
+      rules:
+        illegal_policy:
+          retry: 1
+          on_fail: loss
+      scheduler:
+        type: turn
+        max_turns: 300
+      parser:
+        impl: discrete_action_parser_v1
+      players:
+        - name: player_0
+          player_id: player_0
+          type: backend
+          ref: pz_openai_player_0
+          max_retries: 1
+          fallback_policy: first_legal
+        - name: player_1
+          player_id: player_1
+          type: backend
+          ref: pz_openai_player_1
+          max_retries: 1
+          fallback_policy: first_legal
+
+
+tasks:
+  - task_id: pettingzoo_double_dunk_ai
+    dataset_id: pettingzoo_double_dunk_demo
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console

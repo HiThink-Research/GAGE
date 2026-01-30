@@ -163,7 +163,10 @@ def apply_bundle(
     config = observability_config or get_observability_config()
     ctx = build_bundle_context(spec, data_path=data_path)
     if not ctx:
-        return records
+        def default_generator():
+            for record in records:
+                yield record
+        return default_generator()
 
     def generator():
         for record in records:
