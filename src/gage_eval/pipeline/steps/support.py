@@ -67,6 +67,7 @@ class SupportStep(SampleStep):
                 output = role.invoke(payload, trace) if role else {}
                 sample.setdefault("support_outputs", []).append(output)
                 _emit_tool_doc_metrics(trace, adapter_id, sample, output)
+                _emit_observability_events(trace, sample, output)
                 logger.trace("Support step output appended keys={}", list(output.keys()))
         trace.emit("support_end", payload={"step": _serialize_step(step)})
         logger.debug("Support step end adapter_id={}", adapter_id)
@@ -93,3 +94,20 @@ def _emit_tool_doc_metrics(trace: ObservabilityTrace, adapter_id: Optional[str],
         payload.setdefault("adapter_id", adapter_id)
     sample_id = sample.get("id") if isinstance(sample, dict) else None
     trace.emit_tool_documentation(payload, sample_id=sample_id)
+
+
+def _emit_observability_events(trace: ObservabilityTrace, sample: dict, output: dict) -> None:
+    if not isinstance(output, dict):
+        return
+    events = output.get("observability_events")
+    if not isinstance(events, list):
+        return
+    sample_id = sample.get("id") if isinstance(sample, dict) else None
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("event")
+        payload = item.get("payload")
+        if not name or not isinstance(payload, dict):
+            continue
+        trace.emit(str(name), payload, sample_id=sample_id)

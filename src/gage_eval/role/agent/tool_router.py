@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import shlex
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -62,6 +64,9 @@ class ToolRouter:
             "status": status,
             "latency_ms": latency_ms,
         }
+        final_answer = _resolve_final_answer(result["output"], metadata)
+        if status == "success" and final_answer:
+            result["final_answer"] = final_answer
         if resolved_tool:
             result["resolved_tool"] = resolved_tool
         return result
@@ -95,7 +100,11 @@ class ToolRouter:
         exec_tool = getattr(sandbox, "exec_tool", None)
         if callable(exec_tool):
             return exec_tool(name, arguments)
-        payload = json.dumps({"tool": name, "arguments": arguments}, ensure_ascii=True)
+        normalized = _normalize_tool_arguments(arguments)
+        builtin = _execute_builtin_tool(name, normalized, sandbox, self._default_timeout_s)
+        if builtin is not None:
+            return builtin
+        payload = json.dumps({"tool": name, "arguments": normalized}, ensure_ascii=True)
         return sandbox.exec(payload, timeout=self._default_timeout_s)
 
     def _execute_meta_tool(
@@ -153,6 +162,20 @@ def _normalize_output(output: Any) -> Dict[str, Any]:
     if isinstance(output, dict):
         return dict(output)
     return serialize_exec_result(output)
+
+
+def _normalize_tool_arguments(arguments: Any) -> Dict[str, Any]:
+    if arguments is None:
+        return {}
+    if isinstance(arguments, str):
+        parsed = _try_parse_json(arguments)
+        if parsed is not None:
+            arguments = parsed
+        else:
+            return {"value": arguments}
+    if isinstance(arguments, dict):
+        return _unwrap_tool_arguments(arguments)
+    return {"value": arguments}
 
 
 def _resolve_tool_metadata(
@@ -218,3 +241,233 @@ def _extract_meta_tool_params(arguments: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in flattened.items():
         params.setdefault(key, value)
     return params
+
+
+def _unwrap_tool_arguments(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    current = dict(arguments)
+    for _ in range(3):
+        wrapped = _extract_wrapped_args(current)
+        if wrapped is None:
+            break
+        current = wrapped
+    return current
+
+
+def _extract_wrapped_args(arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    for key in ("arguments", "input", "payload"):
+        inner = arguments.get(key)
+        if isinstance(inner, dict) and _has_known_arg_keys(inner):
+            return inner
+        if isinstance(inner, dict) and len(arguments) == 1:
+            return inner
+    return None
+
+
+def _has_known_arg_keys(arguments: Dict[str, Any]) -> bool:
+    known = {
+        "command",
+        "cmd",
+        "path",
+        "content",
+        "pattern",
+        "replacement",
+        "timeout_s",
+        "timeout",
+        "count",
+    }
+    return any(key in arguments for key in known)
+
+
+def _execute_builtin_tool(
+    name: str,
+    arguments: Dict[str, Any],
+    sandbox: BaseSandbox,
+    default_timeout_s: int,
+) -> Optional[Any]:
+    if name == "run_shell":
+        command = _coerce_string(arguments, ("command", "cmd"))
+        if not command:
+            raise RuntimeError("command_missing")
+        timeout = _coerce_timeout(arguments.get("timeout_s") or arguments.get("timeout"), default_timeout_s)
+        return sandbox.exec(command, timeout=timeout)
+    if name == "read_file":
+        path = _coerce_string(arguments, ("path",))
+        if not path:
+            raise RuntimeError("path_missing")
+        reader = getattr(sandbox, "read_file", None)
+        if callable(reader):
+            try:
+                content = reader(path)
+                return {"content": _decode_bytes(content)}
+            except Exception:
+                pass
+        result = sandbox.exec(f"cat {shlex.quote(path)}", timeout=default_timeout_s)
+        if getattr(result, "exit_code", 1) != 0:
+            raise RuntimeError("read_file_failed")
+        return {"content": str(getattr(result, "stdout", ""))}
+    if name == "write_file":
+        path = _coerce_string(arguments, ("path",))
+        if not path:
+            raise RuntimeError("path_missing")
+        content = _coerce_string(arguments, ("content",))
+        writer = getattr(sandbox, "write_file", None)
+        if callable(writer):
+            try:
+                writer(path, content.encode("utf-8"))
+                return {"status": "ok"}
+            except Exception:
+                pass
+        command = _build_write_command(path, content)
+        return sandbox.exec(command, timeout=default_timeout_s)
+    if name == "replace_in_file":
+        path = _coerce_string(arguments, ("path",))
+        pattern = _coerce_string(arguments, ("pattern",))
+        replacement = _coerce_string(arguments, ("replacement",))
+        if not path or not pattern:
+            raise RuntimeError("replace_in_file_missing_args")
+        count = _coerce_optional_int(arguments.get("count"))
+        command = _build_replace_command(path, pattern, replacement, count)
+        return sandbox.exec(command, timeout=default_timeout_s)
+    if name == "submit_patch_tool":
+        timeout = _coerce_timeout(arguments.get("timeout_s") or arguments.get("timeout"), default_timeout_s)
+        stage_untracked = _coerce_bool(_first_present(arguments, ("stage_untracked", "intent_to_add", "git_add")))
+        if stage_untracked:
+            _try_intent_to_add(sandbox, timeout)
+        result = sandbox.exec("git diff", timeout=timeout)
+        _write_submission_patch(sandbox, getattr(result, "stdout", ""))
+        return result
+    return None
+
+
+def _coerce_timeout(value: Any, default: int) -> int:
+    coerced = _coerce_optional_int(value)
+    if coerced is None:
+        return int(default)
+    return max(1, coerced)
+
+
+def _coerce_bool(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_present(arguments: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in arguments:
+            return arguments.get(key)
+    return None
+
+
+def _coerce_string(arguments: Dict[str, Any], keys: Tuple[str, ...]) -> str:
+    for key in keys:
+        value = arguments.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _decode_bytes(value: Any) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _resolve_final_answer(output: Dict[str, Any], metadata: Dict[str, Any]) -> str:
+    if not metadata:
+        return ""
+    spec = metadata.get("final_answer_from") or metadata.get("final_answer_key")
+    if not spec:
+        return ""
+    keys: list[str] = []
+    if isinstance(spec, str):
+        keys = [spec]
+    elif isinstance(spec, list):
+        keys = [str(item) for item in spec if item is not None]
+    for key in keys:
+        value = _extract_output_value(output, key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
+def _extract_output_value(output: Dict[str, Any], key: str) -> Any:
+    if key in output:
+        return output.get(key)
+    nested = output.get("output")
+    if isinstance(nested, dict):
+        return nested.get(key)
+    return None
+
+
+def _build_write_command(path: str, content: str) -> str:
+    b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    return (
+        "python - <<'PY'\n"
+        "import base64\n"
+        "from pathlib import Path\n"
+        f"path = {path!r}\n"
+        f"data = base64.b64decode({b64!r})\n"
+        "target = Path(path)\n"
+        "target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "target.write_bytes(data)\n"
+        "PY\n"
+    )
+
+
+def _build_replace_command(path: str, pattern: str, replacement: str, count: Optional[int]) -> str:
+    replace_count = 0 if count is None else max(0, int(count))
+    return (
+        "python - <<'PY'\n"
+        "import re\n"
+        "from pathlib import Path\n"
+        f"path = {path!r}\n"
+        f"pattern = {pattern!r}\n"
+        f"replacement = {replacement!r}\n"
+        f"count = {replace_count}\n"
+        "target = Path(path)\n"
+        "text = target.read_text(encoding='utf-8', errors='replace')\n"
+        "updated, _ = re.subn(pattern, replacement, text, count=count)\n"
+        "target.write_text(updated, encoding='utf-8')\n"
+        "PY\n"
+    )
+
+
+def _try_intent_to_add(sandbox: BaseSandbox, timeout: int) -> None:
+    try:
+        sandbox.exec("git add -N -- .", timeout=timeout)
+    except Exception:
+        return
+
+
+def _write_submission_patch(sandbox: BaseSandbox, content: Any) -> None:
+    if not content:
+        return
+    payload = str(content)
+    writer = getattr(sandbox, "write_file", None)
+    if callable(writer):
+        try:
+            writer("/workspace/submission.patch", payload.encode("utf-8"))
+            return
+        except Exception:
+            pass
+    try:
+        command = _build_write_command("/workspace/submission.patch", payload)
+        sandbox.exec(command, timeout=30)
+    except Exception:
+        return

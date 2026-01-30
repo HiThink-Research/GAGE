@@ -1,0 +1,66 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: screenspot_pro_vllm_async
+  description: 使用 vllm_backend 运行 ScreenSpot-Pro (GUI Grounding) 测试集评测。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: screenspot_pro_test
+    hub: huggingface
+    hub_params:
+      hub_id: lmms-lab/ScreenSpot-Pro
+      split: train
+    loader: hf_hub
+    params:
+      streaming: true
+      bundle: screenspot_pro
+      preprocess: screenspot_pro
+      preprocess_kwargs:
+        pre_encode_images: true
+
+backends:
+  - backend_id: screenspot_pro_vllm_backend
+    type: vllm
+    config:
+      # 需使用具备视觉能力的权重；默认指向本机已存在的模型目录
+      model_path: /mnt/model/qwen2_5_vl_3b
+      tokenizer_path: /mnt/model/qwen2_5_vl_3b
+      force_tokenize_prompt: true
+      tensor_parallel_size: 1
+      max_tokens: 128
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 4096
+      gpu_memory_utilization: 0.95
+      async_max_concurrency: 8
+      output_type: text
+
+role_adapters:
+  - adapter_id: dut_screenspot_pro_vllm_qwen
+    role_type: dut_model
+    backend_id: screenspot_pro_vllm_backend
+    capabilities:
+      - chat_completion
+      - multimodal_chat_completion
+
+metrics:
+  - metric_id: screenspot_pro_acc
+    implementation: screenspot_point_in_bbox
+    aggregation: mean
+
+tasks:
+  - task_id: screenspot_pro_test_eval
+    dataset_id: screenspot_pro_test
+    max_samples: 6
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/screenspot_pro_vllm_events.jsonl

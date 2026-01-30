@@ -50,7 +50,7 @@ class HumanPlayer:
         with self._role_manager.borrow_role(self._adapter_id) as role:
             output = role.invoke(payload, self._trace) if role else {}
         raw_text = _extract_text(output)
-        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_moves)
+        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
         metadata = self._build_action_metadata(parse_result)
@@ -67,9 +67,9 @@ class HumanPlayer:
         active_player = _format_player_label(observation, observation.active_player)
         lines = [
             f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_move or 'First move'}",
+            f"Opponent last move: {observation.last_action or 'First move'}",
             "\nBoard:",
-            observation.board_text,
+            observation.view_text,
             "\nInstructions:",
             "- Enter a single coordinate (e.g. 'H8').",
             "- Win by 5 in a row. Overlines allowed.",

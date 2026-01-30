@@ -89,50 +89,20 @@ role_adapters:
     role_type: toolchain
     mcp_client_id: appworld_env
     params:
-      # Restrict tools to stable prefixes/allowlist for repeatable evals.
-      tool_prefixes:
-        - supervisor
-        - spotify
-      tool_allowlist:
-        - phone__show_account
-        - phone__login
-        - phone__logout
-        - phone__show_profile
-        - phone__show_text_message_window
-        - phone__search_text_messages
-        - phone__show_text_message
-        - phone__send_text_message
-        - phone__show_voice_message_window
-        - phone__search_voice_messages
-        - phone__show_voice_message
-        - phone__get_current_date_and_time
-        - file_system__show_account
-        - file_system__login
-        - file_system__logout
-        - file_system__show_profile
-        - file_system__show_directory
-        - file_system__directory_exists
-        - file_system__show_file
-        - file_system__file_exists
-        - file_system__create_directory
-        - file_system__delete_directory
-        - file_system__create_file
-        - file_system__update_file
-        - file_system__delete_file
-        - file_system__copy_file
-        - file_system__move_file
-        - file_system__copy_directory
-        - file_system__move_directory
-        - file_system__decompress_file
-      max_tools: 128
+      # Use schema_yaml to include constraints/response schemas with truncation.
+      meta_tool_mode: false
+      tool_doc_enabled: true
+      tool_doc_format: schema_yaml
+      tool_doc_max_endpoints: 40
+      tool_doc_max_chars: 8000
 
   - adapter_id: dut_agent_main
     role_type: dut_agent
     agent_backend_id: agent_model_main
     sandbox:
       sandbox_id: appworld_local
-      # Keep a single container per task to preserve state across samples.
-      lifecycle: per_task
+      # Use per-sample sandboxing for deterministic tests.
+      lifecycle: per_sample
     params:
       max_turns: 16
       # Initialize and persist AppWorld state around each sample.

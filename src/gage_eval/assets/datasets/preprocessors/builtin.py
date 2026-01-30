@@ -5,11 +5,9 @@ from __future__ import annotations
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
 from gage_eval.assets.datasets.preprocessors.default_preprocessor import DefaultPreprocessor
 from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import MultiChoicePreprocessor as NewMultiChoice
+import warnings
+
 from gage_eval.assets.datasets.preprocessors.docvqa_preprocessor import DocVQAPreprocessor as NewDocVQA
-from gage_eval.assets.datasets.preprocessors.mathvista_preprocessor import (
-    MathVistaPreprocessor as NewMathVista,
-    MathVistaStructOnlyPreprocessor as NewMathVistaStructOnly,
-)
 from gage_eval.assets.datasets.preprocessors.grid_game_preprocessor import (
     GridGamePreprocessor as NewGridGame,
 )
@@ -27,13 +25,30 @@ from gage_eval.assets.datasets.preprocessors.gpqa_preprocessor import (
     GpqaStructOnlyPreprocessor as NewGpqaStructOnly,
 )
 from gage_eval.assets.datasets.preprocessors.appworld_preprocessor import AppWorldPreprocessor as NewAppWorld
+from gage_eval.assets.datasets.preprocessors.tau2_preprocessor import Tau2Preprocessor as NewTau2
 from gage_eval.registry import registry
 
 # benchmark GPQA-diamond
 from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
 
 # benchmark MathVista
-from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import MathVistaChatPreprocessor as NewMathVistaChat
+try:
+    from gage_eval.assets.datasets.preprocessors.mathvista_preprocessor import (
+        MathVistaPreprocessor as NewMathVista,
+        MathVistaStructOnlyPreprocessor as NewMathVistaStructOnly,
+    )
+except Exception as exc:  # pragma: no cover - optional dependency guard
+    NewMathVista = None
+    NewMathVistaStructOnly = None
+    warnings.warn(f"MathVista preprocessors unavailable: {exc}", RuntimeWarning)
+
+try:
+    from gage_eval.assets.datasets.preprocessors.mathvista.mathvista_chat_preprocessor import (
+        MathVistaChatPreprocessor as NewMathVistaChat,
+    )
+except Exception as exc:  # pragma: no cover - optional dependency guard
+    NewMathVistaChat = None
+    warnings.warn(f"MathVista chat preprocessor unavailable: {exc}", RuntimeWarning)
 
 # benchmark aime 2024
 from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Preprocessor as NewAIME2024Preprocessor
@@ -45,13 +60,42 @@ from gage_eval.assets.datasets.preprocessors.aime.aime2025 import AIME2025Prepro
 from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLEConverter
 
 # benchmark MMLU-Pro
-from gage_eval.assets.datasets.preprocessors.mmlu_pro.mmlu_pro_converter import MMLUProConverter
+try:
+    from gage_eval.assets.datasets.preprocessors.mmlu_pro.mmlu_pro_converter import MMLUProConverter as NewMMLUProConverter
+except Exception as exc:  # pragma: no cover - optional dependency guard
+    NewMMLUProConverter = None
+    warnings.warn(f"MMLU-Pro preprocessor unavailable: {exc}", RuntimeWarning)
 
 # benchmark Math500
 from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 
 # benchmark MME
 from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
+
+
+# benchmark SimpleQA Verified
+from gage_eval.assets.datasets.preprocessors.simpleqa_verified import SimpleQAVerifiedPreprocessor
+
+# benchmark ARC-AGI-2
+from gage_eval.assets.datasets.preprocessors.arcagi2 import ARCAGI2Preprocessor
+
+# benchmark ScreenSpot-Pro
+from gage_eval.assets.datasets.preprocessors.screespot_pro import ScreenSpotProPreprocessor
+from gage_eval.assets.datasets.preprocessors.charxiv import CharXivReasoningPreprocessor
+
+# benchmark LiveCodeBench
+from gage_eval.assets.datasets.preprocessors.live_code_bench.live_code_converter import LiveCodeBenchConverter
+
+# benchmark global piqa
+from gage_eval.assets.datasets.preprocessors.global_piqa.global_piqa_converter import GlobalPIQAConverter
+
+# benchmark BizFinBench V2
+from gage_eval.assets.datasets.preprocessors.biz_fin_bench_v2.biz_fin_bench_v2_converter import BizFinBenchV2Converter
+
+# benchmark MRCR
+from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConverter
+
+
 
 @registry.asset(
     "dataset_preprocessors",
@@ -151,6 +195,30 @@ class AppWorldPreprocessor(NewAppWorld):
 
 @registry.asset(
     "dataset_preprocessors",
+    "swebench_pro_standardizer",
+    desc="SWE-bench Pro preprocessor (prompt + sandbox metadata)",
+    tags=("swebench", "agent"),
+)
+class SwebenchProStandardizer(NewSwebenchPro):
+    """Standardize SWE-bench Pro records into the Sample schema."""
+
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "tau2_preprocessor",
+    desc="Tau2 task preprocessor (task metadata + Sample envelope)",
+    tags=("tau2", "agent"),
+)
+class Tau2Preprocessor(NewTau2):
+    """Standardize Tau2 task records into the Sample schema."""
+
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
     "mmmu_multimodal_inputs",
     desc="MMMU multimodal inputs builder (messages -> inputs.multi_modal_data)",
     tags=("prompt", "vision", "mmmu"),
@@ -178,23 +246,24 @@ class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
     pass
 
 
-@registry.asset(
-    "dataset_preprocessors",
-    "mathvista_preprocessor",
-    desc="MathVista multimodal preprocessor (prompt + image + optional choices)",
-    tags=("prompt", "vision", "mathvista"),
-)
-class MathVistaPreprocessor(NewMathVista):
-    pass
+if NewMathVista is not None:
+    @registry.asset(
+        "dataset_preprocessors",
+        "mathvista_preprocessor",
+        desc="MathVista multimodal preprocessor (prompt + image + optional choices)",
+        tags=("prompt", "vision", "mathvista"),
+    )
+    class MathVistaPreprocessor(NewMathVista):
+        pass
 
-@registry.asset(
-    "dataset_preprocessors",
-    "mathvista_struct_only",
-    desc="MathVista structured multimodal preprocessor (multimodal/choices/metadata only; no prompt concatenation)",
-    tags=("mathvista", "vision", "struct_only"),
-)
-class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
-    pass
+    @registry.asset(
+        "dataset_preprocessors",
+        "mathvista_struct_only",
+        desc="MathVista structured multimodal preprocessor (multimodal/choices/metadata only; no prompt concatenation)",
+        tags=("mathvista", "vision", "struct_only"),
+    )
+    class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
+        pass
 
 
 # benchmark GPQA-diamond
@@ -208,14 +277,15 @@ class GpqaDiamondPreprocessor(NewGpqaDiamond):
     pass
 
 # benchmark MathVista
-@registry.asset(
-    "dataset_preprocessors",
-    "mathvista_chat_preprocessor",
-    desc="MathVista multimodal preprocessor (prompt + image + optional choices)",
-    tags=("prompt", "vision", "mathvista"),
-)
-class MathVistaChatPreprocessor(NewMathVistaChat):
-    pass
+if NewMathVistaChat is not None:
+    @registry.asset(
+        "dataset_preprocessors",
+        "mathvista_chat_preprocessor",
+        desc="MathVista multimodal preprocessor (prompt + image + optional choices)",
+        tags=("prompt", "vision", "mathvista"),
+    )
+    class MathVistaChatPreprocessor(NewMathVistaChat):
+        pass
 
 # benchmark aime2024
 @registry.asset(
@@ -249,14 +319,15 @@ class HLEPreprocessor(HLEConverter):
     pass
 
 # benchmark MMLU-Pro
-@registry.asset(
-    "dataset_preprocessors",
-    "mmlu_pro_chat_preprocessor",
-    desc="MMLU Pro prompt wrapper",
-    tags=("prompt", "mmlu-pro"),
-)
-class MMLUPreprocessor(MMLUProConverter):
-    pass
+if NewMMLUProConverter is not None:
+    @registry.asset(
+        "dataset_preprocessors",
+        "mmlu_pro_chat_preprocessor",
+        desc="MMLU Pro prompt wrapper",
+        tags=("prompt", "mmlu-pro"),
+    )
+    class MMLUPreprocessor(NewMMLUProConverter):
+        pass
 
 # benchmark Math500
 @registry.asset(
@@ -289,11 +360,86 @@ class MMEPreprocessorProvider(MMEPreprocessor):
     pass
 
 
+# benchmark SimpleQA Verified
 @registry.asset(
     "dataset_preprocessors",
-    "mme_preprocessor",
-    desc="MME dataset preprocessing logic (alias)",
-    tags=("vision", "mme", "multi-modal"),
+    "simpleqa_verified",
+    desc="SimpleQA Verified dataset preprocessing logic",
+    tags=("factuality", "simpleqa_verified", "question_answering"),
 )
-class MMEPreprocessorProviderAlias(MMEPreprocessor):
+class SimpleQAVerifiedPreprocessorProvider(SimpleQAVerifiedPreprocessor):
     pass
+
+
+# benchmark ARC-AGI-2
+@registry.asset(
+    "dataset_preprocessors",
+    "arcagi2",
+    desc="ARC-AGI-2 dataset preprocessing logic (visual abstraction and reasoning)",
+    tags=("vision", "arcagi2", "reasoning", "pattern-recognition"),
+)
+class ARCAGI2PreprocessorProvider(ARCAGI2Preprocessor):
+    pass
+
+# benchmark ScreenSpot-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "screenspot_pro",
+    desc="ScreenSpot-Pro dataset preprocessing logic",
+    tags=("vision", "screenspot-pro", "gui-grounding"),
+)
+class ScreenSpotProPreprocessorProvider(ScreenSpotProPreprocessor):
+    pass
+
+
+# benchmark CharXiv (reasoning)
+@registry.asset(
+    "dataset_preprocessors",
+    "charxiv_reasoning",
+    desc="CharXiv reasoning dataset preprocessing logic",
+    tags=("vision", "charxiv", "reasoning", "chart-understanding"),
+)
+class CharXivReasoningPreprocessorProvider(CharXivReasoningPreprocessor):
+    pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "live_code_bench_chat_preprocessor",
+    desc="Live Code Bench prompt wrapper",
+    tags=("prompt", "live code bench"),
+)
+class LiveCodeBenchPreprocessor(LiveCodeBenchConverter):
+    pass
+
+# benchmark LiveCodeBench
+@registry.asset(
+    "dataset_preprocessors",
+    "global_piqa_chat_preprocessor",
+    desc="Global PIQA prompt wrapper",
+    tags=("prompt", "global PIQA"),
+)
+class GlobalPIQAPreprocessor(GlobalPIQAConverter):
+    pass
+
+# benchmark BizFinBench V2
+@registry.asset(
+    "dataset_preprocessors",
+    "bizfinbench_chat_preprocessor",
+    desc="BizFinBench V2 prompt wrapper",
+    tags=("prompt", "BizFinBench V2"),
+)
+class BizFinBenchV2Preprocessor(BizFinBenchV2Converter):
+    pass
+
+# benchmark MRCR
+@registry.asset(
+    "dataset_preprocessors",
+    "mrcr_chat_preprocessor",
+    desc="MRCR prompt wrapper",
+    tags=("prompt", "MRCR"),
+)
+class MRCRPreprocessor(MRCRConverter):
+    pass
+
+

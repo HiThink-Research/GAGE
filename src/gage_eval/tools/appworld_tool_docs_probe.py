@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from gage_eval.mcp import McpClient
-from gage_eval.role.adapters.tool_docs import build_app_catalog, build_tool_documentation
+from gage_eval.role.toolchain.tool_docs import build_app_catalog, build_tool_documentation
 
 
 def load_tools_from_file(path: Path) -> List[Dict[str, Any]]:

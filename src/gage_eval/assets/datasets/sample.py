@@ -100,6 +100,7 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         schema_version=SCHEMA_VERSION,
         id=str(payload.get("id")),
         messages=messages,
+        sandbox=payload.get("sandbox"),
         metadata=payload.get("metadata") or {},
         data_tag=payload.get("data_tag") or {},
         label=payload.get("label"),

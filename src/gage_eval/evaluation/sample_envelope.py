@@ -11,10 +11,11 @@ _MESSAGE_EXTRAS = ("tool_calls", "tool_use", "model_output", "name", "path")
 
 
 def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[str, Any]]) -> None:
-    """Appends a DUT output entry to `sample["predict_result"]`.
+    """Append a DUT output entry to `sample["predict_result"]`.
 
     The original fields are preserved, and a canonical `message` field is added
-    if missing.
+    if missing. Multi-sample outputs are split into per-candidate entries when
+    `_sample_n` is present and `answer` is a list.
     """
 
     if not isinstance(model_output, dict) or not model_output:
@@ -24,11 +25,42 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
     if not isinstance(predict_result, list):
         predict_result = sample["predict_result"] = []
 
+    answer = model_output.get("answer")
+    if _should_split_predict_result(model_output, answer):
+        _append_split_predict_results(predict_result, model_output, answer)
+        return
+
     entry = copy.deepcopy(model_output)
     entry.setdefault("index", len(predict_result))
     if "message" not in entry:
         entry["message"] = _build_message(entry)
     predict_result.append(entry)
+
+
+def _should_split_predict_result(model_output: Mapping[str, Any], answer: Any) -> bool:
+    if not isinstance(answer, list):
+        return False
+    sample_n = model_output.get("_sample_n")
+    if isinstance(sample_n, int):
+        return sample_n > 1
+    if isinstance(sample_n, str) and sample_n.isdigit():
+        return int(sample_n) > 1
+    return False
+
+
+def _append_split_predict_results(
+    predict_result: List[Dict[str, Any]],
+    model_output: Dict[str, Any],
+    answers: List[Any],
+) -> None:
+    for idx, answer in enumerate(answers):
+        entry = copy.deepcopy(model_output)
+        entry["answer"] = answer
+        entry.pop("message", None)
+        entry["index"] = len(predict_result)
+        entry["candidate_index"] = idx
+        entry["message"] = _build_message(entry)
+        predict_result.append(entry)
 
 
 def latest_predict_result(sample: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:

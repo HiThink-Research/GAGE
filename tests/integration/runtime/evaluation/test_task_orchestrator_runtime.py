@@ -82,6 +82,50 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4):
     return runtime, trace, cache, entries
 
 
+def _make_runtime_with_steps(tmp_path: Path, steps, sample_count: int = 2):
+    dataset = DataSource(
+        dataset_id="ds",
+        records=[
+            {
+                "id": f"s{idx}",
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+                "choices": [],
+            }
+            for idx in range(sample_count)
+        ],
+        metadata={"path": str(tmp_path / "ds.jsonl")},
+    )
+    dm = DataManager()
+    dm.register_source(dataset)
+
+    config = PipelineConfig(
+        datasets=(DatasetSpec(dataset_id="ds", loader="jsonl"),),
+        role_adapters=(RoleAdapterSpec(adapter_id="dut", role_type="dut_model", class_path="tests.integration.runtime.evaluation.test_task_orchestrator_runtime._EchoRole"),),
+        tasks=(TaskSpec(task_id="t1", dataset_id="ds", steps=steps),),
+    )
+    plans = build_task_plan_specs(config)
+    cache = EvalCache(base_dir=tmp_path, run_id="runtime-auto-eval-test")
+    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="runtime-trace"))
+    report_step = ReportStep(auto_eval_step=None, cache_store=cache)
+    entries = _prepare_task_entries(
+        task_plans=plans,
+        config=config,
+        data_manager=dm,
+        datasets={"ds": dataset},
+        trace=trace,
+        cache_store=cache,
+        resource_profile=ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]),
+        sandbox_profiles={},
+    )
+
+    rm = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]))
+    rm.register_role_adapter("dut", _EchoRole("dut", "dut_model"))
+
+    runtime = TaskOrchestratorRuntime(entries, rm, trace, report_step)
+    _record_config_metadata(config, cache)
+    return runtime, cache
+
+
 def test_task_orchestrator_runs_tasks(tmp_path: Path):
     runtime, trace, cache, entries = _make_runtime(tmp_path)
 
@@ -102,3 +146,17 @@ def test_task_orchestrator_records_timings(tmp_path: Path):
 
     timings = cache._timings
     assert "inference_s" in timings and timings["inference_s"] >= 0.0
+
+
+def test_auto_eval_writes_samples_without_metrics(tmp_path: Path):
+    steps = (
+        CustomPipelineStep(step_type="inference", adapter_id="dut"),
+        CustomPipelineStep(step_type="auto_eval"),
+    )
+    runtime, cache = _make_runtime_with_steps(tmp_path, steps)
+
+    runtime.run()
+
+    samples_jsonl = cache.run_dir / "samples.jsonl"
+    assert samples_jsonl.exists()
+    assert samples_jsonl.read_text(encoding="utf-8").strip()

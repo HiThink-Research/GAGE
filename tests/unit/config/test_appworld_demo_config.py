@@ -19,6 +19,10 @@ def test_appworld_demo_config_parses() -> None:
     adapter_ids = {spec.adapter_id for spec in config.role_adapters}
     assert {"toolchain_main", "dut_agent_main"}.issubset(adapter_ids)
 
+    toolchain = next(spec for spec in config.role_adapters if spec.adapter_id == "toolchain_main")
+    assert toolchain.params.get("meta_tool_mode") is False
+    assert toolchain.params.get("tool_doc_format") == "schema_yaml"
+
     task = config.tasks[0]
     step_types = [step.step_type for step in task.steps]
     assert step_types == ["support", "inference", "auto_eval"]

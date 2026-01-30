@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import shlex
 import time
 from typing import Any, Dict, Optional
 
@@ -21,7 +23,12 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         self._data_endpoint = self._runtime_configs.get("data_endpoint")
         self._exec_url = self._runtime_configs.get("exec_url")
         self._exec_path = self._runtime_configs.get("exec_path", "run_command")
+        self._file_read_url = self._runtime_configs.get("file_read_url")
+        self._file_write_url = self._runtime_configs.get("file_write_url")
+        self._file_read_path = self._runtime_configs.get("file_read_path", "read_file")
+        self._file_write_path = self._runtime_configs.get("file_write_path", "write_file")
         self._timeout_s = int(self._runtime_configs.get("timeout_s", 30))
+        self._file_timeout_s = int(self._runtime_configs.get("file_timeout_s", self._timeout_s))
         self._headers = dict(self._runtime_configs.get("headers") or {})
         self._requester = self._runtime_configs.get("requester")
 
@@ -40,7 +47,12 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         self._data_endpoint = config.get("data_endpoint") or self._data_endpoint
         self._exec_url = config.get("exec_url") or self._exec_url
         self._exec_path = self._runtime_configs.get("exec_path", self._exec_path)
+        self._file_read_url = config.get("file_read_url") or self._file_read_url
+        self._file_write_url = config.get("file_write_url") or self._file_write_url
+        self._file_read_path = self._runtime_configs.get("file_read_path", self._file_read_path)
+        self._file_write_path = self._runtime_configs.get("file_write_path", self._file_write_path)
         self._timeout_s = int(self._runtime_configs.get("timeout_s", self._timeout_s))
+        self._file_timeout_s = int(self._runtime_configs.get("file_timeout_s", self._file_timeout_s))
         self._headers = dict(self._runtime_configs.get("headers") or self._headers)
         self._requester = self._runtime_configs.get("requester") or self._requester
         self._running = True
@@ -76,6 +88,38 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         result.duration_ms = result.duration_ms or (time.perf_counter() - start) * 1000.0
         return result
 
+    def read_file(self, path: str) -> bytes:
+        """Read a file from the remote sandbox."""
+
+        read_url = self._resolve_file_url(self._file_read_url, self._file_read_path)
+        if read_url:
+            payload = dict(self._runtime_configs.get("file_read_payload") or {})
+            payload["path"] = path
+            response = self._request(read_url, payload, timeout_s=self._file_timeout_s)
+            return _extract_file_bytes(response)
+        result = self.exec(f"cat {shlex.quote(path)}", timeout=self._file_timeout_s)
+        if result.exit_code != 0:
+            raise RuntimeError("remote_read_failed")
+        return result.stdout.encode("utf-8")
+
+    def write_file(self, path: str, content: bytes) -> None:
+        """Write a file into the remote sandbox."""
+
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        write_url = self._resolve_file_url(self._file_write_url, self._file_write_path)
+        if write_url:
+            payload = dict(self._runtime_configs.get("file_write_payload") or {})
+            payload["path"] = path
+            payload["content_b64"] = base64.b64encode(content).decode("ascii")
+            payload.setdefault("encoding", "base64")
+            self._request(write_url, payload, timeout_s=self._file_timeout_s)
+            return
+        command = _build_write_command(path, content)
+        result = self.exec(command, timeout=self._file_timeout_s)
+        if result.exit_code != 0:
+            raise RuntimeError("remote_write_failed")
+
     def teardown(self) -> None:
         self._running = False
 
@@ -90,6 +134,15 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         base = str(self._data_endpoint).rstrip("/")
         path = str(self._exec_path).lstrip("/")
         return f"{base}/{path}"
+
+    def _resolve_file_url(self, explicit: Optional[str], path: str) -> Optional[str]:
+        if explicit:
+            return explicit
+        if not self._data_endpoint:
+            return None
+        base = str(self._data_endpoint).rstrip("/")
+        suffix = str(path).lstrip("/")
+        return f"{base}/{suffix}"
 
     def _request(self, url: str, payload: Dict[str, Any], *, timeout_s: int) -> Any:
         if callable(self._requester):
@@ -118,3 +171,41 @@ def _normalize_exec_result(raw: Any) -> ExecResult:
             duration_ms=float(payload.get("duration_ms") or payload.get("latency_ms") or 0.0),
         )
     return ExecResult(exit_code=0, stdout=str(raw), stderr="", duration_ms=0.0)
+
+
+def _extract_file_bytes(raw: Any) -> bytes:
+    payload = raw
+    if isinstance(payload, dict):
+        if isinstance(payload.get("result"), dict):
+            payload = payload["result"]
+        if isinstance(payload.get("data"), dict):
+            payload = payload["data"]
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    if isinstance(payload, str):
+        return payload.encode("utf-8")
+    if isinstance(payload, dict):
+        if "content_b64" in payload:
+            return base64.b64decode(payload.get("content_b64") or "")
+        if "content" in payload:
+            content = payload.get("content")
+            if isinstance(content, (bytes, bytearray)):
+                return bytes(content)
+            if isinstance(content, str):
+                return content.encode("utf-8")
+    return str(payload).encode("utf-8")
+
+
+def _build_write_command(path: str, content: bytes) -> str:
+    b64 = base64.b64encode(content).decode("ascii")
+    return (
+        "python - <<'PY'\n"
+        "import base64\n"
+        "from pathlib import Path\n"
+        f"path = {path!r}\n"
+        f"data = base64.b64decode({b64!r})\n"
+        "target = Path(path)\n"
+        "target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "target.write_bytes(data)\n"
+        "PY\n"
+    )

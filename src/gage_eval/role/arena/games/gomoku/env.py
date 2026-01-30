@@ -356,6 +356,9 @@ class GomokuArenaEnvironment:
     def observe(self, player: str) -> ArenaObservation:
         board_text = self._core.render_board()
         legal_moves = self._core.legal_coords()
+        view = {"text": board_text}
+        legal_actions = {"items": list(legal_moves)}
+        context = {"mode": "turn", "step": self._core.move_count}
         return ArenaObservation(
             board_text=board_text,
             legal_moves=legal_moves,
@@ -374,7 +377,11 @@ class GomokuArenaEnvironment:
                 "win_direction": self._win_direction,
                 "line_length": self._line_length,
                 "winning_line": list(self._winning_line_coords) if self._winning_line_coords else None,
+                "last_move": self._last_move,
             },
+            view=view,
+            legal_actions=legal_actions,
+            context=context,
         )
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:

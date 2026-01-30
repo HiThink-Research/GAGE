@@ -125,6 +125,7 @@ class AgentLoop:
                         [_tool_call_name(call) for call in tool_calls],
                     )
                     messages.append(_build_tool_call_message(output, tool_calls))
+                    stop_after_tool = False
                     for tool_call in tool_calls:
                         tool_result = self._tool_router.execute(
                             tool_call,
@@ -162,6 +163,28 @@ class AgentLoop:
                             )
                         step_index += 1
                         messages.append(_build_tool_message(tool_call, tool_result.get("output")))
+                        final_answer = _resolve_tool_final_answer(tool_result)
+                        if final_answer:
+                            answer = final_answer
+                            trace_output = {"answer": answer, "final_from_tool": tool_name}
+                            agent_trace.append(
+                                _build_trace_step(
+                                    step_index,
+                                    trace_role="assistant",
+                                    name="agent_response",
+                                    input_payload=None,
+                                    output_payload=trace_output,
+                                    status="success",
+                                    latency_ms=0.0,
+                                    usage=usage,
+                                    turn_index=turn,
+                                )
+                            )
+                            step_index += 1
+                            stop_after_tool = True
+                            break
+                    if stop_after_tool:
+                        break
                     continue
                 answer = output.get("answer") or ""
                 logger.info("AgentLoop turn {} completed answer_len={}", turn, len(answer))
@@ -234,6 +257,15 @@ def _tool_call_name(tool_call: Dict[str, Any]) -> str:
         fn = tool_call.get("function") or {}
         return str(fn.get("name") or "")
     return str(tool_call.get("name") or "")
+
+
+def _resolve_tool_final_answer(tool_result: Dict[str, Any]) -> str:
+    if tool_result.get("status") != "success":
+        return ""
+    final_answer = tool_result.get("final_answer")
+    if isinstance(final_answer, str) and final_answer.strip():
+        return final_answer
+    return ""
 
 
 def _build_tool_registry(tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

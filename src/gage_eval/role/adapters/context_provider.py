@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from gage_eval.mcp.utils import sync_mcp_endpoint
 from gage_eval.registry import ensure_async, registry
+from gage_eval.sandbox.provider import SandboxProvider
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 
 
@@ -24,14 +26,28 @@ class ContextProviderAdapter(RoleAdapter):
         implementation_params: Optional[Dict[str, Any]] = None,
         capabilities=(),
         role_type: str = "context_provider",
+        mcp_client_id: Optional[str] = None,
+        mcp_client: Optional[Any] = None,
+        resource_requirement: Optional[Dict[str, Any]] = None,
+        sandbox_config: Optional[Dict[str, Any]] = None,
         **_,
     ) -> None:
         resolved_caps = tuple(capabilities) if capabilities else ("text",)
-        super().__init__(adapter_id=adapter_id, role_type=role_type, capabilities=resolved_caps)
+        super().__init__(
+            adapter_id=adapter_id,
+            role_type=role_type,
+            capabilities=resolved_caps,
+            resource_requirement=resource_requirement,
+            sandbox_config=sandbox_config,
+        )
         if not implementation:
             raise ValueError("ContextProviderAdapter requires non-empty implementation")
         self._implementation = implementation
         self._implementation_params = dict(implementation_params or {})
+        if mcp_client_id:
+            self._implementation_params.setdefault("mcp_client_id", mcp_client_id)
+        if mcp_client is not None:
+            self._implementation_params.setdefault("mcp_client", mcp_client)
         try:
             impl_cls = registry.get("context_impls", implementation)
         except KeyError:
@@ -45,6 +61,11 @@ class ContextProviderAdapter(RoleAdapter):
 
     async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
         impl_payload = dict(payload or {})
+        sandbox_provider = impl_payload.get("sandbox_provider")
+        mcp_client = self._implementation_params.get("mcp_client")
+        if isinstance(sandbox_provider, SandboxProvider) and mcp_client is not None:
+            runtime_handle = sandbox_provider.runtime_handle()
+            sync_mcp_endpoint(mcp_client, runtime_handle)
         impl_payload["params"] = self._merge_params(payload)
         impl_payload.setdefault("implementation", self._implementation)
         impl_payload.setdefault("adapter_id", self.adapter_id)

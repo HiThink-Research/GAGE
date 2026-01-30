@@ -4,7 +4,7 @@ from gage_eval.evaluation.sample_loop import SampleLoop
 from gage_eval.evaluation.task_planner import TaskPlanner
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.adapters.dut_agent import DUTAgentAdapter
-from gage_eval.role.adapters.toolchain import ToolchainAdapter
+from gage_eval.role.toolchain import ToolchainAdapter
 from gage_eval.role.agent.backends.base import AgentBackend
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_manager import RoleManager

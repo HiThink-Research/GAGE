@@ -1,0 +1,247 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: HiThink-Research/BizFinBench.v2_vllm_async
+  description: using vllm_backend eval BizFinBench.v2
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: stock_price_predict_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: stock_price_predict
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: anomaly_information_tracing_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: anomaly_information_tracing
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: conterfactual_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: conterfactual
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor      
+  - dataset_id: event_logic_reasoning_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: event_logic_reasoning
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: financial_data_description_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: financial_data_description
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: financial_multi_turn_perception_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: financial_multi_turn_perception
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: financial_quantitative_computation_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: financial_quantitative_computation
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor
+  - dataset_id: user_sentiment_analysis_en_ds
+    hub: huggingface
+    hub_params:
+      hub_id: HiThink-Research/BizFinBench.v2
+      split: user_sentiment_analysis
+      subset: en
+    loader: hf_hub_biz_fin_bench
+    params:
+      limit: 10
+      local_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/biz_fin_bench_v2
+      preprocess: bizfinbench_chat_preprocessor                 
+backends:
+  - backend_id: mmlu_pro_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_5_05B
+      tokenizer_path: /mnt/model/qwen2_5_05B
+      force_tokenize_prompt: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 8192
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
+  - backend_id: bizbinbenchv2_litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+role_adapters:
+  - adapter_id: dut_mmlu_pro_vllm_qwen
+    role_type: dut_model
+    backend_id: bizbinbenchv2_litellm_backend
+    # backend_id: mmlu_pro_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: stock_price_predict_short_term
+    implementation: stock_price_predict_short_term 
+  - metric_id: aea2
+    implementation: aea2
+  - metric_id: fin_cal_2
+    implementation: fin_cal_2
+  - metric_id: fin_logic
+    implementation: fin_logic
+  - metric_id: fin_desc
+    implementation: fin_desc
+  - metric_id: fin_multi_round_desc
+    implementation: fin_multi_round_desc
+  - metric_id: eval_emotion
+    implementation: eval_emotion
+tasks:
+  - task_id: stock_price_predict_en_eval
+    dataset_id: stock_price_predict_en_ds
+    metric_overrides:
+      - metric_id: stock_price_predict_short_term
+        implementation: stock_price_predict_short_term         
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/stock_price_predict_en.jsonl
+  - task_id: anomaly_information_tracing_eval
+    dataset_id: anomaly_information_tracing_en_ds
+    metric_overrides: 
+      - metric_id: aea2
+        implementation: aea2
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/anomaly_information_tracing_en.jsonl
+  - task_id: conterfactual_en
+    dataset_id: conterfactual_en_ds
+    metric_overrides: 
+      - metric_id: fin_cal_2
+        implementation: fin_cal_2
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/conterfactual_en.jsonl 
+  - task_id: event_logic_reasoning_en
+    dataset_id: event_logic_reasoning_en_ds
+    metric_overrides: 
+      - metric_id: fin_logic
+        implementation: fin_logic
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/event_logic_reasoning_en.jsonl 
+  - task_id: financial_data_description_en
+    dataset_id: financial_data_description_en_ds
+    metric_overrides: 
+      - metric_id: fin_desc
+        implementation: fin_desc
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/event_logic_reasoning_en.jsonl
+  - task_id: financial_multi_turn_perception_en
+    dataset_id: financial_multi_turn_perception_en_ds
+    metric_overrides: 
+      - metric_id: fin_multi_round_desc
+        implementation: fin_multi_round_desc
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/financial_multi_turn_perception_en.jsonl 
+  - task_id: financial_quantitative_computation_en
+    dataset_id: financial_quantitative_computation_en_ds
+    metric_overrides: 
+      - metric_id: fin_cal_2
+        implementation: fin_cal_2
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/financial_quantitative_computation_en.jsonl 
+  - task_id: user_sentiment_analysis_en
+    dataset_id: user_sentiment_analysis_en_ds
+    metric_overrides: 
+      - metric_id: eval_emotion
+        implementation: eval_emotion
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/user_sentiment_analysis_en.jsonl 

@@ -33,6 +33,7 @@ backends:
       tensor_parallel_size: 1
       max_tokens: 128
       sampling_params:
+        n: 5
         temperature: 0.0
         top_p: 0.8
       max_batch_size: 16

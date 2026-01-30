@@ -103,7 +103,7 @@ parameters:
   default:
     loader: jsonl
     params:
-      path: tests/Test_Gomoku.jsonl
+      path: tests/data/Test_Gomoku.jsonl
       preprocess: grid_game_preprocessor
   description: Gomoku test set path.
 - name: runtime.backends.gomoku_black_backend

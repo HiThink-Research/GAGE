@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import pytest
 
 from gage_eval.role.adapters.base import RoleAdapterState
-from gage_eval.role.adapters.toolchain import ToolchainAdapter
+from gage_eval.role.toolchain import ToolchainAdapter
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 
