@@ -27,7 +27,7 @@ runtime:
     gomoku_matches:
       loader: jsonl
       params:
-        path: gage-eval-main/tests/Test_Gomoku.jsonl
+        path: gage-eval-main/tests/data/Test_Gomoku.jsonl
         preprocess: grid_game_preprocessor
   backends:
     gomoku_black_backend:

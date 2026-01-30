@@ -462,13 +462,6 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 - Node reports `ERR_OSSL_EVP_UNSUPPORTED`
   Use `NODE_OPTIONS=--openssl-legacy-provider` (the script already includes this).
 
-## 10. Extension checklist
-
-1. Add a new environment under `src/gage_eval/role/arena/games/<game>/`.
-2. Register environment, context, parser, and renderer to their registries.
-3. Add demo configs and tests under `config/custom/` and `tests/unit/`.
-4. Validate via `run.py` with a small `max_samples`.
-
 ## 10. Mahjong quickstart (showdown)
 
 Prereqs:
@@ -519,6 +512,9 @@ GAGE has integrated PettingZoo Atari environments, supporting 22 classic two-pla
 
 ### Quick Start
 Refer to the full user guide for detailed instructions:
+
+### Environment Requirements
+- **Dependencies**: `cmake` (Required for building Atari environments)
 
 > 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide.md)**
 >
