@@ -67,7 +67,7 @@ When the answer is given:
 Next, I will show you some worked-out examples as a tutorial before we proceed with the real task instruction.
 ----------------------------------------------------------------------------
 Sounds good!
-============================================================================
+===
 # Real Task Instruction
 {{ payload.get('instruction', '') }}
 
@@ -97,7 +97,7 @@ App-wise API Descriptions:
 {{ payload.get('api_descriptions_string', '') }}
 ----------------------------------------------------------------------------
 Understood.
-============================================================================
+===
 # Task Instruction
 {{ payload.get('instruction', '') }}
 
