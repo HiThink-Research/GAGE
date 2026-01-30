@@ -25,15 +25,27 @@ class JudgeExtendAdapter(RoleAdapter):
         implementation_params: Optional[Dict[str, Any]] = None,
         capabilities=(),
         role_type: str = "judge_extend",
+        resource_requirement: Optional[Dict[str, Any]] = None,
+        sandbox_config: Optional[Dict[str, Any]] = None,
         **_,
     ) -> None:
         resolved_caps = tuple(capabilities) if capabilities else ("text",)
-        super().__init__(adapter_id=adapter_id, role_type=role_type, capabilities=resolved_caps)
+        super().__init__(
+            adapter_id=adapter_id,
+            role_type=role_type,
+            capabilities=resolved_caps,
+            resource_requirement=resource_requirement,
+            sandbox_config=sandbox_config,
+        )
         if not implementation:
             raise ValueError("JudgeExtendAdapter requires non-empty implementation")
         self._implementation = implementation
         self._implementation_params = dict(implementation_params or {})
-        impl_cls = registry.get("judge_impls", implementation)
+        try:
+            impl_cls = registry.get("judge_impls", implementation)
+        except KeyError:
+            registry.auto_discover("judge_impls", "gage_eval.role.judge")
+            impl_cls = registry.get("judge_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "ainvoke", None) or getattr(self._impl, "invoke", None)
         if provider is None:

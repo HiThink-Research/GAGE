@@ -110,9 +110,12 @@ class DUTAgentAdapter(RoleAdapter):
     ) -> List[Dict[str, Any]]:
         if not self._prompt_renderer:
             return list(messages)
+        prompt_payload = dict(payload or {})
+        prompt_payload.setdefault("instruction", _extract_instruction(sample))
+        prompt_payload.setdefault("max_steps", self._max_turns)
         context = PromptContext(
             sample=sample,
-            payload=payload,
+            payload=prompt_payload,
             history=payload.get("history") or [],
             extras={"adapter_id": self.adapter_id, "role_type": self.role_type},
         )
@@ -163,6 +166,27 @@ def _normalize_tool_entry(tool: Any) -> Optional[Dict[str, Any]]:
             },
         }
     return dict(tool)
+
+
+def _extract_instruction(sample: Dict[str, Any]) -> str:
+    instruction = sample.get("instruction")
+    if isinstance(instruction, str) and instruction.strip():
+        return instruction.strip()
+    prompt = sample.get("prompt")
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt.strip()
+    messages = sample.get("messages")
+    if isinstance(messages, list) and messages:
+        first = messages[0] if isinstance(messages[0], dict) else None
+        if first:
+            content = first.get("content")
+            if isinstance(content, list) and content:
+                text = content[0].get("text")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+    return ""
 
 
 def _extract_system_prompt(messages: Sequence[Dict[str, Any]]) -> Optional[str]:

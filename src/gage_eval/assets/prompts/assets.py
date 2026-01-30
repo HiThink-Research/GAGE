@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from gage_eval.assets.prompts.renderers import (
+    JinjaDelimitedChatPromptRenderer,
     JinjaChatPromptRenderer,
     JinjaPromptRenderer,
     PassthroughPromptRenderer,
@@ -25,6 +26,19 @@ def build_prompt_renderer(renderer_type: str, *, template: Optional[str], params
             variables=params,
             role=role,
             include_existing=bool(include_existing),
+        )
+    if kind in {"jinja_delimited_chat", "delimited_jinja_chat", "delimited_chat"}:
+        mode = params.get("mode", "full")
+        include_system = params.get("include_system", True)
+        message_delimiter = params.get("message_delimiter", "---")
+        section_delimiter = params.get("section_delimiter", "===")
+        return JinjaDelimitedChatPromptRenderer(
+            template or "",
+            variables=params,
+            mode=mode,
+            include_system=bool(include_system),
+            message_delimiter=str(message_delimiter or "---"),
+            section_delimiter=str(section_delimiter or "==="),
         )
     if kind in {"passthrough", "raw"}:
         fields = params.get("fields")

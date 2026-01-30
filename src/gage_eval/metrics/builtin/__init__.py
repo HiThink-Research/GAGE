@@ -28,6 +28,13 @@ from gage_eval.metrics.builtin.text import (
     RegexMatchMetric,
     TextLengthMetric,
 )
+from gage_eval.metrics.builtin.tau2 import (
+    Tau2AgentCostMetric,
+    Tau2PassMetric,
+    Tau2PassHatMetric,
+    Tau2RewardMetric,
+    Tau2UserCostMetric,
+)
 from gage_eval.metrics.builtin.simpleqa_verified import (
     SimpleQAVerifiedAccuracyMetric,
     SimpleQAVerifiedJudgeAccuracyMetric,
@@ -60,6 +67,11 @@ __all__ = [
     "AppWorldDifficultyMetric",
     "LikelihoodMetric",
     "RankingMetric",
+    "Tau2RewardMetric",
+    "Tau2PassMetric",
+    "Tau2PassHatMetric",
+    "Tau2AgentCostMetric",
+    "Tau2UserCostMetric",
     "SimpleQAVerifiedAccuracyMetric",
     "SimpleQAVerifiedJudgeAccuracyMetric",
     "ScreenSpotPointInBboxMetric",

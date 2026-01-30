@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from gage_eval.role.agent.tool_router import ToolRouter
@@ -22,7 +20,5 @@ def test_tool_router_execs_command_payload():
     tool_call = {"function": {"name": "run_shell", "arguments": "{\"command\": \"ls\"}"}}
     result = router.execute(tool_call, sandbox)
     assert result["name"] == "run_shell"
-    payload = json.loads(sandbox.last_command)
-    assert payload["tool"] == "run_shell"
-    assert payload["arguments"]["command"] == "ls"
+    assert sandbox.last_command == "ls"
     assert result["output"]["exit_code"] == 0

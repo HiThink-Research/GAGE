@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import warnings
 
 from gage_eval._loguru_compat import ensure_loguru
@@ -11,9 +12,10 @@ ensure_loguru()
 
 _AUTO_DISCOVERY_PACKAGES = {
     "backends": ("gage_eval.role.model.backends",),
-    "roles": ("gage_eval.role.adapters", "gage_eval.role.model"),
+    "roles": ("gage_eval.role.adapters", "gage_eval.role.model", "gage_eval.role.toolchain"),
     "context_impls": ("gage_eval.role.context",),
     "judge_impls": ("gage_eval.role.judge",),
+    "helper_impls": ("gage_eval.role.helper",),
     "arena_impls": ("gage_eval.role.arena.games",),
     "parser_impls": ("gage_eval.role.arena.parsers",),
     "renderer_impls": ("gage_eval.role.arena.games",),
@@ -28,9 +30,13 @@ _AUTO_DISCOVERY_PACKAGES = {
     "pipeline_steps": ("gage_eval.pipeline.steps",),
 }
 
-for kind, packages in _AUTO_DISCOVERY_PACKAGES.items():
-    for package in packages:
-        try:
-            registry.auto_discover(kind, package)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            warnings.warn(f"Failed to auto-discover '{kind}' assets from {package}: {exc}", RuntimeWarning)
+_DISABLE_AUTO_DISCOVERY = os.environ.get("GAGE_EVAL_DISABLE_AUTO_DISCOVERY", "")
+_SKIP_AUTO_DISCOVERY = _DISABLE_AUTO_DISCOVERY.lower() in {"1", "true", "yes", "on"}
+
+if not _SKIP_AUTO_DISCOVERY:
+    for kind, packages in _AUTO_DISCOVERY_PACKAGES.items():
+        for package in packages:
+            try:
+                registry.auto_discover(kind, package)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                warnings.warn(f"Failed to auto-discover '{kind}' assets from {package}: {exc}", RuntimeWarning)

@@ -15,10 +15,11 @@ from gage_eval.config.pipeline_config import (
     PipelineConfig,
     RoleAdapterSpec,
 )
-from gage_eval.assets.prompts.assets import PromptTemplateAsset
-from gage_eval.assets.prompts.defaults import resolve_prompt_id_for_adapter
-from gage_eval.metrics.registry import MetricRegistry
-from gage_eval.registry import registry
+
+if TYPE_CHECKING:
+    from gage_eval.assets.prompts.assets import PromptTemplateAsset
+    from gage_eval.metrics.registry import MetricRegistry
+    from gage_eval.registry.manager import RegistryManager
 
 
 class ConfigRegistry:
@@ -86,23 +87,12 @@ class ConfigRegistry:
             backend_obj = backends[spec.backend_id]
         if backend_obj is not None:
             adapter_kwargs.setdefault("backend", backend_obj)
-        prompt_id = spec.prompt_id or resolve_prompt_id_for_adapter(
-            spec.adapter_id,
-            spec.role_type,
-            spec.params,
-        )
-        if prompt_id:
-            prompt_asset = None
-            if prompts and prompt_id in prompts:
-                prompt_asset = prompts[prompt_id]
-            else:
-                try:
-                    prompt_asset = registry.get("prompts", prompt_id)
-                except KeyError as exc:
-                    raise KeyError(
-                        f"Prompt '{prompt_id}' referenced by adapter '{spec.adapter_id}' is not defined"
-                    ) from exc
-            prompt_renderer = prompt_asset.instantiate(spec.prompt_params)
+        if spec.prompt_id:
+            if not prompts or spec.prompt_id not in prompts:
+                raise KeyError(
+                    f"Prompt '{spec.prompt_id}' referenced by adapter '{spec.adapter_id}' is not defined"
+                )
+            prompt_renderer = prompts[spec.prompt_id].instantiate(spec.prompt_params)
             adapter_kwargs.setdefault("prompt_renderer", prompt_renderer)
         agent_backend_obj: Any = None
         if spec.agent_backend is not None:
@@ -237,6 +227,11 @@ class ConfigRegistry:
         from gage_eval.registry import registry
 
         prompts: Dict[str, PromptTemplateAsset] = {}
+        registry.auto_discover("prompts", "gage_eval.assets.prompts.catalog")
+        for entry in registry.list("prompts"):
+            asset = registry.get("prompts", entry.name)
+            if isinstance(asset, PromptTemplateAsset):
+                prompts[entry.name] = asset
         for spec in config.prompts:
             asset = PromptTemplateAsset(
                 prompt_id=spec.prompt_id,

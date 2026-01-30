@@ -183,13 +183,31 @@ def _validate_role_bindings(
                     f"role adapter '{adapter_id}' inline agent backend missing required field 'type'"
                 )
         if prompt_id and prompt_id not in prompt_set:
-            errors.append(
-                f"role adapter '{adapter_id}' references unknown prompt '{prompt_id}'"
-            )
+            if not _prompt_id_in_registry(prompt_id):
+                errors.append(
+                    f"role adapter '{adapter_id}' references unknown prompt '{prompt_id}'"
+                )
         if mcp_client_id and mcp_client_id not in mcp_client_set:
             errors.append(
                 f"role adapter '{adapter_id}' references unknown mcp client '{mcp_client_id}'"
             )
+
+
+def _prompt_id_in_registry(prompt_id: str) -> bool:
+    if not prompt_id:
+        return False
+    try:
+        from gage_eval.registry import registry
+    except Exception:
+        return False
+    try:
+        registry.auto_discover("prompts", "gage_eval.assets.prompts.catalog")
+        registry.get("prompts", prompt_id)
+        return True
+    except KeyError:
+        return False
+    except Exception:
+        return False
 
 
 def _validate_steps(custom: Any, errors: List[str]) -> None:
