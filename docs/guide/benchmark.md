@@ -225,3 +225,47 @@ python GAGE/run.py \
   --output-dir ./gage_runs/final_test \
   --run-id mme
 ```
+
+### ARC-AGI-2
+ARC-AGI-2 contains 1,000 public training tasks and 120 public evaluation tasks.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/arcagi2/arcagi2_vllm_async_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id mme
+```
+
+### CharXiv
+CharXiv: Charting Gaps in Realistic Chart Understanding in Multimodal LLMs, which is a diverse and challenging chart understanding benchmark fully curated by human experts. It includes 2,323 high-resolution charts manually sourced from arXiv preprints. Each chart is paired with 4 descriptive questions (3 answerable and 1 unanswerable) and 1 reasoning question, all of which require open-vocabulary short answers that are easily verifiable.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/charxiv/charxiv_vllm_async_chat.yaml \
+  --output-dir ./gage_runs_charxiv_reasoning/final_test \
+  --run-id charxiv_reasoning
+```
+
+### ScreenSpot-Pro
+ScreenSpot-Pro is an advanced benchmark specifically designed to evaluate GUI Grounding (Graphical User Interface) capabilities for large multimodal models in professional, high-resolution environments. Unlike general UI benchmarks, it focuses on the precision required for autonomous computer use in complex software ecosystems.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/screen_spot/screenspot_pro_vllm_async_chat.yaml \
+  --output-dir ./gage_runs_screenspot_pro/final_test \
+  --run-id screenspot_pro
+```
+
+### SimpleQA Verified
+A 1,000-prompt factuality benchmark from Google DeepMind and Google Research, designed to reliably evaluate LLM parametric knowledge.
+
+#### Execution Command
+```bash
+python GAGE_dev/run.py \
+  --config GAGE_dev/config/custom/simpleqa_verified/simpleqa_verified_vllm_async_chat.yaml \
+  --output-dir ./gage_simpleqa-verified/simpleqa-verified \
+  --run-id simpleqa-verified
+```
