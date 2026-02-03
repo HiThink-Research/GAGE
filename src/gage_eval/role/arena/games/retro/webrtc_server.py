@@ -193,7 +193,11 @@ def _load_web_deps() -> Tuple[Any, Any, Any, Any, Any]:
     return FastAPI, FileResponse, HTMLResponse, PlainTextResponse, RTCPeerConnection, RTCSessionDescription
 
 
-def _encode_jpeg(frame: Any, *, quality: int = 80) -> tuple[Optional[bytes], Optional[str]]:
+def _encode_jpeg(
+    frame: Any,
+    *,
+    quality: int = 80,
+) -> tuple[Optional[bytes], Optional[str]]:
     """Encode an RGB frame into JPEG bytes.
 
     Args:
@@ -211,9 +215,11 @@ def _encode_jpeg(frame: Any, *, quality: int = 80) -> tuple[Optional[bytes], Opt
     if not hasattr(frame, "shape"):
         return None, "frame_missing_shape"
     try:
+        # STEP 1: Build the base image from the RGB array.
         image = Image.fromarray(frame, mode="RGB")
     except Exception as exc:  # pragma: no cover - defensive
         return None, f"jpeg_encode_failed:{exc}"
+
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=int(quality), optimize=True)
     return buffer.getvalue(), None
@@ -248,7 +254,8 @@ def create_app(config: ServerConfig):
     app = FastAPI()
     pcs: set[Any] = set()
     frame_queue: "asyncio.Queue[Optional[Any]]" = asyncio.Queue(maxsize=config.frame_queue_size)
-    key_state = KeyState(build_default_key_map(), legal_moves=config.legal_moves)
+    key_map = build_default_key_map()
+    key_state = KeyState(key_map, legal_moves=config.legal_moves)
     game_loop = RetroGameLoop(config=config, frame_queue=frame_queue, key_state=key_state)
 
     @app.on_event("startup")
@@ -256,6 +263,8 @@ def create_app(config: ServerConfig):
         loop = asyncio.get_running_loop()
         game_loop.start(loop)
         logger.info("Retro WebRTC server started for game {}", config.game)
+        logger.info("Retro stream UI: http://localhost:{}/", config.port)
+        logger.info("Keyboard mapping (key -> action): {}", key_map)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
@@ -411,6 +420,7 @@ def main() -> None:
     except ImportError as exc:
         raise ImportError("uvicorn is required to run the WebRTC server.") from exc
 
+    logger.info("Uvicorn running on http://localhost:{}/", config.port)
     uvicorn.run(app, host=config.host, port=config.port, log_level="info")
 
 

@@ -12,12 +12,19 @@ _DEFAULT_KEY_MAP: dict[str, str] = {
     "ArrowRight": "right",
     "ArrowUp": "up",
     "ArrowDown": "down",
+    "w": "up",
+    "a": "left",
+    "s": "down",
+    "d": "right",
     "Enter": "start",
     "Shift": "select",
     " ": "jump",
     "z": "jump",
+    "j": "jump",
     "x": "run",
+    "k": "run",
     "c": "jump",
+    "l": "start",
 }
 
 
