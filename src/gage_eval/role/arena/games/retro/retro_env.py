@@ -169,6 +169,11 @@ class StableRetroArenaEnvironment:
             reward_total=self._reward_total,
         )
 
+    def get_last_frame(self) -> Optional[Any]:
+        """Return the most recent RGB frame, if available."""
+
+        return self._last_obs
+
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         if self._terminal:
             return self._final_result
