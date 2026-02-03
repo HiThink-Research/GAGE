@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 import os
 import re
-import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
@@ -45,9 +44,7 @@ class StableRetroArenaEnvironment:
         player_ids: Optional[Sequence[str]] = None,
         player_names: Optional[Dict[str, str]] = None,
         runtime_policy: str = "persistent",
-        render: bool = False,
-        render_every_n_ticks: int = 1,
-        render_sleep_ms: Optional[int] = None,
+        display_mode: str = "headless",
         record_bk2: bool = False,
         record_dir: Optional[str] = None,
         record_filename: Optional[str] = None,
@@ -75,7 +72,7 @@ class StableRetroArenaEnvironment:
             player_ids: Optional list of player ids.
             player_names: Optional mapping of player ids to display names.
             runtime_policy: Runtime reuse policy (persistent or fresh).
-            render_sleep_ms: Optional sleep duration after render, in milliseconds.
+            display_mode: Display mode (headless or pil).
             action_mapping: Optional macro-to-button mapping.
             legal_moves: Optional list of exposed macro moves.
             info_feeder: Optional info feeder config.
@@ -99,9 +96,10 @@ class StableRetroArenaEnvironment:
         self._rom_path = str(rom_path) if rom_path else None
         self._runtime_policy = str(runtime_policy or "persistent").lower()
         self._seed = seed
-        self._render = bool(render)
-        self._render_every_n_ticks = max(1, int(render_every_n_ticks))
-        self._render_sleep_ms = None if render_sleep_ms is None else max(0, int(render_sleep_ms))
+        self._display_mode = str(display_mode or "headless").lower()
+        self._render = False
+        self._force_frame_viewer = self._display_mode == "pil"
+        self._frame_viewer_kind = "pil" if self._force_frame_viewer else "pyglet"
         self._record_bk2 = bool(record_bk2)
         self._record_dir = str(record_dir) if record_dir else None
         self._record_filename = str(record_filename) if record_filename else None
@@ -142,9 +140,12 @@ class StableRetroArenaEnvironment:
         self._last_move: Optional[str] = None
         self._last_reward = 0.0
         self._last_info: dict[str, Any] = {}
+        self._last_obs = None
         self._terminal = False
         self._final_result: Optional[GameResult] = None
         self._replay_writer: Optional[ReplaySchemaWriter] = None
+        self._frame_viewer = None
+        self._frame_viewer_disabled = False
 
     def reset(self) -> None:
         self._ensure_env()
@@ -183,6 +184,7 @@ class StableRetroArenaEnvironment:
 
         step_result = self._retro_env.step(encoded.buttons)
         obs, reward, terminated, truncated, info = self._normalize_step(step_result)
+        self._last_obs = obs
         self._tick += 1
         self._reward_total += float(reward)
         self._last_reward = float(reward)
@@ -360,6 +362,7 @@ class StableRetroArenaEnvironment:
         else:
             reset_result = self._retro_env.reset()
         obs, info = self._normalize_reset(reset_result)
+        self._last_obs = obs
         if info:
             self._last_info = dict(info)
             self._info_history.append(self._last_info)
@@ -373,8 +376,14 @@ class StableRetroArenaEnvironment:
             )
 
     def _make_env(self):
-        if not self._render:
-            os.environ.setdefault("PYGLET_HEADLESS", "true")
+        # STEP 1: Set up render mode hints before importing retro.
+        os.environ.setdefault("PYGLET_HEADLESS", "true")
+        logger.info(
+            "Retro render setup: display_mode={} display={} headless={}",
+            self._display_mode,
+            os.environ.get("DISPLAY"),
+            os.environ.get("PYGLET_HEADLESS"),
+        )
         try:
             retro = importlib.import_module("retro")
         except ImportError as exc:
@@ -388,7 +397,9 @@ class StableRetroArenaEnvironment:
             except Exception:
                 record_target = None
         state = self._state or self._default_state
-        render_mode = "human" if self._render else "rgb_array"
+        render_mode = "rgb_array"
+        logger.info("Retro render mode: {}", render_mode)
+        # STEP 2: Build the retro environment.
         try:
             if record_target is not None:
                 return retro.make(game=self._game, state=state, record=str(record_target), render_mode=render_mode)
@@ -404,16 +415,17 @@ class StableRetroArenaEnvironment:
                 return retro.make(game=self._game)
 
     def _maybe_render(self, *, force: bool = False) -> None:
-        if not self._render:
+        if not self._force_frame_viewer:
             return
         if self._retro_env is None:
             return
-        if not force and (self._tick % self._render_every_n_ticks != 0):
-            return
         try:
-            self._retro_env.render()
-            if self._render_sleep_ms:
-                time.sleep(self._render_sleep_ms / 1000.0)
+            logger.debug("Retro render tick={} force={}", self._tick, force)
+            if self._last_obs is None:
+                if self._tick <= 3:
+                    logger.warning("Force frame viewer enabled but no frame is available yet.")
+            else:
+                self._show_frame(self._last_obs)
         except Exception:
             return
 
@@ -445,6 +457,71 @@ class StableRetroArenaEnvironment:
             macro_map=self._action_mapping_override,
             legal_moves=self._legal_moves_override,
         )
+
+    def _show_frame(self, frame) -> None:
+        if frame is None:
+            return
+        frame_shape = getattr(frame, "shape", None)
+        frame_ndim = getattr(frame, "ndim", 0)
+        if frame_ndim != 3:
+            logger.warning("Frame viewer skipped non-RGB frame: ndim={} shape={}", frame_ndim, frame_shape)
+            return
+        if self._tick <= 3 or self._tick % 60 == 0:
+            try:
+                min_val = float(frame.min())
+                max_val = float(frame.max())
+            except Exception:
+                min_val = None
+                max_val = None
+            logger.debug(
+                "Frame viewer stats: shape={} dtype={} min={} max={}",
+                frame_shape,
+                getattr(frame, "dtype", None),
+                min_val,
+                max_val,
+            )
+        if self._frame_viewer_disabled:
+            return
+        if self._frame_viewer is None:
+            self._frame_viewer = self._init_frame_viewer()
+            if self._frame_viewer is None:
+                self._frame_viewer_disabled = True
+                return
+        try:
+            if self._frame_viewer_kind == "pil":
+                self._frame_viewer["image"] = self._frame_viewer["photo_factory"](frame)
+                self._frame_viewer["label"].configure(image=self._frame_viewer["image"])
+                self._frame_viewer["root"].update_idletasks()
+                self._frame_viewer["root"].update()
+            else:
+                self._frame_viewer.imshow(frame)
+        except Exception:
+            return
+
+    def _init_frame_viewer(self):
+        if self._frame_viewer_kind == "pil":
+            try:
+                import tkinter as tk
+                from PIL import Image, ImageTk
+            except Exception:
+                logger.warning("PIL frame viewer unavailable; install pillow and tkinter to enable it.")
+                return None
+            root = tk.Tk()
+            root.title("Retro Frame Viewer")
+            label = tk.Label(root)
+            label.pack()
+
+            def photo_factory(arr):
+                image = Image.fromarray(arr)
+                return ImageTk.PhotoImage(image)
+
+            return {"root": root, "label": label, "photo_factory": photo_factory, "image": None}
+        try:
+            from stable_retro.rendering import SimpleImageViewer
+        except Exception:
+            logger.warning("Pyglet frame viewer unavailable.")
+            return None
+        return SimpleImageViewer()
 
     def _build_info_feeder(self, info_feeder: Optional[Dict[str, Any]]) -> InfoFeeder:
         if not info_feeder:

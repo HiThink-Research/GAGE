@@ -42,9 +42,7 @@ role_adapters:
         impl: retro_env_v1
         game: SuperMarioBros3-Nes-v0
         state: Start
-        render: true
-        render_every_n_ticks: 1
-        render_sleep_ms: 33
+        display_mode: pil
         record_bk2: false
         legal_moves:
           - noop
