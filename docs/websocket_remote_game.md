@@ -20,7 +20,7 @@ python -m retro.import
 ## Run
 
 ```
-PYTHONPATH=src python -m gage_eval.role.arena.games.retro.webrtc_server \
+PYTHONPATH=src python -m gage_eval.role.arena.games.retro.websocket_server \
   --game SuperMarioBros3-Nes-v0 \
   --port 5800
 ```

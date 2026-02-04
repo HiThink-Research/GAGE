@@ -1,4 +1,4 @@
-"""Keyboard input utilities for stable-retro WebRTC sessions."""
+"""Keyboard input utilities for stable-retro WebSocket sessions."""
 
 from __future__ import annotations
 
