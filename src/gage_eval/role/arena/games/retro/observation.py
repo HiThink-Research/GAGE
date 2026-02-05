@@ -23,7 +23,9 @@ class ActionSchema:
         moves_hint = ", ".join([str(move) for move in legal_moves]) if legal_moves else "none"
         return (
             "Output ONE JSON object:\n"
-            '{ "move": "<legal_move>", "hold_ticks": <int> }\n'
+            '{ "move": "<legal_move_or_key_combo>", "hold_ticks": <int> }\n'
+            "Key aliases accepted for `move`: w/a/s/d (up/left/down/right), j=A(jump), k=B(run), l=select, enter=start.\n"
+            "Key combos are allowed (e.g. `d+j+k`).\n"
             f"hold_ticks range: {self.hold_ticks_min}-{self.hold_ticks_max} "
             f"(default {self.default_hold_ticks}).\n"
             f"Legal moves: {moves_hint}."
@@ -103,6 +105,7 @@ class ObservationBuilder:
         info_history: Sequence[dict[str, Any]],
         raw_info: dict[str, Any],
         reward_total: float,
+        controls: Optional[dict[str, Any]] = None,
     ) -> ArenaObservation:
         """Build an ArenaObservation plus the section-15 dict payload."""
 
@@ -117,6 +120,9 @@ class ObservationBuilder:
             reward_total=reward_total,
             info_text=info_text,
         )
+        controls_block = self._format_controls_block(controls)
+        if controls_block:
+            view_text = f"{view_text}\n\n{controls_block}"
         action_hint = self._action_schema.format_prompt(legal_moves)
         observation_dict = _build_observation_dict(
             view_text=view_text,
@@ -125,7 +131,7 @@ class ObservationBuilder:
             tick=tick,
             step=decision_count,
             info=raw_info,
-            extra={"info_projection": info_extra, "action_schema": action_hint},
+            extra={"info_projection": info_extra, "action_schema": action_hint, "controls": controls or {}},
         )
         return ArenaObservation(
             board_text=view_text,
@@ -139,8 +145,12 @@ class ObservationBuilder:
                 "token_budget": self._token_budget,
             },
             view=observation_dict.get("view"),
+            legal_actions={"items": list(observation_dict.get("legal_actions") or [])},
             context=observation_dict.get("context"),
             extra=observation_dict.get("extra", {}),
+            view_text=view_text,
+            last_action=last_move,
+            legal_actions_items=tuple(observation_dict.get("legal_actions") or []),
         )
 
     @staticmethod
@@ -159,6 +169,38 @@ class ObservationBuilder:
             "Info:",
             info_text or "{}",
         ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_controls_block(controls: Optional[dict[str, Any]]) -> str:
+        if not isinstance(controls, dict) or not controls:
+            return ""
+        keys_hint = controls.get("keys_hint")
+        buttons = controls.get("buttons")
+        move_aliases = controls.get("move_aliases")
+
+        lines: list[str] = ["Controls:"]
+        if isinstance(keys_hint, str) and keys_hint.strip():
+            lines.append(f"- {keys_hint.strip()}")
+        if isinstance(buttons, (list, tuple)) and buttons:
+            button_preview = ", ".join([str(btn) for btn in buttons])
+            lines.append(f"- Stable-retro buttons: {button_preview}")
+        if isinstance(move_aliases, dict) and move_aliases:
+            preview_items: list[str] = []
+            for move, payload in move_aliases.items():
+                if not isinstance(payload, dict):
+                    continue
+                key_combo = payload.get("keys_combo")
+                if not isinstance(key_combo, str) or not key_combo:
+                    continue
+                buttons_payload = payload.get("buttons")
+                if isinstance(buttons_payload, (list, tuple)) and buttons_payload:
+                    button_combo = "+".join([str(btn) for btn in buttons_payload])
+                    preview_items.append(f"{move}={key_combo} ({button_combo})")
+                else:
+                    preview_items.append(f"{move}={key_combo}")
+            if preview_items:
+                lines.append("- Legal move aliases: " + ", ".join(preview_items))
         return "\n".join(lines)
 
 

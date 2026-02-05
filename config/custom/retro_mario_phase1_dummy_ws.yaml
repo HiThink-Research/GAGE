@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_phase1
-  description: Stable-retro Mario demo with dummy LLM backend (single-player).
+  name: retro_mario_phase1_dummy_ws
+  description: Stable-retro Mario demo with dummy DUT driving the env + WebSocket streaming (no human control).
 
 custom:
   steps:
@@ -34,11 +34,6 @@ role_adapters:
     backend_id: retro_dummy
     capabilities:
       - chat_completion
-
-  - adapter_id: retro_websocket_human
-    role_type: human
-    params:
-      source: queue
 
   - adapter_id: retro_mario_arena
     role_type: arena
@@ -75,11 +70,12 @@ role_adapters:
         host: 0.0.0.0
         port: 5800
         fps: 30
-        hold_ticks_default: 6
       players:
         - name: player_0
-          type: human
-          ref: retro_websocket_human
+          type: backend
+          ref: retro_dummy_player
+          max_retries: 0
+          fallback_policy: first_legal
 
 tasks:
   - task_id: retro_mario_demo
@@ -92,3 +88,4 @@ tasks:
         - type: file
           params:
             output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_demo_events.jsonl
+

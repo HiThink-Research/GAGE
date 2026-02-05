@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from queue import Queue, Empty
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
@@ -33,6 +36,10 @@ class HumanPlayer:
         self._parser = parser
         self._trace = trace
         self._action_queue = action_queue
+        self._decision_queue: "Queue[ArenaAction]" = Queue()
+        self._think_thread: Optional[threading.Thread] = None
+        self._think_lock = threading.Lock()
+        self._pending_error: Optional[BaseException] = None
 
     def think(self, observation: ArenaObservation) -> ArenaAction:
         """Return a human-provided action."""
@@ -62,6 +69,60 @@ class HumanPlayer:
             raw=raw_text,
             metadata=metadata,
         )
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: int = 100) -> None:
+        """Start waiting for the next human action on a background thread."""
+
+        del deadline_ms
+        with self._think_lock:
+            if self._think_thread and self._think_thread.is_alive():
+                return
+            self._pending_error = None
+
+            # STEP 1: Block on human input in a background thread to keep schedulers responsive.
+            def _worker(obs: ArenaObservation = observation) -> None:
+                start_s = time.perf_counter()
+                try:
+                    action = self.think(obs)
+                except BaseException as exc:  # pragma: no cover - defensive
+                    self._pending_error = exc
+                    return
+                latency_ms = max(0, int((time.perf_counter() - start_s) * 1000))
+                action_meta = dict(action.metadata or {})
+                action_meta.setdefault("latency_ms", latency_ms)
+                self._decision_queue.put(
+                    ArenaAction(
+                        player=action.player,
+                        move=action.move,
+                        raw=action.raw,
+                        metadata=action_meta,
+                        hold_ticks=action.hold_ticks,
+                    )
+                )
+
+            self._think_thread = threading.Thread(target=_worker, daemon=True)
+            self._think_thread.start()
+
+    def has_action(self) -> bool:
+        """Return True if a completed action is available."""
+
+        return not self._decision_queue.empty() or self._pending_error is not None
+
+    def pop_action(self) -> ArenaAction:
+        """Return the next available action.
+
+        Raises:
+            RuntimeError: If the background worker failed to produce an action.
+        """
+
+        if self._pending_error is not None:
+            error = self._pending_error
+            self._pending_error = None
+            raise RuntimeError(f"HumanPlayer '{self.name}' failed to produce an action: {error}") from error
+        try:
+            return self._decision_queue.get_nowait()
+        except Empty as exc:
+            raise RuntimeError(f"HumanPlayer '{self.name}' pop_action called without available action") from exc
 
     def _format_observation(self, observation: ArenaObservation) -> str:
         active_player = _format_player_label(observation, observation.active_player)

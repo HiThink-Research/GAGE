@@ -60,6 +60,11 @@ class RetroActionCodec:
 
         return list(self._legal_moves)
 
+    def buttons(self) -> list[str]:
+        """Return the ordered stable-retro button list."""
+
+        return list(self._buttons)
+
     def encode(self, move: str) -> EncodedAction:
         """Encode the macro move into a retro action array.
 

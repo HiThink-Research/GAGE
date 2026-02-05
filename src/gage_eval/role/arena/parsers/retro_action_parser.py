@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Sequence
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.games.retro.keyboard_input import resolve_macro_move_from_action_state
 
 DEFAULT_RETHINK_TEMPLATE = (
     "Your previous action could not be processed.\n"
@@ -15,7 +16,8 @@ DEFAULT_RETHINK_TEMPLATE = (
     "Your last output was: '{last_output}'.\n"
     "Instructions:\n"
     "- Output ONE JSON object on the last line.\n"
-    '- Schema: {"move": "<legal_move>", "hold_ticks": <int>}.\n'
+    '- Schema: {"move": "<legal_move_or_key_combo>", "hold_ticks": <int>}.\n'
+    "- You may also use key aliases for `move` (W/A/S/D + J/K/L). Example: `d+j+k`.\n"
     "Legal moves: {legal_moves}."
 )
 
@@ -59,6 +61,7 @@ class RetroActionParser:
         self._hold_ticks_max = int(hold_ticks_max)
         self._default_hold_ticks = int(default_hold_ticks)
         self._json_pattern = re.compile(r"\{.*\}", re.DOTALL)
+        self._key_combo_pattern = re.compile(r"[a-zA-Z]+")
 
     def parse(
         self,
@@ -84,6 +87,10 @@ class RetroActionParser:
         parsed_move, hold_ticks, parse_error = self._parse_payload(stripped)
         if not parsed_move:
             return RetroParseResult(None, None, raw, parse_error or "invalid_format")
+
+        alias_move = self._resolve_key_alias_move(parsed_move)
+        if alias_move:
+            parsed_move = alias_move
 
         if legal_moves is not None:
             legal_set = {str(move) for move in legal_moves}
@@ -167,6 +174,54 @@ class RetroActionParser:
         if isinstance(payload, dict):
             return payload
         return None
+
+    def _resolve_key_alias_move(self, move: str) -> Optional[str]:
+        """Resolve key-alias strings into canonical macro moves.
+
+        This supports a compact "keyboard" interface for models such as:
+        - `d` -> right
+        - `dk` / `d+k` -> right_run
+        - `djk` / `d+j+k` -> right_run_jump
+
+        Args:
+            move: Move string extracted from model output.
+
+        Returns:
+            Canonical macro move string when the input looks like a key combo,
+            otherwise None.
+        """
+
+        normalized = str(move or "").strip().lower()
+        if not normalized:
+            return None
+
+        key_alias_to_action = {
+            "w": "up",
+            "a": "left",
+            "s": "down",
+            "d": "right",
+            "j": "jump",
+            "k": "run",
+            "l": "select",
+            "enter": "start",
+            "shift": "select",
+        }
+
+        tokens = [token.lower() for token in self._key_combo_pattern.findall(normalized)]
+        if not tokens:
+            return None
+
+        pressed_actions: dict[str, bool] = {}
+        for token in tokens:
+            if token in {"enter", "shift"}:
+                pressed_actions[key_alias_to_action[token]] = True
+                continue
+            if not all(char in key_alias_to_action for char in token):
+                return None
+            for char in token:
+                pressed_actions[key_alias_to_action[char]] = True
+
+        return resolve_macro_move_from_action_state(pressed_actions)
 
 
 __all__ = ["RetroActionParser", "RetroParseResult"]

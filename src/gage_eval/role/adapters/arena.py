@@ -98,9 +98,14 @@ class ArenaRoleAdapter(RoleAdapter):
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
         visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
-        action_server, action_queue_server = self._ensure_action_server(player_specs)
-        if action_queue is None:
-            action_queue = action_queue_server
+        env_display_mode = str(self._environment_cfg.get("display_mode") or "headless").lower()
+        wants_retro_ws = bool("retro" in env_impl_lower and env_display_mode in {"websocket", "ws"})
+        action_server = None
+        action_queue_server = None
+        if self._human_input_cfg and bool(self._human_input_cfg.get("enabled", False)) and not wants_retro_ws:
+            action_server, action_queue_server = self._ensure_action_server(player_specs, environment=None)
+            if action_queue is None:
+                action_queue = action_queue_server
         environment = self._build_environment(
             sample,
             player_ids=player_ids,
@@ -110,6 +115,10 @@ class ArenaRoleAdapter(RoleAdapter):
             chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
         )
+        if wants_retro_ws:
+            action_server, action_queue_server = self._ensure_retro_websocket_server(player_specs, environment=environment)
+            if action_queue is None:
+                action_queue = action_queue_server
         if visualizer is not None:
             visualizer.reset_state()
             visualizer.set_players(
@@ -684,7 +693,7 @@ class ArenaRoleAdapter(RoleAdapter):
         self._shared_visualizer = visualizer
         return visualizer, visualizer.action_queue
 
-    def _ensure_action_server(self, player_specs: Sequence[Dict[str, Any]]):
+    def _ensure_action_server(self, player_specs: Sequence[Dict[str, Any]], *, environment=None):
         if self._action_server is not None:
             return self._action_server, self._action_server.action_queue
 
@@ -703,6 +712,46 @@ class ArenaRoleAdapter(RoleAdapter):
         port = int(self._human_input_cfg.get("port", 8001))
         allow_origin = self._human_input_cfg.get("allow_origin", "*")
         server = ActionQueueServer(host=str(host), port=port, allow_origin=str(allow_origin))
+        server.start()
+        self._action_server = server
+        return server, server.action_queue
+
+    def _ensure_retro_websocket_server(self, player_specs: Sequence[Dict[str, Any]], *, environment):
+        if self._action_server is not None:
+            return self._action_server, self._action_server.action_queue
+
+        has_human = any(spec.get("type") == "human" for spec in player_specs)
+        if environment is None:
+            raise ValueError("retro websocket control requires an initialized environment")
+
+        from queue import Queue
+
+        from gage_eval.role.arena.games.retro.websocket_attached_server import (
+            AttachedServerConfig,
+            RetroAttachedWebSocketServer,
+        )
+
+        host = self._human_input_cfg.get("host", "127.0.0.1") if self._human_input_cfg else "127.0.0.1"
+        port = int(self._human_input_cfg.get("port", 5800)) if self._human_input_cfg else 5800
+        fps = int(self._human_input_cfg.get("fps", 30)) if self._human_input_cfg else 30
+        action_schema = dict(self._environment_cfg.get("action_schema") or {})
+        hold_ticks_default = int(
+            (self._human_input_cfg.get("hold_ticks_default") if self._human_input_cfg else None)
+            or action_schema.get("hold_ticks_default", 6)
+            or 6
+        )
+        action_queue: Optional[Queue[str]] = Queue() if has_human else None
+        server = RetroAttachedWebSocketServer(
+            config=AttachedServerConfig(
+                host=str(host),
+                port=port,
+                fps=fps,
+                legal_moves=self._environment_cfg.get("legal_moves") or action_schema.get("legal_moves"),
+                hold_ticks_default=hold_ticks_default,
+            ),
+            frame_source=getattr(environment, "get_last_frame"),
+            action_queue=action_queue,
+        )
         server.start()
         self._action_server = server
         return server, server.action_queue

@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_phase1
-  description: Stable-retro Mario demo with dummy LLM backend (single-player).
+  name: retro_mario_phase1_openai_ws
+  description: Stable-retro Mario demo with OpenAI HTTP backend driving the agent + WebSocket streaming (no human control).
 
 custom:
   steps:
@@ -18,27 +18,22 @@ datasets:
       streaming: false
 
 backends:
-  - backend_id: retro_dummy
-    type: dummy
+  - backend_id: openai_http_player
+    type: openai_http
     config:
-      cycle: true
-      responses:
-        - '{"move":"right_run","hold_ticks":6}'
-        - '{"move":"right_run_jump","hold_ticks":6}'
-        - '{"move":"right","hold_ticks":4}'
-        - '{"move":"noop","hold_ticks":3}'
+      base_url: https://api.openai.com/v1
+      model: gpt-4o-mini
+      require_api_key: true
+      default_params:
+        temperature: 0.2
+        max_tokens: 64
 
 role_adapters:
-  - adapter_id: retro_dummy_player
+  - adapter_id: openai_player_0
     role_type: dut_model
-    backend_id: retro_dummy
+    backend_id: openai_http_player
     capabilities:
       - chat_completion
-
-  - adapter_id: retro_websocket_human
-    role_type: human
-    params:
-      source: queue
 
   - adapter_id: retro_mario_arena
     role_type: arena
@@ -47,6 +42,7 @@ role_adapters:
         impl: retro_env_v1
         game: SuperMarioBros3-Nes-v0
         state: Start
+        # Use display_mode=websocket to stream frames from the in-pipeline env.
         display_mode: websocket
         record_bk2: false
         legal_moves:
@@ -70,6 +66,7 @@ role_adapters:
         hold_ticks_min: 1
         hold_ticks_max: 12
         hold_ticks_default: 6
+      # WebSocket server settings (stream-only because no human player is configured).
       human_input:
         enabled: true
         host: 0.0.0.0
@@ -78,8 +75,10 @@ role_adapters:
         hold_ticks_default: 6
       players:
         - name: player_0
-          type: human
-          ref: retro_websocket_human
+          type: backend
+          ref: openai_player_0
+          max_retries: 1
+          fallback_policy: first_legal
 
 tasks:
   - task_id: retro_mario_demo
@@ -91,4 +90,5 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_demo_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_ws_events.jsonl
+

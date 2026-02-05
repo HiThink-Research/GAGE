@@ -24,7 +24,7 @@ _DEFAULT_KEY_MAP: dict[str, str] = {
     "x": "run",
     "k": "run",
     "c": "jump",
-    "l": "start",
+    "l": "select",
 }
 
 
@@ -97,41 +97,52 @@ class KeyState:
     def resolve_move(self) -> str:
         """Resolve the current key state into a retro macro move."""
 
-        state = self.snapshot()
-        if state.get("start"):
-            return "start"
-        if state.get("select"):
-            return "select"
-
-        left = bool(state.get("left"))
-        right = bool(state.get("right"))
-        up = bool(state.get("up"))
-        down = bool(state.get("down"))
-        jump = bool(state.get("jump"))
-        run = bool(state.get("run"))
-
-        if left and right:
-            left = False
-            right = False
-
-        if left:
-            move = _resolve_directional_move("left", run=run, jump=jump)
-        elif right:
-            move = _resolve_directional_move("right", run=run, jump=jump)
-        elif up:
-            move = "up"
-        elif down:
-            move = "down"
-        elif jump:
-            move = "jump"
-        elif run:
-            move = "run"
-        else:
-            move = "noop"
-
+        move = resolve_macro_move_from_action_state(self.snapshot())
         if self._legal_moves and move not in self._legal_moves:
             return "noop"
         return move
+
+
+def resolve_macro_move_from_action_state(state: Mapping[str, bool]) -> str:
+    """Resolve a macro move from a primitive action-state mapping.
+
+    Args:
+        state: Mapping of primitive action name to pressed booleans. The expected
+            action names are: left/right/up/down/jump/run/start/select.
+
+    Returns:
+        Resolved macro move string such as "right_run_jump" or "noop".
+    """
+
+    if state.get("start"):
+        return "start"
+    if state.get("select"):
+        return "select"
+
+    left = bool(state.get("left"))
+    right = bool(state.get("right"))
+    up = bool(state.get("up"))
+    down = bool(state.get("down"))
+    jump = bool(state.get("jump"))
+    run = bool(state.get("run"))
+
+    if left and right:
+        left = False
+        right = False
+
+    if left:
+        return _resolve_directional_move("left", run=run, jump=jump)
+    if right:
+        return _resolve_directional_move("right", run=run, jump=jump)
+    if up:
+        return "up"
+    if down:
+        return "down"
+    if jump:
+        return "jump"
+    if run:
+        return "run"
+    return "noop"
 
 
 def _resolve_directional_move(direction: str, *, run: bool, jump: bool) -> str:
@@ -144,4 +155,4 @@ def _resolve_directional_move(direction: str, *, run: bool, jump: bool) -> str:
     return direction
 
 
-__all__ = ["KeyState", "build_default_key_map"]
+__all__ = ["KeyState", "build_default_key_map", "resolve_macro_move_from_action_state"]

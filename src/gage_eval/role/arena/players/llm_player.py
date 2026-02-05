@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from queue import Queue, Empty
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
@@ -40,6 +43,10 @@ class LLMPlayer:
         self._sampling_params = dict(sampling_params or {})
         self._fallback_policy = str(fallback_policy or "none").lower()
         self._base_messages = list(sample.get("messages") or [])
+        self._action_queue: "Queue[ArenaAction]" = Queue()
+        self._think_thread: Optional[threading.Thread] = None
+        self._think_lock = threading.Lock()
+        self._pending_error: Optional[BaseException] = None
 
     def think(self, observation: ArenaObservation) -> ArenaAction:
         """Produce an action using the LLM adapter."""
@@ -93,6 +100,67 @@ class LLMPlayer:
             hold_ticks=getattr(parse_result, "hold_ticks", None),
         )
 
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: int = 100) -> None:
+        """Start producing the next action on a background thread.
+
+        Args:
+            observation: Current observation for this player.
+            deadline_ms: Scheduler tick budget in milliseconds. This implementation
+                cannot cancel in-flight model calls, but uses the deadline for
+                latency metadata when available.
+        """
+
+        with self._think_lock:
+            if self._think_thread and self._think_thread.is_alive():
+                return
+            self._pending_error = None
+
+            # STEP 1: Launch background computation to avoid blocking tick schedulers.
+            def _worker(obs: ArenaObservation = observation, budget_ms: int = int(deadline_ms)) -> None:
+                start_s = time.perf_counter()
+                try:
+                    action = self.think(obs)
+                except BaseException as exc:  # pragma: no cover - defensive, surfaced in pop_action
+                    self._pending_error = exc
+                    return
+                latency_ms = max(0, int((time.perf_counter() - start_s) * 1000))
+                action_meta = dict(action.metadata or {})
+                action_meta.setdefault("latency_ms", latency_ms)
+                action_meta.setdefault("deadline_ms", budget_ms)
+                self._action_queue.put(
+                    ArenaAction(
+                        player=action.player,
+                        move=action.move,
+                        raw=action.raw,
+                        metadata=action_meta,
+                        hold_ticks=action.hold_ticks,
+                    )
+                )
+
+            self._think_thread = threading.Thread(target=_worker, daemon=True)
+            self._think_thread.start()
+
+    def has_action(self) -> bool:
+        """Return True if a completed action is available."""
+
+        return not self._action_queue.empty() or self._pending_error is not None
+
+    def pop_action(self) -> ArenaAction:
+        """Return the next available action.
+
+        Raises:
+            RuntimeError: If the background worker failed to produce an action.
+        """
+
+        if self._pending_error is not None:
+            error = self._pending_error
+            self._pending_error = None
+            raise RuntimeError(f"LLMPlayer '{self.name}' failed to produce an action: {error}") from error
+        try:
+            return self._action_queue.get_nowait()
+        except Empty as exc:
+            raise RuntimeError(f"LLMPlayer '{self.name}' pop_action called without available action") from exc
+
     def _invoke_model(self, messages: Sequence[Dict[str, Any]]) -> str:
         payload = {
             "sample": self._sample,
@@ -114,39 +182,30 @@ class LLMPlayer:
         return self._format_grid_observation(observation)
 
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_moves)
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items or observation.legal_moves)
         legal_hint = ", ".join(legal_moves) if legal_moves else "none"
         active_player = _format_player_label(observation, observation.active_player)
-
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {last_action}",
-            "\nEnvironment:",
-            observation.view_text,
-            "\nLegal moves:",
-            legal_hint,
-            "\nInstructions:",
-            *instructions,
-        ]
-        return "\n".join(lines)
-
-    def _format_grid_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
+        action_schema = observation.metadata.get("action_schema")
+        schema_block = str(action_schema).strip() if isinstance(action_schema, str) and action_schema.strip() else None
 
         lines = [
             f"Active player: {active_player}",
             f"Opponent last move: {observation.last_action or 'First move'}",
-            "\nCurrent Board:",
-            observation.view_text,
+            "\nEnvironment:",
+            observation.view_text or observation.board_text,
             "\nStatus:",
             f"- Legal moves (truncated): {legal_hint}",
-            "\nInstructions:",
-            "- Analyze the board.",
-            "- Select the best coordinate for your move.",
-            "- Output your move as a single coordinate (e.g., 'H8').",
         ]
+        if schema_block:
+            lines.extend(["\nAction schema:", schema_block, "\nInstructions:", "- Output ONE JSON object on the last line."])
+        else:
+            lines.extend(
+                [
+                    "\nInstructions:",
+                    "- Select the best coordinate for your move.",
+                    "- Output your move as a single coordinate (e.g., 'H8').",
+                ]
+            )
         return "\n".join(lines)
 
     def _format_card_observation(self, observation: ArenaObservation) -> str:

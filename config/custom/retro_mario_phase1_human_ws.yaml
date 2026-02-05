@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_phase1
-  description: Stable-retro Mario demo with dummy LLM backend (single-player).
+  name: retro_mario_phase1_human_ws
+  description: Stable-retro Mario demo with a pure human player controlled via WebSocket (no LLM backend).
 
 custom:
   steps:
@@ -17,24 +17,7 @@ datasets:
       path: config/custom/retro_mario_phase1.jsonl
       streaming: false
 
-backends:
-  - backend_id: retro_dummy
-    type: dummy
-    config:
-      cycle: true
-      responses:
-        - '{"move":"right_run","hold_ticks":6}'
-        - '{"move":"right_run_jump","hold_ticks":6}'
-        - '{"move":"right","hold_ticks":4}'
-        - '{"move":"noop","hold_ticks":3}'
-
 role_adapters:
-  - adapter_id: retro_dummy_player
-    role_type: dut_model
-    backend_id: retro_dummy
-    capabilities:
-      - chat_completion
-
   - adapter_id: retro_websocket_human
     role_type: human
     params:
@@ -47,6 +30,7 @@ role_adapters:
         impl: retro_env_v1
         game: SuperMarioBros3-Nes-v0
         state: Start
+        # display_mode=websocket starts the attached WS server and disables local rendering.
         display_mode: websocket
         record_bk2: false
         legal_moves:
@@ -91,4 +75,5 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_demo_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_human_ws_events.jsonl
+

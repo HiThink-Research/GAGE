@@ -98,6 +98,10 @@ class StableRetroArenaEnvironment:
         self._seed = seed
         self._display_mode = str(display_mode or "headless").lower()
         self._render = False
+        # NOTE: display_mode controls only local rendering; websocket streaming is handled
+        # by an external attached server. Treat websocket modes as headless here.
+        if self._display_mode in {"websocket", "ws"}:
+            self._display_mode = "headless"
         self._force_frame_viewer = self._display_mode == "pil"
         self._frame_viewer_kind = "pil" if self._force_frame_viewer else "pyglet"
         self._record_bk2 = bool(record_bk2)
@@ -157,6 +161,7 @@ class StableRetroArenaEnvironment:
 
     def observe(self, player: str) -> ArenaObservation:
         legal_moves = self._action_codec.legal_moves() if self._action_codec else []
+        controls = self._build_controls_payload(legal_moves)
         return self._observation_builder.build(
             player_id=player,
             active_player=self._active_player,
@@ -167,12 +172,52 @@ class StableRetroArenaEnvironment:
             info_history=self._info_history,
             raw_info=self._last_info,
             reward_total=self._reward_total,
+            controls=controls,
         )
 
     def get_last_frame(self) -> Optional[Any]:
         """Return the most recent RGB frame, if available."""
 
         return self._last_obs
+
+    def _build_controls_payload(self, legal_moves: Sequence[str]) -> dict[str, Any]:
+        key_aliases = {
+            "w": "UP",
+            "a": "LEFT",
+            "s": "DOWN",
+            "d": "RIGHT",
+            "j": "A",
+            "k": "B",
+            "l": "SELECT",
+            "enter": "START",
+        }
+        button_to_key = {button: key for key, button in key_aliases.items()}
+        key_order = {key: idx for idx, key in enumerate(key_aliases.keys())}
+
+        move_aliases: dict[str, dict[str, Any]] = {}
+        if self._action_codec:
+            for move in legal_moves:
+                try:
+                    encoded = self._action_codec.encode(move)
+                except Exception:
+                    continue
+                pressed_buttons = list(encoded.pressed)
+                pressed_keys = [button_to_key.get(button) for button in pressed_buttons]
+                pressed_keys = [key for key in pressed_keys if key]
+                pressed_keys.sort(key=lambda key: key_order.get(key, 1_000_000))
+                move_aliases[str(move)] = {
+                    "buttons": pressed_buttons,
+                    "keys": pressed_keys,
+                    "keys_combo": "+".join(pressed_keys),
+                }
+
+        return {
+            "scheme": "wasd_jkl",
+            "keys_hint": "W/A/S/D = up/left/down/right; J=A(jump), K=B(run), L=select, Enter=start.",
+            "key_aliases": dict(key_aliases),
+            "buttons": self._action_codec.buttons() if self._action_codec else [],
+            "move_aliases": move_aliases,
+        }
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         if self._terminal:
