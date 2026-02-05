@@ -177,9 +177,28 @@ class LLMPlayer:
         return raw_text
 
     def _format_observation(self, observation: ArenaObservation) -> str:
+        if self._should_use_pettingzoo_prompt(observation):
+            return self._format_pettingzoo_observation(observation)
         if self._should_use_card_prompt(observation):
             return self._format_card_observation(observation)
         return self._format_grid_observation(observation)
+
+    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items or observation.legal_moves)
+        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
+        active_player = _format_player_label(observation, observation.active_player)
+
+        lines = [
+            f"Active player: {active_player}",
+            "\nEnvironment:",
+            observation.view_text or observation.board_text,
+            "\nLegal moves:",
+            legal_hint,
+            "\nInstructions:",
+            "- Pick exactly one legal move.",
+            "- Output ONLY the action label or id (no extra text).",
+        ]
+        return "\n".join(lines)
 
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
         legal_moves = self._truncate_legal_moves(observation.legal_actions_items or observation.legal_moves)
@@ -253,6 +272,17 @@ class LLMPlayer:
         if isinstance(observation.metadata.get("public_state"), dict):
             return True
         return "Public State:" in observation.board_text
+
+    @staticmethod
+    def _should_use_pettingzoo_prompt(observation: ArenaObservation) -> bool:
+        env_id = observation.metadata.get("env_id")
+        if isinstance(env_id, str) and env_id.startswith("pettingzoo."):
+            return True
+        board_text = str(observation.board_text or "")
+        view_text = str(observation.view_text or "")
+        if board_text.lower().startswith("pettingzoo env:"):
+            return True
+        return view_text.lower().startswith("pettingzoo env:")
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
         metadata = observation.metadata if isinstance(observation.metadata, dict) else {}

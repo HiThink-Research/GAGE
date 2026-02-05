@@ -45,7 +45,6 @@ class InfoFeeder:
         """Build info text and extra payload from raw info."""
 
         del info_history
-        del token_budget
         return _truncate_text(_json_dumps(raw_info), token_budget), {}
 
 
