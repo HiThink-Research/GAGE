@@ -1,0 +1,70 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: mmsu_benchmark
+  description: eval mmsu
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: mmsu_ds
+    loader: jsonl
+    params:
+      path: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/mmsu/question/mmsu.jsonl
+      preprocess: mmsu_chat_preprocessor
+      preprocess_kwargs:
+        audio_path_root: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/GAGE_workspace/data/mmsu
+
+backends:
+  - backend_id: vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen2_audio
+      tokenizer_path: /mnt/model/qwen2_audio
+      force_tokenize_prompt: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 512
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
+  - backend_id: litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_mmsu_qwen
+    role_type: dut_model
+    #backend_id: litellm_backend
+    backend_id: vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: global_piqa_accuracy_local
+    implementation: global_piqa_accuracy_local
+
+tasks:
+  - task_id: mmsu_eval
+    dataset_id: mmsu_ds
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmsu_events.jsonl

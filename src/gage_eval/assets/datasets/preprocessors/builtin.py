@@ -95,7 +95,8 @@ from gage_eval.assets.datasets.preprocessors.biz_fin_bench_v2.biz_fin_bench_v2_c
 # benchmark MRCR
 from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConverter
 
-
+# benchmark MMSU (audio)
+from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConverter
 
 @registry.asset(
     "dataset_preprocessors",
@@ -440,6 +441,16 @@ class BizFinBenchV2Preprocessor(BizFinBenchV2Converter):
     tags=("prompt", "MRCR"),
 )
 class MRCRPreprocessor(MRCRConverter):
+    pass
+
+# benchmark MMSU audio
+@registry.asset(
+    "dataset_preprocessors",
+    "mmsu_chat_preprocessor",
+    desc="MMSU prompt wrapper",
+    tags=("prompt", "MMSU"),
+)
+class MMSUPreprocessor(MMSUConverter):
     pass
 
 
