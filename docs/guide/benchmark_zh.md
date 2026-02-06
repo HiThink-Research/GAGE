@@ -314,3 +314,37 @@ python GAGE_dev/run.py \
   --run-id simpleqa-verified
 
 ```
+
+### **MMSU**
+
+**MMSU** 是一个专门为口语理解与推理设计的综合性 Benchmark。MMSU 包含 **5,000 个精心筛选的“音频-问题-答案”三元组 (triplets)**，涵盖 **47 个不同的任务**。
+
+为了使该基准测试具备坚实的语言学理论基础，我们系统性地融入了广泛的语言学现象，包括：
+
+* **语音与韵律：** Phonetics, Prosody
+* **结构：** Syntax, Syntactics
+* **语义与副语言学：** Semantics, Paralinguistics
+
+#### Pre-Execution (预执行)
+
+在运行评估之前，请从 Hugging Face 下载数据集：
+
+> **[MMSU Dataset on Hugging Face](https://huggingface.co/datasets/ddwang2000/MMSU)**
+
+#### Execution Command (执行命令)
+
+使用以下命令启动 Benchmark 流程：
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/mmsu/mmsu_audio.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id mmsu
+
+```
+
+#### Detailed Configuration (详细配置)
+
+| 参数 | 描述 | 支持的取值 |
+| --- | --- | --- |
+| **`audio_path_root`** | 存储 MMSU 数据的根目录。 | *有效系统路径 (Path)* |

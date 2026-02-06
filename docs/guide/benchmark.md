@@ -269,3 +269,30 @@ python GAGE_dev/run.py \
   --output-dir ./gage_simpleqa-verified/simpleqa-verified \
   --run-id simpleqa-verified
 ```
+
+### MMSU
+MMSU, a comprehensive benchmark designed specifically for understanding and reasoning in spoken language. MMSU comprises 5,000 meticulously curated audio-question-answer triplets across 47 distinct tasks. To ground our benchmark in linguistic theory, we systematically incorporate a wide range of linguistic phenomena, including phonetics, prosody, syntax, syntactics, semantics, and paralinguistics.
+
+#### Pre-Execution
+
+Before running the evaluation, download the dataset from Hugging Face:
+
+> **[MMSU Dataset on Hugging Face](https://huggingface.co/datasets/ddwang2000/MMSU)**
+
+#### Execution Command
+
+Use the following command to initiate the benchmark process:
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/mmsu/mmsu_audio.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id mmsu
+
+```
+
+####  Detailed Configuration
+| Parameter | Description | Supported Values |
+| --- | --- | --- |
+| **`audio_path_root`** | The root directory where the downloaded MMSU data is stored. | *Valid System Path* |
+

@@ -22,6 +22,7 @@ backends:
   - backend_id: vllm_backend
     type: vllm
     config:
+      enforce_eager: false
       model_path: /mnt/model/qwen2_audio
       tokenizer_path: /mnt/model/qwen2_audio
       force_tokenize_prompt: true
