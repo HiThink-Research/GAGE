@@ -55,8 +55,8 @@ role_adapters:
       - chat_completion
 
 metrics:
-  - metric_id: global_piqa_accuracy_local
-    implementation: global_piqa_accuracy_local
+  - metric_id: mmsu_acc
+    implementation: mmsu_acc
 
 tasks:
   - task_id: mmsu_eval
