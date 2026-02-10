@@ -34,7 +34,9 @@ class ARCAGI2DatasetLoader(DatasetLoader):
         if not path:
             raise ValueError(f"Dataset '{self.spec.dataset_id}' missing ARC-AGI-2 'path' argument")
 
-        filesystem_path = Path(path).expanduser().resolve()
+        # NOTE: Keep path string stable across symlinked temp dirs (for example:
+        # /var -> /private/var on macOS) by avoiding resolve() canonicalization.
+        filesystem_path = Path(os.path.abspath(os.path.expanduser(str(path))))
         if not filesystem_path.exists():
             message = f"Dataset '{self.spec.dataset_id}' ARC-AGI-2 directory not found: {filesystem_path}"
             raise FileNotFoundError(message)
