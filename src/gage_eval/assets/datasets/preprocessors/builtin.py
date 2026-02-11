@@ -69,6 +69,9 @@ except Exception as exc:  # pragma: no cover - optional dependency guard
 # benchmark Math500
 from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 
+# benchmark MMAU-Pro
+from gage_eval.assets.datasets.preprocessors.mmau_pro import MMAUProConverter
+
 # benchmark MME
 from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 
@@ -95,7 +98,8 @@ from gage_eval.assets.datasets.preprocessors.biz_fin_bench_v2.biz_fin_bench_v2_c
 # benchmark MRCR
 from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConverter
 
-
+# benchmark MMSU (audio)
+from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConverter
 
 @registry.asset(
     "dataset_preprocessors",
@@ -329,6 +333,16 @@ if NewMMLUProConverter is not None:
     class MMLUPreprocessor(NewMMLUProConverter):
         pass
 
+# benchmark MMAU-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "mmau_pro_chat_preprocessor",
+    desc="MMAU-Pro 本地 jsonl + 音频 base64 预处理器",
+    tags=("prompt", "audio", "mmau-pro"),
+)
+class MMAUProChatPreprocessor(MMAUProConverter):
+    pass
+
 # benchmark Math500
 @registry.asset(
     "dataset_preprocessors",
@@ -440,6 +454,16 @@ class BizFinBenchV2Preprocessor(BizFinBenchV2Converter):
     tags=("prompt", "MRCR"),
 )
 class MRCRPreprocessor(MRCRConverter):
+    pass
+
+# benchmark MMSU audio
+@registry.asset(
+    "dataset_preprocessors",
+    "mmsu_chat_preprocessor",
+    desc="MMSU prompt wrapper",
+    tags=("prompt", "MMSU"),
+)
+class MMSUPreprocessor(MMSUConverter):
     pass
 
 

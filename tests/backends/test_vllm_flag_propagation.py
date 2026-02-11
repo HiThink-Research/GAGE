@@ -3,6 +3,11 @@ import pytest
 from unittest.mock import MagicMock, patch
 from gage_eval.role.model.backends.vllm_backend import VLLMBackend
 
+
+class DummyModel:
+    """Lightweight placeholder to avoid real vLLM engine initialization in tests."""
+
+
 class TestVLLMFlagPropagation:
     
     @pytest.fixture
@@ -13,7 +18,8 @@ class TestVLLMFlagPropagation:
             "model_path": "dummy-model",
             "tokenizer_path": "dummy-tokenizer"
         }
-        with patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend._init_tokenizer", return_value=MagicMock()), \
+        with patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend.load_model", return_value=DummyModel()), \
+             patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend._init_tokenizer", return_value=MagicMock()), \
              patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend._load_auto_processor", return_value=MagicMock()):
             backend = VLLMBackend(config)
             # Prevent actual rendering logic from running if it falls through
@@ -113,4 +119,3 @@ class TestVLLMFlagPropagation:
         # It usually updates prepared['prompt'] = prompt?
         # We need to verify vllm_backend code to be sure.
         pass
-

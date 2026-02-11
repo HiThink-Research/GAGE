@@ -38,11 +38,23 @@ backends:
       max_model_len: 4096
       gpu_memory_utilization: 0.9
       async_max_concurrency: 32
+  - backend_id: litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
 
 role_adapters:
   - adapter_id: dut_aime2025_vllm_qwen
     role_type: dut_model
-    backend_id: aime2025_vllm_backend
+    #backend_id: aime2025_vllm_backend
+    backend_id: litellm_backend
     capabilities:
       - chat_completion
 
