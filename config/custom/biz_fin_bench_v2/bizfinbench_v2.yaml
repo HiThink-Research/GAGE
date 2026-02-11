@@ -102,15 +102,16 @@ backends:
   - backend_id: mmlu_pro_vllm_backend
     type: vllm
     config:
-      model_path: /mnt/model/qwen2_5_05B
-      tokenizer_path: /mnt/model/qwen2_5_05B
+      enforce_eager: false
+      model_path: /mnt/model/qwen3_8B
+      tokenizer_path: /mnt/model/qwen3_8B
       force_tokenize_prompt: true
       tensor_parallel_size: 1
       max_tokens: 512
       sampling_params:
         temperature: 0.0
       max_batch_size: 1
-      max_model_len: 8192
+      max_model_len: 32768
       gpu_memory_utilization: 0.9
       async_max_concurrency: 8
       output_type: text
@@ -128,8 +129,8 @@ backends:
 role_adapters:
   - adapter_id: dut_mmlu_pro_vllm_qwen
     role_type: dut_model
-    backend_id: bizbinbenchv2_litellm_backend
-    # backend_id: mmlu_pro_vllm_backend
+    #backend_id: bizbinbenchv2_litellm_backend
+    backend_id: mmlu_pro_vllm_backend
     capabilities:
       - chat_completion
 
