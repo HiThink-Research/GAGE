@@ -51,15 +51,19 @@ from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin,
 from gage_eval.utils.chat_templates import get_fallback_template
 from gage_eval.utils.cleanup import install_signal_cleanup
 
-try:  # pragma: no cover - optional dependency
-    import vllm  # type: ignore
-    from packaging import version as _pkg_version
+_VLLM_VERSION: Optional[str] = None
+_VLLM_PROMPT_V1 = False
 
-    _VLLM_VERSION = getattr(vllm, "__version__", None)
-    _VLLM_PROMPT_V1 = bool(_VLLM_VERSION) and _pkg_version.parse(_VLLM_VERSION) >= _pkg_version.parse("0.8.0")
-except Exception:  # pragma: no cover
-    _VLLM_VERSION = None
-    _VLLM_PROMPT_V1 = False
+
+def _refresh_vllm_prompt_flag(version: Optional[str]) -> None:
+    global _VLLM_VERSION, _VLLM_PROMPT_V1
+    _VLLM_VERSION = version
+    try:
+        from packaging import version as _pkg_version
+
+        _VLLM_PROMPT_V1 = bool(version) and _pkg_version.parse(version) >= _pkg_version.parse("0.8.0")
+    except Exception:
+        _VLLM_PROMPT_V1 = False
 
 
 @registry.asset(
@@ -83,12 +87,24 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._default_sampling = config.get("sampling_params") or {}
         self._max_tokens = int(config.get("max_tokens", 512))
         self._request_timeout = float(config.get("request_timeout", 300))
+        if config.get("gpu_groups") is not None or config.get("auto_gpu_groups") is not None:
+            raise ValueError(
+                "vllm_backend no longer supports gpu_groups/auto_gpu_groups router mode. "
+                "Use vLLM native data_parallel_* options instead."
+            )
         cfg = dict(config)
         cfg.setdefault("execution_mode", "native")
         ensure_spawn_start_method()
         self._vllm_version = detect_vllm_version()
+        _refresh_vllm_prompt_flag(self._vllm_version)
         if self._vllm_version:
             logger.info("Detected vLLM version {}", self._vllm_version)
+        logger.info(
+            "vllm_backend mode=single_engine tensor_parallel_size={} pipeline_parallel_size={} data_parallel_size={}",
+            config.get("tensor_parallel_size"),
+            config.get("pipeline_parallel_size"),
+            config.get("data_parallel_size"),
+        )
         self._mm_supported, self._mm_strategy, self._strict_mm = resolve_vllm_mm_support(config, self._vllm_version)
 
         # Initialize a dedicated event loop thread to avoid deadlocks when vLLM spins loops internally.
@@ -120,7 +136,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._processor = self._load_auto_processor(model_id, trust_remote_code=trust_remote_code)
         self._tokenizer = self._init_tokenizer(config)
         cfg_obj = self._apply_model_patches(cfg_obj, args_ns)
-        engine, processor = self._build_engine(cfg_obj, self._processor, model_id, args_ns)
+        engine, processor = self._build_engine(cfg_obj, self._processor, model_id, args_ns, config)
         self._processor = processor
         return engine
 
@@ -374,10 +390,14 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 else:
                     raise
             except Exception as exc:
-                logger.warning(
-                    "vllm_backend generate failed: {} - {}; returning echo output", type(exc).__name__, exc, exc_info=True
+                logger.error(
+                    "vllm_backend generate failed request_id={} error_type={} error={}",
+                    request_id,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
                 )
-                return {"outputs": [{"text": str(prompt)}]}
+                raise RuntimeError(f"vllm_backend generate failed: {type(exc).__name__}: {exc}") from exc
 
             # Collect results from async generators/coroutines.
             if inspect.isasyncgen(result) or isinstance(result, types.AsyncGeneratorType):
@@ -399,11 +419,15 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 request_id=request_id,
                 abort_fn=abort_fn,
                 logger_prefix="vllm_backend",
-                timeout_result_fn=lambda: {"outputs": [{"text": str(prompt)}]},
             )
         except Exception as exc:
-            logger.error("vllm_backend: background thread execution failed: {}", exc)
-            return {"outputs": [{"text": str(prompt)}]}
+            logger.error(
+                "vllm_backend background execution failed request_id={} error_type={} error={}",
+                request_id,
+                type(exc).__name__,
+                exc,
+            )
+            raise RuntimeError(f"vllm_backend background execution failed: {type(exc).__name__}: {exc}") from exc
 
     # ------------------------------------------------------------------ #
     # Model loading and compatibility patches                              #
@@ -483,7 +507,9 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
 
         return cfg
 
-    def _build_engine(self, cfg: Any, processor: Any, model_id: str, args: SimpleNamespace):
+    def _build_engine(
+        self, cfg: Any, processor: Any, model_id: str, args: SimpleNamespace, config: Dict[str, Any]
+    ):
         try:  # pragma: no cover - heavy dependency
             from vllm.engine.arg_utils import AsyncEngineArgs  # type: ignore
             from vllm.engine.async_llm_engine import AsyncLLMEngine  # type: ignore
@@ -493,8 +519,57 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 model=model_id,
                 tensor_parallel_size=getattr(args, "tensor_parallel_size", 1),
                 trust_remote_code=getattr(args, "trust_remote_code", True),
-                enforce_eager=getattr(args, "enforce_eager", False),
             )
+            enforce_eager = getattr(args, "enforce_eager", None)
+            if enforce_eager is not None:
+                engine_kwargs["enforce_eager"] = bool(enforce_eager)
+            if getattr(args, "pipeline_parallel_size", None) is not None:
+                engine_kwargs["pipeline_parallel_size"] = int(args.pipeline_parallel_size)
+            if getattr(args, "data_parallel_size", None) is not None:
+                engine_kwargs["data_parallel_size"] = int(args.data_parallel_size)
+            if getattr(args, "data_parallel_rank", None) is not None:
+                engine_kwargs["data_parallel_rank"] = int(args.data_parallel_rank)
+            if getattr(args, "data_parallel_size_local", None) is not None:
+                engine_kwargs["data_parallel_size_local"] = int(args.data_parallel_size_local)
+            if getattr(args, "data_parallel_address", None):
+                engine_kwargs["data_parallel_address"] = str(args.data_parallel_address)
+            if getattr(args, "data_parallel_rpc_port", None) is not None:
+                engine_kwargs["data_parallel_rpc_port"] = int(args.data_parallel_rpc_port)
+            if getattr(args, "data_parallel_backend", None):
+                engine_kwargs["data_parallel_backend"] = str(args.data_parallel_backend)
+            if getattr(args, "distributed_executor_backend", None):
+                engine_kwargs["distributed_executor_backend"] = str(args.distributed_executor_backend)
+            if getattr(args, "enable_expert_parallel", None) is not None:
+                engine_kwargs["enable_expert_parallel"] = bool(args.enable_expert_parallel)
+            if getattr(args, "max_length", None) is not None:
+                engine_kwargs["max_model_len"] = int(args.max_length)
+            for key in (
+                "block_size",
+                "num_gpu_blocks",
+                "num_cpu_blocks",
+                "forced_num_gpu_blocks",
+                "num_gpu_blocks_override",
+            ):
+                val = getattr(args, key, None)
+                if val is not None:
+                    engine_kwargs[key] = int(val)
+            for key, caster in (
+                ("gpu_memory_utilization", float),
+                ("max_num_batched_tokens", int),
+                ("max_num_seqs", int),
+                ("swap_space", int),
+            ):
+                val = config.get(key)
+                if val is not None:
+                    engine_kwargs[key] = caster(val)
+            if "max_num_seqs" not in engine_kwargs:
+                fallback_batch = config.get("max_batch_size")
+                if fallback_batch is not None:
+                    engine_kwargs["max_num_seqs"] = int(fallback_batch)
+            for key in ("dtype", "kv_cache_dtype"):
+                val = config.get(key)
+                if val is not None:
+                    engine_kwargs[key] = val
             if limit_mm is not None:
                 engine_kwargs["limit_mm_per_prompt"] = limit_mm
 
@@ -507,25 +582,8 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 pass
             return engine, processor
         except Exception as exc:
-            logger.warning("vllm_backend: vLLM not available, using DummyEngine ({})", exc)
-
-            class DummyEngine:
-                def __init__(self, cfg_obj, args_obj):
-                    self.cfg = cfg_obj
-                    self.args = args_obj
-                    self.calls: List[Dict[str, Any]] = []
-
-                def generate(self, **kwargs):
-                    self.calls.append(kwargs)
-                    rid = kwargs.get("request_id", "")
-                    return {"outputs": [{"text": f"dummy-{rid}"}]}
-
-                def abort(self, *_args, **_kwargs):
-                    return None
-
-            dummy = DummyEngine(cfg, args)
-            dummy.processor = processor
-            return dummy, processor
+            logger.error("vllm_backend failed to initialize vLLM engine: {}: {}", type(exc).__name__, exc)
+            raise RuntimeError(f"vllm_backend failed to initialize vLLM engine: {type(exc).__name__}: {exc}") from exc
 
     def _is_multimodal_config(self, cfg: Any, processor: Any) -> bool:
         """Best-effort detection to decide whether to pass multi-modal limits to vLLM."""
