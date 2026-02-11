@@ -259,6 +259,40 @@ python GAGE/run.py \
 
 ```
 
+### MMAU-Pro
+
+MMAU-Pro 是一个综合基准测试，旨在评估多模态模型的**音频智能能力**。
+
+它涵盖语音、环境声音、音乐及其组合，跨越 **49 种不同的感知和推理技能**，例如声学源特征化、声学场景推理、时序和定量推理以及过程推理（[数据集卡片](https://huggingface.co/datasets/gamma-lab-umd/MMAU-Pro)）。
+
+该数据集包含 **5,305 个专家标注的音频-问题-答案三元组**，音频片段采集自多样化的真实场景（包括长音频和多音频情况）。
+
+#### 1. 执行前准备
+
+在运行评估之前，请准备测试集的本地 JSONL 版本和相应的音频文件。
+
+每条 JSONL 记录应遵循与 Hugging Face 数据集相同的字段架构（例如 `id`、`audio_path`、`question`、`answer`、`choices`、`length_type`、`perceptual_skills`、`reasoning_skills`、`category`、`transcription` 等）。
+
+#### 2. 执行命令
+
+使用以下命令启动基准测试流程：
+
+```bash
+python GAGE_dev/run.py \
+  --config GAGE_dev/config/custom/mmau_pro/mmau_pro_audio.yaml \
+  --output-dir ./gage_runs_mmau_pro/final_test \
+  --run-id mmau_pro
+```
+
+#### 3. 详细配置
+
+| 参数 | 描述 | 支持的值 |
+| --- | --- | --- |
+| **`path`** | 本地 MMAU-Pro JSONL 文件的路径（架构与 `gamma-lab-umd/MMAU-Pro` 对齐）。 | *有效的 JSONL 文件路径* |
+| **`audio_path_root`** | 存储引用音频文件（例如 `data/*.wav`）的根目录。 | *有效的目录路径* |
+| **`audio_index`** | 当每个样本提供多个音频路径时，要使用的音频片段索引。 | *非负整数（默认 `0`）* |
+| **`model_path` / `tokenizer_path`** | vLLM 后端使用的支持音频的模型和分词器的本地路径（例如 Qwen2-Audio 系列）。 | *包含 `config.json` 和分词器文件的模型目录* |
+
 ### ARC-AGI-2
 
 ARC-AGI-2 包含 1,000 个公开训练任务和 120 个公开评估任务。
