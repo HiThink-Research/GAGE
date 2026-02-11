@@ -226,6 +226,40 @@ python GAGE/run.py \
   --run-id mme
 ```
 
+
+### MMAU-Pro
+
+MMAU-Pro is a comprehensive benchmark designed to evaluate **audio intelligence in multimodal models**.  
+It covers speech, environmental sounds, music and their combinations, spanning **49 distinct perceptual and reasoning skills** such as acoustic source characterization, acoustic scene reasoning, temporal and quantitative reasoning, and procedural reasoning ([dataset card](https://huggingface.co/datasets/gamma-lab-umd/MMAU-Pro)).
+
+The dataset contains **5,305 expert-annotated audio–question–answer triplets**, with audio clips collected from diverse real-world scenarios (including long-form and multi-audio cases).
+
+#### 1. Pre-Execution
+
+Before running the evaluation, prepare a local JSONL version of the test split and the corresponding audio files.  
+Each JSONL record should follow the same field schema as the Hugging Face dataset (e.g. `id`, `audio_path`, `question`, `answer`, `choices`, `length_type`, `perceptual_skills`, `reasoning_skills`, `category`, `transcription`, etc.).
+
+#### 2. Execution Command
+
+Use the following command to initiate the benchmark process:
+
+```bash
+python zyw_bench/run.py \
+  --config zyw_bench/config/custom/mmau_pro/mmau_pro_audio.yaml \
+  --output-dir ./gage_runs_mmau_pro/final_test \
+  --run-id mmau_pro
+```
+
+#### 3. Detailed Configuration
+
+| Parameter | Description | Supported Values |
+| --- | --- | --- |
+| **`path`** | Path to the local MMAU-Pro JSONL file (schema aligned with `gamma-lab-umd/MMAU-Pro`). | *Valid JSONL file path* |
+| **`audio_path_root`** | Root directory where the referenced audio files (e.g. `data/*.wav`) are stored. | *Valid directory path* |
+| **`audio_index`** | Index of the audio segment to be used when multiple audio paths are provided per sample. | *Non-negative integer (default `0`)* |
+| **`model_path` / `tokenizer_path`** | Local path to the audio-capable model and tokenizer (e.g. Qwen2-Audio family) used by the vLLM backend. | *Model directory containing `config.json` and tokenizer files* |
+
+
 ### ARC-AGI-2
 ARC-AGI-2 contains 1,000 public training tasks and 120 public evaluation tasks.
 
@@ -269,3 +303,4 @@ python GAGE_dev/run.py \
   --output-dir ./gage_simpleqa-verified/simpleqa-verified \
   --run-id simpleqa-verified
 ```
+
