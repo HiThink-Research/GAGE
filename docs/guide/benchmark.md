@@ -245,7 +245,7 @@ Use the following command to initiate the benchmark process:
 
 ```bash
 python GAGE_dev/run.py \
-  --config zyw_bench/config/custom/mmau_pro/mmau_pro_audio.yaml \
+  --config GAGE_dev/config/custom/mmau_pro/mmau_pro_audio.yaml \
   --output-dir ./gage_runs_mmau_pro/final_test \
   --run-id mmau_pro
 ```
