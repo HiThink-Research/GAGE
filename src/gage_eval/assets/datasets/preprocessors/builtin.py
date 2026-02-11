@@ -69,6 +69,9 @@ except Exception as exc:  # pragma: no cover - optional dependency guard
 # benchmark Math500
 from gage_eval.assets.datasets.preprocessors.math500 import Math500Preprocessor
 
+# benchmark MMAU-Pro
+from gage_eval.assets.datasets.preprocessors.mmau_pro import MMAUProConverter
+
 # benchmark MME
 from gage_eval.assets.datasets.preprocessors.mme import MMEPreprocessor
 
@@ -328,6 +331,16 @@ if NewMMLUProConverter is not None:
     )
     class MMLUPreprocessor(NewMMLUProConverter):
         pass
+
+# benchmark MMAU-Pro
+@registry.asset(
+    "dataset_preprocessors",
+    "mmau_pro_chat_preprocessor",
+    desc="MMAU-Pro 本地 jsonl + 音频 base64 预处理器",
+    tags=("prompt", "audio", "mmau-pro"),
+)
+class MMAUProChatPreprocessor(MMAUProConverter):
+    pass
 
 # benchmark Math500
 @registry.asset(

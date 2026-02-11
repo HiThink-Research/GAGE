@@ -1,0 +1,97 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: mmau_pro_local_audio
+  description: 使用本地 MMAU-Pro jsonl 与音频文件进行评测（与 MMAUPro 官方评估保持文本答案一致，采用精确匹配指标）。
+
+custom:
+  steps:
+    - step: inference
+      # 显式指定使用 LiteLLM 后端的 adapter，避免多个 dut_model 角色歧义
+      adapter_id: dut_mmau_pro_litellm
+    - step: auto_eval
+
+datasets:
+  - dataset_id: mmau_pro_ds
+    loader: jsonl
+    params:
+      # 本地 jsonl，字段结构与 HF gamma-lab-umd/MMAU-Pro 保持一致
+      path: /mnt/aime_data_ssd/user_workspace/zhangyiwei2/GAGE/mmau_pro_data/mmau_pro_test.jsonl
+      # 关键：强制流式读取 + 限制条数，避免加载/预处理整个 jsonl（以及音频 base64）导致 CPU 内存飙升被 OOM killer 杀死
+      streaming: true
+      limit: 10
+      # 使用在 builtin 中注册的 mmau_pro_chat_preprocessor
+      preprocess: mmau_pro_chat_preprocessor
+      preprocess_kwargs:
+        # 根目录：包含 data/*.wav 的本地路径
+        audio_path_root: /mnt/aime_data_ssd/user_workspace/zhangyiwei2/GAGE/mmau_pro_data
+        # 多音频样本仅取第 0 段，满足“一次只转一个音频为 base64”的约束
+        audio_index: 0
+
+backends:
+  - backend_id: mmau_pro_vllm_backend
+    type: vllm
+    config:
+      # 这里沿用 MMSU 中的音频模型配置思路，可按需覆盖环境变量
+      # 注意：默认路径若不存在，可能触发远端下载/缓存并导致 CPU 内存暴涨被 OOM killer 杀死
+      model_path: /mnt/model/qwen2-7b-audio
+      tokenizer_path: /mnt/model/qwen2-7b-audio
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true
+      tensor_parallel_size: 1
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      # 初次排障建议先用更保守的上下文长度，避免 KV cache 与预分配带来的额外压力
+      max_model_len: 2048
+      gpu_memory_utilization: 0.9
+      # 降低并发，避免启动与推理阶段出现瞬时资源峰值
+      async_max_concurrency: 1
+      output_type: text
+  - backend_id: mmau_pro_litellm_backend
+    type: litellm
+    config:
+      # 与 mmsu_audio.yaml 保持一致；需要时可用环境变量覆盖
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_mmau_pro_qwen
+    role_type: dut_model
+    backend_id: mmau_pro_vllm_backend
+    capabilities:
+      - chat_completion
+  - adapter_id: dut_mmau_pro_litellm
+    role_type: dut_model
+    backend_id: mmau_pro_litellm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  # 官方 MMAUPro 评估对 MCQ 与部分开放题的目标都是对齐文本答案。
+  # 这里采用内置 exact_match 指标，对 `model_output.answer` 与 `sample.label` 做不区分大小写的严格匹配，
+  # 在闭卷选择题场景下与官方评估目标一致。
+  - metric_id: mmau_pro_em
+    implementation: exact_match
+    args:
+      case_sensitive: false
+      strip_whitespace: true
+
+tasks:
+  - task_id: mmau_pro_eval
+    dataset_id: mmau_pro_ds
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/mmau_pro_events.jsonl
+
