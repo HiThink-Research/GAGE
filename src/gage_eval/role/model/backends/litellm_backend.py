@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import time
 import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -38,6 +38,7 @@ class LiteLLMBackend(EngineBackend):
     # ------------------------------------------------------------------ #
     def load_model(self, config_dict: Dict[str, Any]):
         self._cfg = LiteLLMBackendConfig(**config_dict)
+        self._tool_choice_default = config_dict.get("tool_choice")
         self.model_name = self._cfg.model
         self.provider = self._cfg.provider or self._infer_provider(self.model_name)
         self.api_base = self._cfg.api_base
@@ -134,11 +135,15 @@ class LiteLLMBackend(EngineBackend):
         sampling_params = dict(self._base_sampling)
         sampling_params.update(sample.get("sampling_params") or {})
         sampling_params.update(payload.get("sampling_params") or {})
+        tool_defs = payload.get("tools") or sample.get("tools")
+        tool_choice = payload.get("tool_choice") or sample.get("tool_choice") or self._tool_choice_default
 
         return {
             "model": payload.get("model") or self.model_name,
             "messages": messages,
             "sampling_params": sampling_params,
+            "tools": tool_defs,
+            "tool_choice": tool_choice,
             "stream": bool(payload.get("stream", self._cfg.streaming)),
             "num_samples": payload.get("num_samples") or sampling_params.get("n"),
         }
@@ -197,6 +202,14 @@ class LiteLLMBackend(EngineBackend):
                 kwargs["api_version"] = self._azure_api_version
         if self.headers:
             kwargs["headers"] = self.headers
+        tool_defs = inputs.get("tools")
+        if tool_defs:
+            formatted_tools = self._format_tools(tool_defs)
+            if formatted_tools:
+                kwargs["tools"] = formatted_tools
+                tool_choice = inputs.get("tool_choice")
+                if tool_choice is not None:
+                    kwargs["tool_choice"] = tool_choice
         kwargs.update({k: v for k, v in sampling_params.items() if v is not None})
         if stop_sequences:
             kwargs["stop"] = stop_sequences
@@ -291,6 +304,43 @@ class LiteLLMBackend(EngineBackend):
                     new_msg["content"] = new_content
             sanitized.append(new_msg)
         return sanitized
+
+    def _format_tools(self, tools: Any) -> List[Dict[str, Any]]:
+        if not tools:
+            return []
+        if isinstance(tools, dict):
+            tools = [tools]
+        if not isinstance(tools, list):
+            return []
+        formatted = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            if tool.get("type") == "function":
+                formatted.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool["function"]["name"],
+                            "description": tool["function"].get("description", ""),
+                            "parameters": tool["function"].get("parameters", {"type": "object", "properties": {}}),
+                        },
+                    }
+                )
+            elif "name" in tool and "parameters" in tool:
+                formatted.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.get("name"),
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("parameters") or {"type": "object", "properties": {}},
+                        },
+                    }
+                )
+            else:
+                formatted.append(tool)
+        return formatted
 
     def _normalize_sampling_params(self, params: Dict[str, Any], num_samples: Optional[int]) -> Dict[str, Any]:
         sampling = {k: v for k, v in params.items() if v is not None}

@@ -27,11 +27,19 @@
 
 <table width="100%">
   <tr>
-    <td align="center" width="40%">
-      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="max-width: 100%;">
+    <td align="center" width="50%">
+      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="height: 240px; width: auto; max-width: 100%;">
     </td>
     <td align="center" width="50%">
-      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="max-width: 100%;">
+      <img src="docs/assets/spacegame.gif" style="height: 240px; width: auto; max-width: 100%;">
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="height: 240px; width: auto; max-width: 100%;">
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/mahjong.gif" style="height: 240px; width: auto; max-width: 100%;">
     </td>
   </tr>
 </table>
