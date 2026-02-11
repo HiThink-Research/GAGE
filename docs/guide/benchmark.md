@@ -244,7 +244,7 @@ Each JSONL record should follow the same field schema as the Hugging Face datase
 Use the following command to initiate the benchmark process:
 
 ```bash
-python zyw_bench/run.py \
+python GAGE_dev/run.py \
   --config zyw_bench/config/custom/mmau_pro/mmau_pro_audio.yaml \
   --output-dir ./gage_runs_mmau_pro/final_test \
   --run-id mmau_pro
