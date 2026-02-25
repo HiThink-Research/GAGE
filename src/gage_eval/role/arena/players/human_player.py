@@ -81,7 +81,7 @@ class HumanPlayer:
         return {"role": "user", "content": [{"type": "text", "text": text}]}
 
     def _build_action_metadata(self, parse_result) -> Dict[str, Any]:
-        metadata = {"player_type": "human"}
+        metadata = {"player_type": "human", "retry_count": 0}
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)

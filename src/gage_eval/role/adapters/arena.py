@@ -19,6 +19,9 @@ from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.players.agent_player import AgentPlayer
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
+from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
+from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
+from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
 from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import GameResult
@@ -204,7 +207,7 @@ class ArenaRoleAdapter(RoleAdapter):
             is_generic_name = False
             if existing_name is not None:
                 normalized_existing = str(existing_name).strip()
-                is_generic_name = bool(re.match(r"^player\\s*\\d+$", normalized_existing, re.IGNORECASE))
+                is_generic_name = bool(re.match(r"^player\s*\d+$", normalized_existing, re.IGNORECASE))
             if existing_name is None or existing_name == normalized["player_id"] or is_generic_name:
                 adapter_ref = normalized.get("ref")
                 if adapter_ref and not normalized.get("name"):
@@ -403,13 +406,126 @@ class ArenaRoleAdapter(RoleAdapter):
     def _build_scheduler(self, sample: Dict[str, Any]):
         cfg = dict(self._scheduler_cfg)
         eval_cfg = sample.get("eval_config") or {}
-        scheduler_type = str(cfg.get("type", "turn"))
+        trace_options = self._resolve_trace_scheduler_options(cfg)
+        scheduler_type = str(cfg.get("type", "turn")).strip().lower()
         max_turns = eval_cfg.get("max_turns", cfg.get("max_turns"))
         if scheduler_type == "tick":
             tick_ms = int(cfg.get("tick_ms", 100))
             max_ticks = cfg.get("max_ticks")
             return TickScheduler(tick_ms=tick_ms, max_ticks=max_ticks)
-        return TurnScheduler(max_turns=max_turns)
+        if scheduler_type == "turn":
+            return TurnScheduler(max_turns=max_turns)
+        if scheduler_type == "record":
+            max_steps = eval_cfg.get("max_turns", cfg.get("max_steps", cfg.get("max_turns")))
+            return RecordScheduler(
+                tick_ms=int(cfg.get("tick_ms", 33)),
+                max_steps=max_steps,
+                action_timeout_ms=cfg.get("action_timeout_ms"),
+                timeout_fallback_move=str(cfg.get("timeout_fallback_move", "NOOP")),
+                timeline_id=cfg.get("timeline_id"),
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
+        if scheduler_type == "simultaneous":
+            max_steps = eval_cfg.get("max_turns", cfg.get("max_steps", cfg.get("max_turns")))
+            return SimultaneousScheduler(
+                frames_per_action=int(cfg.get("frames_per_action", 1)),
+                max_steps=max_steps,
+                action_timeout_ms=cfg.get("action_timeout_ms"),
+                timeout_fallback_move=str(cfg.get("timeout_fallback_move", "NOOP")),
+                tick_ms=int(cfg.get("tick_ms", 0)),
+                timeline_id=cfg.get("timeline_id"),
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
+        if scheduler_type == "multi_timeline":
+            return MultiTimelineScheduler(
+                tick_ms=int(cfg.get("tick_ms", 33)),
+                max_ticks=cfg.get("max_ticks"),
+                default_fallback_move=str(cfg.get("default_fallback_move", "NOOP")),
+                lane_registry=cfg.get("lane_registry"),
+                timelines=cfg.get("timelines"),
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
+        raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
+
+    @staticmethod
+    def _resolve_trace_scheduler_options(cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve trace-related scheduler options from config."""
+
+        trace_cfg = cfg.get("trace")
+        if not isinstance(trace_cfg, dict):
+            trace_cfg = {}
+
+        return {
+            "step_index_start": int(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="step_index_start",
+                    default=0,
+                )
+            ),
+            "timestamp_clock": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="timestamp_clock",
+                    default="wall_clock",
+                )
+            ),
+            "time_clock": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="time_clock",
+                    default="monotonic",
+                )
+            ),
+            "finalize_timing": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="finalize_timing",
+                    default="after_env_apply",
+                )
+            ),
+            "action_format": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="action_format",
+                    default="flat",
+                )
+            ),
+        }
+
+    @staticmethod
+    def _pick_trace_option(
+        scheduler_cfg: Dict[str, Any],
+        trace_cfg: Dict[str, Any],
+        *,
+        key: str,
+        default: Any,
+    ) -> Any:
+        """Read trace option from nested or flat scheduler config."""
+
+        if key in trace_cfg:
+            return trace_cfg[key]
+        prefixed_key = f"trace_{key}"
+        if prefixed_key in scheduler_cfg:
+            return scheduler_cfg[prefixed_key]
+        return default
 
     def _build_players(
         self,
@@ -502,6 +618,8 @@ class ArenaRoleAdapter(RoleAdapter):
         output.update(self._format_game_log(result.move_log, sample, trace))
         if result.replay_path:
             output["replay_path"] = result.replay_path
+        if result.arena_trace:
+            output["arena_trace"] = list(result.arena_trace)
         return output
 
     def _format_game_log(

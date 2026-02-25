@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Sequence
 
 
@@ -70,3 +70,21 @@ class GameResult:
     win_direction: Optional[str] = None
     line_length: Optional[int] = None
     replay_path: Optional[str] = None
+    arena_trace: Sequence[dict[str, Any]] = field(default_factory=tuple)
+
+
+def attach_arena_trace(
+    result: GameResult,
+    arena_trace: Sequence[dict[str, Any]],
+) -> GameResult:
+    """Attach scheduler-produced arena trace to a GameResult.
+
+    Args:
+        result: The immutable GameResult instance returned by the environment.
+        arena_trace: Ordered per-step trace entries produced by the scheduler.
+
+    Returns:
+        A new GameResult instance with ``arena_trace`` populated.
+    """
+
+    return replace(result, arena_trace=tuple(arena_trace))
