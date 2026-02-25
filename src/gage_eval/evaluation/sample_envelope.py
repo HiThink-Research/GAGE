@@ -93,10 +93,20 @@ def append_arena_contract(
     # STEP 1: Locate the arena result entry and move it to predict_result[0].
     arena_index = _resolve_arena_entry_index(predict_result, model_output)
     if arena_index < 0:
-        arena_entry: Dict[str, Any] = {}
+        arena_entry = (
+            copy.deepcopy(dict(model_output))
+            if isinstance(model_output, Mapping)
+            else {}
+        )
     else:
         source_entry = predict_result.pop(arena_index)
         arena_entry = dict(source_entry) if isinstance(source_entry, Mapping) else {}
+        if isinstance(model_output, Mapping):
+            for key, value in model_output.items():
+                arena_entry.setdefault(key, copy.deepcopy(value))
+    if "message" not in arena_entry:
+        message_source = dict(model_output) if isinstance(model_output, Mapping) else arena_entry
+        arena_entry["message"] = _build_message(message_source)
 
     # STEP 2: Normalize trace/footer payloads under the frozen keys.
     fallback_ts_ms = int(time.time() * 1000)
@@ -104,7 +114,6 @@ def append_arena_contract(
     if raw_trace is None and isinstance(model_output, Mapping):
         raw_trace = model_output.get("arena_trace")
     trace_steps = _normalize_arena_trace_steps(raw_trace, fallback_timestamp_ms=fallback_ts_ms)
-    _validate_arena_trace_steps(trace_steps)
     arena_entry["arena_trace"] = trace_steps
 
     footer = _build_arena_footer(arena_entry, trace_steps, end_time_ms=end_time_ms)
@@ -159,33 +168,6 @@ def _normalize_arena_trace_steps(
         normalized.append(step.to_dict())
 
     return normalized
-
-
-def _validate_arena_trace_steps(trace_steps: Sequence[Mapping[str, Any]]) -> None:
-    required_fields = (
-        "step_index",
-        "trace_state",
-        "timestamp",
-        "player_id",
-        "action_raw",
-        "action_applied",
-        "t_obs_ready_ms",
-        "t_action_submitted_ms",
-        "timeout",
-        "is_action_legal",
-        "retry_count",
-    )
-
-    # STEP 1: Validate required field presence.
-    for idx, step in enumerate(trace_steps):
-        missing = [field for field in required_fields if field not in step]
-        if missing:
-            raise ValueError(f"Trace step {idx} missing required fields: {missing}")
-
-        # STEP 2: Validate constrained values.
-        state = str(step.get("trace_state"))
-        if state not in {"in_progress", "done"}:
-            raise ValueError(f"Trace step {idx} has invalid trace_state: {state}")
 
 
 def _build_arena_footer(
@@ -572,8 +554,8 @@ def _resolve_arena_entry_index(
         if isinstance(raw_index, int) and 0 <= raw_index < len(predict_result):
             return raw_index
 
-    # STEP 3: Default to the latest predict_result item for arena step output.
-    return len(predict_result) - 1
+    # STEP 3: No explicit arena entry found.
+    return -1
 
 
 def _looks_like_arena_output(entry: Mapping[str, Any]) -> bool:

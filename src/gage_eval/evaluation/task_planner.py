@@ -260,7 +260,6 @@ class StepExecutionContext:
             self.trace,
             sandbox_provider=self.sandbox_provider,
         )
-        append_predict_result(self.sample, self._model_output)
         append_arena_contract(
             self.sample,
             self._model_output,

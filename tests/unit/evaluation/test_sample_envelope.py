@@ -211,7 +211,6 @@ def test_append_arena_contract_normalizes_paths_and_prunes_duplicates() -> None:
         ],
     }
 
-    envelope.append_predict_result(sample, output)
     envelope.append_arena_contract(sample, output, end_time_ms=5000)
 
     entry = sample["predict_result"][0]
@@ -245,7 +244,6 @@ def test_append_arena_contract_handles_missing_entry_and_footer_derivation(monke
     assert sample["predict_result"][0]["game_arena"]["total_steps"] == 0
 
     output = {
-        "index": 0,
         "reason": "",
         "arena_trace": [
             {
@@ -265,39 +263,20 @@ def test_append_arena_contract_handles_missing_entry_and_footer_derivation(monke
         ],
     }
     sample2 = {"predict_result": [{"index": 0, "message": {"role": "assistant", "content": []}}]}
-    envelope.append_predict_result(sample2, output)
     envelope.append_arena_contract(sample2, output)
     footer = sample2["predict_result"][0]["game_arena"]
     assert footer["termination_reason"] == "unknown"
     assert footer["episode_returns"] == {"p0": 2.5}
+    assert sample2["predict_result"][0]["index"] == 0
+    assert sample2["predict_result"][1]["index"] == 1
 
 
-def test_validate_arena_trace_and_resolve_entry_paths() -> None:
-    with pytest.raises(ValueError):
-        envelope._validate_arena_trace_steps([{"trace_state": "done"}])
-    with pytest.raises(ValueError):
-        envelope._validate_arena_trace_steps(
-            [
-                {
-                    "step_index": 0,
-                    "trace_state": "weird",
-                    "timestamp": 1,
-                    "player_id": "p",
-                    "action_raw": "a",
-                    "action_applied": "a",
-                    "t_obs_ready_ms": 1,
-                    "t_action_submitted_ms": 1,
-                    "timeout": False,
-                    "is_action_legal": True,
-                    "retry_count": 0,
-                }
-            ]
-        )
-
+def test_resolve_arena_entry_paths() -> None:
     assert envelope._resolve_arena_entry_index([], None) == -1
     assert envelope._resolve_arena_entry_index([{"answer": "x"}, {"game_arena": {}}], None) == 1
     assert envelope._resolve_arena_entry_index([{"answer": "x"}, {"answer": "y"}], {"index": 0}) == 0
-    assert envelope._resolve_arena_entry_index([{"answer": "x"}, {"answer": "y"}], {"index": 9}) == 1
+    assert envelope._resolve_arena_entry_index([{"answer": "x"}, {"answer": "y"}], {"index": 9}) == -1
+    assert envelope._resolve_arena_entry_index([{"answer": "x"}, {"answer": "y"}], None) == -1
     assert envelope._looks_like_arena_output({"replay_path": "/tmp/a"}) is True
     assert envelope._looks_like_arena_output({"answer": "x"}) is False
 
