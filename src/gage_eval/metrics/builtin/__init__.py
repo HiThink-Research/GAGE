@@ -42,6 +42,7 @@ from gage_eval.metrics.builtin.simpleqa_verified import (
 from gage_eval.metrics.builtin.arcagi2 import ARCAGI2AccuracyMetric
 from gage_eval.metrics.builtin.charxiv import CharXivReasoningMatchMetric
 from gage_eval.metrics.builtin.screenspot_pro import ScreenSpotPointInBboxMetric
+<<<<<<< HEAD
 from gage_eval.metrics.builtin.arena import (
     CompletionFlagMetric,
     DrawFlagMetric,
@@ -64,6 +65,11 @@ from gage_eval.metrics.builtin.arena import (
     TimeoutCountMetric,
     WinFlagPerPlayerMetric,
     WinnerPlayerIdMetric,
+=======
+from gage_eval.metrics.builtin.inverse_ifeval import (
+    InverseIFEvalJudgePassRateMetric,
+    InverseIFEvalPassRateMetric,
+>>>>>>> 90b545b (feat(inverse_ifeval): add dataset config preprocessor and metrics)
 )
 
 __all__ = [
@@ -120,4 +126,6 @@ __all__ = [
     "ScoreMarginMetric",
     "TerminationReasonMetric",
     "CompletionFlagMetric",
+    "InverseIFEvalJudgePassRateMetric",
+    "InverseIFEvalPassRateMetric",
 ]
