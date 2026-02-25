@@ -100,6 +100,7 @@ from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConv
 
 # benchmark MMSU (audio)
 from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConverter
+from gage_eval.assets.datasets.preprocessors.inverse_ifeval_preprocessor import InverseIFEvalPreprocessor
 
 
 def _warn_deprecated_dataset_preprocessor(
@@ -531,5 +532,14 @@ class MRCRPreprocessor(MRCRConverter):
     tags=("prompt", "MMSU"),
 )
 class MMSUPreprocessor(MMSUConverter):
+    pass
+
+@registry.asset(
+    "dataset_preprocessors",
+    "inverse_ifeval_preprocessor",
+    desc="Inverse IFEval preprocessing logic",
+    tags=("instruction_following", "ifeval", "inverse"),
+)
+class InverseIFEvalPreprocessorProvider(InverseIFEvalPreprocessor):
     pass
 
