@@ -42,6 +42,10 @@ from gage_eval.metrics.builtin.simpleqa_verified import (
 from gage_eval.metrics.builtin.arcagi2 import ARCAGI2AccuracyMetric
 from gage_eval.metrics.builtin.charxiv import CharXivReasoningMatchMetric
 from gage_eval.metrics.builtin.screenspot_pro import ScreenSpotPointInBboxMetric
+from gage_eval.metrics.builtin.inverse_ifeval import (
+    InverseIFEvalJudgePassRateMetric,
+    InverseIFEvalPassRateMetric,
+)
 
 __all__ = [
     "ARCAGI2AccuracyMetric",
@@ -76,4 +80,6 @@ __all__ = [
     "SimpleQAVerifiedJudgeAccuracyMetric",
     "ScreenSpotPointInBboxMetric",
     "CharXivReasoningMatchMetric",
+    "InverseIFEvalJudgePassRateMetric",
+    "InverseIFEvalPassRateMetric",
 ]
