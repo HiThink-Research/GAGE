@@ -48,4 +48,8 @@ def test_sample_loop_runs_arena_step():
 
     assert loop.processed_count == 1
     assert samples[0].get("predict_result")
-    assert samples[0]["predict_result"][0]["winner"] == "Black"
+    assert samples[0]["predict_result"][0]["arena_trace"] == []
+    game_arena = samples[0]["predict_result"][0]["game_arena"]
+    assert game_arena["winner_player_id"] == "Black"
+    assert game_arena["termination_reason"] == "test"
+    assert game_arena["total_steps"] == 1
