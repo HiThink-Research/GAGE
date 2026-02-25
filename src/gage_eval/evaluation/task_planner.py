@@ -9,7 +9,11 @@ from loguru import logger
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
-from gage_eval.evaluation.sample_envelope import append_predict_result, update_eval_result
+from gage_eval.evaluation.sample_envelope import (
+    append_predict_result,
+    set_arena_trace,
+    update_eval_result,
+)
 from gage_eval.sandbox.provider import SandboxProvider
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -253,6 +257,10 @@ class StepExecutionContext:
             sandbox_provider=self.sandbox_provider,
         )
         append_predict_result(self.sample, self._model_output)
+        if isinstance(self._model_output, dict):
+            arena_trace = self._model_output.get("arena_trace")
+            if isinstance(arena_trace, dict):
+                set_arena_trace(self.sample, arena_trace, index=0)
 
     def execute_judge(self) -> None:
         logger.trace("Executing judge step adapter={}", getattr(self.judge, "_adapter_id", None))
