@@ -333,6 +333,69 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return default
+def ensure_predict_result_slot(sample: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    """Ensure `sample["predict_result"][index]` exists and return it.
+
+    Args:
+        sample: Mutable sample envelope.
+        index: Target predict_result index.
+
+    Returns:
+        The mutable predict_result entry at `index`.
+    """
+
+    normalized_index = max(0, int(index))
+    predict_result = sample.setdefault("predict_result", [])
+    if not isinstance(predict_result, list):
+        predict_result = sample["predict_result"] = []
+    while len(predict_result) <= normalized_index:
+        predict_result.append({})
+    slot = predict_result[normalized_index]
+    if not isinstance(slot, dict):
+        slot = {}
+        predict_result[normalized_index] = slot
+    return slot
+
+
+def set_arena_trace(sample: Dict[str, Any], arena_trace: Dict[str, Any], index: int = 0) -> None:
+    """Write arena_trace to `sample["predict_result"][index]`.
+
+    Args:
+        sample: Mutable sample envelope.
+        arena_trace: Arena trace payload.
+        index: Target predict_result index.
+    """
+
+    if not isinstance(arena_trace, dict):
+        return
+    slot = ensure_predict_result_slot(sample, index=index)
+    slot["arena_trace"] = copy.deepcopy(arena_trace)
+
+
+def get_arena_trace(sample: Mapping[str, Any], index: int = 0) -> Optional[Dict[str, Any]]:
+    """Read arena_trace from `sample["predict_result"][index]` when available.
+
+    Args:
+        sample: Sample mapping.
+        index: Target predict_result index.
+
+    Returns:
+        Arena trace mapping when present, otherwise None.
+    """
+
+    predict_result = sample.get("predict_result")
+    if not isinstance(predict_result, list):
+        return None
+    normalized_index = max(0, int(index))
+    if normalized_index >= len(predict_result):
+        return None
+    slot = predict_result[normalized_index]
+    if not isinstance(slot, Mapping):
+        return None
+    arena_trace = slot.get("arena_trace")
+    if not isinstance(arena_trace, Mapping):
+        return None
+    return dict(arena_trace)
 
 
 def _should_split_predict_result(model_output: Mapping[str, Any], answer: Any) -> bool:
