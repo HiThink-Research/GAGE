@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from gage_eval.role.arena.types import ArenaFooter, ArenaHeader, ArenaTraceStep
 
 _MESSAGE_EXTRAS = ("tool_calls", "tool_use", "model_output", "name", "path")
+_ARENA_RESULT_DUPLICATE_FIELDS = (
+    "winner",
+    "reason",
+    "move_count",
+    "ranks",
+    "final_scores",
+    "episode_returns",
+)
 
 
 def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[str, Any]]) -> None:
@@ -35,6 +45,357 @@ def append_predict_result(sample: Dict[str, Any], model_output: Optional[Dict[st
     if "message" not in entry:
         entry["message"] = _build_message(entry)
     predict_result.append(entry)
+
+
+def ensure_arena_header(
+    sample: Dict[str, Any],
+    *,
+    start_time_ms: Optional[int] = None,
+) -> None:
+    """Ensures `sample.metadata.game_arena` follows the frozen header contract.
+
+    Args:
+        sample: Mutable sample payload.
+        start_time_ms: Optional explicit run start timestamp.
+    """
+
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        sample["metadata"] = metadata
+    if start_time_ms is None:
+        start_time_ms = int(time.time() * 1000)
+    metadata["game_arena"] = _build_arena_header(metadata, start_time_ms=start_time_ms)
+
+
+def append_arena_contract(
+    sample: Dict[str, Any],
+    model_output: Optional[Mapping[str, Any]],
+    *,
+    end_time_ms: Optional[int] = None,
+) -> None:
+    """Normalizes arena output into the frozen sample paths.
+
+    This function enforces:
+    - `sample.predict_result[0].arena_trace`
+    - `sample.predict_result[0].game_arena`
+
+    Args:
+        sample: Mutable sample payload.
+        model_output: Raw arena model output.
+        end_time_ms: Optional explicit run end timestamp.
+    """
+
+    predict_result = sample.setdefault("predict_result", [])
+    if not isinstance(predict_result, list):
+        predict_result = sample["predict_result"] = []
+
+    # STEP 1: Locate the arena result entry and move it to predict_result[0].
+    arena_index = _resolve_arena_entry_index(predict_result, model_output)
+    if arena_index < 0:
+        arena_entry = (
+            copy.deepcopy(dict(model_output))
+            if isinstance(model_output, Mapping)
+            else {}
+        )
+    else:
+        source_entry = predict_result.pop(arena_index)
+        arena_entry = dict(source_entry) if isinstance(source_entry, Mapping) else {}
+        if isinstance(model_output, Mapping):
+            for key, value in model_output.items():
+                arena_entry.setdefault(key, copy.deepcopy(value))
+    if "message" not in arena_entry:
+        message_source = dict(model_output) if isinstance(model_output, Mapping) else arena_entry
+        arena_entry["message"] = _build_message(message_source)
+
+    # STEP 2: Normalize trace/footer payloads under the frozen keys.
+    fallback_ts_ms = int(time.time() * 1000)
+    raw_trace = arena_entry.get("arena_trace")
+    if raw_trace is None and isinstance(model_output, Mapping):
+        raw_trace = model_output.get("arena_trace")
+    trace_steps = _normalize_arena_trace_steps(raw_trace, fallback_timestamp_ms=fallback_ts_ms)
+    arena_entry["arena_trace"] = trace_steps
+
+    footer = _build_arena_footer(arena_entry, trace_steps, end_time_ms=end_time_ms)
+    arena_entry["game_arena"] = footer
+
+    # STEP 3: Remove duplicate semantics from the arena root payload.
+    for key in _ARENA_RESULT_DUPLICATE_FIELDS:
+        arena_entry.pop(key, None)
+
+    predict_result.insert(0, arena_entry)
+    _reindex_predict_result(predict_result)
+
+
+def _normalize_arena_trace_steps(
+    raw_trace: Any,
+    *,
+    fallback_timestamp_ms: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(raw_trace, Sequence) or isinstance(raw_trace, (str, bytes)):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+
+    # STEP 1: Canonicalize every step to the frozen required field set.
+    for idx, item in enumerate(raw_trace):
+        source = dict(item) if isinstance(item, Mapping) else {}
+        timestamp = _coerce_int(source.get("timestamp"), fallback_timestamp_ms)
+        obs_ready_ms = _coerce_int(source.get("t_obs_ready_ms"), timestamp)
+        action_submitted_ms = _coerce_int(source.get("t_action_submitted_ms"), obs_ready_ms)
+        state = str(source.get("trace_state") or "done")
+        if state not in {"in_progress", "done"}:
+            state = "done"
+
+        step = ArenaTraceStep(
+            step_index=_coerce_int(source.get("step_index"), idx),
+            trace_state=state,
+            timestamp=timestamp,
+            player_id=str(source.get("player_id") or "unknown"),
+            action_raw=source.get("action_raw"),
+            action_applied=source.get("action_applied", source.get("action_raw")),
+            t_obs_ready_ms=obs_ready_ms,
+            t_action_submitted_ms=action_submitted_ms,
+            timeout=_coerce_bool(source.get("timeout"), default=False),
+            is_action_legal=_coerce_bool(source.get("is_action_legal"), default=True),
+            retry_count=max(0, _coerce_int(source.get("retry_count"), 0)),
+            illegal_reason=source.get("illegal_reason"),
+            info=source.get("info"),
+            reward=source.get("reward"),
+            timeline_id=source.get("timeline_id"),
+            deadline_ms=source.get("deadline_ms"),
+        )
+        normalized.append(step.to_dict())
+
+    return normalized
+
+
+def _build_arena_footer(
+    output: Mapping[str, Any],
+    trace_steps: Sequence[Mapping[str, Any]],
+    *,
+    end_time_ms: Optional[int] = None,
+) -> dict[str, Any]:
+    if end_time_ms is None:
+        end_time_ms = int(time.time() * 1000)
+
+    total_steps = _coerce_int(output.get("move_count"), len(trace_steps))
+    winner = _coerce_optional_str(output.get("winner"))
+    termination_reason = str(output.get("reason") or "unknown")
+    ranks = _coerce_sequence_list(output.get("ranks"))
+    final_scores = _coerce_float_map(output.get("final_scores"))
+    episode_returns = _coerce_float_map(output.get("episode_returns"))
+    if episode_returns is None:
+        episode_returns = _derive_episode_returns(trace_steps)
+    footer = ArenaFooter(
+        end_time_ms=end_time_ms,
+        total_steps=max(0, total_steps),
+        winner_player_id=winner,
+        termination_reason=termination_reason,
+        ranks=ranks,
+        final_scores=final_scores,
+        episode_returns=episode_returns,
+    )
+    return footer.to_dict()
+
+
+def _build_arena_header(
+    metadata: Mapping[str, Any],
+    *,
+    start_time_ms: int,
+) -> dict[str, Any]:
+    existing_header = metadata.get("game_arena")
+    header_source = existing_header if isinstance(existing_header, Mapping) else {}
+    players = _normalize_arena_players(header_source.get("players"), metadata)
+    mode = str(header_source.get("mode") or ("competitive" if len(players) > 1 else "single"))
+    engine_id = str(
+        header_source.get("engine_id")
+        or metadata.get("engine_id")
+        or metadata.get("env_impl")
+        or metadata.get("game_type")
+        or "unknown_engine"
+    )
+    seed = _coerce_int(header_source.get("seed"), _coerce_int(metadata.get("seed"), 0))
+    header = ArenaHeader(
+        engine_id=engine_id,
+        seed=seed,
+        mode=mode,
+        players=players,
+        start_time_ms=_coerce_int(header_source.get("start_time_ms"), start_time_ms),
+    )
+    return header.to_dict()
+
+
+def _normalize_arena_players(
+    existing_players: Any,
+    metadata: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    normalized_existing = _coerce_players(existing_players)
+    if normalized_existing:
+        return normalized_existing
+
+    normalized_metadata_players = _coerce_players(metadata.get("players"))
+    if normalized_metadata_players:
+        return normalized_metadata_players
+
+    player_ids = metadata.get("player_ids")
+    if isinstance(player_ids, Mapping):
+        player_ids = list(player_ids.values())
+    if isinstance(player_ids, Sequence) and not isinstance(player_ids, (str, bytes)):
+        by_ids: list[dict[str, Any]] = []
+        for player_id in player_ids:
+            if player_id in (None, ""):
+                continue
+            by_ids.append(
+                {
+                    "player_id": str(player_id),
+                    "controller_type": "unknown",
+                    "model_id": None,
+                    "policy_id": None,
+                }
+            )
+        return by_ids
+    return []
+
+
+def _coerce_players(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    players: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        player_id = item.get("player_id")
+        if player_id in (None, ""):
+            continue
+        players.append(
+            {
+                "player_id": str(player_id),
+                "controller_type": str(item.get("controller_type") or "unknown"),
+                "model_id": item.get("model_id"),
+                "policy_id": item.get("policy_id"),
+            }
+        )
+    return players
+
+
+def _derive_episode_returns(trace_steps: Sequence[Mapping[str, Any]]) -> Optional[dict[str, float]]:
+    totals: dict[str, float] = {}
+    for step in trace_steps:
+        reward_map = _coerce_float_map(step.get("reward"))
+        if reward_map is None:
+            continue
+        for player_id, value in reward_map.items():
+            totals[player_id] = totals.get(player_id, 0.0) + value
+    return totals or None
+
+
+def _coerce_float_map(value: Any) -> Optional[dict[str, float]]:
+    if not isinstance(value, Mapping):
+        return None
+    parsed: dict[str, float] = {}
+    for key, raw in value.items():
+        try:
+            parsed[str(key)] = float(raw)
+        except (TypeError, ValueError):
+            continue
+    return parsed or None
+
+
+def _coerce_sequence_list(value: Any) -> Optional[list[Any]]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return list(value)
+    return None
+
+
+def _coerce_optional_str(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+def ensure_predict_result_slot(sample: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
+    """Ensure `sample["predict_result"][index]` exists and return it.
+
+    Args:
+        sample: Mutable sample envelope.
+        index: Target predict_result index.
+
+    Returns:
+        The mutable predict_result entry at `index`.
+    """
+
+    normalized_index = max(0, int(index))
+    predict_result = sample.setdefault("predict_result", [])
+    if not isinstance(predict_result, list):
+        predict_result = sample["predict_result"] = []
+    while len(predict_result) <= normalized_index:
+        predict_result.append({})
+    slot = predict_result[normalized_index]
+    if not isinstance(slot, dict):
+        slot = {}
+        predict_result[normalized_index] = slot
+    return slot
+
+
+def set_arena_trace(sample: Dict[str, Any], arena_trace: Dict[str, Any], index: int = 0) -> None:
+    """Write arena_trace to `sample["predict_result"][index]`.
+
+    Args:
+        sample: Mutable sample envelope.
+        arena_trace: Arena trace payload.
+        index: Target predict_result index.
+    """
+
+    if not isinstance(arena_trace, dict):
+        return
+    slot = ensure_predict_result_slot(sample, index=index)
+    slot["arena_trace"] = copy.deepcopy(arena_trace)
+
+
+def get_arena_trace(sample: Mapping[str, Any], index: int = 0) -> Optional[Dict[str, Any]]:
+    """Read arena_trace from `sample["predict_result"][index]` when available.
+
+    Args:
+        sample: Sample mapping.
+        index: Target predict_result index.
+
+    Returns:
+        Arena trace mapping when present, otherwise None.
+    """
+
+    predict_result = sample.get("predict_result")
+    if not isinstance(predict_result, list):
+        return None
+    normalized_index = max(0, int(index))
+    if normalized_index >= len(predict_result):
+        return None
+    slot = predict_result[normalized_index]
+    if not isinstance(slot, Mapping):
+        return None
+    arena_trace = slot.get("arena_trace")
+    if not isinstance(arena_trace, Mapping):
+        return None
+    return dict(arena_trace)
 
 
 def _should_split_predict_result(model_output: Mapping[str, Any], answer: Any) -> bool:
@@ -235,3 +596,45 @@ def _normalize_content(fragment: Any) -> Dict[str, Any]:
         return {"type": "text", "text": fragment}
 
     return {"type": "text", "text": str(fragment)}
+
+
+def _resolve_arena_entry_index(
+    predict_result: Sequence[Any],
+    model_output: Optional[Mapping[str, Any]],
+) -> int:
+    if not predict_result:
+        return -1
+
+    # STEP 1: Prioritize entries already carrying arena contract fields.
+    for idx in range(len(predict_result) - 1, -1, -1):
+        entry = predict_result[idx]
+        if isinstance(entry, Mapping) and _looks_like_arena_output(entry):
+            return idx
+
+    # STEP 2: Fall back to model_output index when available.
+    if isinstance(model_output, Mapping):
+        raw_index = model_output.get("index")
+        if isinstance(raw_index, int) and 0 <= raw_index < len(predict_result):
+            return raw_index
+
+    # STEP 3: No explicit arena entry found.
+    return -1
+
+
+def _looks_like_arena_output(entry: Mapping[str, Any]) -> bool:
+    arena_markers = (
+        "arena_trace",
+        "game_arena",
+        "move_count",
+        "illegal_move_count",
+        "final_board",
+        "replay_path",
+        "game_log",
+    )
+    return any(marker in entry for marker in arena_markers)
+
+
+def _reindex_predict_result(predict_result: Sequence[Any]) -> None:
+    for idx, entry in enumerate(predict_result):
+        if isinstance(entry, dict):
+            entry["index"] = idx

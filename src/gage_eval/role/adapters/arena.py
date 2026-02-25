@@ -22,6 +22,7 @@ from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
 from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
 from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
+from gage_eval.role.arena.replay_schema_writer import ReplaySchemaWriter
 from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import GameResult
@@ -604,9 +605,11 @@ class ArenaRoleAdapter(RoleAdapter):
         sample: Dict[str, Any],
         trace: Optional[ObservabilityTrace],
     ) -> Dict[str, Any]:
+        resolved_status = str(getattr(result, "status", None) or result.result)
         output = {
             "winner": result.winner,
-            "result": result.result,
+            "status": resolved_status,
+            "result": resolved_status,
             "reason": result.reason,
             "move_count": result.move_count,
             "illegal_move_count": result.illegal_move_count,
@@ -615,11 +618,31 @@ class ArenaRoleAdapter(RoleAdapter):
             "win_direction": result.win_direction,
             "line_length": result.line_length,
         }
+        scores = getattr(result, "scores", None)
+        if isinstance(scores, dict):
+            output["scores"] = dict(scores)
+        metrics = getattr(result, "metrics", None)
+        if isinstance(metrics, dict):
+            output["metrics"] = dict(metrics)
+        arena_trace = getattr(result, "arena_trace", None)
+        if isinstance(arena_trace, dict):
+            output["arena_trace"] = arena_trace
         output.update(self._format_game_log(result.move_log, sample, trace))
         if result.replay_path:
             output["replay_path"] = result.replay_path
         if result.arena_trace:
             output["arena_trace"] = list(result.arena_trace)
+        replay_v1_path = self._maybe_write_replay_v1(
+            result=result,
+            sample=sample,
+            trace=trace,
+            output=output,
+        )
+        if replay_v1_path:
+            if self._resolve_replay_primary_mode():
+                output["replay_path"] = replay_v1_path
+            else:
+                output["replay_v1_path"] = replay_v1_path
         return output
 
     def _format_game_log(
@@ -740,6 +763,21 @@ class ArenaRoleAdapter(RoleAdapter):
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _coerce_bool(value: Any, *, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return default
+
     def _ensure_visualizer(self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]):
         if self._shared_visualizer is not None:
             return self._shared_visualizer, self._shared_visualizer.action_queue
@@ -818,6 +856,86 @@ class ArenaRoleAdapter(RoleAdapter):
         server.start()
         self._action_server = server
         return server, server.action_queue
+
+    def _maybe_write_replay_v1(
+        self,
+        *,
+        result: GameResult,
+        sample: Dict[str, Any],
+        trace: Optional[ObservabilityTrace],
+        output: Dict[str, Any],
+    ) -> Optional[str]:
+        """Write replay v1 artifacts when enabled by environment.replay."""
+
+        if not self._resolve_replay_v1_enabled():
+            return None
+
+        # STEP 1: Resolve writer paths and replay options.
+        run_dir = self._resolve_run_dir(trace)
+        if run_dir is None:
+            logger.debug("Replay v1 enabled but run_id is missing; skip replay v1 write.")
+            return None
+        sample_id = self._resolve_sample_id(sample)
+        replay_cfg = self._environment_cfg.get("replay")
+        output_dir = replay_cfg.get("output_dir") if isinstance(replay_cfg, dict) else None
+        scheduler_type = str(self._scheduler_cfg.get("type", "turn")).strip().lower() or "turn"
+
+        # STEP 2: Assemble metadata payload for replay manifest.
+        extra_meta: Dict[str, Any] = {
+            "adapter_id": self.adapter_id,
+            "env_impl": self._environment_cfg.get("impl"),
+        }
+        if output.get("game_log_path"):
+            extra_meta["game_log_path"] = output.get("game_log_path")
+        if result.replay_path:
+            extra_meta["legacy_replay_path"] = result.replay_path
+        arena_trace = output.get("arena_trace")
+
+        # STEP 3: Persist replay.json + events.jsonl.
+        writer = ReplaySchemaWriter(
+            run_dir=run_dir,
+            sample_id=sample_id,
+            output_dir=str(output_dir) if output_dir else None,
+        )
+        try:
+            replay_v1_path = writer.write(
+                scheduler_type=scheduler_type,
+                result=result,
+                move_log=list(result.move_log),
+                arena_trace=arena_trace if isinstance(arena_trace, dict) else None,
+                extra_meta=extra_meta,
+            )
+        except Exception as exc:  # pragma: no cover - defensive filesystem guard
+            logger.warning("Failed to write replay v1 for sample {}: {}", sample_id, exc)
+            return None
+
+        if trace is not None:
+            trace.emit(
+                "arena_replay_v1_written",
+                {
+                    "adapter_id": self.adapter_id,
+                    "sample_id": sample_id,
+                    "path": replay_v1_path,
+                    "primary_mode": self._resolve_replay_primary_mode(),
+                },
+            )
+        return replay_v1_path
+
+    def _resolve_replay_v1_enabled(self) -> bool:
+        """Return whether replay v1 write is enabled."""
+
+        replay_cfg = self._environment_cfg.get("replay")
+        if not isinstance(replay_cfg, dict):
+            return False
+        return self._coerce_bool(replay_cfg.get("enabled"), default=False)
+
+    def _resolve_replay_primary_mode(self) -> bool:
+        """Return whether replay_path should point to replay v1 output."""
+
+        replay_cfg = self._environment_cfg.get("replay")
+        if not isinstance(replay_cfg, dict):
+            return False
+        return self._coerce_bool(replay_cfg.get("primary_mode"), default=False)
 
     def shutdown(self) -> None:
         """Shutdown the shared visualizer when the runtime ends."""
