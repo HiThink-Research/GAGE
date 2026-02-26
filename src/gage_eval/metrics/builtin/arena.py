@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from gage_eval.evaluation.sample_envelope import resolve_arena_trace
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult, SimpleMetric
 from gage_eval.registry import registry
 
@@ -415,10 +416,7 @@ def _arena_entry(context: MetricContext) -> Mapping[str, Any]:
 
 
 def _arena_trace(context: MetricContext) -> list[Mapping[str, Any]]:
-    entry = _arena_entry(context)
-    trace = entry.get("arena_trace")
-    if not isinstance(trace, Sequence) or isinstance(trace, (str, bytes)):
-        return []
+    trace = resolve_arena_trace(context.sample, context.model_output)
     return [item for item in trace if isinstance(item, Mapping)]
 
 

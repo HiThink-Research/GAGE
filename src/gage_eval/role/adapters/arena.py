@@ -998,7 +998,12 @@ class ArenaRoleAdapter(RoleAdapter):
             extra_meta["game_log_path"] = output.get("game_log_path")
         if result.replay_path:
             extra_meta["legacy_replay_path"] = result.replay_path
-        arena_trace = output.get("arena_trace")
+        arena_trace_payload = output.get("arena_trace")
+        normalized_arena_trace: Optional[Any] = None
+        if isinstance(arena_trace_payload, Mapping):
+            normalized_arena_trace = dict(arena_trace_payload)
+        elif isinstance(arena_trace_payload, Sequence) and not isinstance(arena_trace_payload, (str, bytes)):
+            normalized_arena_trace = list(arena_trace_payload)
 
         # STEP 3: Persist replay.json + events.jsonl.
         writer = ReplaySchemaWriter(
@@ -1011,7 +1016,7 @@ class ArenaRoleAdapter(RoleAdapter):
                 scheduler_type=scheduler_type,
                 result=result,
                 move_log=list(result.move_log),
-                arena_trace=arena_trace if isinstance(arena_trace, dict) else None,
+                arena_trace=normalized_arena_trace,
                 extra_meta=extra_meta,
             )
         except Exception as exc:  # pragma: no cover - defensive filesystem guard

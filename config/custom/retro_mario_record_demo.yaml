@@ -1,0 +1,84 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: retro_mario_record_demo
+  description: Retro Mario demo using RecordScheduler with a dummy backend.
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: retro_mario_arena
+
+datasets:
+  - dataset_id: retro_mario_demo
+    loader: jsonl
+    params:
+      path: config/custom/retro_mario_phase1.jsonl
+      streaming: false
+
+backends:
+  - backend_id: retro_dummy
+    type: dummy
+    config:
+      cycle: true
+      responses:
+        - '{"move":"right_run","hold_ticks":4}'
+        - '{"move":"right_run_jump","hold_ticks":4}'
+        - '{"move":"right","hold_ticks":2}'
+        - '{"move":"noop","hold_ticks":1}'
+
+role_adapters:
+  - adapter_id: retro_dummy_player
+    role_type: dut_model
+    backend_id: retro_dummy
+    capabilities:
+      - chat_completion
+
+  - adapter_id: retro_mario_arena
+    role_type: arena
+    params:
+      environment:
+        impl: retro_env_v1
+        game: SuperMarioBros3-Nes-v0
+        state: Start
+        display_mode: headless
+        record_bk2: false
+        legal_moves:
+          - noop
+          - right
+          - right_run
+          - right_jump
+          - right_run_jump
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 12
+          hold_ticks_default: 6
+        info_feeder:
+          impl: info_last_v1
+        replay:
+          enabled: true
+          mode: action
+      scheduler:
+        type: record
+        tick_ms: 33
+        max_steps: 64
+        action_timeout_ms: 200
+        timeout_fallback_move: noop
+      parser:
+        impl: retro_action_v1
+        hold_ticks_min: 1
+        hold_ticks_max: 12
+        hold_ticks_default: 6
+      players:
+        - name: player_0
+          type: backend
+          ref: retro_dummy_player
+          max_retries: 0
+          fallback_policy: first_legal
+
+tasks:
+  - task_id: retro_mario_record_demo
+    dataset_id: retro_mario_demo
+    max_samples: 1
+    concurrency: 1

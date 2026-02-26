@@ -34,7 +34,7 @@ class ReplaySchemaWriter:
         scheduler_type: str,
         result: GameResult,
         move_log: Sequence[dict[str, Any]],
-        arena_trace: Optional[dict[str, Any]],
+        arena_trace: Optional[Any],
         extra_meta: Optional[dict[str, Any]] = None,
     ) -> str:
         """Write replay schema artifacts and return replay.json path.
@@ -157,7 +157,7 @@ class ReplaySchemaWriter:
         result: GameResult,
         action_count: int,
         frame_count: int,
-        arena_trace: Optional[dict[str, Any]],
+        arena_trace: Optional[Any],
         extra_meta: dict[str, Any],
     ) -> dict[str, Any]:
         recording_mode = _resolve_recording_mode(action_count, frame_count)
@@ -189,8 +189,13 @@ class ReplaySchemaWriter:
                 "illegal_move_count": int(result.illegal_move_count),
             },
         }
-        if isinstance(arena_trace, dict):
-            payload["arena_trace"] = arena_trace
+        if isinstance(arena_trace, Mapping):
+            payload["arena_trace"] = dict(arena_trace)
+        elif isinstance(arena_trace, Sequence) and not isinstance(arena_trace, (str, bytes)):
+            payload["arena_trace"] = [
+                dict(item) if isinstance(item, Mapping) else item
+                for item in arena_trace
+            ]
         legacy_replay_path = payload["meta"].pop("legacy_replay_path", None)
         if legacy_replay_path:
             payload["files"] = {"legacy_replay_path": str(legacy_replay_path)}

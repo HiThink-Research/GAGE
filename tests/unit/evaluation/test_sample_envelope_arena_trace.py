@@ -5,6 +5,7 @@ from typing import Any, Dict
 from gage_eval.evaluation.sample_envelope import (
     ensure_predict_result_slot,
     get_arena_trace,
+    resolve_arena_trace,
     set_arena_trace,
 )
 from gage_eval.evaluation.task_planner import StepExecutionContext
@@ -20,10 +21,10 @@ def test_sample_envelope_arena_trace_helpers_normalize_predict_result() -> None:
 
     trace_payload = {"schema": "gage.trace/v1", "steps": [{"step_index": 1}]}
     set_arena_trace(sample, trace_payload, index=0)
-    assert sample["predict_result"][0]["arena_trace"]["schema"] == "gage.trace/v1"
+    assert sample["predict_result"][0]["arena_trace"][0]["step_index"] == 1
     loaded = get_arena_trace(sample, index=0)
     assert loaded is not None
-    assert loaded["steps"][0]["step_index"] == 1
+    assert loaded[0]["step_index"] == 1
 
 
 def test_execute_arena_writes_arena_trace_to_predict_result_zero() -> None:
@@ -65,7 +66,55 @@ def test_execute_arena_writes_arena_trace_to_predict_result_zero() -> None:
 
     assert isinstance(sample["predict_result"], list)
     assert sample["predict_result"]
+    assert len(sample["predict_result"]) == 1
     trace_payload = sample["predict_result"][0].get("arena_trace")
-    assert isinstance(trace_payload, dict)
-    assert trace_payload["steps"][0]["step_index"] == 2
+    assert isinstance(trace_payload, list)
+    assert trace_payload[0]["step_index"] == 2
 
+
+def test_resolve_arena_trace_prefers_model_output_then_sample() -> None:
+    sample: Dict[str, Any] = {
+        "predict_result": [
+            {
+                "arena_trace": [
+                    {
+                        "step_index": 8,
+                        "trace_state": "done",
+                        "timestamp": 1,
+                        "player_id": "p0",
+                        "action_raw": "A",
+                        "action_applied": "A",
+                        "t_obs_ready_ms": 1,
+                        "t_action_submitted_ms": 2,
+                        "timeout": False,
+                        "is_action_legal": True,
+                        "retry_count": 0,
+                    }
+                ]
+            }
+        ]
+    }
+    model_output = {
+        "arena_trace": {
+            "schema": "gage.trace/v1",
+            "steps": [
+                {
+                    "step_index": 9,
+                    "trace_state": "done",
+                    "timestamp": 3,
+                    "player_id": "p1",
+                    "action_raw": "B",
+                    "action_applied": "B",
+                    "t_obs_ready_ms": 3,
+                    "t_action_submitted_ms": 4,
+                    "timeout": False,
+                    "is_action_legal": True,
+                    "retry_count": 0,
+                }
+            ],
+        }
+    }
+
+    resolved = resolve_arena_trace(sample, model_output)
+    assert len(resolved) == 1
+    assert resolved[0]["step_index"] == 9

@@ -14,6 +14,7 @@ from gage_eval.evaluation.sample_envelope import (
     append_arena_contract,
     append_predict_result,
     ensure_arena_header,
+    resolve_arena_trace,
     set_arena_trace,
     update_eval_result,
 )
@@ -266,11 +267,9 @@ class StepExecutionContext:
             self._model_output,
             end_time_ms=int(time.time() * 1000),
         )
-        append_predict_result(self.sample, self._model_output)
-        if isinstance(self._model_output, dict):
-            arena_trace = self._model_output.get("arena_trace")
-            if isinstance(arena_trace, dict):
-                set_arena_trace(self.sample, arena_trace, index=0)
+        # STEP 1: Normalize arena trace from a unified source.
+        resolved_trace = resolve_arena_trace(self.sample, self._model_output, index=0)
+        set_arena_trace(self.sample, resolved_trace, index=0)
 
     def execute_judge(self) -> None:
         logger.trace("Executing judge step adapter={}", getattr(self.judge, "_adapter_id", None))
