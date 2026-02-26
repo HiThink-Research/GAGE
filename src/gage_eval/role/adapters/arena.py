@@ -965,6 +965,22 @@ class ArenaRoleAdapter(RoleAdapter):
                 enforce_legal_moves=enforce_legal_moves,
             )
 
+        if "doudizhu" in normalized_env_impl:
+            from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return DoudizhuInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
         return None
 
     def _build_display_id(self, *, sample: Dict[str, Any], env_impl: str) -> str:
