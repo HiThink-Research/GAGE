@@ -82,8 +82,14 @@ class MMSUConverter(BasePreprocessor):
             sub_sub_category = sample.get("sub-sub-category")
             linguistics_sub_discipline = sample.get("linguistics_sub_discipline")
             audio_path = sample.get("audio_path")
-            audio_file_path = build_audio_file_path(audio_path_root, audio_path)
-            audio_base64 = encode_audio(audio_file_path)
+            try:
+                audio_file_path = build_audio_file_path(audio_path_root, audio_path)
+            except Exception as e:
+                audio_file_path = ""
+            try:
+                audio_base64 = encode_audio(audio_file_path)
+            except:
+                audio_base64 = ""
             audio_frag = MessageContent(**{"type": "audio_url", "audio_url": {"url": f"data:audio/wav;base64,{audio_base64}"}})            
             label = build_answer_index(
                 [choice_a, choice_b, choice_c, choice_d],
