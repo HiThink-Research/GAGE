@@ -465,6 +465,7 @@ class DoudizhuArenaEnvironment:
         self._landlord_id: Optional[str] = None
         self._final_result: Optional[GameResult] = None
         self._start_time_ms: Optional[int] = None
+        self._last_frame: Optional[dict[str, Any] | str] = None
         self.reset()
 
     def reset(self) -> None:
@@ -484,12 +485,14 @@ class DoudizhuArenaEnvironment:
         self._landlord_id = None
         self._replay_path = None
         self._final_result = None
+        self._last_frame = None
         self._start_time_ms = int(time.time() * 1000)
         self._drain_chat_queue(record=False)
         self._refresh_perfect_information()
         self._initial_hands = [list(cards) for cards in self._hand_cards_with_suit]
         if self._replay_live:
             self._save_showdown_replay()
+        self._refresh_last_frame()
 
     def get_active_player(self) -> str:
         """Return the active player identifier."""
@@ -518,6 +521,14 @@ class DoudizhuArenaEnvironment:
             include_public_state=self._context_include_public,
             include_private_state=True,
         )
+        self._update_last_frame(
+            observer_player_id=player,
+            public_state=public_state,
+            private_state=private_state,
+            legal_moves=legal_moves,
+            ui_state=ui_state,
+            board_text=board_text,
+        )
         view = {"text": board_text}
         legal_actions = {"items": list(legal_moves)}
         context = {"mode": "turn", "step": self._move_count}
@@ -542,6 +553,17 @@ class DoudizhuArenaEnvironment:
             legal_actions=legal_actions,
             context=context,
         )
+
+    def get_last_frame(self) -> dict[str, Any] | str:
+        """Returns the latest rendered frame payload for websocket display."""
+
+        if self._last_frame is None:
+            self._refresh_last_frame()
+        if isinstance(self._last_frame, dict):
+            return dict(self._last_frame)
+        if self._last_frame is None:
+            return {}
+        return self._last_frame
 
     def _drain_chat_queue(self, *, record: bool = True) -> None:
         if self._chat_queue is None:
@@ -666,6 +688,7 @@ class DoudizhuArenaEnvironment:
         self._last_move = action_text
         self._core.step(action_id)
         self._refresh_perfect_information()
+        self._refresh_last_frame()
         if self._replay_live:
             self._save_showdown_replay()
 
@@ -899,6 +922,96 @@ class DoudizhuArenaEnvironment:
             )
         except Exception:
             return ""
+
+    def _refresh_last_frame(self) -> None:
+        """Refreshes the cached frame from current core state."""
+
+        try:
+            frame = self._build_frame_payload()
+        except Exception:
+            frame = {
+                "active_player_id": None,
+                "observer_player_id": None,
+                "public_state": {},
+                "private_state": {},
+                "legal_moves": [],
+                "ui_state": {},
+                "board_text": "",
+                "move_count": self._move_count,
+                "last_move": self._last_move,
+            }
+        self._last_frame = frame
+
+    def _update_last_frame(
+        self,
+        *,
+        observer_player_id: str,
+        public_state: dict[str, Any],
+        private_state: dict[str, Any],
+        legal_moves: Sequence[str],
+        ui_state: dict[str, Any],
+        board_text: str,
+    ) -> None:
+        """Updates the cached frame using already-computed observation state."""
+
+        self._last_frame = {
+            "active_player_id": self.get_active_player(),
+            "observer_player_id": str(observer_player_id),
+            "public_state": dict(public_state),
+            "private_state": dict(private_state),
+            "legal_moves": list(legal_moves),
+            "ui_state": dict(ui_state),
+            "board_text": str(board_text),
+            "move_count": self._move_count,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            "last_move": self._last_move,
+            "chat_log": list(self._chat_log),
+            "timestamp_ms": int(time.time() * 1000),
+        }
+
+    def _build_frame_payload(self) -> dict[str, Any]:
+        """Builds one frame payload from the active-player snapshot."""
+
+        # STEP 1: Resolve active player and legal actions.
+        active_player = self.get_active_player()
+        player_index = self._resolve_player_index(active_player)
+        raw_obs = self._core.get_observation(player_index)
+        legal_action_ids = self._core.get_legal_actions(player_index)
+
+        # STEP 2: Format states and UI view.
+        self._refresh_perfect_information()
+        public_state, private_state, legal_moves = self._formatter.format_observation(
+            raw_obs,
+            legal_action_ids,
+        )
+        ui_state = self._build_ui_state(public_state, private_state, legal_moves)
+        board_text = self._format_board_text(
+            public_state,
+            private_state,
+            legal_moves,
+            chat_log=self._chat_log,
+            ui_state=ui_state if self._context_include_ui_state else None,
+            include_public_state=self._context_include_public,
+            include_private_state=True,
+        )
+
+        # STEP 3: Return one JSON-friendly frame envelope.
+        return {
+            "active_player_id": active_player,
+            "observer_player_id": active_player,
+            "public_state": public_state,
+            "private_state": private_state,
+            "legal_moves": list(legal_moves),
+            "ui_state": ui_state,
+            "board_text": board_text,
+            "move_count": self._move_count,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            "last_move": self._last_move,
+            "chat_log": list(self._chat_log),
+            "timestamp_ms": int(time.time() * 1000),
+        }
 
     @staticmethod
     def _format_board_text(

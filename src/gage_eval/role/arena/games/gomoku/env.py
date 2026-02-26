@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
 from gage_eval.role.arena.games.gomoku.rules import GomokuRuleEngine
@@ -340,6 +340,8 @@ class GomokuArenaEnvironment:
         self._winning_line_coords: Optional[List[str]] = None
         self._win_direction: Optional[str] = None
         self._line_length: Optional[int] = None
+        self._last_frame: Optional[dict[str, Any]] = None
+        self._refresh_last_frame()
 
     def reset(self) -> None:
         self._core.reset(start_player=self._start_player_id)
@@ -349,13 +351,27 @@ class GomokuArenaEnvironment:
         self._winning_line_coords = None
         self._win_direction = None
         self._line_length = None
+        self._last_frame = None
+        self._refresh_last_frame()
 
     def get_active_player(self) -> str:
         return self._core.active_player
 
+    def get_last_frame(self) -> dict[str, Any]:
+        """Returns the latest rendered frame payload for websocket display."""
+
+        if self._last_frame is None:
+            self._refresh_last_frame()
+        return dict(self._last_frame or {})
+
     def observe(self, player: str) -> ArenaObservation:
         board_text = self._core.render_board()
         legal_moves = self._core.legal_coords()
+        self._update_last_frame(
+            observer_player_id=player,
+            board_text=board_text,
+            legal_moves=legal_moves,
+        )
         view = {"text": board_text}
         legal_actions = {"items": list(legal_moves)}
         context = {"mode": "turn", "step": self._core.move_count}
@@ -399,6 +415,7 @@ class GomokuArenaEnvironment:
             return self._handle_illegal(action, reason=move_result.reason or "illegal_move")
 
         self._last_move = move_result.move.coord if move_result.move else None
+        self._refresh_last_frame()
 
         # STEP 2: Check for terminal conditions.
         if move_result.winner or move_result.is_draw:
@@ -497,6 +514,58 @@ class GomokuArenaEnvironment:
             line_length=self._line_length,
         )
         return self._final_result
+
+    def _refresh_last_frame(self) -> None:
+        """Refreshes the cached frame from current board state."""
+
+        self._last_frame = self._build_frame_payload(observer_player_id=self.get_active_player())
+
+    def _update_last_frame(
+        self,
+        *,
+        observer_player_id: str,
+        board_text: str,
+        legal_moves: Sequence[str],
+    ) -> None:
+        """Updates cached frame using the current observation payload."""
+
+        self._last_frame = self._build_frame_payload(
+            observer_player_id=observer_player_id,
+            board_text=board_text,
+            legal_moves=legal_moves,
+        )
+
+    def _build_frame_payload(
+        self,
+        *,
+        observer_player_id: str,
+        board_text: Optional[str] = None,
+        legal_moves: Optional[Sequence[str]] = None,
+    ) -> dict[str, Any]:
+        """Builds one JSON-friendly frame payload for websocket consumers."""
+
+        resolved_board = str(board_text) if board_text is not None else self._core.render_board()
+        resolved_legal_moves = (
+            list(legal_moves)
+            if legal_moves is not None
+            else list(self._core.legal_coords())
+        )
+        return {
+            "active_player_id": self._core.active_player,
+            "observer_player_id": str(observer_player_id),
+            "board_text": resolved_board,
+            "legal_moves": resolved_legal_moves,
+            "move_count": self._core.move_count,
+            "last_move": self._last_move,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            "coord_scheme": self._coord_scheme,
+            "rule_profile": self._rule_profile,
+            "win_directions": list(self._win_directions),
+            "win_direction": self._win_direction,
+            "line_length": self._line_length,
+            "winning_line": list(self._winning_line_coords) if self._winning_line_coords else None,
+        }
 
     def _other_player(self, player: str) -> str:
         if len(self._player_ids) != 2:

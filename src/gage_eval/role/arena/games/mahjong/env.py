@@ -142,6 +142,7 @@ class MahjongArena:
         self._illegal_move_count = 0
         self._illegal_counts = {player_id: 0 for player_id in self._player_ids}
         self._last_move: Optional[str] = None
+        self._last_frame: Optional[dict[str, Any] | str] = None
         self._replay_path: Optional[str] = None
         self._start_time_ms: Optional[int] = None
 
@@ -161,6 +162,7 @@ class MahjongArena:
         self._illegal_counts = {player_id: 0 for player_id in self._player_ids}
         self._final_result = None
         self._last_move = None
+        self._last_frame = None
         self._replay_path = None
         self._start_time_ms = int(time.time() * 1000)
 
@@ -170,6 +172,7 @@ class MahjongArena:
         if self._replay_live:
             self._save_replay(winner=None)
         self._start_chat_worker()
+        self._refresh_last_frame()
 
     def get_all_hands(self) -> Optional[dict[int, Any]]:
         """Return the current hands for all players, if available."""
@@ -203,6 +206,12 @@ class MahjongArena:
             legal_moves,
             chat_log=chat_log if self._chat_mode != "off" else None,
         )
+        self._update_last_frame(
+            observer_player_id=player_id,
+            public_state=public_state,
+            private_state=private_state,
+            legal_moves=legal_moves,
+        )
 
         # STEP 3: Build the observation payload.
         metadata = {
@@ -233,6 +242,17 @@ class MahjongArena:
             legal_actions=legal_actions,
             context=context,
         )
+
+    def get_last_frame(self) -> dict[str, Any] | str:
+        """Returns the latest rendered frame payload for websocket display."""
+
+        if self._last_frame is None:
+            self._refresh_last_frame()
+        if isinstance(self._last_frame, dict):
+            return dict(self._last_frame)
+        if self._last_frame is None:
+            return {}
+        return self._last_frame
 
     def apply(self, action: MahjongAction | ArenaAction | str) -> Optional[GameResult]:
         """Apply an action and return the GameResult if the game ends."""
@@ -643,6 +663,91 @@ class MahjongArena:
             self._record_chat(str(player_id), str(chat_text), "human")
             drained = True
         return drained
+
+    def _refresh_last_frame(self) -> None:
+        """Refreshes the cached frame from current core state."""
+
+        try:
+            frame = self._build_frame_payload()
+        except Exception:
+            frame = {
+                "active_player_id": None,
+                "observer_player_id": None,
+                "public_state": {},
+                "private_state": {},
+                "legal_moves": [],
+                "move_count": self._move_count,
+                "last_move": self._last_move,
+            }
+        self._last_frame = self._render_frame(frame)
+
+    def _update_last_frame(
+        self,
+        *,
+        observer_player_id: str,
+        public_state: dict[str, Any],
+        private_state: dict[str, Any],
+        legal_moves: Sequence[str],
+    ) -> None:
+        """Updates the cached frame using already-formatted observation state."""
+
+        frame = {
+            "active_player_id": self.get_active_player(),
+            "observer_player_id": str(observer_player_id),
+            "public_state": dict(public_state),
+            "private_state": dict(private_state),
+            "legal_moves": list(legal_moves),
+            "move_count": self._move_count,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            "last_move": self._last_move,
+            "chat_log": list(self._chat_log),
+            "timestamp_ms": int(time.time() * 1000),
+        }
+        self._last_frame = self._render_frame(frame)
+
+    def _build_frame_payload(self) -> dict[str, Any]:
+        """Builds a frame payload from the current active-player perspective."""
+
+        # STEP 1: Resolve active player and legal moves.
+        active_player_id, active_player_idx, legal_moves = self._current_legal_snapshot()
+        public_state: dict[str, Any] = {}
+        private_state: dict[str, Any] = {}
+
+        # STEP 2: Collect formatted state when active-player snapshot is available.
+        if active_player_id is not None and active_player_idx is not None:
+            raw_obs = self._core.get_observation(active_player_idx)
+            legal_action_ids = self._core.get_legal_actions(active_player_idx)
+            public_state, private_state, legal_moves = self._formatter.format_observation(
+                raw_obs,
+                legal_action_ids,
+            )
+
+        # STEP 3: Return one renderer-ready frame envelope.
+        return {
+            "active_player_id": active_player_id,
+            "observer_player_id": active_player_id,
+            "public_state": public_state,
+            "private_state": private_state,
+            "legal_moves": list(legal_moves),
+            "move_count": self._move_count,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            "last_move": self._last_move,
+            "chat_log": list(self._chat_log),
+            "timestamp_ms": int(time.time() * 1000),
+        }
+
+    def _render_frame(self, frame: dict[str, Any]) -> dict[str, Any] | str:
+        """Renders a frame payload and falls back to the raw payload on failure."""
+
+        try:
+            rendered = self._renderer.render_frame(frame)
+        except Exception:
+            return frame
+        if isinstance(rendered, dict):
+            return dict(rendered)
+        return rendered
 
     def _current_legal_snapshot(self) -> tuple[Optional[str], Optional[int], list[str]]:
         try:
