@@ -86,5 +86,9 @@ def test_replay_schema_writer_supports_frame_events_and_mode_both(tmp_path: Path
     assert payload["recording"]["mode"] == "both"
     assert payload["recording"]["counts"]["frame"] == 1
     lines = (replay_file.parent / "events.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    assert any(json.loads(line).get("type") == "frame" for line in lines)
+    events = [json.loads(line) for line in lines]
+    assert any(event.get("type") == "frame" for event in events)
 
+    # NOTE: seq must be globally increasing across action/frame/result events.
+    seqs = [int(event["seq"]) for event in events]
+    assert seqs == [1, 2, 3]
