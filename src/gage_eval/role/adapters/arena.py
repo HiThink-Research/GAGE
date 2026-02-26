@@ -7,6 +7,7 @@ import functools
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -151,6 +152,7 @@ class ArenaRoleAdapter(RoleAdapter):
         try:
             result = scheduler.run_loop(environment, players)
         finally:
+            self._wait_for_pending_players(players)
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
             pass
         output = self._format_result(result, sample, trace)
@@ -353,6 +355,39 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["include_raw_obs"] = env_cfg.get("include_raw_obs")
             if env_cfg.get("agent_map") is not None:
                 env_kwargs["agent_map"] = env_cfg.get("agent_map")
+        if "vizdoom" in str(impl).lower():
+            for key in (
+                "use_single_process",
+                "render_mode",
+                "pov_view",
+                "show_automap",
+                "automap_scale",
+                "automap_follow",
+                "automap_stride",
+                "show_pov",
+                "pov_stride",
+                "allow_respawn",
+                "respawn_grace_steps",
+                "no_attack_seconds",
+                "max_steps",
+                "action_repeat",
+                "sleep_s",
+                "port",
+                "config_path",
+                "replay_output_dir",
+                "game_id",
+                "tick_rate_hz",
+                "frame_stride",
+                "time_source",
+                "obs_image",
+                "replay_in_env",
+                "action_labels",
+                "allow_partial_actions",
+                "reset_retry_count",
+                "death_check_warmup_steps",
+            ):
+                if env_cfg.get(key) is not None:
+                    env_kwargs[key] = env_cfg.get(key)
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
         if "mahjong" in str(impl).lower():
@@ -422,7 +457,15 @@ class ArenaRoleAdapter(RoleAdapter):
         if scheduler_type == "tick":
             tick_ms = int(cfg.get("tick_ms", 100))
             max_ticks = cfg.get("max_ticks")
-            return TickScheduler(tick_ms=tick_ms, max_ticks=max_ticks)
+            return TickScheduler(
+                tick_ms=tick_ms,
+                max_ticks=max_ticks,
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
         if scheduler_type == "turn":
             return TurnScheduler(max_turns=max_turns)
         if scheduler_type == "record":
@@ -572,6 +615,8 @@ class ArenaRoleAdapter(RoleAdapter):
                         legal_moves_limit=int(spec.get("legal_moves_limit", 40)),
                         sampling_params=spec.get("sampling_params"),
                         fallback_policy=spec.get("fallback_policy", "none"),
+                        timeout_ms=spec.get("timeout_ms"),
+                        timeout_fallback_move=spec.get("timeout_fallback_move"),
                     )
                 )
             elif player_type == "agent":
@@ -602,11 +647,40 @@ class ArenaRoleAdapter(RoleAdapter):
                         parser=parser,
                         trace=trace,
                         action_queue=action_queue,
+                        timeout_ms=spec.get("timeout_ms"),
+                        timeout_fallback_move=spec.get("timeout_fallback_move"),
                     )
                 )
             else:
                 raise ValueError(f"Unsupported player type: {player_type}")
         return players
+
+    def _wait_for_pending_players(self, players: Sequence[Any]) -> None:
+        """Wait briefly for async player workers before adapter return.
+
+        Args:
+            players: All instantiated players in the arena run.
+        """
+
+        timeout_s = self._coerce_non_negative_float(
+            self._scheduler_cfg.get("pending_wait_timeout_s"),
+            default=5.0,
+        )
+        if timeout_s <= 0:
+            return
+
+        deadline = time.monotonic() + timeout_s
+        for player in players:
+            wait_for_pending = getattr(player, "wait_for_pending", None)
+            if not callable(wait_for_pending):
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            try:
+                wait_for_pending(timeout_s=remaining)
+            except Exception as exc:
+                logger.debug("Skip pending wait for player {} due to: {}", getattr(player, "name", "?"), exc)
 
     def _format_result(
         self,
@@ -771,6 +845,18 @@ class ArenaRoleAdapter(RoleAdapter):
             return int(raw)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _coerce_non_negative_float(value: Any, *, default: float) -> float:
+        if value is None:
+            return default
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return default
+        if parsed < 0:
+            return 0.0
+        return parsed
 
     @staticmethod
     def _coerce_bool(value: Any, *, default: bool) -> bool:

@@ -8,6 +8,7 @@ from gage_eval.role.arena.parsers.pettingzoo_actions import (
 )
 from gage_eval.role.arena.parsers.gomoku_parser import GomokuParseResult, GomokuParser
 from gage_eval.role.arena.parsers.doudizhu_parser import DoudizhuParseResult, DoudizhuParser
+from gage_eval.role.arena.parsers.vizdoom_parser import VizDoomParseResult, VizDoomParser
 
 __all__ = [
     "DiscreteActionParseResult",
@@ -16,4 +17,6 @@ __all__ = [
     "DoudizhuParser",
     "GomokuParseResult",
     "GomokuParser",
+    "VizDoomParseResult",
+    "VizDoomParser",
 ]
