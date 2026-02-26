@@ -7,6 +7,7 @@ from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.adapters import arena as arena_module
 from gage_eval.role.adapters.arena import ArenaRoleAdapter, _VisualizedEnvironment
 from gage_eval.role.adapters.base import RoleAdapterState
+from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import ArenaObservation, GameResult
 
@@ -220,6 +221,51 @@ def test_build_environment_for_mahjong_forwards_run_context_and_models(monkeypat
     assert captured_env_kwargs["replay_filename"] == "sample.json"
     assert captured_env_kwargs["chat_queue"] is chat_queue
     assert captured_env_kwargs["player_models"] == {"p0": "model-007"}
+
+
+def test_bind_input_mapper_returns_mahjong_mapper() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "mahjong_rlcard_v1"},
+    )
+
+    mapper = adapter._bind_input_mapper(env_impl="mahjong_rlcard_v1")
+
+    assert isinstance(mapper, MahjongInputMapper)
+
+
+def test_maybe_register_ws_display_for_mahjong() -> None:
+    class _Hub:
+        def __init__(self) -> None:
+            self.registrations: list[Any] = []
+
+        def register_display(self, registration: Any) -> None:
+            self.registrations.append(registration)
+
+    class _Environment:
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"frame_id": 1}
+
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "mahjong_rlcard_v1", "display_mode": "websocket"},
+    )
+    hub = _Hub()
+    adapter._ensure_ws_rgb_hub = lambda: hub  # type: ignore[method-assign]
+
+    adapter._maybe_register_ws_display(
+        sample={"id": "sample-1", "task_id": "task-1", "metadata": {}},
+        environment=_Environment(),
+        action_queue=None,
+        player_specs=[{"type": "human", "player_id": "player_0"}],
+        env_impl="mahjong_rlcard_v1",
+    )
+
+    assert len(hub.registrations) == 1
+    registration = hub.registrations[0]
+    assert registration.display_id == "task-1:sample-1:arena:mahjong_rlcard_v1"
+    assert isinstance(registration.input_mapper, MahjongInputMapper)
 
 
 def test_format_result_keeps_small_game_log_and_trace_fields() -> None:
