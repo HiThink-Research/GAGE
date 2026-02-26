@@ -981,6 +981,24 @@ class ArenaRoleAdapter(RoleAdapter):
                 enforce_legal_moves=enforce_legal_moves,
             )
 
+        if "pettingzoo" in normalized_env_impl:
+            from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import (
+                PettingZooDiscreteInputMapper,
+            )
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return PettingZooDiscreteInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
         if "gomoku" in normalized_env_impl or "tictactoe" in normalized_env_impl:
             from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
 

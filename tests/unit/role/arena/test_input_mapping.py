@@ -5,6 +5,7 @@ import json
 from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
 from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
+from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
 from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
 
@@ -175,6 +176,37 @@ def test_grid_coord_input_mapper_supports_row_col_and_filters_illegal() -> None:
 
     illegal = mapper.handle_browser_event(
         {"event": "action_submit", "coord": "3,3"},
+        context=context,
+    )
+    assert illegal == []
+
+
+def test_pettingzoo_discrete_input_mapper_maps_action_and_index() -> None:
+    mapper = PettingZooDiscreteInputMapper()
+    context = {"human_player_id": "p0", "legal_moves": ["NOOP", "FIRE", "RIGHT"]}
+
+    by_label = mapper.handle_browser_event(
+        {"event": "action_submit", "action": "fire"},
+        context=context,
+    )
+    assert len(by_label) == 1
+    assert by_label[0].move == "FIRE"
+    assert by_label[0].raw == "FIRE"
+
+    by_index = mapper.handle_browser_event(
+        {"event": "action_submit", "action_index": 3},
+        context=context,
+    )
+    assert len(by_index) == 1
+    assert by_index[0].move == "RIGHT"
+
+
+def test_pettingzoo_discrete_input_mapper_filters_illegal() -> None:
+    mapper = PettingZooDiscreteInputMapper()
+    context = {"human_player_id": "p1", "legal_moves": ["0", "1", "2"]}
+
+    illegal = mapper.handle_browser_event(
+        {"event": "action_submit", "action": "99"},
         context=context,
     )
     assert illegal == []
