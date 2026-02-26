@@ -10,6 +10,7 @@ from gage_eval.role.adapters.base import RoleAdapterState
 from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
 from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
+from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import ArenaObservation, GameResult
 
@@ -269,6 +270,17 @@ def test_bind_input_mapper_returns_grid_mapper_for_tictactoe() -> None:
     assert isinstance(mapper, GridCoordInputMapper)
 
 
+def test_bind_input_mapper_returns_pettingzoo_mapper() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "pettingzoo_aec_v1"},
+    )
+
+    mapper = adapter._bind_input_mapper(env_impl="pettingzoo_aec_v1")
+
+    assert isinstance(mapper, PettingZooDiscreteInputMapper)
+
+
 def test_maybe_register_ws_display_for_mahjong() -> None:
     class _Hub:
         def __init__(self) -> None:
@@ -369,6 +381,40 @@ def test_maybe_register_ws_display_for_gomoku() -> None:
     registration = hub.registrations[0]
     assert registration.display_id == "task-3:sample-3:arena:gomoku_local_v1"
     assert isinstance(registration.input_mapper, GridCoordInputMapper)
+
+
+def test_maybe_register_ws_display_for_pettingzoo() -> None:
+    class _Hub:
+        def __init__(self) -> None:
+            self.registrations: list[Any] = []
+
+        def register_display(self, registration: Any) -> None:
+            self.registrations.append(registration)
+
+    class _Environment:
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"frame_id": 4}
+
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "pettingzoo_aec_v1", "display_mode": "websocket"},
+    )
+    hub = _Hub()
+    adapter._ensure_ws_rgb_hub = lambda: hub  # type: ignore[method-assign]
+
+    adapter._maybe_register_ws_display(
+        sample={"id": "sample-4", "task_id": "task-4", "metadata": {}},
+        environment=_Environment(),
+        action_queue=None,
+        player_specs=[{"type": "human", "player_id": "player_0"}],
+        env_impl="pettingzoo_aec_v1",
+    )
+
+    assert len(hub.registrations) == 1
+    registration = hub.registrations[0]
+    assert registration.display_id == "task-4:sample-4:arena:pettingzoo_aec_v1"
+    assert isinstance(registration.input_mapper, PettingZooDiscreteInputMapper)
 
 
 def test_format_result_keeps_small_game_log_and_trace_fields() -> None:
