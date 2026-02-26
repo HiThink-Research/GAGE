@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
 from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
@@ -95,6 +96,46 @@ def test_mahjong_input_mapper_resolves_index_and_filters_illegal_action() -> Non
 
     illegal = mapper.handle_browser_event(
         {"event": "action_submit", "action": "C9"},
+        context=context,
+    )
+    assert illegal == []
+
+
+def test_doudizhu_input_mapper_maps_pass_alias_and_chat() -> None:
+    mapper = DoudizhuInputMapper()
+    actions = mapper.handle_browser_event(
+        {
+            "event": "action_submit",
+            "move": "skip",
+            "chat": "let it go",
+        },
+        context={
+            "human_player_id": "p2",
+            "legal_moves": ["pass", "333"],
+        },
+    )
+
+    assert len(actions) == 1
+    assert actions[0].player_id == "p2"
+    assert actions[0].move == "pass"
+    payload = json.loads(actions[0].raw)
+    assert payload["action"] == "pass"
+    assert payload["chat"] == "let it go"
+
+
+def test_doudizhu_input_mapper_supports_index_and_filters_illegal() -> None:
+    mapper = DoudizhuInputMapper()
+    context = {"human_player_id": "p0", "legal_moves": ["pass", "333", "4444"]}
+
+    by_index = mapper.handle_browser_event(
+        {"event": "action_submit", "action_index": 3},
+        context=context,
+    )
+    assert len(by_index) == 1
+    assert by_index[0].move == "4444"
+
+    illegal = mapper.handle_browser_event(
+        {"event": "action_submit", "action": "AAAA"},
         context=context,
     )
     assert illegal == []
