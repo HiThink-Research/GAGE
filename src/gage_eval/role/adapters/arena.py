@@ -921,10 +921,12 @@ class ArenaRoleAdapter(RoleAdapter):
             return self._ws_rgb_hub
         host = str(self._human_input_cfg.get("ws_host", self._human_input_cfg.get("host", "127.0.0.1")))
         port = int(self._human_input_cfg.get("ws_port", 5800))
+        allow_origin = str(self._human_input_cfg.get("ws_allow_origin", self._human_input_cfg.get("allow_origin", "*")))
         from gage_eval.tools.ws_rgb_server import WsRgbHubServer
 
-        hub = WsRgbHubServer(host=host, port=port)
+        hub = WsRgbHubServer(host=host, port=port, allow_origin=allow_origin)
         hub.start()
+        logger.info("ArenaRoleAdapter {} ws_rgb hub ready at {}", self.adapter_id, hub.base_url)
         self._ws_rgb_hub = hub
         return self._ws_rgb_hub
 
