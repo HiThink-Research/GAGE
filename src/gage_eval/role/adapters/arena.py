@@ -931,22 +931,41 @@ class ArenaRoleAdapter(RoleAdapter):
     def _bind_input_mapper(self, *, env_impl: str):
         """Bind a game-specific mapper for websocket input routing."""
 
-        if "retro" not in str(env_impl).lower():
-            return None
-        from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
-
+        normalized_env_impl = str(env_impl).lower()
         action_schema = self._environment_cfg.get("action_schema")
-        hold_ticks_default = None
-        if isinstance(action_schema, dict):
-            hold_ticks_default = action_schema.get("hold_ticks_default")
-        if hold_ticks_default is None:
-            hold_ticks_default = self._human_input_cfg.get("hold_ticks_default")
-        if hold_ticks_default is None:
-            return RetroInputMapper()
-        try:
-            return RetroInputMapper(default_hold_ticks=int(hold_ticks_default))
-        except (TypeError, ValueError):
-            return RetroInputMapper()
+
+        if "retro" in normalized_env_impl:
+            from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
+
+            hold_ticks_default = None
+            if isinstance(action_schema, dict):
+                hold_ticks_default = action_schema.get("hold_ticks_default")
+            if hold_ticks_default is None:
+                hold_ticks_default = self._human_input_cfg.get("hold_ticks_default")
+            if hold_ticks_default is None:
+                return RetroInputMapper()
+            try:
+                return RetroInputMapper(default_hold_ticks=int(hold_ticks_default))
+            except (TypeError, ValueError):
+                return RetroInputMapper()
+
+        if "mahjong" in normalized_env_impl:
+            from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return MahjongInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        return None
 
     def _build_display_id(self, *, sample: Dict[str, Any], env_impl: str) -> str:
         metadata = sample.get("metadata")
