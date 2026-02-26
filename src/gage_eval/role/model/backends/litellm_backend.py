@@ -400,6 +400,9 @@ class LiteLLMBackend(EngineBackend):
                 return func()
             except Exception as exc:  # pragma: no cover - network/third-party errors
                 last_exc = exc
+                if self._is_non_retryable_error(exc):
+                    logger.debug("LiteLLM call aborted without retry due to non-retryable error: {}", exc)
+                    break
                 if attempt == self._max_retries - 1:
                     break
                 wait = min(64, self._retry_sleep * (self._retry_multiplier**attempt))
@@ -407,6 +410,20 @@ class LiteLLMBackend(EngineBackend):
                 time.sleep(wait)
         assert last_exc is not None
         raise last_exc
+
+    @staticmethod
+    def _is_non_retryable_error(exc: Exception) -> bool:
+        """Return True when an error should bypass retry loops."""
+
+        message = str(exc).strip().lower()
+        if not message:
+            return False
+        non_retryable_markers = (
+            "cannot schedule new futures after shutdown",
+            "rolepool",
+            "is shut down",
+        )
+        return any(marker in message for marker in non_retryable_markers)
 
     @staticmethod
     def _infer_provider(model_name: str | None) -> Optional[str]:

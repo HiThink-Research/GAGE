@@ -9,6 +9,7 @@ from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
 from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
 from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
+from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 
@@ -105,6 +106,63 @@ class _TwoTickDictEnv:
             final_board="",
             move_log=[],
         )
+
+
+class _AsyncTickPlayer:
+    def __init__(self, name: str, moves: list[str]) -> None:
+        self.name = name
+        self._moves = list(moves)
+        self._inflight = False
+        self._ready: list[ArenaAction] = []
+        self.start_calls = 0
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        if self._inflight:
+            return False
+        self._inflight = True
+        self.start_calls += 1
+        move = self._moves.pop(0) if self._moves else "NOOP"
+        self._ready.append(ArenaAction(player=self.name, move=move, raw=move, metadata={}))
+        return True
+
+    def has_action(self) -> bool:
+        return bool(self._ready)
+
+    def pop_action(self) -> ArenaAction:
+        action = self._ready.pop(0)
+        self._inflight = False
+        return action
+
+
+class _QueueReadyAsyncPlayer:
+    def __init__(self, name: str, moves: list[str]) -> None:
+        self.name = name
+        self._moves = list(moves)
+        self._inflight = False
+        self._ready: list[ArenaAction] = []
+        self.start_calls = 0
+        self.started_while_ready = 0
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        if self._inflight:
+            return False
+        if self._ready:
+            self.started_while_ready += 1
+        self._inflight = True
+        self.start_calls += 1
+        move = self._moves.pop(0) if self._moves else "NOOP"
+        # Emulate async completion happening before the scheduler pops current action.
+        self._ready.append(ArenaAction(player=self.name, move=move, raw=move, metadata={}))
+        self._inflight = False
+        return True
+
+    def has_action(self) -> bool:
+        return bool(self._ready)
+
+    def pop_action(self) -> ArenaAction:
+        return self._ready.pop(0)
 
 
 def test_record_scheduler_timeout_fallback_and_trace() -> None:
@@ -305,6 +363,37 @@ def test_arena_adapter_build_scheduler_supports_new_types() -> None:
     assert isinstance(timeline_adapter._build_scheduler(sample), MultiTimelineScheduler)
 
 
+def test_tick_scheduler_rearms_async_player_after_each_action() -> None:
+    environment = _TwoTickDictEnv(max_ticks=3)
+    player = _AsyncTickPlayer("p0", ["A", "B", "C"])
+    scheduler = TickScheduler(tick_ms=1, max_ticks=10)
+
+    result = scheduler.run_loop(environment, [player])
+
+    assert [action.move for action in environment.applied_actions] == ["A", "B", "C"]
+    assert player.start_calls >= 3
+    assert result.move_count == 3
+    assert len(result.arena_trace) == 3
+    assert [entry["action_applied"] for entry in result.arena_trace] == ["A", "B", "C"]
+    assert all(entry["trace_state"] == "done" for entry in result.arena_trace)
+
+
+def test_tick_scheduler_does_not_start_new_think_when_action_is_ready() -> None:
+    environment = _SingleActionEnv()
+    player = _QueueReadyAsyncPlayer("p0", ["A", "B"])
+    scheduler = TickScheduler(tick_ms=1, max_ticks=10)
+
+    result = scheduler.run_loop(environment, [player])
+
+    assert [action.move for action in environment.applied_actions] == ["A"]
+    assert player.start_calls == 1
+    assert player.started_while_ready == 0
+    assert result.move_count == 1
+    assert len(result.arena_trace) == 1
+    assert result.arena_trace[0]["player_id"] == "p0"
+    assert result.arena_trace[0]["action_applied"] == "A"
+
+
 def test_arena_adapter_build_scheduler_applies_trace_options() -> None:
     sample = {"eval_config": {"max_turns": 10}}
     adapter = ArenaRoleAdapter(
@@ -332,6 +421,36 @@ def test_arena_adapter_build_scheduler_applies_trace_options() -> None:
     assert scheduler._trace_time_clock == "monotonic"
     assert scheduler._trace_finalize_timing == "after_action_submit"
     assert scheduler._trace_action_format == "flat"
+
+
+def test_arena_adapter_build_tick_scheduler_applies_trace_options() -> None:
+    sample = {"eval_config": {"max_turns": 10}}
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        scheduler={
+            "type": "tick",
+            "tick_ms": 5,
+            "trace_step_index_start": 6,
+            "trace_timestamp_clock": "wall_clock",
+            "trace_time_clock": "wall_clock",
+            "trace_finalize_timing": "after_action_submit",
+            "trace_action_format": "envelope",
+            "trace": {
+                "step_index_start": 9,
+                "timestamp_clock": "monotonic",
+                "time_clock": "monotonic",
+            },
+        },
+    )
+
+    scheduler = adapter._build_scheduler(sample)
+
+    assert isinstance(scheduler, TickScheduler)
+    assert scheduler._trace_step_index_start == 9
+    assert scheduler._trace_timestamp_clock == "monotonic"
+    assert scheduler._trace_time_clock == "monotonic"
+    assert scheduler._trace_finalize_timing == "after_action_submit"
+    assert scheduler._trace_action_format == "envelope"
 
 
 def test_arena_adapter_build_scheduler_unknown_type_raises() -> None:
