@@ -80,7 +80,6 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         return Message(role=msg.get("role", "user"), content=normalized_content, **extras)
 
     messages = [build_message(m) for m in payload.get("messages", []) if isinstance(m, dict)]
-    messages = [build_message(m) for m in payload.get("messages", []) if isinstance(m, dict)]
     
     # NOTE: 'choices', 'inputs', 'audit_info' are ignored as strict Sample schema does not support them.
 

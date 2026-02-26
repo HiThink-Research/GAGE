@@ -78,7 +78,7 @@ class LLMPlayer:
                     fallback_move,
                     parse_result.error,
                 )
-                metadata = self._build_action_metadata(parse_result)
+                metadata = self._build_action_metadata(parse_result, retry_count=retries)
                 metadata["error"] = parse_result.error
                 metadata["fallback"] = self._fallback_policy
                 return ArenaAction(
@@ -88,7 +88,7 @@ class LLMPlayer:
                     metadata=metadata,
                 )
 
-        metadata = self._build_action_metadata(parse_result)
+        metadata = self._build_action_metadata(parse_result, retry_count=retries)
         if parse_result.error:
             metadata["error"] = parse_result.error
         return ArenaAction(
@@ -259,11 +259,12 @@ class LLMPlayer:
     def _build_user_message(text: str) -> Dict[str, Any]:
         return {"role": "user", "content": [{"type": "text", "text": text}]}
 
-    def _build_action_metadata(self, parse_result) -> Dict[str, Any]:
+    def _build_action_metadata(self, parse_result, *, retry_count: int = 0) -> Dict[str, Any]:
         metadata = {"player_type": "backend"}
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)
+        metadata["retry_count"] = max(0, int(retry_count))
         return metadata
 
 

@@ -8,7 +8,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -19,6 +19,9 @@ from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.players.agent_player import AgentPlayer
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
+from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
+from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
+from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
 from gage_eval.role.arena.replay_schema_writer import ReplaySchemaWriter
 from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
@@ -65,6 +68,8 @@ class ArenaRoleAdapter(RoleAdapter):
         self._player_specs = list(players or [])
         self._shared_visualizer = None
         self._action_server = None
+        self._ws_rgb_hub = None
+        self._registered_displays: set[str] = set()
 
     def invoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
         """Run the arena loop in a synchronous context."""
@@ -112,6 +117,13 @@ class ArenaRoleAdapter(RoleAdapter):
             start_player_id=start_player_id,
             chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
+        )
+        self._maybe_register_ws_display(
+            sample=sample,
+            environment=environment,
+            action_queue=action_queue,
+            player_specs=player_specs,
+            env_impl=env_impl_lower,
         )
         if visualizer is not None:
             visualizer.reset_state()
@@ -205,7 +217,7 @@ class ArenaRoleAdapter(RoleAdapter):
             is_generic_name = False
             if existing_name is not None:
                 normalized_existing = str(existing_name).strip()
-                is_generic_name = bool(re.match(r"^player\\s*\\d+$", normalized_existing, re.IGNORECASE))
+                is_generic_name = bool(re.match(r"^player\s*\d+$", normalized_existing, re.IGNORECASE))
             if existing_name is None or existing_name == normalized["player_id"] or is_generic_name:
                 adapter_ref = normalized.get("ref")
                 if adapter_ref and not normalized.get("name"):
@@ -404,13 +416,126 @@ class ArenaRoleAdapter(RoleAdapter):
     def _build_scheduler(self, sample: Dict[str, Any]):
         cfg = dict(self._scheduler_cfg)
         eval_cfg = sample.get("eval_config") or {}
-        scheduler_type = str(cfg.get("type", "turn"))
+        trace_options = self._resolve_trace_scheduler_options(cfg)
+        scheduler_type = str(cfg.get("type", "turn")).strip().lower()
         max_turns = eval_cfg.get("max_turns", cfg.get("max_turns"))
         if scheduler_type == "tick":
             tick_ms = int(cfg.get("tick_ms", 100))
             max_ticks = cfg.get("max_ticks")
             return TickScheduler(tick_ms=tick_ms, max_ticks=max_ticks)
-        return TurnScheduler(max_turns=max_turns)
+        if scheduler_type == "turn":
+            return TurnScheduler(max_turns=max_turns)
+        if scheduler_type == "record":
+            max_steps = eval_cfg.get("max_turns", cfg.get("max_steps", cfg.get("max_turns")))
+            return RecordScheduler(
+                tick_ms=int(cfg.get("tick_ms", 33)),
+                max_steps=max_steps,
+                action_timeout_ms=cfg.get("action_timeout_ms"),
+                timeout_fallback_move=str(cfg.get("timeout_fallback_move", "NOOP")),
+                timeline_id=cfg.get("timeline_id"),
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
+        if scheduler_type == "simultaneous":
+            max_steps = eval_cfg.get("max_turns", cfg.get("max_steps", cfg.get("max_turns")))
+            return SimultaneousScheduler(
+                frames_per_action=int(cfg.get("frames_per_action", 1)),
+                max_steps=max_steps,
+                action_timeout_ms=cfg.get("action_timeout_ms"),
+                timeout_fallback_move=str(cfg.get("timeout_fallback_move", "NOOP")),
+                tick_ms=int(cfg.get("tick_ms", 0)),
+                timeline_id=cfg.get("timeline_id"),
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
+        if scheduler_type == "multi_timeline":
+            return MultiTimelineScheduler(
+                tick_ms=int(cfg.get("tick_ms", 33)),
+                max_ticks=cfg.get("max_ticks"),
+                default_fallback_move=str(cfg.get("default_fallback_move", "NOOP")),
+                lane_registry=cfg.get("lane_registry"),
+                timelines=cfg.get("timelines"),
+                trace_step_index_start=trace_options["step_index_start"],
+                trace_timestamp_clock=trace_options["timestamp_clock"],
+                trace_time_clock=trace_options["time_clock"],
+                trace_finalize_timing=trace_options["finalize_timing"],
+                trace_action_format=trace_options["action_format"],
+            )
+        raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
+
+    @staticmethod
+    def _resolve_trace_scheduler_options(cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve trace-related scheduler options from config."""
+
+        trace_cfg = cfg.get("trace")
+        if not isinstance(trace_cfg, dict):
+            trace_cfg = {}
+
+        return {
+            "step_index_start": int(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="step_index_start",
+                    default=0,
+                )
+            ),
+            "timestamp_clock": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="timestamp_clock",
+                    default="wall_clock",
+                )
+            ),
+            "time_clock": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="time_clock",
+                    default="monotonic",
+                )
+            ),
+            "finalize_timing": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="finalize_timing",
+                    default="after_env_apply",
+                )
+            ),
+            "action_format": str(
+                ArenaRoleAdapter._pick_trace_option(
+                    cfg,
+                    trace_cfg,
+                    key="action_format",
+                    default="flat",
+                )
+            ),
+        }
+
+    @staticmethod
+    def _pick_trace_option(
+        scheduler_cfg: Dict[str, Any],
+        trace_cfg: Dict[str, Any],
+        *,
+        key: str,
+        default: Any,
+    ) -> Any:
+        """Read trace option from nested or flat scheduler config."""
+
+        if key in trace_cfg:
+            return trace_cfg[key]
+        prefixed_key = f"trace_{key}"
+        if prefixed_key in scheduler_cfg:
+            return scheduler_cfg[prefixed_key]
+        return default
 
     def _build_players(
         self,
@@ -509,8 +634,10 @@ class ArenaRoleAdapter(RoleAdapter):
         if isinstance(metrics, dict):
             output["metrics"] = dict(metrics)
         arena_trace = getattr(result, "arena_trace", None)
-        if isinstance(arena_trace, dict):
-            output["arena_trace"] = arena_trace
+        if isinstance(arena_trace, Mapping):
+            output["arena_trace"] = dict(arena_trace)
+        elif isinstance(arena_trace, Sequence) and not isinstance(arena_trace, (str, bytes)):
+            output["arena_trace"] = list(arena_trace)
         output.update(self._format_game_log(result.move_log, sample, trace))
         if result.replay_path:
             output["replay_path"] = result.replay_path
@@ -739,6 +866,106 @@ class ArenaRoleAdapter(RoleAdapter):
         self._action_server = server
         return server, server.action_queue
 
+    def _maybe_register_ws_display(
+        self,
+        *,
+        sample: Dict[str, Any],
+        environment: Any,
+        action_queue: Any,
+        player_specs: Sequence[Dict[str, Any]],
+        env_impl: str,
+    ) -> None:
+        """Register display metadata when websocket display mode is enabled."""
+
+        display_mode = str(self._environment_cfg.get("display_mode") or "").lower()
+        if display_mode not in {"websocket", "ws"}:
+            return
+        frame_source = getattr(environment, "get_last_frame", None)
+        if not callable(frame_source):
+            return
+        input_mapper = self._bind_input_mapper(env_impl=env_impl)
+        if input_mapper is None:
+            return
+        hub = self._ensure_ws_rgb_hub()
+        if hub is None:
+            return
+
+        from gage_eval.tools.ws_rgb_server import DisplayRegistration
+
+        display_id = self._build_display_id(sample=sample, env_impl=env_impl)
+        legal_moves = self._environment_cfg.get("legal_moves")
+        normalized_legal_moves = list(legal_moves) if isinstance(legal_moves, (list, tuple)) else None
+        registration = DisplayRegistration(
+            display_id=display_id,
+            label=str(env_impl or "arena_display"),
+            human_player_id=self._resolve_human_player_id(player_specs),
+            frame_source=frame_source,
+            input_mapper=input_mapper,
+            legal_moves=normalized_legal_moves,
+            action_queue=action_queue,
+            default_context={
+                "display_id": display_id,
+                "sample_id": self._resolve_sample_id(sample),
+                "adapter_id": self.adapter_id,
+                "game_id": env_impl,
+                "human_player_id": self._resolve_human_player_id(player_specs),
+            },
+        )
+        hub.register_display(registration)
+        self._registered_displays.add(display_id)
+
+    def _ensure_ws_rgb_hub(self):
+        """Start and cache a local WsRgbHubServer instance."""
+
+        if self._ws_rgb_hub is not None:
+            return self._ws_rgb_hub
+        host = str(self._human_input_cfg.get("ws_host", self._human_input_cfg.get("host", "127.0.0.1")))
+        port = int(self._human_input_cfg.get("ws_port", 5800))
+        from gage_eval.tools.ws_rgb_server import WsRgbHubServer
+
+        hub = WsRgbHubServer(host=host, port=port)
+        hub.start()
+        self._ws_rgb_hub = hub
+        return self._ws_rgb_hub
+
+    def _bind_input_mapper(self, *, env_impl: str):
+        """Bind a game-specific mapper for websocket input routing."""
+
+        if "retro" not in str(env_impl).lower():
+            return None
+        from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
+
+        action_schema = self._environment_cfg.get("action_schema")
+        hold_ticks_default = None
+        if isinstance(action_schema, dict):
+            hold_ticks_default = action_schema.get("hold_ticks_default")
+        if hold_ticks_default is None:
+            hold_ticks_default = self._human_input_cfg.get("hold_ticks_default")
+        if hold_ticks_default is None:
+            return RetroInputMapper()
+        try:
+            return RetroInputMapper(default_hold_ticks=int(hold_ticks_default))
+        except (TypeError, ValueError):
+            return RetroInputMapper()
+
+    def _build_display_id(self, *, sample: Dict[str, Any], env_impl: str) -> str:
+        metadata = sample.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        task_id = str(sample.get("task_id") or metadata.get("task_id") or "task")
+        sample_id = self._resolve_sample_id(sample)
+        return f"{task_id}:{sample_id}:{self.adapter_id}:{env_impl}"
+
+    @staticmethod
+    def _resolve_human_player_id(player_specs: Sequence[Dict[str, Any]]) -> str:
+        for spec in player_specs:
+            if spec.get("type") != "human":
+                continue
+            player_id = spec.get("player_id") or spec.get("name")
+            if player_id:
+                return str(player_id)
+        return "player_0"
+
     def _maybe_write_replay_v1(
         self,
         *,
@@ -835,6 +1062,16 @@ class ArenaRoleAdapter(RoleAdapter):
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("ArenaRoleAdapter {} action server stop failed: {}", self.adapter_id, exc)
             self._action_server = None
+
+        if self._ws_rgb_hub is not None:
+            try:
+                for display_id in list(self._registered_displays):
+                    self._ws_rgb_hub.unregister_display(display_id)
+                self._ws_rgb_hub.stop()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("ArenaRoleAdapter {} ws hub stop failed: {}", self.adapter_id, exc)
+            self._ws_rgb_hub = None
+            self._registered_displays = set()
 
 
 class _VisualizedEnvironment:

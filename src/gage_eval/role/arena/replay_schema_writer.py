@@ -62,7 +62,10 @@ class ReplaySchemaWriter:
         action_events = self._build_action_events(move_log)
 
         # STEP 2: Convert optional frame events and append result event.
-        frame_events = self._build_frame_events(meta_extra.pop("frame_events", None))
+        frame_events = self._build_frame_events(
+            meta_extra.pop("frame_events", None),
+            start_seq=len(action_events) + 1,
+        )
         result_event = self._build_result_event(
             seq=len(action_events) + len(frame_events) + 1,
             result=result,
@@ -123,7 +126,7 @@ class ReplaySchemaWriter:
             events.append(event)
         return events
 
-    def _build_frame_events(self, frame_events: Any) -> list[dict[str, Any]]:
+    def _build_frame_events(self, frame_events: Any, *, start_seq: int) -> list[dict[str, Any]]:
         if not isinstance(frame_events, Sequence):
             return []
         events: list[dict[str, Any]] = []
@@ -132,7 +135,7 @@ class ReplaySchemaWriter:
                 continue
             frame = dict(item)
             frame.setdefault("type", "frame")
-            frame.setdefault("seq", len(events) + 1)
+            frame.setdefault("seq", int(start_seq) + len(events))
             frame.setdefault("ts_ms", _now_ms())
             events.append(frame)
         return events
@@ -303,4 +306,3 @@ def _resolve_result_status(result: GameResult) -> str:
     if status:
         return str(status)
     return str(result.result)
-

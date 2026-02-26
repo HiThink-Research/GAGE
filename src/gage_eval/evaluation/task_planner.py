@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
@@ -10,7 +11,9 @@ from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.sample_envelope import (
+    append_arena_contract,
     append_predict_result,
+    ensure_arena_header,
     set_arena_trace,
     update_eval_result,
 )
@@ -250,11 +253,18 @@ class StepExecutionContext:
 
     def execute_arena(self) -> None:
         logger.trace("Executing arena step adapter={}", getattr(self.arena, "_adapter_id", None))
+        start_time_ms = int(time.time() * 1000)
+        ensure_arena_header(self.sample, start_time_ms=start_time_ms)
         self._model_output = self.arena.execute(
             self.sample,
             self.role_manager,
             self.trace,
             sandbox_provider=self.sandbox_provider,
+        )
+        append_arena_contract(
+            self.sample,
+            self._model_output,
+            end_time_ms=int(time.time() * 1000),
         )
         append_predict_result(self.sample, self._model_output)
         if isinstance(self._model_output, dict):
