@@ -981,6 +981,26 @@ class ArenaRoleAdapter(RoleAdapter):
                 enforce_legal_moves=enforce_legal_moves,
             )
 
+        if "gomoku" in normalized_env_impl or "tictactoe" in normalized_env_impl:
+            from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            coord_scheme = self._environment_cfg.get("coord_scheme")
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                if action_schema.get("coord_scheme") is not None:
+                    coord_scheme = action_schema.get("coord_scheme")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return GridCoordInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                coord_scheme=str(coord_scheme) if coord_scheme else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
         return None
 
     def _build_display_id(self, *, sample: Dict[str, Any], env_impl: str) -> str:
