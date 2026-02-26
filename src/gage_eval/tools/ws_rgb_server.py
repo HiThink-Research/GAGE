@@ -150,6 +150,12 @@ class WsRgbHubServer:
 
         return f"http://{self.host}:{self.port}"
 
+    @property
+    def viewer_url(self) -> str:
+        """Return browser viewer URL for live ws_rgb inspection."""
+
+        return f"{self.base_url}/ws_rgb/viewer"
+
     def broadcast_frame(self, display_id: str) -> dict[str, Any]:
         """Fetch one latest frame payload from display frame_source."""
 
@@ -208,6 +214,363 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     """HTTP handler for WsRgbHubServer control APIs."""
 
     server_version = "GAGEWsRgbHub/1.0"
+    _VIEWER_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GAGE ws_rgb Viewer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1220;
+      --panel: #141e30;
+      --panel-alt: #1b263d;
+      --text: #d6deed;
+      --muted: #91a0bc;
+      --accent: #5bc0be;
+      --warn: #ffcc66;
+      --error: #ff7d7d;
+      --ok: #85d988;
+      --border: #2b3a58;
+    }
+    * {
+      box-sizing: border-box;
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    body {
+      margin: 0;
+      background: linear-gradient(165deg, var(--bg) 0%, #0e1a2a 45%, #09111b 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .panel {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-alt) 100%);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+    }
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      color: var(--accent);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .row + .row {
+      margin-top: 10px;
+    }
+    select, input, button {
+      background: #0f1727;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 9px;
+    }
+    select {
+      min-width: 300px;
+    }
+    input {
+      min-width: 140px;
+    }
+    button {
+      cursor: pointer;
+    }
+    button:hover {
+      border-color: var(--accent);
+    }
+    .status {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+    .status.ok {
+      color: var(--ok);
+    }
+    .status.warn {
+      color: var(--warn);
+    }
+    .status.error {
+      color: var(--error);
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0b1322;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      max-height: 360px;
+      overflow: auto;
+      line-height: 1.45;
+      font-size: 12px;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 900px) {
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="panel">
+      <div class="title">GAGE ws_rgb Viewer</div>
+      <div class="row">
+        <label for="displaySelect">Display:</label>
+        <select id="displaySelect"></select>
+        <button id="refreshDisplaysBtn" type="button">Refresh Displays</button>
+      </div>
+      <div class="row">
+        <label for="pollMsInput">Poll ms:</label>
+        <input id="pollMsInput" type="number" min="50" max="2000" step="10" value="200" />
+        <button id="applyPollBtn" type="button">Apply</button>
+        <button id="fetchFrameBtn" type="button">Fetch Once</button>
+      </div>
+      <div class="row">
+        <label for="actionInput">Action:</label>
+        <input id="actionInput" type="text" value="0" />
+        <button id="sendActionBtn" type="button">Send Action</button>
+        <label><input id="keyCaptureToggle" type="checkbox" /> Key Capture</label>
+      </div>
+      <div id="status" class="status">Initializing...</div>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <div class="title">Frame board_text</div>
+        <pre id="boardText">(waiting frame)</pre>
+      </div>
+      <div class="panel">
+        <div class="title">Frame JSON</div>
+        <pre id="frameJson">{}</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      displays: [],
+      selectedDisplayId: "",
+      pollTimer: null,
+      pollMs: 200,
+    };
+
+    const el = {
+      displaySelect: document.getElementById("displaySelect"),
+      refreshDisplaysBtn: document.getElementById("refreshDisplaysBtn"),
+      pollMsInput: document.getElementById("pollMsInput"),
+      applyPollBtn: document.getElementById("applyPollBtn"),
+      fetchFrameBtn: document.getElementById("fetchFrameBtn"),
+      actionInput: document.getElementById("actionInput"),
+      sendActionBtn: document.getElementById("sendActionBtn"),
+      keyCaptureToggle: document.getElementById("keyCaptureToggle"),
+      status: document.getElementById("status"),
+      boardText: document.getElementById("boardText"),
+      frameJson: document.getElementById("frameJson"),
+    };
+
+    function setStatus(message, tone = "status") {
+      el.status.className = tone;
+      el.status.textContent = message;
+    }
+
+    async function apiJson(url, options) {
+      const response = await fetch(url, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const err = payload && payload.error ? payload.error : "request_failed";
+        throw new Error(err);
+      }
+      return payload;
+    }
+
+    function normalizeAction(raw) {
+      const text = String(raw || "").trim();
+      if (!text) {
+        return "0";
+      }
+      if (/^-?\\d+$/.test(text)) {
+        return Number(text);
+      }
+      return text;
+    }
+
+    function renderDisplays(displays) {
+      state.displays = Array.isArray(displays) ? displays : [];
+      const oldSelected = state.selectedDisplayId;
+      el.displaySelect.innerHTML = "";
+      for (const item of state.displays) {
+        const id = String(item.display_id || "");
+        if (!id) {
+          continue;
+        }
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = `${id} (${item.label || "display"})`;
+        el.displaySelect.appendChild(option);
+      }
+      if (state.displays.length === 0) {
+        state.selectedDisplayId = "";
+        return;
+      }
+      const hasOld = state.displays.some(item => String(item.display_id || "") === oldSelected);
+      state.selectedDisplayId = hasOld ? oldSelected : String(state.displays[0].display_id || "");
+      el.displaySelect.value = state.selectedDisplayId;
+    }
+
+    async function refreshDisplays() {
+      try {
+        const payload = await apiJson("/ws_rgb/displays");
+        renderDisplays(payload.displays || []);
+        if (!state.selectedDisplayId) {
+          setStatus("No display registered yet.", "status warn");
+          return;
+        }
+        setStatus(`Connected. display_id=${state.selectedDisplayId}`, "status ok");
+      } catch (error) {
+        setStatus(`Refresh displays failed: ${error.message}`, "status error");
+      }
+    }
+
+    async function fetchFrame() {
+      if (!state.selectedDisplayId) {
+        return;
+      }
+      try {
+        const query = new URLSearchParams({ display_id: state.selectedDisplayId });
+        const payload = await apiJson(`/ws_rgb/frame?${query.toString()}`);
+        const frame = payload.frame || {};
+        const boardText = frame.board_text != null ? String(frame.board_text) : "(no board_text)";
+        el.boardText.textContent = boardText;
+        el.frameJson.textContent = JSON.stringify(frame, null, 2);
+      } catch (error) {
+        setStatus(`Fetch frame failed: ${error.message}`, "status error");
+      }
+    }
+
+    async function sendAction(actionValue) {
+      if (!state.selectedDisplayId) {
+        return;
+      }
+      const body = {
+        display_id: state.selectedDisplayId,
+        payload: { type: "action", action: actionValue },
+        context: {},
+      };
+      try {
+        const response = await apiJson("/ws_rgb/input", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const queued = Number(response.queued || 0);
+        setStatus(`Input accepted. queued=${queued}`, queued > 0 ? "status ok" : "status warn");
+      } catch (error) {
+        setStatus(`Send action failed: ${error.message}`, "status error");
+      }
+    }
+
+    async function sendKeyEvent(type, key) {
+      if (!state.selectedDisplayId) {
+        return;
+      }
+      const body = {
+        display_id: state.selectedDisplayId,
+        payload: { type, key: String(key || "") },
+        context: {},
+      };
+      try {
+        await apiJson("/ws_rgb/input", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        setStatus(`Send key failed: ${error.message}`, "status error");
+      }
+    }
+
+    function restartPolling() {
+      if (state.pollTimer !== null) {
+        clearInterval(state.pollTimer);
+      }
+      state.pollTimer = setInterval(() => {
+        refreshDisplays().then(fetchFrame);
+      }, state.pollMs);
+    }
+
+    function bindEvents() {
+      el.refreshDisplaysBtn.addEventListener("click", () => {
+        refreshDisplays().then(fetchFrame);
+      });
+      el.displaySelect.addEventListener("change", () => {
+        state.selectedDisplayId = el.displaySelect.value;
+        fetchFrame();
+      });
+      el.applyPollBtn.addEventListener("click", () => {
+        const parsed = Number(el.pollMsInput.value || "200");
+        state.pollMs = Number.isFinite(parsed) ? Math.max(50, Math.min(2000, parsed)) : 200;
+        el.pollMsInput.value = String(state.pollMs);
+        restartPolling();
+        setStatus(`Poll interval set to ${state.pollMs} ms`, "status ok");
+      });
+      el.fetchFrameBtn.addEventListener("click", fetchFrame);
+      el.sendActionBtn.addEventListener("click", () => {
+        sendAction(normalizeAction(el.actionInput.value));
+      });
+      el.actionInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          sendAction(normalizeAction(el.actionInput.value));
+        }
+      });
+      window.addEventListener("keydown", (event) => {
+        if (!el.keyCaptureToggle.checked) {
+          return;
+        }
+        event.preventDefault();
+        sendKeyEvent("keydown", event.key);
+      });
+      window.addEventListener("keyup", (event) => {
+        if (!el.keyCaptureToggle.checked) {
+          return;
+        }
+        event.preventDefault();
+        sendKeyEvent("keyup", event.key);
+      });
+    }
+
+    async function start() {
+      bindEvents();
+      await refreshDisplays();
+      await fetchFrame();
+      restartPolling();
+    }
+
+    start();
+  </script>
+</body>
+</html>"""
 
     def do_OPTIONS(self) -> None:
         """Handle CORS preflight requests."""
@@ -223,6 +586,9 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
+        if parsed.path in {"/ws_rgb/viewer", "/ws_rgb"}:
+            self._send_html(self._VIEWER_HTML, status=HTTPStatus.OK)
+            return
         if parsed.path == "/ws_rgb/displays":
             hub = self._hub()
             payload = {
@@ -314,6 +680,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         body = json.dumps(dict(payload), ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_html(self, html: str, *, status: HTTPStatus) -> None:
+        body = str(html).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self._send_cors_headers()
         self.end_headers()

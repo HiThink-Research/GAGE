@@ -128,3 +128,16 @@ def test_ws_rgb_hub_http_frame_missing_display_returns_not_found() -> None:
         assert payload["error"] == "display_not_found"
     finally:
         hub.stop()
+
+
+def test_ws_rgb_hub_http_viewer_page_available() -> None:
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        with urlopen(f"{hub.base_url}/ws_rgb/viewer") as response:  # noqa: S310 - local test endpoint
+            html = response.read().decode("utf-8")
+        assert "GAGE ws_rgb Viewer" in html
+        assert "/ws_rgb/displays" in html
+        assert "/ws_rgb/frame" in html
+    finally:
+        hub.stop()
