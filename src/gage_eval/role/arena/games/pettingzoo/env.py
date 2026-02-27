@@ -183,6 +183,7 @@ class PettingZooAecArenaEnvironment:
         legal_moves = self._build_legal_moves(agent_id, info, termination, truncation)
         board_text = self._format_board_text(player_id, reward, termination, truncation)
         action_mask = self._extract_action_mask(info)
+        rgb_frame = self._resolve_frame_rgb(obs)
         metadata: Dict[str, Any] = {
             "env_id": self._env_id,
             "agent_id": agent_id,
@@ -210,6 +211,7 @@ class PettingZooAecArenaEnvironment:
             truncation=truncation,
             action_mask=action_mask,
             metadata=metadata,
+            rgb_frame=rgb_frame,
         )
         view = {"text": board_text}
         legal_actions: Dict[str, Any] = {"items": list(legal_moves)}
@@ -524,6 +526,33 @@ class PettingZooAecArenaEnvironment:
         except TypeError:
             return None
 
+    def _resolve_frame_rgb(self, obs: Any) -> Optional[Any]:
+        """Resolve RGB observation payload used by ws_rgb image streaming."""
+
+        candidate = obs
+        if isinstance(candidate, dict):
+            for key in ("observation", "obs", "rgb", "rgb_array", "frame"):
+                value = candidate.get(key)
+                if value is not None:
+                    candidate = value
+                    break
+        if self._is_rgb_like(candidate):
+            return candidate
+        return None
+
+    @staticmethod
+    def _is_rgb_like(value: Any) -> bool:
+        shape = getattr(value, "shape", None)
+        if shape is None:
+            return False
+        try:
+            dims = tuple(int(dim) for dim in shape)
+        except Exception:
+            return False
+        if len(dims) == 2:
+            return True
+        return len(dims) == 3 and dims[2] in {1, 3, 4}
+
     def _update_score(self, player_id: str, reward: float) -> None:
         if player_id not in self._scores:
             self._scores[player_id] = 0.0
@@ -616,6 +645,7 @@ class PettingZooAecArenaEnvironment:
         truncation: bool,
         action_mask: Optional[Sequence[int]],
         metadata: Dict[str, Any],
+        rgb_frame: Optional[Any] = None,
     ) -> None:
         """Updates cached frame payload from already-computed observation state."""
 
@@ -637,6 +667,8 @@ class PettingZooAecArenaEnvironment:
             "metadata": dict(metadata),
             "scores": dict(self._scores),
         }
+        if rgb_frame is not None:
+            self._last_frame["_rgb"] = rgb_frame
 
     def _build_frame_payload(self, *, observer_player_id: str) -> Dict[str, Any]:
         """Builds one frame payload from the current active agent transition."""
@@ -648,6 +680,7 @@ class PettingZooAecArenaEnvironment:
         legal_moves = self._build_legal_moves(agent_id, info, termination, truncation)
         board_text = self._format_board_text(player_id, reward, termination, truncation)
         action_mask = self._extract_action_mask(info)
+        rgb_frame = self._resolve_frame_rgb(obs)
         metadata: Dict[str, Any] = {
             "env_id": self._env_id,
             "agent_id": agent_id,
@@ -669,7 +702,7 @@ class PettingZooAecArenaEnvironment:
         legal_actions: Dict[str, Any] = {"items": list(legal_moves)}
         if action_mask is not None:
             legal_actions["mask"] = list(action_mask)
-        return {
+        frame_payload = {
             "active_player_id": player_id,
             "observer_player_id": str(observer_player_id),
             "env_id": self._env_id,
@@ -684,6 +717,9 @@ class PettingZooAecArenaEnvironment:
             "metadata": metadata,
             "scores": dict(self._scores),
         }
+        if rgb_frame is not None:
+            frame_payload["_rgb"] = rgb_frame
+        return frame_payload
 
     def _handle_illegal(self, action: ArenaAction, *, reason: str) -> Optional[GameResult]:
         player = action.player
