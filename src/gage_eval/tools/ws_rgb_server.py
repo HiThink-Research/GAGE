@@ -609,6 +609,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       replaySpeed: 1.0,
       lastSnapshotDisplayId: "",
       lastSnapshotSignature: "",
+      captureCount: 0,
     };
 
     const el = {
@@ -773,9 +774,19 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       el.replayLiveBtn.disabled = !state.replayMode;
 
       const mode = state.replayMode ? "replay" : "live";
-      const indexText = hasFrames ? `${state.replayIndex + 1}/${total}` : "0/0";
+      const globalTotal = Math.max(state.captureCount, total);
+      const selectedSnapshot = hasFrames ? state.historyFrames[Math.max(0, state.replayIndex)] : null;
+      let currentCaptureIndex = 0;
+      if (selectedSnapshot && Number.isFinite(Number(selectedSnapshot.captureIndex))) {
+        currentCaptureIndex = Number(selectedSnapshot.captureIndex);
+      } else if (hasFrames) {
+        currentCaptureIndex = Math.max(1, globalTotal - (total - 1 - state.replayIndex));
+      }
+      const indexText = hasFrames ? `${currentCaptureIndex}/${globalTotal}` : "0/0";
+      const bufferText = hasFrames ? `${state.replayIndex + 1}/${total}` : "0/0";
+      const droppedText = state.captureCount > total ? ` | dropped=${state.captureCount - total}` : "";
       setReplayStatus(
-        `Replay buffer: ${total} frame(s) | mode=${mode} | index=${indexText} | speed=${state.replaySpeed.toFixed(2)}x`,
+        `Replay buffer: ${total} frame(s) | mode=${mode} | index=${indexText} | buffer=${bufferText}${droppedText} | speed=${state.replaySpeed.toFixed(2)}x`,
         state.replayMode ? "status ok" : "status",
       );
     }
@@ -787,6 +798,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       state.replayMode = false;
       state.lastSnapshotDisplayId = "";
       state.lastSnapshotSignature = "";
+      state.captureCount = 0;
       updateReplayUi();
     }
 
@@ -944,12 +956,14 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       ) {
         return;
       }
+      state.captureCount += 1;
       const snapshot = {
         frame: safeCloneFrame(frame),
         imageDataUrl: imageDataUrl || "",
         imageHint: imageHint || "No RGB frame available in snapshot.",
         displayId: state.selectedDisplayId,
         timestampMs: Date.now(),
+        captureIndex: state.captureCount,
       };
       state.historyFrames.push(snapshot);
       state.lastSnapshotDisplayId = state.selectedDisplayId;
