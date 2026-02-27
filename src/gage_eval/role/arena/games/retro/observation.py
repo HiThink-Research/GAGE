@@ -105,6 +105,7 @@ class ObservationBuilder:
         raw_info: dict[str, Any],
         reward_total: float,
         controls: Optional[dict[str, Any]] = None,
+        image: Optional[dict[str, Any]] = None,
     ) -> ArenaObservation:
         """Build an ArenaObservation plus the section-15 dict payload."""
 
@@ -125,6 +126,7 @@ class ObservationBuilder:
         action_hint = self._action_schema.format_prompt(legal_moves)
         observation_dict = _build_observation_dict(
             view_text=view_text,
+            image=image,
             legal_actions=[str(move) for move in legal_moves],
             active_player=active_player,
             tick=tick,
@@ -231,6 +233,7 @@ def _truncate_text(text: str, token_budget: int) -> str:
 def _build_observation_dict(
     *,
     view_text: str,
+    image: Optional[dict[str, Any]],
     legal_actions: Sequence[str],
     active_player: str,
     tick: int,
@@ -241,8 +244,11 @@ def _build_observation_dict(
     merged_extra: dict[str, Any] = {"info": dict(info)}
     if extra:
         merged_extra.update(extra)
+    view_payload: dict[str, Any] = {"text": str(view_text)}
+    if isinstance(image, dict) and image:
+        view_payload["image"] = dict(image)
     return {
-        "view": {"text": str(view_text)},
+        "view": view_payload,
         "legal_actions": [str(item) for item in legal_actions],
         "context": {"mode": "tick", "step": int(step), "tick": int(tick)},
         "active_player": str(active_player),

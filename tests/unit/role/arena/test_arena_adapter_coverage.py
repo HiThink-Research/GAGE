@@ -272,6 +272,52 @@ def test_build_environment_for_mahjong_forwards_run_context_and_models(monkeypat
     assert captured_env_kwargs["player_models"] == {"p0": "model-007"}
 
 
+def test_build_environment_for_retro_forwards_runtime_and_observation_kwargs(monkeypatch) -> None:
+    captured_env_kwargs: dict[str, Any] = {}
+
+    class _CapturedEnv:
+        def __init__(self, **kwargs: Any) -> None:
+            captured_env_kwargs.update(kwargs)
+
+    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={
+            "impl": "retro_env_v1",
+            "game": "SuperMarioBros3-Nes-v0",
+            "state": "Start",
+            "display_mode": "websocket",
+            "legal_moves": ["noop", "right"],
+            "action_schema": {"hold_ticks_default": 6},
+            "token_budget": 128,
+            "frame_stride": 2,
+            "snapshot_stride": 2,
+            "obs_image": True,
+            "record_bk2": False,
+        },
+    )
+    trace = ObservabilityTrace(run_id="run-retro")
+
+    adapter._build_environment(
+        {"id": "sample-retro", "metadata": {}},
+        player_ids=["p0"],
+        player_names={"p0": "player0"},
+        trace=trace,
+    )
+
+    assert captured_env_kwargs["game"] == "SuperMarioBros3-Nes-v0"
+    assert captured_env_kwargs["state"] == "Start"
+    assert captured_env_kwargs["display_mode"] == "websocket"
+    assert captured_env_kwargs["legal_moves"] == ["noop", "right"]
+    assert captured_env_kwargs["action_schema"] == {"hold_ticks_default": 6}
+    assert captured_env_kwargs["token_budget"] == 128
+    assert captured_env_kwargs["frame_stride"] == 2
+    assert captured_env_kwargs["snapshot_stride"] == 2
+    assert captured_env_kwargs["obs_image"] is True
+    assert captured_env_kwargs["run_id"] == "run-retro"
+    assert captured_env_kwargs["sample_id"] == "sample-retro"
+
+
 def test_bind_input_mapper_returns_mahjong_mapper() -> None:
     adapter = ArenaRoleAdapter(
         adapter_id="arena",

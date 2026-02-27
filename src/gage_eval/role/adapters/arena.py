@@ -397,6 +397,39 @@ class ArenaRoleAdapter(RoleAdapter):
             ):
                 if env_cfg.get(key) is not None:
                     env_kwargs[key] = env_cfg.get(key)
+        if "retro" in str(impl).lower():
+            for key in (
+                "game",
+                "state",
+                "default_state",
+                "rom_path",
+                "runtime_policy",
+                "display_mode",
+                "record_bk2",
+                "record_dir",
+                "record_filename",
+                "record_path",
+                "action_mapping",
+                "legal_moves",
+                "info_feeder",
+                "action_schema",
+                "token_budget",
+                "frame_stride",
+                "snapshot_stride",
+                "obs_image",
+                "replay_output_dir",
+                "replay_filename",
+                "frame_output_dir",
+                "seed",
+            ):
+                if env_cfg.get(key) is not None:
+                    env_kwargs[key] = env_cfg.get(key)
+            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            if run_id:
+                env_kwargs["run_id"] = str(run_id)
+            if sample_id:
+                env_kwargs["sample_id"] = str(sample_id)
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
         if "mahjong" in str(impl).lower():

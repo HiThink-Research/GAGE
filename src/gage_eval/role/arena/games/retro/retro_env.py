@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib
 import os
 import re
@@ -56,6 +57,7 @@ class StableRetroArenaEnvironment:
         token_budget: int = 200,
         frame_stride: int = 1,
         snapshot_stride: int = 1,
+        obs_image: bool = False,
         replay_output_dir: Optional[str] = None,
         replay_filename: Optional[str] = None,
         frame_output_dir: Optional[str] = None,
@@ -81,6 +83,7 @@ class StableRetroArenaEnvironment:
             token_budget: Token budget for info prompt.
             frame_stride: Frame recording stride.
             snapshot_stride: Snapshot recording stride.
+            obs_image: Whether to include encoded RGB image in observations.
             replay_output_dir: Optional output dir for replay schema.
             replay_filename: Optional replay filename.
             frame_output_dir: Optional output dir for frame arrays.
@@ -126,6 +129,7 @@ class StableRetroArenaEnvironment:
         )
         self._frame_stride = max(1, int(frame_stride or 1))
         self._snapshot_stride = max(1, int(snapshot_stride or 1))
+        self._obs_image = bool(obs_image)
         self._replay_output_dir = replay_output_dir
         self._replay_filename = replay_filename
         self._frame_output_dir = frame_output_dir
@@ -163,6 +167,7 @@ class StableRetroArenaEnvironment:
     def observe(self, player: str) -> ArenaObservation:
         legal_moves = self._action_codec.legal_moves() if self._action_codec else []
         controls = self._build_controls_payload(legal_moves)
+        image_payload = self._build_observation_image(self._last_obs)
         return self._observation_builder.build(
             player_id=player,
             active_player=self._active_player,
@@ -174,6 +179,7 @@ class StableRetroArenaEnvironment:
             raw_info=self._last_info,
             reward_total=self._reward_total,
             controls=controls,
+            image=image_payload,
         )
 
     def get_last_frame(self) -> Optional[Any]:
@@ -218,6 +224,31 @@ class StableRetroArenaEnvironment:
             "key_aliases": dict(key_aliases),
             "buttons": self._action_codec.buttons() if self._action_codec else [],
             "move_aliases": move_aliases,
+        }
+
+    def _build_observation_image(self, frame: Any) -> Optional[dict[str, Any]]:
+        if not self._obs_image or frame is None:
+            return None
+        if not hasattr(frame, "tobytes") or not hasattr(frame, "shape"):
+            return None
+        shape = getattr(frame, "shape", None)
+        if not isinstance(shape, (list, tuple)) or len(shape) < 2:
+            return None
+        normalized_shape: list[int] = []
+        for dim in shape:
+            try:
+                normalized_shape.append(int(dim))
+            except Exception:
+                return None
+        try:
+            raw = frame.tobytes()
+        except Exception:
+            return None
+        return {
+            "encoding": "raw_base64",
+            "data": base64.b64encode(raw).decode("ascii"),
+            "shape": normalized_shape,
+            "dtype": str(getattr(frame, "dtype", "unknown")),
         }
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:

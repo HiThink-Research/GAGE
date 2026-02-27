@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 
 from gage_eval.role.arena.games.retro.action_codec import RetroActionCodec
@@ -28,8 +30,13 @@ class FakeRetroEnvNoSeed(FakeRetroEnv):
         return self.reset_result
 
 
-def _make_env_with_stubbed_runtime(*, retro_env, codec, seed=None):
-    env = StableRetroArenaEnvironment(game="SuperMarioBros3-Nes-v0", display_mode="headless", seed=seed)
+def _make_env_with_stubbed_runtime(*, retro_env, codec, seed=None, obs_image=False):
+    env = StableRetroArenaEnvironment(
+        game="SuperMarioBros3-Nes-v0",
+        display_mode="headless",
+        seed=seed,
+        obs_image=obs_image,
+    )
     env._retro_env = retro_env  # type: ignore[attr-defined]
     env._action_codec = codec  # type: ignore[attr-defined]
     return env
@@ -63,6 +70,25 @@ def test_retro_env_reset_falls_back_when_seed_not_supported():
     env.reset()
 
     assert retro_env.reset_seeds == [None]
+
+
+def test_retro_env_observe_includes_encoded_image_when_obs_image_enabled():
+    np = pytest.importorskip("numpy")
+    frame = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+    retro_env = FakeRetroEnv(reset_result=(frame, {}), step_results=[])
+    codec = RetroActionCodec(buttons=["LEFT"])
+    env = _make_env_with_stubbed_runtime(retro_env=retro_env, codec=codec, obs_image=True)
+
+    env.reset()
+    obs = env.observe("player_0")
+
+    image = (obs.view or {}).get("image")
+    assert isinstance(image, dict)
+    assert image.get("encoding") == "raw_base64"
+    assert image.get("shape") == [2, 3, 3]
+    assert image.get("dtype") == "uint8"
+    raw = base64.b64decode(str(image.get("data")))
+    assert len(raw) == frame.nbytes
 
 
 def test_retro_env_apply_handles_illegal_moves_and_builds_terminal_result():

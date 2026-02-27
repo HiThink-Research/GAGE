@@ -93,3 +93,27 @@ def test_format_controls_block_skips_invalid_alias_payloads_and_handles_empty_co
     )
     assert "ok=d" in block
     assert "bad=" not in block
+
+
+def test_observation_builder_build_attaches_image_payload():
+    builder = retro_observation.ObservationBuilder(
+        info_feeder=retro_observation.InfoLastFeeder(),
+        action_schema=retro_observation.ActionSchema(),
+        token_budget=16,
+    )
+
+    obs = builder.build(
+        player_id="player_0",
+        active_player="player_0",
+        legal_moves=["noop"],
+        last_move=None,
+        tick=0,
+        decision_count=0,
+        info_history=[],
+        raw_info={},
+        reward_total=0.0,
+        image={"encoding": "raw_base64", "data": "abc", "shape": [1, 1, 3], "dtype": "uint8"},
+    )
+
+    assert isinstance(obs.view, dict)
+    assert obs.view.get("image", {}).get("encoding") == "raw_base64"
