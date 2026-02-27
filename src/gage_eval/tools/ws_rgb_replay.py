@@ -76,13 +76,30 @@ class ReplayFrameCursor:
 
         started_at = self._started_at if self._started_at is not None else now
         elapsed_s = max(0.0, now - started_at)
-        payload = dict(self._frames[self._index])
+        return self._materialize_payload(index=self._index, elapsed_s=elapsed_s)
+
+    def frame_count(self) -> int:
+        """Return total replay frame count."""
+
+        return len(self._frames)
+
+    def frame_at(self, index: int) -> dict[str, Any]:
+        """Return one replay frame by index without advancing cursor."""
+
+        if not self._frames:
+            return self._materialize_payload(index=0, elapsed_s=0.0)
+        clamped = max(0, min(len(self._frames) - 1, int(index)))
+        elapsed_s = max(0.0, float(clamped) / self._fps)
+        return self._materialize_payload(index=clamped, elapsed_s=elapsed_s)
+
+    def _materialize_payload(self, *, index: int, elapsed_s: float) -> dict[str, Any]:
+        payload = dict(self._frames[index])
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
         metadata = dict(metadata)
-        metadata["replay_elapsed_s"] = elapsed_s
-        metadata["replay_index"] = self._index
+        metadata["replay_elapsed_s"] = max(0.0, float(elapsed_s))
+        metadata["replay_index"] = int(index)
         metadata["replay_total"] = len(self._frames)
         payload["metadata"] = metadata
         return payload
@@ -275,6 +292,8 @@ def _build_replay_v1_display(
         "label": f"replay_v1:{replay_label}",
         "human_player_id": human_player_id,
         "frame_source": cursor.frame_source,
+        "frame_at": cursor.frame_at,
+        "frame_count": cursor.frame_count,
     }
 
 
@@ -306,6 +325,8 @@ def _serve_replay(
     frame_source = replay_display.get("frame_source")
     if not callable(frame_source):
         raise ValueError("replay_builder_missing_frame_source")
+    frame_at = replay_display.get("frame_at")
+    frame_count = replay_display.get("frame_count")
 
     hub = WsRgbHubServer(host=str(options.host), port=int(options.port), allow_origin="*")
     hub.start()
@@ -315,6 +336,8 @@ def _serve_replay(
             label=str(replay_display.get("label") or f"{game_key}_replay"),
             human_player_id=str(replay_display.get("human_player_id") or "player_0"),
             frame_source=frame_source,
+            frame_at=frame_at if callable(frame_at) else None,
+            frame_count=frame_count if callable(frame_count) else None,
             input_mapper=None,
             action_queue=None,
         )

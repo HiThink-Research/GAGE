@@ -81,13 +81,30 @@ class ReplayFrameCursor:
 
         started_at = self._started_at if self._started_at is not None else now
         elapsed_s = max(0.0, now - started_at)
-        payload = dict(self._frames[self._index])
+        return self._materialize_payload(index=self._index, elapsed_s=elapsed_s)
+
+    def frame_count(self) -> int:
+        """Return total replay frame count."""
+
+        return len(self._frames)
+
+    def frame_at(self, index: int) -> dict[str, Any]:
+        """Return one replay frame by index without advancing cursor."""
+
+        if not self._frames:
+            return self._materialize_payload(index=0, elapsed_s=0.0)
+        clamped = max(0, min(len(self._frames) - 1, int(index)))
+        elapsed_s = max(0.0, float(clamped) / self._fps)
+        return self._materialize_payload(index=clamped, elapsed_s=elapsed_s)
+
+    def _materialize_payload(self, *, index: int, elapsed_s: float) -> dict[str, Any]:
+        payload = dict(self._frames[index])
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
         metadata = dict(metadata)
-        metadata["replay_elapsed_s"] = elapsed_s
-        metadata["replay_index"] = self._index
+        metadata["replay_elapsed_s"] = max(0.0, float(elapsed_s))
+        metadata["replay_index"] = int(index)
         metadata["replay_total"] = len(self._frames)
         payload["metadata"] = metadata
         return payload
@@ -137,6 +154,8 @@ def build_ws_rgb_replay_display(
         "label": f"pettingzoo_replay:{env_id}",
         "human_player_id": human_player_id,
         "frame_source": cursor.frame_source,
+        "frame_at": cursor.frame_at,
+        "frame_count": cursor.frame_count,
     }
 
 

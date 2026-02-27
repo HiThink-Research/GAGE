@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
-from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
+from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer, _is_client_disconnect_error
 
 
 class _Mapper(GameInputMapper):
@@ -24,6 +24,13 @@ class _Mapper(GameInputMapper):
                 metadata={},
             )
         ]
+
+
+def test_ws_rgb_client_disconnect_error_helper() -> None:
+    assert _is_client_disconnect_error(BrokenPipeError())
+    assert _is_client_disconnect_error(ConnectionResetError())
+    assert _is_client_disconnect_error(OSError(32, "broken pipe"))
+    assert not _is_client_disconnect_error(ValueError("unexpected"))
 
 
 def test_ws_rgb_hub_register_list_broadcast_and_route_input() -> None:
@@ -45,6 +52,7 @@ def test_ws_rgb_hub_register_list_broadcast_and_route_input() -> None:
         displays = hub.list_displays()
         assert len(displays) == 1
         assert displays[0]["display_id"] == "display-1"
+        assert displays[0]["accepts_input"] is True
         frame_payload = hub.broadcast_frame("display-1")
         assert frame_payload["ok"] is True
         assert frame_payload["frame"]["frame_id"] == 1
@@ -71,6 +79,30 @@ def test_ws_rgb_hub_reports_missing_display() -> None:
         hub.stop()
 
 
+def test_ws_rgb_hub_reports_missing_input_mapper() -> None:
+    hub = WsRgbHubServer(port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-no-mapper",
+                label="text-only",
+                human_player_id="player_0",
+                frame_source=lambda: {"frame_id": 1},
+            )
+        )
+        displays = hub.list_displays()
+        assert displays[0]["accepts_input"] is False
+        result = hub.handle_input(
+            display_id="display-no-mapper",
+            payload={"type": "keydown", "key": "x"},
+        )
+        assert result["ok"] is False
+        assert result["error"] == "input_mapper_missing"
+    finally:
+        hub.stop()
+
+
 def test_ws_rgb_hub_http_endpoints() -> None:
     queue: Queue[str] = Queue()
     hub = WsRgbHubServer(host="127.0.0.1", port=0)
@@ -91,6 +123,7 @@ def test_ws_rgb_hub_http_endpoints() -> None:
             payload = json.loads(response.read().decode("utf-8"))
         assert payload["ok"] is True
         assert payload["displays"][0]["display_id"] == "display-http"
+        assert payload["displays"][0]["accepts_input"] is True
 
         with urlopen(
             f"{hub.base_url}/ws_rgb/frame?display_id=display-http"
@@ -143,6 +176,7 @@ def test_ws_rgb_hub_http_viewer_page_available() -> None:
         assert "/ws_rgb/displays" in html
         assert "/ws_rgb/frame" in html
         assert "/ws_rgb/frame_image" in html
+        assert "/ws_rgb/replay_buffer" in html
     finally:
         hub.stop()
 
@@ -242,5 +276,66 @@ def test_ws_rgb_hub_http_frame_image_supports_image_path_payload(tmp_path: Path)
         assert content_type == "image/jpeg"
         assert isinstance(image_bytes, bytes)
         assert len(image_bytes) > 0
+    finally:
+        hub.stop()
+
+
+def test_ws_rgb_hub_http_replay_buffer_endpoint_and_indexed_frame(tmp_path: Path) -> None:
+    pil_image = pytest.importorskip("PIL.Image")
+    image_path_0 = tmp_path / "frame_0.jpg"
+    image_path_1 = tmp_path / "frame_1.jpg"
+    pil_image.new("RGB", (4, 4), color=(200, 10, 10)).save(image_path_0, format="JPEG")
+    pil_image.new("RGB", (4, 4), color=(10, 200, 10)).save(image_path_1, format="JPEG")
+
+    replay_frames = [
+        {"board_text": "f0", "_image_path_abs": str(image_path_0)},
+        {"board_text": "f1", "_image_path_abs": str(image_path_1)},
+    ]
+
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-replay-indexed",
+                label="replay",
+                human_player_id="player_0",
+                frame_source=lambda: {"board_text": "live"},
+                frame_at=lambda index: replay_frames[max(0, min(index, len(replay_frames) - 1))],
+                frame_count=lambda: len(replay_frames),
+            )
+        )
+
+        with urlopen(f"{hub.base_url}/ws_rgb/displays") as response:  # noqa: S310 - local test endpoint
+            displays_payload = json.loads(response.read().decode("utf-8"))
+        assert displays_payload["ok"] is True
+        assert displays_payload["displays"][0]["replay_seekable"] is True
+        assert displays_payload["displays"][0]["replay_total"] == 2
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/replay_buffer?display_id=display-replay-indexed"
+        ) as response:  # noqa: S310 - local test endpoint
+            replay_payload = json.loads(response.read().decode("utf-8"))
+        assert replay_payload["ok"] is True
+        assert replay_payload["total"] == 2
+        assert replay_payload["loaded"] == 2
+        assert replay_payload["frames"][0]["board_text"] == "f0"
+        assert "_image_path_abs" not in replay_payload["frames"][0]
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/frame?display_id=display-replay-indexed&replay_index=1"
+        ) as response:  # noqa: S310 - local test endpoint
+            indexed_frame_payload = json.loads(response.read().decode("utf-8"))
+        assert indexed_frame_payload["ok"] is True
+        assert indexed_frame_payload["frame"]["board_text"] == "f1"
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/frame_image?display_id=display-replay-indexed&replay_index=1"
+        ) as response:  # noqa: S310 - local test endpoint
+            indexed_image_bytes = response.read()
+            indexed_content_type = response.headers.get("Content-Type")
+        assert indexed_content_type == "image/jpeg"
+        assert isinstance(indexed_image_bytes, bytes)
+        assert len(indexed_image_bytes) > 0
     finally:
         hub.stop()
