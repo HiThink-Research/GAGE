@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from gage_eval.tools import replay_server as rs
 
@@ -79,3 +80,96 @@ def test_legacy_payload_to_events_includes_result() -> None:
     assert events[1]["type"] == "result"
     assert events[1]["reason"] == "terminal"
 
+
+def _build_replay_with_frame(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    replay_file = tmp_path / "run_3" / "replays" / "sample_3" / "replay.json"
+    replay_file.parent.mkdir(parents=True, exist_ok=True)
+    frame_dir = replay_file.parent / "frames"
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    (frame_dir / "frame_000001.jpg").write_bytes(b"\xff\xd8\xff")
+    events_file = replay_file.parent / "events.jsonl"
+    events_file.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "action", "seq": 1}),
+                json.dumps(
+                    {
+                        "type": "frame",
+                        "seq": 2,
+                        "step": 1,
+                        "image": {"path": "frames/frame_000001.jpg"},
+                    }
+                ),
+                json.dumps({"type": "result", "seq": 3}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    replay_payload = {
+        "schema": "gage_replay/v1",
+        "recording": {"events_path": "events.jsonl"},
+    }
+    replay_file.write_text(json.dumps(replay_payload), encoding="utf-8")
+    return replay_file, replay_payload
+
+
+def test_resolve_frame_events_filters_frame_only(tmp_path: Path) -> None:
+    replay_file, replay_payload = _build_replay_with_frame(tmp_path)
+    frame_events, error = rs._resolve_frame_events(  # noqa: SLF001
+        tmp_path,
+        replay_file=replay_file,
+        payload=replay_payload,
+    )
+    assert error is None
+    assert len(frame_events) == 1
+    assert frame_events[0]["type"] == "frame"
+    assert frame_events[0]["seq"] == 2
+
+
+def test_select_frame_event_supports_seq_and_index(tmp_path: Path) -> None:
+    replay_file, replay_payload = _build_replay_with_frame(tmp_path)
+    frame_events, error = rs._resolve_frame_events(  # noqa: SLF001
+        tmp_path,
+        replay_file=replay_file,
+        payload=replay_payload,
+    )
+    assert error is None
+
+    by_seq = rs._select_frame_event(frame_events, seq=2, index=None)  # noqa: SLF001
+    assert by_seq is not None
+    assert by_seq["seq"] == 2
+
+    by_index = rs._select_frame_event(frame_events, seq=None, index=0)  # noqa: SLF001
+    assert by_index is not None
+    assert by_index["seq"] == 2
+
+    missing = rs._select_frame_event(frame_events, seq=999, index=None)  # noqa: SLF001
+    assert missing is None
+
+
+def test_resolve_frame_image_path_keeps_base_dir_boundary(tmp_path: Path) -> None:
+    replay_file, replay_payload = _build_replay_with_frame(tmp_path)
+    frame_events, error = rs._resolve_frame_events(  # noqa: SLF001
+        tmp_path,
+        replay_file=replay_file,
+        payload=replay_payload,
+    )
+    assert error is None
+    frame_event = frame_events[0]
+
+    frame_path = rs._resolve_frame_image_path(  # noqa: SLF001
+        tmp_path,
+        replay_file=replay_file,
+        frame_event=frame_event,
+    )
+    assert frame_path is not None
+    assert frame_path.name == "frame_000001.jpg"
+
+    escaped = dict(frame_event)
+    escaped["image"] = {"path": "../../outside.jpg"}
+    escaped_path = rs._resolve_frame_image_path(  # noqa: SLF001
+        tmp_path,
+        replay_file=replay_file,
+        frame_event=escaped,
+    )
+    assert escaped_path is None
