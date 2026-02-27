@@ -42,6 +42,12 @@ role_adapters:
         replay:
           enabled: true
           primary_mode: true
+          mode: both
+          frame:
+            enabled: true
+            stride: 2
+            encoding: jpeg
+            quality: 80
         render_mode: both
         show_pov: false
         show_automap: false

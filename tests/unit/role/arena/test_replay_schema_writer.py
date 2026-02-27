@@ -90,6 +90,39 @@ def test_replay_schema_writer_supports_frame_events_and_mode_both(tmp_path: Path
     assert any(event.get("type") == "frame" for event in events)
 
 
+def test_replay_schema_writer_honors_frame_only_mode(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "run_4"
+    writer = ReplaySchemaWriter(run_dir=run_dir, sample_id="sample_frame_only")
+    result = _build_result()
+    replay_path = writer.write(
+        scheduler_type="tick",
+        result=result,
+        move_log=[{"step": 1, "player_id": "player_0", "action_text": "right"}],
+        arena_trace=None,
+        extra_meta={
+            "frame_events": [
+                {
+                    "type": "frame",
+                    "stream_id": "pov",
+                    "image": {"path": "frames/frame_000001.jpg", "format": "jpeg"},
+                }
+            ]
+        },
+        recording_mode="frame",
+    )
+
+    replay_file = Path(replay_path)
+    payload = json.loads(replay_file.read_text(encoding="utf-8"))
+    assert payload["recording"]["mode"] == "frame"
+    assert payload["recording"]["counts"]["action"] == 0
+    assert payload["recording"]["counts"]["frame"] == 1
+
+    lines = (replay_file.parent / "events.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line) for line in lines]
+    assert [event["type"] for event in events] == ["frame", "result"]
+    assert [event["seq"] for event in events] == [1, 2]
+
+
 def test_replay_schema_writer_accepts_legacy_trace_mapping_shape(tmp_path: Path) -> None:
     run_dir = tmp_path / "runs" / "run_3"
     writer = ReplaySchemaWriter(run_dir=run_dir, sample_id="sample_legacy")
@@ -104,6 +137,8 @@ def test_replay_schema_writer_accepts_legacy_trace_mapping_shape(tmp_path: Path)
     replay_file = Path(replay_path)
     payload = json.loads(replay_file.read_text(encoding="utf-8"))
     assert payload["arena_trace"][0]["step_index"] == 9
+    lines = (replay_file.parent / "events.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line) for line in lines]
     # NOTE: seq must be globally increasing across action/frame/result events.
     seqs = [int(event["seq"]) for event in events]
-    assert seqs == [1, 2, 3]
+    assert seqs == [1]

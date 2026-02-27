@@ -33,6 +33,7 @@ class ViZDoomEnvConfig:
     automap_follow: bool = False
     automap_stride: int = 1
     show_pov: bool = True
+    capture_pov: bool = False
     pov_stride: int = 2
     allow_respawn: bool = False
     respawn_grace_steps: int = 0
@@ -78,6 +79,7 @@ class ViZDoomArenaEnvironment:
         automap_follow: bool = False,
         automap_stride: int = 1,
         show_pov: bool = True,
+        capture_pov: bool = False,
         pov_stride: int = 2,
         allow_respawn: bool = False,
         respawn_grace_steps: int = 0,
@@ -113,6 +115,7 @@ class ViZDoomArenaEnvironment:
             automap_follow: Whether the automap camera follows the player.
             automap_stride: Frame stride for automap capture.
             show_pov: Whether to render POV frames.
+            capture_pov: Whether to capture POV frames without opening POV window.
             pov_stride: Frame stride for POV capture.
             allow_respawn: Whether to allow respawn in the backend.
             respawn_grace_steps: Grace period before respawn.
@@ -141,6 +144,7 @@ class ViZDoomArenaEnvironment:
             automap_follow=bool(automap_follow),
             automap_stride=int(automap_stride),
             show_pov=bool(show_pov),
+            capture_pov=bool(capture_pov),
             pov_stride=int(pov_stride),
             allow_respawn=bool(allow_respawn),
             respawn_grace_steps=int(respawn_grace_steps),
@@ -183,6 +187,7 @@ class ViZDoomArenaEnvironment:
         self._replay = _ReplayWriter(self._cfg.replay_output_dir)
         self._start_ts = time.time()
         self._active_idx = 0
+        self._last_frame_payload: Dict[str, Any] = {}
 
     def reset(self) -> None:
         """Reset the environment to its initial state."""
@@ -197,6 +202,7 @@ class ViZDoomArenaEnvironment:
         self._move_log = []
         self._start_ts = time.time()
         self._active_idx = 0
+        self._last_frame_payload = {}
 
         # STEP 2: Initialize replay if enabled.
         if self._cfg.replay_in_env:
@@ -209,6 +215,7 @@ class ViZDoomArenaEnvironment:
                 time_source=self._cfg.time_source,
             )
             self._replay.start(meta)
+        self._refresh_last_frame_payload()
 
     def get_active_player(self) -> str:
         """Return the player_id of the participant who should act next."""
@@ -329,6 +336,12 @@ class ViZDoomArenaEnvironment:
         if callable(setter):
             setter(view)
 
+    def get_last_frame(self) -> Dict[str, Any]:
+        """Return latest raw frame payload for replay frame capture."""
+
+        self._refresh_last_frame_payload()
+        return dict(self._last_frame_payload)
+
     def close(self) -> None:
         """Close the underlying environment."""
 
@@ -363,6 +376,7 @@ class ViZDoomArenaEnvironment:
             automap_follow=cfg.automap_follow,
             automap_stride=cfg.automap_stride,
             show_pov=cfg.show_pov,
+            capture_pov=cfg.capture_pov,
             pov_stride=cfg.pov_stride,
             allow_respawn=cfg.allow_respawn,
             respawn_grace_steps=cfg.respawn_grace_steps,
@@ -443,6 +457,7 @@ class ViZDoomArenaEnvironment:
         self._last_rewards = rewards
         self._last_info = info
         self._done = bool(done)
+        self._refresh_last_frame_payload()
         self._tick += 1
 
         if self._done:
@@ -467,11 +482,58 @@ class ViZDoomArenaEnvironment:
         )
 
     def _get_frame_from_env(self) -> Optional[Dict[str, Any]]:
-        frames = getattr(self._env, "_pov_frames", None)
-        if isinstance(frames, dict):
-            raw = frames.get(0)
-            return _encode_frame(raw)
+        raw_frames = self._get_raw_pov_frames()
+        if raw_frames:
+            raw = raw_frames.get(0)
+            if raw is None:
+                raw = next((frame for frame in raw_frames.values() if frame is not None), None)
+            if raw is not None:
+                return _encode_frame(raw)
         return None
+
+    def _refresh_last_frame_payload(self) -> None:
+        raw_frames = self._get_raw_pov_frames()
+        if not raw_frames:
+            return
+        player_index = 0 if raw_frames.get(0) is not None else next(iter(raw_frames.keys()))
+        raw_frame = raw_frames.get(player_index)
+        if raw_frame is None:
+            return
+        player_id = self._player_id_by_index.get(int(player_index), f"p{player_index}")
+        self._last_frame_payload = {
+            "tick": int(self._tick),
+            "step": int(self._tick),
+            "stream_id": "pov",
+            "actor": str(player_id),
+            "player_index": int(player_index),
+            "_rgb": raw_frame,
+        }
+
+    def _get_raw_pov_frames(self) -> Dict[int, Any]:
+        frame_getter = getattr(self._env, "get_pov_frames", None)
+        if callable(frame_getter):
+            try:
+                raw_frames = frame_getter()
+            except Exception:
+                raw_frames = None
+            normalized = self._normalize_frame_mapping(raw_frames)
+            if normalized:
+                return normalized
+        return self._normalize_frame_mapping(getattr(self._env, "_pov_frames", None))
+
+    def _normalize_frame_mapping(self, raw_frames: Any) -> Dict[int, Any]:
+        if not isinstance(raw_frames, dict):
+            return {}
+        normalized: Dict[int, Any] = {}
+        for key, value in raw_frames.items():
+            if value is None:
+                continue
+            try:
+                player_index = int(key)
+            except (TypeError, ValueError):
+                continue
+            normalized[player_index] = value
+        return normalized
 
     def _winner_from_info(self, info: Dict[str, Any]) -> Optional[str]:
         outcome = info.get("outcome")

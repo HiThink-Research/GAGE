@@ -32,6 +32,7 @@ class ViZDoomMPProcEnvConfig:
     automap_follow: bool = True
     automap_stride: int = 2
     show_pov: bool = True
+    capture_pov: bool = False
     pov_stride: int = 2
     allow_respawn: bool = True
     respawn_grace_steps: int = 60
@@ -126,6 +127,7 @@ def _worker(
     automap_follow: bool,
     automap_stride: int,
     show_pov: bool,
+    capture_pov: bool,
     pov_stride: int,
     allow_respawn: bool,
     respawn_grace_steps: int,
@@ -135,6 +137,7 @@ def _worker(
     _ensure_vizdoom_available()
     game: Optional[DoomGame] = None
     try:
+        collect_pov = bool(show_pov or capture_pov)
         game = DoomGame()
         game.load_config(cfg_path)
 
@@ -239,7 +242,7 @@ def _worker(
                 if show_automap:
                     state = game.get_state()
                     payload["automap"] = None if state is None else state.automap_buffer
-                if show_pov:
+                if collect_pov:
                     state = game.get_state()
                     if state is not None and state.screen_buffer is not None:
                         payload["screen"] = state.screen_buffer
@@ -267,7 +270,7 @@ def _worker(
                         state = game.get_state()
                         if state is not None and state.automap_buffer is not None:
                             payload["automap"] = state.automap_buffer
-                    if show_pov:
+                    if collect_pov:
                         state = game.get_state()
                         if state is not None and state.screen_buffer is not None:
                             payload["screen"] = state.screen_buffer
@@ -291,7 +294,7 @@ def _worker(
                 if show_automap and (automap_stride <= 1 or (t % automap_stride == 0)):
                     state = game.get_state()
                     payload["automap"] = None if state is None else state.automap_buffer
-                if show_pov and (pov_stride <= 1 or (t % pov_stride == 0)):
+                if collect_pov and (pov_stride <= 1 or (t % pov_stride == 0)):
                     state = game.get_state()
                     if state is not None and state.screen_buffer is not None:
                         payload["screen"] = state.screen_buffer
@@ -408,6 +411,7 @@ class ViZDoomMPProcEnv:
                     self.cfg.automap_follow,
                     self.cfg.automap_stride,
                     self.cfg.show_pov,
+                    self.cfg.capture_pov,
                     self.cfg.pov_stride,
                     self.cfg.allow_respawn,
                     self.cfg.respawn_grace_steps,
@@ -429,6 +433,7 @@ class ViZDoomMPProcEnv:
                     self.cfg.automap_follow,
                     self.cfg.automap_stride,
                     self.cfg.show_pov,
+                    self.cfg.capture_pov,
                     self.cfg.pov_stride,
                     self.cfg.allow_respawn,
                     self.cfg.respawn_grace_steps,
@@ -612,6 +617,11 @@ class ViZDoomMPProcEnv:
         else:
             self.set_view("p0")
 
+    def get_pov_frames(self) -> Dict[int, Any]:
+        """Return latest cached POV frames for all players."""
+
+        return dict(self._pov_frames)
+
     def reset(self, seed: Optional[int] = None) -> Dict[int, Any]:
         if self._host_proc is None or self._join_proc is None:
             self._start_processes()
@@ -687,15 +697,15 @@ class ViZDoomMPProcEnv:
                 None if frame1 is None else getattr(frame1, "shape", None),
                 flush=True,
             )
+        frame0 = host_msg.get("screen")
+        frame1 = join_msg.get("screen")
+        if frame0 is not None:
+            self._pov_frames[0] = frame0
+        if frame1 is not None:
+            self._pov_frames[1] = frame1
         if self.cfg.show_pov and self._pov is not None:
             if self.cfg.pov_view in ("p0", "p1", "both", "none"):
                 self._view = self.cfg.pov_view
-            frame0 = host_msg.get("screen")
-            frame1 = join_msg.get("screen")
-            if frame0 is not None:
-                self._pov_frames[0] = frame0
-            if frame1 is not None:
-                self._pov_frames[1] = frame1
             show_pid = 0 if self._view in (None, "p0", "both") else 1
             frame = self._pov_frames.get(show_pid)
             if frame is not None:
@@ -913,13 +923,13 @@ class ViZDoomMPProcEnv:
                     None if frame1 is None else getattr(frame1, "shape", None),
                     flush=True,
                 )
+        frame0 = host_msg.get("screen")
+        frame1 = join_msg.get("screen")
+        if frame0 is not None:
+            self._pov_frames[0] = frame0
+        if frame1 is not None:
+            self._pov_frames[1] = frame1
         if self.cfg.show_pov and self._pov is not None:
-            frame0 = host_msg.get("screen")
-            frame1 = join_msg.get("screen")
-            if frame0 is not None:
-                self._pov_frames[0] = frame0
-            if frame1 is not None:
-                self._pov_frames[1] = frame1
             show_pid = 0 if self._view in (None, "p0", "both") else 1
             frame = self._pov_frames.get(show_pid)
             if frame is not None:

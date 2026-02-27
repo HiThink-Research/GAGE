@@ -374,6 +374,7 @@ class ArenaRoleAdapter(RoleAdapter):
                 "automap_follow",
                 "automap_stride",
                 "show_pov",
+                "capture_pov",
                 "pov_stride",
                 "allow_respawn",
                 "respawn_grace_steps",
@@ -397,6 +398,8 @@ class ArenaRoleAdapter(RoleAdapter):
             ):
                 if env_cfg.get(key) is not None:
                     env_kwargs[key] = env_cfg.get(key)
+            if self._replay_mode_includes_frame(self._resolve_replay_recording_mode()):
+                env_kwargs.setdefault("capture_pov", True)
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
         if "mahjong" in str(impl).lower():
@@ -897,6 +900,111 @@ class ArenaRoleAdapter(RoleAdapter):
             return False
         return default
 
+    def _resolve_replay_recording_mode(self) -> str:
+        """Resolve replay recording mode from environment.replay config."""
+
+        replay_cfg = self._environment_cfg.get("replay")
+        if not isinstance(replay_cfg, Mapping):
+            return "action"
+        explicit_mode = self._normalize_recording_mode(replay_cfg.get("mode"))
+        if explicit_mode is not None:
+            return explicit_mode
+        action_enabled = self._resolve_replay_action_enabled(replay_cfg)
+        frame_enabled = self._resolve_replay_frame_enabled(replay_cfg, default=False)
+        if action_enabled and frame_enabled:
+            return "both"
+        if frame_enabled:
+            return "frame"
+        return "action"
+
+    def _resolve_replay_action_enabled(self, replay_cfg: Mapping[str, Any]) -> bool:
+        action_cfg = replay_cfg.get("action")
+        if not isinstance(action_cfg, Mapping):
+            return True
+        raw_enabled = action_cfg.get("enabled")
+        return self._coerce_bool_or_auto(raw_enabled, default=True)
+
+    def _resolve_replay_frame_enabled(self, replay_cfg: Mapping[str, Any], *, default: bool) -> bool:
+        frame_cfg = replay_cfg.get("frame")
+        if isinstance(frame_cfg, Mapping):
+            if "enabled" in frame_cfg:
+                return self._coerce_bool_or_auto(frame_cfg.get("enabled"), default=True)
+            return True
+        legacy_frame_cfg = replay_cfg.get("frame_capture")
+        if isinstance(legacy_frame_cfg, Mapping):
+            if "enabled" in legacy_frame_cfg:
+                return self._coerce_bool_or_auto(legacy_frame_cfg.get("enabled"), default=True)
+            return True
+        return default
+
+    def _resolve_replay_frame_capture_cfg(self, replay_cfg: Mapping[str, Any]) -> dict[str, Any]:
+        frame_cfg = replay_cfg.get("frame")
+        frame_options = dict(frame_cfg) if isinstance(frame_cfg, Mapping) else {}
+        legacy_frame_cfg = replay_cfg.get("frame_capture")
+        legacy_options = dict(legacy_frame_cfg) if isinstance(legacy_frame_cfg, Mapping) else {}
+        return {
+            "frame_dir_name": self._first_non_none(
+                frame_options.get("frame_dir_name"),
+                frame_options.get("dir"),
+                legacy_options.get("frame_dir_name"),
+            )
+            or "frames",
+            "frame_stride": self._first_non_none(
+                frame_options.get("stride"),
+                frame_options.get("frame_stride"),
+                legacy_options.get("stride"),
+                legacy_options.get("frame_stride"),
+            ),
+            "max_frames": self._first_non_none(
+                frame_options.get("max_frames"),
+                legacy_options.get("max_frames"),
+            ),
+            "format": self._first_non_none(
+                frame_options.get("encoding"),
+                frame_options.get("format"),
+                legacy_options.get("encoding"),
+                legacy_options.get("format"),
+            )
+            or "jpeg",
+            "quality": self._first_non_none(
+                frame_options.get("quality"),
+                legacy_options.get("quality"),
+            ),
+            "include_frame_snapshot": self._first_non_none(
+                frame_options.get("include_frame_snapshot"),
+                legacy_options.get("include_frame_snapshot"),
+            ),
+        }
+
+    @staticmethod
+    def _first_non_none(*values: Any) -> Any:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
+    def _coerce_bool_or_auto(self, value: Any, *, default: bool) -> bool:
+        if isinstance(value, str) and value.strip().lower() == "auto":
+            return default
+        return self._coerce_bool(value, default=default)
+
+    @staticmethod
+    def _normalize_recording_mode(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        mode = str(value).strip().lower()
+        if mode in {"action", "frame", "both"}:
+            return mode
+        return None
+
+    @staticmethod
+    def _replay_mode_includes_action(mode: str) -> bool:
+        return mode in {"action", "both"}
+
+    @staticmethod
+    def _replay_mode_includes_frame(mode: str) -> bool:
+        return mode in {"frame", "both"}
+
     def _build_frame_capture_recorder(
         self,
         *,
@@ -910,12 +1018,10 @@ class ArenaRoleAdapter(RoleAdapter):
             return None
         if not self._coerce_bool(replay_cfg.get("enabled"), default=False):
             return None
-
-        frame_cfg = replay_cfg.get("frame_capture")
-        if not isinstance(frame_cfg, Mapping):
+        recording_mode = self._resolve_replay_recording_mode()
+        if not self._replay_mode_includes_frame(recording_mode):
             return None
-        if not self._coerce_bool(frame_cfg.get("enabled"), default=False):
-            return None
+        frame_cfg = self._resolve_replay_frame_capture_cfg(replay_cfg)
 
         run_dir = self._resolve_run_dir(trace)
         if run_dir is None:
@@ -1223,6 +1329,8 @@ class ArenaRoleAdapter(RoleAdapter):
         replay_cfg = self._environment_cfg.get("replay")
         output_dir = replay_cfg.get("output_dir") if isinstance(replay_cfg, dict) else None
         scheduler_type = str(self._scheduler_cfg.get("type", "turn")).strip().lower() or "turn"
+        recording_mode = self._resolve_replay_recording_mode()
+        move_log = list(result.move_log) if self._replay_mode_includes_action(recording_mode) else []
 
         # STEP 2: Assemble metadata payload for replay manifest.
         extra_meta: Dict[str, Any] = {
@@ -1248,9 +1356,10 @@ class ArenaRoleAdapter(RoleAdapter):
             replay_v1_path = writer.write(
                 scheduler_type=scheduler_type,
                 result=result,
-                move_log=list(result.move_log),
+                move_log=move_log,
                 arena_trace=arena_trace,
                 extra_meta=extra_meta,
+                recording_mode=recording_mode,
             )
         except Exception as exc:  # pragma: no cover - defensive filesystem guard
             logger.warning("Failed to write replay v1 for sample {}: {}", sample_id, exc)
