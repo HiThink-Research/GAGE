@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: vizdoom_human_vs_llm_record
-  description: ViZDoom arena demo (Human vs LLM, record scheduler).
+  name: vizdoom_human_vs_llm
+  description: ViZDoom arena demo (Human vs LLM).
 
 custom:
   steps:
@@ -75,10 +75,8 @@ role_adapters:
         reset_retry_count: 3
         death_check_warmup_steps: 8
       scheduler:
-        type: record
-        tick_ms: 0
-        action_timeout_ms: 30000
-        timeout_fallback_move: "0"
+        type: tick
+        tick_ms: 20
       parser:
         impl: vizdoom_parser_v1
       players:
@@ -98,7 +96,7 @@ role_adapters:
 metrics: []
 
 tasks:
-  - task_id: vizdoom_human_vs_llm_record_task
+  - task_id: vizdoom_human_vs_llm_task
     dataset_id: vizdoom_demo_dataset
     max_samples: 1
     concurrency: 1
@@ -107,4 +105,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_vs_llm_record_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_vs_llm_events.jsonl

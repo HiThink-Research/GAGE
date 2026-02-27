@@ -19,6 +19,7 @@ except Exception as exc:  # pragma: no cover - depends on local optional deps.
     _VIZDOOM_IMPORT_ERROR = exc
 
 _AUTOMAP_VIZ_MODULE: Any = None
+_MAX_STALE_RESET_RECOVERY_RESTARTS = 2
 
 
 @dataclass
@@ -515,6 +516,72 @@ class ViZDoomMPProcEnv:
             self._pov = None
         logger.info("ViZDoomMPProc close done")
 
+    def _dispose_runtime_processes(self) -> None:
+        """Terminate host/join child processes and clear connection state."""
+
+        self._terminate_process(self._join_proc, self._join_conn)
+        self._terminate_process(self._host_proc, self._host_conn)
+        self._join_proc = None
+        self._host_proc = None
+        self._join_conn = None
+        self._host_conn = None
+        self.port = None
+
+    def _reset_with_existing_processes(
+        self,
+        *,
+        seed: Optional[int],
+        attempts: int,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], bool]:
+        """Reset current host/join processes and return whether stale state persists."""
+
+        assert self._host_conn is not None
+        assert self._join_conn is not None
+
+        host_msg: Dict[str, Any] = {}
+        join_msg: Dict[str, Any] = {}
+        stale_reset = True
+        for attempt in range(1, attempts + 1):
+            self._host_conn.send({"type": "reset", "seed": seed, "t": self.t})
+            self._join_conn.send({"type": "reset", "seed": seed, "t": self.t})
+
+            host_msg = self._recv_with_timeout(self._host_conn, 20.0)
+            print(
+                "[DEBUG] reset host automap:",
+                None if host_msg.get("automap") is None else host_msg["automap"].shape,
+                flush=True,
+            )
+            join_msg = self._recv_with_timeout(self._join_conn, 20.0)
+            if host_msg.get("type") == "error":
+                raise RuntimeError(f"Host reset failed: {host_msg.get('error')}")
+            if join_msg.get("type") == "error":
+                raise RuntimeError(f"Join reset failed: {join_msg.get('error')}")
+
+            host_obs = host_msg.get("obs", {})
+            join_obs = join_msg.get("obs", {})
+            host_done = bool(host_msg.get("done", False))
+            join_done = bool(join_msg.get("done", False))
+            self._update_last_health(0, host_obs)
+            self._update_last_health(1, join_obs)
+
+            health0 = self._effective_health(0, host_obs)
+            health1 = self._effective_health(1, join_obs)
+            stale_reset = host_done or join_done or self._is_dead(health0) or self._is_dead(health1)
+            logger.info(
+                "ViZDoomMPProc reset attempt={} host_done={} join_done={} p0_health={} p1_health={} stale={}",
+                attempt,
+                host_done,
+                join_done,
+                health0,
+                health1,
+                stale_reset,
+            )
+            if not stale_reset:
+                break
+            if attempt < attempts:
+                time.sleep(0.15)
+        return host_msg, join_msg, stale_reset
+
     def set_view(self, view: str) -> None:
         if view not in ("p0", "p1", "both", "none"):
             return
@@ -571,45 +638,29 @@ class ViZDoomMPProcEnv:
         host_msg: Dict[str, Any] = {}
         join_msg: Dict[str, Any] = {}
         attempts = max(1, int(self.cfg.reset_retry_count))
-        for attempt in range(1, attempts + 1):
-            self._host_conn.send({"type": "reset", "seed": seed, "t": self.t})
-            self._join_conn.send({"type": "reset", "seed": seed, "t": self.t})
-
-            host_msg = self._recv_with_timeout(self._host_conn, 20.0)
-            print(
-                "[DEBUG] reset host automap:",
-                None if host_msg.get("automap") is None else host_msg["automap"].shape,
-                flush=True,
-            )
-            join_msg = self._recv_with_timeout(self._join_conn, 20.0)
-            if host_msg.get("type") == "error":
-                raise RuntimeError(f"Host reset failed: {host_msg.get('error')}")
-            if join_msg.get("type") == "error":
-                raise RuntimeError(f"Join reset failed: {join_msg.get('error')}")
-
-            host_obs = host_msg.get("obs", {})
-            join_obs = join_msg.get("obs", {})
-            host_done = bool(host_msg.get("done", False))
-            join_done = bool(join_msg.get("done", False))
-            self._update_last_health(0, host_obs)
-            self._update_last_health(1, join_obs)
-
-            health0 = self._effective_health(0, host_obs)
-            health1 = self._effective_health(1, join_obs)
-            stale_reset = host_done or join_done or self._is_dead(health0) or self._is_dead(health1)
-            logger.info(
-                "ViZDoomMPProc reset attempt={} host_done={} join_done={} p0_health={} p1_health={} stale={}",
-                attempt,
-                host_done,
-                join_done,
-                health0,
-                health1,
-                stale_reset,
+        stale_reset = True
+        for restart_idx in range(_MAX_STALE_RESET_RECOVERY_RESTARTS + 1):
+            if self._host_proc is None or self._join_proc is None:
+                self._start_processes()
+            host_msg, join_msg, stale_reset = self._reset_with_existing_processes(
+                seed=seed,
+                attempts=attempts,
             )
             if not stale_reset:
                 break
-            if attempt < attempts:
-                time.sleep(0.15)
+            logger.warning(
+                "ViZDoomMPProc reset remained stale after {} attempts; restarting workers ({}/{})",
+                attempts,
+                restart_idx + 1,
+                _MAX_STALE_RESET_RECOVERY_RESTARTS + 1,
+            )
+            if restart_idx >= _MAX_STALE_RESET_RECOVERY_RESTARTS:
+                self._dispose_runtime_processes()
+                raise RuntimeError(
+                    "ViZDoom reset failed: stale death/intermission state persisted after process restarts."
+                )
+            self._dispose_runtime_processes()
+            time.sleep(0.2)
 
         logger.info(
             "ViZDoomMPProc reset done host_done={} join_done={} host_obs={} join_obs={}",

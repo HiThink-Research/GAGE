@@ -2,13 +2,13 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: vizdoom_human_vs_llm_record
-  description: ViZDoom arena demo (Human vs LLM, record scheduler).
+  name: vizdoom_human_vs_dummy
+  description: ViZDoom arena demo (Human vs Dummy backend).
 
 custom:
   steps:
     - step: arena
-      adapter_id: vizdoom_human_arena
+      adapter_id: vizdoom_human_dummy_arena
     - step: auto_eval
 
 datasets:
@@ -20,22 +20,20 @@ datasets:
       streaming: false
 
 backends:
-  - backend_id: vizdoom_litellm
-    type: litellm
+  - backend_id: vizdoom_dummy_backend
+    type: dummy
     config:
-      provider: openai
-      api_base: https://api.openai.com/v1
-      model: gpt-5.2
-      generation_parameters:
-        max_new_tokens: 256
-        temperature: 0.2
-      streaming: false
-      max_retries: 6
+      responses:
+        - "0"
+        - "1"
+        - "2"
+        - "3"
+      cycle: true
 
 role_adapters:
-  - adapter_id: vizdoom_llm_adapter
+  - adapter_id: vizdoom_dummy_adapter
     role_type: dut_model
-    backend_id: vizdoom_litellm
+    backend_id: vizdoom_dummy_backend
     capabilities:
       - chat_completion
 
@@ -52,7 +50,7 @@ role_adapters:
         space: "1"
         j: "1"
 
-  - adapter_id: vizdoom_human_arena
+  - adapter_id: vizdoom_human_dummy_arena
     role_type: arena
     params:
       environment:
@@ -75,10 +73,8 @@ role_adapters:
         reset_retry_count: 3
         death_check_warmup_steps: 8
       scheduler:
-        type: record
-        tick_ms: 0
-        action_timeout_ms: 30000
-        timeout_fallback_move: "0"
+        type: tick
+        tick_ms: 20
       parser:
         impl: vizdoom_parser_v1
       players:
@@ -89,7 +85,7 @@ role_adapters:
           timeout_fallback_move: "0"
         - name: p1
           type: backend
-          ref: vizdoom_llm_adapter
+          ref: vizdoom_dummy_adapter
           max_retries: 1
           fallback_policy: first_legal
           timeout_ms: 100
@@ -98,7 +94,7 @@ role_adapters:
 metrics: []
 
 tasks:
-  - task_id: vizdoom_human_vs_llm_record_task
+  - task_id: vizdoom_human_vs_dummy_task
     dataset_id: vizdoom_demo_dataset
     max_samples: 1
     concurrency: 1
@@ -107,4 +103,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_vs_llm_record_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_vs_dummy_events.jsonl

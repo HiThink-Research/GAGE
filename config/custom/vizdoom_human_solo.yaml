@@ -2,14 +2,13 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: vizdoom_human_vs_llm_record
-  description: ViZDoom arena demo (Human vs LLM, record scheduler).
+  name: vizdoom_human_solo
+  description: ViZDoom human-only playground (no opponent).
 
 custom:
   steps:
     - step: arena
       adapter_id: vizdoom_human_arena
-    - step: auto_eval
 
 datasets:
   - dataset_id: vizdoom_demo_dataset
@@ -19,26 +18,7 @@ datasets:
       preprocess: grid_game_preprocessor
       streaming: false
 
-backends:
-  - backend_id: vizdoom_litellm
-    type: litellm
-    config:
-      provider: openai
-      api_base: https://api.openai.com/v1
-      model: gpt-5.2
-      generation_parameters:
-        max_new_tokens: 256
-        temperature: 0.2
-      streaming: false
-      max_retries: 6
-
 role_adapters:
-  - adapter_id: vizdoom_llm_adapter
-    role_type: dut_model
-    backend_id: vizdoom_litellm
-    capabilities:
-      - chat_completion
-
   - adapter_id: vizdoom_human
     role_type: human
     params:
@@ -57,7 +37,7 @@ role_adapters:
     params:
       environment:
         impl: vizdoom_env_v1
-#        config_path: src/gage_eval/role/arena/games/vizdoom/_vizdoom.ini
+        config_path: src/gage_eval/role/arena/games/vizdoom/_vizdoom.ini
         replay_output_dir: runs/vizdoom_replays
         replay:
           enabled: true
@@ -72,33 +52,22 @@ role_adapters:
         obs_image: true
         no_attack_seconds: 0
         allow_partial_actions: true
-        reset_retry_count: 3
-        death_check_warmup_steps: 8
       scheduler:
-        type: record
-        tick_ms: 0
-        action_timeout_ms: 30000
-        timeout_fallback_move: "0"
+        type: tick
+        tick_ms: 100
       parser:
         impl: vizdoom_parser_v1
       players:
         - name: p0
           type: human
           ref: vizdoom_human
-          timeout_ms: 100
-          timeout_fallback_move: "0"
-        - name: p1
-          type: backend
-          ref: vizdoom_llm_adapter
-          max_retries: 1
-          fallback_policy: first_legal
-          timeout_ms: 100
+          timeout_ms: 120
           timeout_fallback_move: "0"
 
 metrics: []
 
 tasks:
-  - task_id: vizdoom_human_vs_llm_record_task
+  - task_id: vizdoom_human_solo_task
     dataset_id: vizdoom_demo_dataset
     max_samples: 1
     concurrency: 1
@@ -107,4 +76,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_vs_llm_record_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_solo_events.jsonl
