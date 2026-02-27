@@ -586,3 +586,99 @@ def test_visualized_environment_uses_last_action_in_status() -> None:
     assert latest["status_text"] == "Turn: Alice Last: A1"
     assert latest["board_text"] == "board-state"
     assert latest["last_move"] == "A1"
+
+
+def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={
+            "impl": "gomoku_local_v1",
+            "replay": {
+                "enabled": True,
+                "frame_capture": {
+                    "enabled": True,
+                    "frame_stride": 1,
+                    "max_frames": 0,
+                },
+            },
+        },
+        players=[{"player_id": "player_0", "type": "backend", "ref": "dummy_backend"}],
+    )
+    trace = ObservabilityTrace(run_id="run_frame_capture")
+    monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
+
+    class _StubEnvironment:
+        def __init__(self) -> None:
+            self._frame_counter = 0
+
+        def get_last_frame(self) -> dict[str, Any]:
+            self._frame_counter += 1
+            return {"board_text": f"frame-{self._frame_counter}", "move_count": self._frame_counter}
+
+        @staticmethod
+        def get_active_player() -> str:
+            return "player_0"
+
+        @staticmethod
+        def observe(player: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text="board",
+                legal_moves=["A1"],
+                active_player=player,
+                last_move=None,
+            )
+
+        @staticmethod
+        def apply(action: Any) -> None:
+            return None
+
+        @staticmethod
+        def is_terminal() -> bool:
+            return True
+
+    class _StubScheduler:
+        @staticmethod
+        def run_loop(environment: Any, players: Any) -> GameResult:
+            return _make_result(move_log=[])
+
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(
+        adapter,
+        "_normalize_player_specs",
+        lambda sample: (
+            [{"player_id": "player_0", "type": "backend", "ref": "dummy_backend"}],
+            ["player_0"],
+            {"player_0": "player_0"},
+            "player_0",
+        ),
+    )
+    monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
+    monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
+    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_build_environment", lambda sample, **kwargs: _StubEnvironment())
+    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
+
+    def _capture_replay_write(
+        *,
+        result: GameResult,
+        sample: dict[str, Any],
+        trace: ObservabilityTrace | None,
+        output: dict[str, Any],
+        frame_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        captured["frame_events"] = list(frame_events or [])
+        return None
+
+    monkeypatch.setattr(adapter, "_maybe_write_replay_v1", _capture_replay_write)
+
+    adapter._invoke_sync(
+        {"sample": {"id": "sample-frame", "metadata": {}}, "role_manager": object(), "trace": trace},
+        RoleAdapterState(),
+    )
+
+    frame_events = captured.get("frame_events")
+    assert isinstance(frame_events, list)
+    assert len(frame_events) >= 1
+    assert frame_events[0]["type"] == "frame"

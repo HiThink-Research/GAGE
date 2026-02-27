@@ -78,3 +78,46 @@ def test_arena_result_replay_v1_disabled_keeps_legacy_only(tmp_path, monkeypatch
 
     assert output["replay_path"] == "legacy_replay.json"
     assert "replay_v1_path" not in output
+
+
+def test_arena_result_replay_v1_writes_frame_events_in_event_stream(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
+    trace = ObservabilityTrace(run_id="run_frames")
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={
+            "impl": "pettingzoo_aec_v1",
+            "replay": {"enabled": True, "primary_mode": True},
+        },
+        scheduler={"type": "turn"},
+    )
+    result = _build_result(replay_path="legacy_replay.json")
+    frame_events = [
+        {
+            "type": "frame",
+            "step": 0,
+            "ts_ms": 1700000000000,
+            "actor": "player_0",
+            "image": {
+                "path": "frames/frame_000000.jpg",
+                "format": "jpeg",
+                "width": 160,
+                "height": 210,
+            },
+        }
+    ]
+
+    output = adapter._format_result(
+        result,
+        {"id": "sample-4"},
+        trace,
+        frame_events=frame_events,
+    )
+
+    replay_file = Path(output["replay_path"])
+    events_path = replay_file.parent / "events.jsonl"
+    assert events_path.exists()
+    lines = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [item["type"] for item in lines] == ["action", "frame", "result"]
+    assert [item["seq"] for item in lines] == [1, 2, 3]
+    assert lines[1]["image"]["path"] == "frames/frame_000000.jpg"

@@ -95,13 +95,37 @@ class ReplaySchemaWriter:
         return str(replay_path.resolve())
 
     def _resolve_replay_dir(self) -> Path:
-        safe_sample_id = _sanitize_sample_id(self._sample_id)
-        if self._output_dir:
-            base_dir = Path(self._output_dir).expanduser()
+        return self.resolve_replay_dir(
+            run_dir=self._run_dir,
+            sample_id=self._sample_id,
+            output_dir=self._output_dir,
+        )
+
+    @staticmethod
+    def resolve_replay_dir(
+        *,
+        run_dir: Path,
+        sample_id: str,
+        output_dir: Optional[str] = None,
+    ) -> Path:
+        """Resolve replay directory from run/sample identifiers.
+
+        Args:
+            run_dir: Run directory (`runs/<run_id>`).
+            sample_id: Raw sample identifier.
+            output_dir: Optional replay output root override.
+
+        Returns:
+            Absolute replay directory path for this sample.
+        """
+
+        safe_sample_id = _sanitize_sample_id(sample_id)
+        if output_dir:
+            base_dir = Path(output_dir).expanduser()
             if not base_dir.is_absolute():
                 base_dir = (Path.cwd() / base_dir).resolve()
             return base_dir / safe_sample_id
-        return self._run_dir / "replays" / safe_sample_id
+        return Path(run_dir).expanduser().resolve() / "replays" / safe_sample_id
 
     def _build_action_events(self, move_log: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
@@ -135,7 +159,7 @@ class ReplaySchemaWriter:
                 continue
             frame = dict(item)
             frame.setdefault("type", "frame")
-            frame.setdefault("seq", int(start_seq) + len(events))
+            frame["seq"] = int(start_seq) + len(events)
             frame.setdefault("ts_ms", _now_ms())
             events.append(frame)
         return events

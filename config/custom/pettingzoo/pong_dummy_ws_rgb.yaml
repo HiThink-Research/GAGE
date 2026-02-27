@@ -60,6 +60,12 @@ role_adapters:
         replay:
           enabled: true
           primary_mode: true
+          frame_capture:
+            enabled: true
+            frame_stride: 2
+            max_frames: 600
+            format: jpeg
+            quality: 75
       rules:
         illegal_policy:
           retry: 1
