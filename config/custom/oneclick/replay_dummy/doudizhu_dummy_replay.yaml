@@ -1,0 +1,103 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: doudizhu_replay_oneclick_dummy
+custom:
+  steps:
+  - step: arena
+    adapter_id: doudizhu_arena
+datasets:
+- dataset_id: doudizhu_local
+  loader: jsonl
+  params:
+    path: tests/data/Test_Doudizhu_LiteLLM.jsonl
+    preprocess: card_game_preprocessor
+    streaming: false
+backends:
+- backend_id: ddz_dummy_0
+  type: dummy
+  config:
+    responses:
+    - pass
+    - '333'
+    - '444'
+    cycle: true
+- backend_id: ddz_dummy_1
+  type: dummy
+  config:
+    responses:
+    - pass
+    - '555'
+    - '666'
+    cycle: true
+- backend_id: ddz_dummy_2
+  type: dummy
+  config:
+    responses:
+    - pass
+    - '777'
+    - '888'
+    cycle: true
+role_adapters:
+- adapter_id: ddz_dummy_0
+  role_type: dut_model
+  backend_id: ddz_dummy_0
+  capabilities:
+  - chat_completion
+- adapter_id: ddz_dummy_1
+  role_type: dut_model
+  backend_id: ddz_dummy_1
+  capabilities:
+  - chat_completion
+- adapter_id: ddz_dummy_2
+  role_type: dut_model
+  backend_id: ddz_dummy_2
+  capabilities:
+  - chat_completion
+- adapter_id: doudizhu_arena
+  role_type: arena
+  params:
+    environment:
+      impl: doudizhu_arena_v1
+      chat_mode: 'off'
+      replay_live: false
+      replay:
+        enabled: true
+        primary_mode: true
+        frame_capture:
+          enabled: true
+          frame_stride: 1
+          max_frames: 180
+    rules:
+      illegal_policy:
+        retry: 0
+        on_fail: random
+    scheduler:
+      type: turn
+      max_turns: 100
+    parser:
+      impl: doudizhu_arena_parser_v1
+    players:
+    - name: p0
+      player_id: player_0
+      type: backend
+      ref: ddz_dummy_0
+      max_retries: 0
+      fallback_policy: first_legal
+    - name: p1
+      player_id: player_1
+      type: backend
+      ref: ddz_dummy_1
+      max_retries: 0
+      fallback_policy: first_legal
+    - name: p2
+      player_id: player_2
+      type: backend
+      ref: ddz_dummy_2
+      max_retries: 0
+      fallback_policy: first_legal
+tasks:
+- task_id: doudizhu_replay_oneclick_dummy
+  dataset_id: doudizhu_local
+  max_samples: 1
+  concurrency: 1

@@ -59,7 +59,6 @@ def test_build_replay_v1_display_prefers_frame_events(tmp_path: Path) -> None:
         sample_record,
         task_id="pettingzoo_pong_dummy_ws_rgb",
         fps=10.0,
-        loop=False,
         max_frames=0,
     )
 
@@ -68,6 +67,12 @@ def test_build_replay_v1_display_prefers_frame_events(tmp_path: Path) -> None:
     frame = frame_source()
     assert frame["board_text"] == "frame-1"
     assert frame["_image_path_abs"] == str(frame_path.resolve())
+    frame_count = display["frame_count"]
+    frame_at = display["frame_at"]
+    assert callable(frame_count)
+    assert callable(frame_at)
+    assert frame_count() == 1
+    assert frame_at(0)["board_text"] == "frame-1"
 
 
 def test_build_replay_v1_display_returns_none_without_frame_events(tmp_path: Path) -> None:
@@ -96,7 +101,6 @@ def test_build_replay_v1_display_returns_none_without_frame_events(tmp_path: Pat
         sample_record,
         task_id="task_no_frame",
         fps=10.0,
-        loop=False,
         max_frames=0,
     )
 

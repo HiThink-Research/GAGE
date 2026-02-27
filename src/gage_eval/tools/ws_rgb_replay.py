@@ -22,7 +22,6 @@ class ReplayBuilder(Protocol):
         *,
         task_id: str,
         fps: float,
-        loop: bool,
         max_frames: int,
     ) -> dict[str, Any]:
         """Build and return replay display registration fields."""
@@ -35,7 +34,6 @@ class WsRgbReplayOptions:
     host: str
     port: int
     fps: float
-    loop: bool
     max_frames: int
     game: Optional[str]
 
@@ -43,7 +41,7 @@ class WsRgbReplayOptions:
 class ReplayFrameCursor:
     """Resolve replay frame by elapsed wall-clock time."""
 
-    def __init__(self, frames: Sequence[Mapping[str, Any]], *, fps: float, loop: bool) -> None:
+    def __init__(self, frames: Sequence[Mapping[str, Any]], *, fps: float) -> None:
         self._frames = [dict(item) for item in frames if isinstance(item, Mapping)]
         if not self._frames:
             self._frames = [
@@ -53,25 +51,55 @@ class ReplayFrameCursor:
                 }
             ]
         self._fps = max(0.1, float(fps))
-        self._loop = bool(loop)
-        self._started_at = time.monotonic()
+        self._frame_interval_s = 1.0 / self._fps
+        self._started_at: Optional[float] = None
+        self._last_advance_at: Optional[float] = None
+        self._index = 0
 
     def frame_source(self) -> dict[str, Any]:
         """Return one frame payload for ws_rgb polling."""
 
-        elapsed_s = max(0.0, time.monotonic() - self._started_at)
-        raw_index = int(elapsed_s * self._fps)
-        if self._loop:
-            index = raw_index % len(self._frames)
-        else:
-            index = min(raw_index, len(self._frames) - 1)
+        # STEP 1: Start replay cursor at first pull to avoid skipping to tail
+        # when browser attaches after server startup.
+        now = time.monotonic()
+        if self._started_at is None:
+            self._started_at = now
+            self._last_advance_at = now
+        elif self._index < len(self._frames) - 1:
+            last_advance_at = self._last_advance_at if self._last_advance_at is not None else now
+            elapsed_since_advance = max(0.0, now - last_advance_at)
+            # STEP 2: Advance at most one frame per pull.
+            # NOTE: This prevents frame skipping when poll interval is slower than fps.
+            if elapsed_since_advance >= self._frame_interval_s:
+                self._index += 1
+                self._last_advance_at = now
+
+        started_at = self._started_at if self._started_at is not None else now
+        elapsed_s = max(0.0, now - started_at)
+        return self._materialize_payload(index=self._index, elapsed_s=elapsed_s)
+
+    def frame_count(self) -> int:
+        """Return total replay frame count."""
+
+        return len(self._frames)
+
+    def frame_at(self, index: int) -> dict[str, Any]:
+        """Return one replay frame by index without advancing cursor."""
+
+        if not self._frames:
+            return self._materialize_payload(index=0, elapsed_s=0.0)
+        clamped = max(0, min(len(self._frames) - 1, int(index)))
+        elapsed_s = max(0.0, float(clamped) / self._fps)
+        return self._materialize_payload(index=clamped, elapsed_s=elapsed_s)
+
+    def _materialize_payload(self, *, index: int, elapsed_s: float) -> dict[str, Any]:
         payload = dict(self._frames[index])
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
         metadata = dict(metadata)
-        metadata["replay_elapsed_s"] = elapsed_s
-        metadata["replay_index"] = index
+        metadata["replay_elapsed_s"] = max(0.0, float(elapsed_s))
+        metadata["replay_index"] = int(index)
         metadata["replay_total"] = len(self._frames)
         payload["metadata"] = metadata
         return payload
@@ -83,12 +111,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1", help="Bind host for ws_rgb server.")
     parser.add_argument("--port", type=int, default=5800, help="Bind port for ws_rgb server.")
     parser.add_argument("--fps", type=float, default=12.0, help="Replay playback fps for frame cursor.")
-    parser.add_argument(
-        "--loop",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Whether replay loops after reaching the final frame.",
-    )
     parser.add_argument(
         "--max-frames",
         type=int,
@@ -188,7 +210,6 @@ def _build_replay_v1_display(
     *,
     task_id: str,
     fps: float,
-    loop: bool,
     max_frames: int,
 ) -> Optional[dict[str, Any]]:
     """Build ws_rgb display directly from replay v1 frame events."""
@@ -249,7 +270,7 @@ def _build_replay_v1_display(
                 frame_payload["image"] = {"path": str(image.get("path"))}
         frames.append(frame_payload)
 
-    cursor = ReplayFrameCursor(frames, fps=float(fps), loop=bool(loop))
+    cursor = ReplayFrameCursor(frames, fps=float(fps))
 
     # STEP 3: Assemble display registration metadata.
     sample = sample_record.get("sample")
@@ -271,6 +292,8 @@ def _build_replay_v1_display(
         "label": f"replay_v1:{replay_label}",
         "human_player_id": human_player_id,
         "frame_source": cursor.frame_source,
+        "frame_at": cursor.frame_at,
+        "frame_count": cursor.frame_count,
     }
 
 
@@ -286,7 +309,6 @@ def _serve_replay(
         sample_record,
         task_id=task_id,
         fps=float(options.fps),
-        loop=bool(options.loop),
         max_frames=max(0, int(options.max_frames)),
     )
     game_key = ""
@@ -297,13 +319,14 @@ def _serve_replay(
             sample_record,
             task_id=task_id,
             fps=float(options.fps),
-            loop=bool(options.loop),
             max_frames=max(0, int(options.max_frames)),
         )
 
     frame_source = replay_display.get("frame_source")
     if not callable(frame_source):
         raise ValueError("replay_builder_missing_frame_source")
+    frame_at = replay_display.get("frame_at")
+    frame_count = replay_display.get("frame_count")
 
     hub = WsRgbHubServer(host=str(options.host), port=int(options.port), allow_origin="*")
     hub.start()
@@ -313,6 +336,8 @@ def _serve_replay(
             label=str(replay_display.get("label") or f"{game_key}_replay"),
             human_player_id=str(replay_display.get("human_player_id") or "player_0"),
             frame_source=frame_source,
+            frame_at=frame_at if callable(frame_at) else None,
+            frame_count=frame_count if callable(frame_count) else None,
             input_mapper=None,
             action_queue=None,
         )
@@ -345,7 +370,6 @@ def main() -> None:
         host=str(args.host),
         port=int(args.port),
         fps=float(args.fps),
-        loop=bool(args.loop),
         max_frames=max(0, int(args.max_frames)),
         game=str(args.game) if args.game else None,
     )
