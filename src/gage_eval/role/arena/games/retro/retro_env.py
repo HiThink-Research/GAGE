@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import importlib
+import json
 import os
 import re
 from pathlib import Path
@@ -257,55 +258,67 @@ class StableRetroArenaEnvironment:
         if self._retro_env is None or self._action_codec is None:
             raise RuntimeError("retro environment not initialized")
 
-        # STEP 1: Encode and apply one tick.
+        # STEP 1: Resolve hold duration and encode action once.
+        hold_ticks = self._resolve_action_hold_ticks(action)
+        start_tick = self._tick
         try:
             encoded = self._action_codec.encode(action.move)
         except ValueError:
             self._illegal_move_count += 1
             encoded = self._action_codec.encode("noop")
 
-        step_result = self._retro_env.step(encoded.buttons)
-        obs, reward, terminated, truncated, info = self._normalize_step(step_result)
-        self._last_obs = obs
-        self._tick += 1
-        self._reward_total += float(reward)
-        self._last_reward = float(reward)
-        self._last_info = dict(info or {})
-        self._info_history.append(self._last_info)
-        if self._replay_writer is not None:
-            self._replay_writer.append_tick(
-                tick=self._tick,
-                reward=float(reward),
-                info=self._last_info,
-                frame=obs,
-                done=bool(terminated or truncated),
-            )
-        self._maybe_render()
-
-        # STEP 2: Check terminal state.
-        if terminated or truncated:
-            self._terminal = True
-            status = self._derive_result(terminated, truncated, self._last_info)
-            reason = "truncated" if truncated else "terminated"
-            self._final_result = self.build_result(status=status, reason=reason)
+        # STEP 2: Apply repeated environment steps for the resolved hold duration.
+        terminated = False
+        truncated = False
+        executed_ticks = 0
+        while executed_ticks < hold_ticks:
+            step_result = self._retro_env.step(encoded.buttons)
+            obs, reward, terminated, truncated, info = self._normalize_step(step_result)
+            self._last_obs = obs
+            self._tick += 1
+            executed_ticks += 1
+            self._reward_total += float(reward)
+            self._last_reward = float(reward)
+            self._last_info = dict(info or {})
+            self._info_history.append(self._last_info)
             if self._replay_writer is not None:
-                replay_path = self._replay_writer.finalize(self._final_result)
-                if replay_path:
-                    self._final_result = GameResult(
-                        winner=self._final_result.winner,
-                        result=self._final_result.result,
-                        reason=self._final_result.reason,
-                        replay_path=replay_path,
-                        move_count=self._final_result.move_count,
-                        illegal_move_count=self._final_result.illegal_move_count,
-                        final_board=self._final_result.final_board,
-                        move_log=self._final_result.move_log,
-                        rule_profile=self._final_result.rule_profile,
-                        win_direction=self._final_result.win_direction,
-                        line_length=self._final_result.line_length,
-                    )
-            return self._final_result
-        return None
+                self._replay_writer.append_tick(
+                    tick=self._tick,
+                    reward=float(reward),
+                    info=self._last_info,
+                    frame=obs,
+                    done=bool(terminated or truncated),
+                )
+            self._maybe_render()
+            if terminated or truncated:
+                break
+
+        self.record_decision(action, start_tick=start_tick, hold_ticks=max(1, executed_ticks))
+
+        # STEP 3: Check terminal state.
+        if not (terminated or truncated):
+            return None
+        self._terminal = True
+        status = self._derive_result(terminated, truncated, self._last_info)
+        reason = "truncated" if truncated else "terminated"
+        self._final_result = self.build_result(status=status, reason=reason)
+        if self._replay_writer is not None:
+            replay_path = self._replay_writer.finalize(self._final_result)
+            if replay_path:
+                self._final_result = GameResult(
+                    winner=self._final_result.winner,
+                    result=self._final_result.result,
+                    reason=self._final_result.reason,
+                    replay_path=replay_path,
+                    move_count=self._final_result.move_count,
+                    illegal_move_count=self._final_result.illegal_move_count,
+                    final_board=self._final_result.final_board,
+                    move_log=self._final_result.move_log,
+                    rule_profile=self._final_result.rule_profile,
+                    win_direction=self._final_result.win_direction,
+                    line_length=self._final_result.line_length,
+                )
+        return self._final_result
 
     def is_terminal(self) -> bool:
         return self._terminal
@@ -395,6 +408,45 @@ class StableRetroArenaEnvironment:
                 start_tick=start_tick,
                 end_tick=end_tick,
             )
+
+    def _resolve_action_hold_ticks(self, action: ArenaAction) -> int:
+        metadata = action.metadata if isinstance(action.metadata, dict) else {}
+        candidate = metadata.get("hold_ticks")
+        if candidate is None:
+            candidate = self._extract_hold_ticks_from_raw(action.raw)
+        if candidate is None:
+            hold_ticks = 1
+        else:
+            try:
+                hold_ticks = int(candidate)
+            except (TypeError, ValueError):
+                hold_ticks = 1
+        return max(self._action_schema.hold_ticks_min, min(self._action_schema.hold_ticks_max, hold_ticks))
+
+    @staticmethod
+    def _extract_hold_ticks_from_raw(raw: Any) -> Optional[int]:
+        if not isinstance(raw, str):
+            return None
+        stripped = raw.strip()
+        if not stripped:
+            return None
+        if not stripped.startswith("{"):
+            return None
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("hold_ticks")
+        if value is None:
+            value = payload.get("holdTicks")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _ensure_env(self) -> None:
         if self._retro_env is None or self._runtime_policy == "fresh":

@@ -15,7 +15,7 @@ def test_retro_input_mapper_emits_actions_and_dedups_same_move():
     )
     assert len(first) == 1
     assert first[0].player_id == "player_9"
-    assert first[0].move == "RIGHT"
+    assert first[0].move == "right"
     assert first[0].metadata["hold_ticks"] == 3
 
     second = mapper.handle_browser_event(
@@ -33,14 +33,33 @@ def test_retro_input_mapper_handles_keys_state_and_keyup():
         context={"human_player_id": "p0"},
     )
     assert len(combo) == 1
-    assert combo[0].move == "RIGHT+B"
+    assert combo[0].move == "right_run"
 
     release = mapper.handle_browser_event(
         {"type": "keyup", "key": "d"},
         context={"human_player_id": "p0"},
     )
     assert len(release) == 1
-    assert release[0].move == "B"
+    assert release[0].move == "run"
+
+
+def test_retro_input_mapper_emits_repeat_keydown_even_with_dedup() -> None:
+    mapper = RetroInputMapper(default_hold_ticks=2, dedup_same_move=True)
+    context = {"human_player_id": "p0"}
+
+    first = mapper.handle_browser_event(
+        {"type": "keydown", "key": "d", "repeat": False},
+        context=context,
+    )
+    assert len(first) == 1
+    assert first[0].move == "right"
+
+    repeat = mapper.handle_browser_event(
+        {"type": "keydown", "key": "d", "repeat": True},
+        context=context,
+    )
+    assert len(repeat) == 1
+    assert repeat[0].move == "right"
 
 
 def test_retro_input_mapper_reads_hold_ticks_from_alias_field():
@@ -51,8 +70,27 @@ def test_retro_input_mapper_reads_hold_ticks_from_alias_field():
     )
 
     assert len(actions) == 1
-    assert actions[0].move == "A"
+    assert actions[0].move == "jump"
     assert actions[0].metadata["hold_ticks"] == 5
+
+
+def test_retro_input_mapper_normalizes_direct_action_aliases():
+    mapper = RetroInputMapper(default_hold_ticks=2, dedup_same_move=False)
+
+    from_buttons = mapper.handle_browser_event(
+        {"event": "action_submit", "action": "RIGHT+B", "hold_ticks": 4},
+        context={"human_player_id": "p0"},
+    )
+    assert len(from_buttons) == 1
+    assert from_buttons[0].move == "right_run"
+    assert from_buttons[0].metadata["hold_ticks"] == 4
+
+    from_keys = mapper.handle_browser_event(
+        {"event": "action_submit", "move": "d+j+k"},
+        context={"human_player_id": "p0"},
+    )
+    assert len(from_keys) == 1
+    assert from_keys[0].move == "right_run_jump"
 
 
 def test_retro_input_mapper_helper_functions():

@@ -94,6 +94,9 @@ class HumanPlayer:
             self._pending_observation = observation
 
         adapter = getattr(self._role_manager, "get_adapter", lambda _id: None)(self._adapter_id)
+        bind_action_queue = getattr(adapter, "bind_action_queue", None)
+        if callable(bind_action_queue):
+            bind_action_queue(self._action_queue)
         ensure_input_ready = getattr(adapter, "ensure_input_ready", None)
         if callable(ensure_input_ready):
             ensure_input_ready()
@@ -197,6 +200,12 @@ class HumanPlayer:
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)
+        hold_ticks = getattr(parse_result, "hold_ticks", None)
+        if hold_ticks is not None:
+            try:
+                metadata["hold_ticks"] = max(1, int(hold_ticks))
+            except (TypeError, ValueError):
+                pass
         return metadata
 
     def _parse_human_action(

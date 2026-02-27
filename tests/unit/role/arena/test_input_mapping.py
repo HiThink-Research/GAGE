@@ -48,7 +48,7 @@ def test_retro_input_mapper_emits_action_and_dedups() -> None:
     first = mapper.handle_browser_event({"type": "keydown", "key": "w"}, context=context)
     assert len(first) == 1
     assert first[0].player_id == "p0"
-    assert first[0].move == "UP"
+    assert first[0].move == "up"
     assert json.loads(first[0].raw)["hold_ticks"] == 3
 
     second = mapper.handle_browser_event({"type": "keydown", "key": "w"}, context=context)

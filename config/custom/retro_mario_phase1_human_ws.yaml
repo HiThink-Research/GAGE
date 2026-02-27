@@ -46,8 +46,9 @@ role_adapters:
         info_feeder:
           impl: info_last_v1
       scheduler:
-        type: tick
-        tick_ms: 100
+        type: record
+        tick_ms: 33
+        
         max_ticks: 3600
       parser:
         impl: retro_action_v1
@@ -57,7 +58,7 @@ role_adapters:
       human_input:
         enabled: true
         host: 0.0.0.0
-        port: 5800
+        port: 8001
         fps: 30
         hold_ticks_default: 6
       players:

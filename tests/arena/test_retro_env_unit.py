@@ -102,7 +102,6 @@ def test_retro_env_apply_handles_illegal_moves_and_builds_terminal_result():
     env.reset()
 
     action = ArenaAction(player="player_0", move="not_a_move", raw="not_a_move")
-    env.record_decision(action, start_tick=0, hold_ticks=2)
     result = env.apply(action)
 
     assert retro_env.step_payloads == [[0]]
@@ -220,9 +219,36 @@ def test_retro_env_apply_returns_none_when_not_terminal():
     env.reset()
 
     action = ArenaAction(player="player_0", move="noop", raw="noop")
-    env.record_decision(action, start_tick=0, hold_ticks=1)
     assert env.apply(action) is None
     assert env.is_terminal() is False
+
+
+def test_retro_env_apply_respects_hold_ticks_from_action_raw():
+    frame = object()
+    retro_env = FakeRetroEnv(
+        reset_result=(frame, {}),
+        step_results=[
+            (frame, 0.1, False, False, {"tick": 1}),
+            (frame, 0.2, False, False, {"tick": 2}),
+            (frame, 0.3, False, False, {"tick": 3}),
+        ],
+    )
+    codec = RetroActionCodec(buttons=["LEFT", "RIGHT"])
+    env = _make_env_with_stubbed_runtime(retro_env=retro_env, codec=codec)
+    env.reset()
+
+    action = ArenaAction(
+        player="player_0",
+        move="right",
+        raw='{"move":"right","hold_ticks":3}',
+    )
+    result = env.apply(action)
+
+    assert result is None
+    assert len(retro_env.step_payloads) == 3
+    assert env._tick == 3  # noqa: SLF001
+    assert env._decision_count == 1  # noqa: SLF001
+    assert env._move_log[0]["hold_ticks"] == 3  # noqa: SLF001
 
 
 def test_retro_env_apply_attaches_replay_path_when_writer_returns_one():

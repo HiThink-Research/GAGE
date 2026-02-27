@@ -3,26 +3,54 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping, Optional, Sequence
 
+from gage_eval.role.arena.games.retro.keyboard_input import resolve_macro_move_from_action_state
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
 
 _RETRO_DEFAULT_KEY_MAP = {
-    "w": "UP",
-    "arrowup": "UP",
-    "a": "LEFT",
-    "arrowleft": "LEFT",
-    "s": "DOWN",
-    "arrowdown": "DOWN",
-    "d": "RIGHT",
-    "arrowright": "RIGHT",
-    "j": "A",
-    "k": "B",
-    "l": "SELECT",
-    "enter": "START",
+    "w": "up",
+    "arrowup": "up",
+    "a": "left",
+    "arrowleft": "left",
+    "s": "down",
+    "arrowdown": "down",
+    "d": "right",
+    "arrowright": "right",
+    "j": "jump",
+    "k": "run",
+    "l": "select",
+    "enter": "start",
+    "shift": "select",
 }
 
-_ACTION_PRIORITY = ("UP", "DOWN", "LEFT", "RIGHT", "A", "B", "START", "SELECT")
+_BUTTON_ALIAS_TO_ACTION = {
+    "up": "up",
+    "down": "down",
+    "left": "left",
+    "right": "right",
+    "a": "jump",
+    "b": "run",
+    "jump": "jump",
+    "run": "run",
+    "start": "start",
+    "select": "select",
+    "enter": "start",
+    "shift": "select",
+}
+
+_KEY_ALIAS_TO_ACTION = {
+    "w": "up",
+    "a": "left",
+    "s": "down",
+    "d": "right",
+    "j": "jump",
+    "k": "run",
+    "l": "select",
+}
+
+_ACTION_TOKEN_PATTERN = re.compile(r"[a-zA-Z]+")
 
 
 class RetroInputMapper(GameInputMapper):
@@ -39,14 +67,17 @@ class RetroInputMapper(GameInputMapper):
         if isinstance(key_map, Mapping):
             for raw_key, raw_action in key_map.items():
                 key_name = _normalize_key(raw_key)
-                action_name = str(raw_action).strip().upper()
+                action_name = _normalize_action_name(raw_action)
                 if not key_name or not action_name:
                     continue
                 resolved_map[key_name] = action_name
         self._key_map = resolved_map
         self._default_hold_ticks = max(1, int(default_hold_ticks))
         self._dedup_same_move = bool(dedup_same_move)
-        self._pressed_actions: dict[str, bool] = {}
+        self._pressed_actions = {
+            action_name: False
+            for action_name in sorted(set(self._key_map.values()))
+        }
         self._last_emitted_move: Optional[str] = None
 
     def _map_event_to_actions(
@@ -55,15 +86,18 @@ class RetroInputMapper(GameInputMapper):
         event: BrowserKeyEvent,
         context: Mapping[str, Any],
     ) -> Sequence[HumanActionEvent]:
-        # STEP 1: Update local key/action states from this browser event.
-        self._update_action_state(event)
-
-        # STEP 2: Resolve action state to a canonical retro move string.
-        move = self._resolve_move()
+        # STEP 1: Prefer direct action payloads (for ws_rgb action submit path).
+        move = self._resolve_direct_move(event)
+        if move is None:
+            # STEP 2: Update keyboard state and resolve macro move from held keys.
+            changed = self._update_action_state(event)
+            if not changed:
+                return []
+            move = self._resolve_move()
         if not move:
             self._last_emitted_move = None
             return []
-        if self._dedup_same_move and move == self._last_emitted_move:
+        if self._dedup_same_move and move == self._last_emitted_move and not _is_repeat_keydown(event):
             return []
         self._last_emitted_move = move
 
@@ -87,41 +121,55 @@ class RetroInputMapper(GameInputMapper):
             )
         ]
 
-    def _update_action_state(self, event: BrowserKeyEvent) -> None:
+    def _update_action_state(self, event: BrowserKeyEvent) -> bool:
+        changed = False
         if event.keys:
             for raw_key, pressed in event.keys.items():
                 action = self._key_map.get(_normalize_key(raw_key))
                 if action is None:
                     continue
-                self._pressed_actions[action] = bool(pressed)
-            return
+                next_state = bool(pressed)
+                if self._pressed_actions.get(action) != next_state:
+                    self._pressed_actions[action] = next_state
+                    changed = True
+            return changed
 
         if not event.key:
-            return
+            return False
         action = self._key_map.get(_normalize_key(event.key))
         if action is None:
-            return
+            return False
         event_type = event.event_type
         if event_type in {"keydown", "key_down"}:
+            repeated = _coerce_bool(event.payload.get("repeat"), default=False)
+            changed = self._pressed_actions.get(action) is not True or repeated
             self._pressed_actions[action] = True
-            return
+            return changed
         if event_type in {"keyup", "key_up"}:
+            changed = self._pressed_actions.get(action) is not False
             self._pressed_actions[action] = False
-            return
+            return changed
         pressed = event.payload.get("pressed")
         if pressed is None:
             pressed = True
-        self._pressed_actions[action] = _coerce_bool(pressed, default=True)
+        next_state = _coerce_bool(pressed, default=True)
+        changed = self._pressed_actions.get(action) != next_state
+        self._pressed_actions[action] = next_state
+        return changed
 
     def _resolve_move(self) -> Optional[str]:
-        active_actions = [
-            action
-            for action in _ACTION_PRIORITY
-            if self._pressed_actions.get(action)
-        ]
-        if not active_actions:
+        if not self._pressed_actions:
             return None
-        return "+".join(active_actions)
+        return resolve_macro_move_from_action_state(self._pressed_actions)
+
+    def _resolve_direct_move(self, event: BrowserKeyEvent) -> Optional[str]:
+        payload = event.payload
+        direct_move = payload.get("action")
+        if direct_move is None:
+            direct_move = payload.get("move")
+        if direct_move is None:
+            return None
+        return _normalize_direct_move(direct_move)
 
 
 def _normalize_key(value: Any) -> str:
@@ -144,6 +192,66 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
     return default
 
 
+def _normalize_action_name(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    return _BUTTON_ALIAS_TO_ACTION.get(normalized, "")
+
+
+def _normalize_direct_move(value: Any) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in {"0", "noop"}:
+        return "noop"
+
+    action_state = _parse_action_tokens(raw)
+    if action_state:
+        return resolve_macro_move_from_action_state(action_state)
+
+    if re.fullmatch(r"[a-z0-9_]+", lowered):
+        return lowered
+    return None
+
+
+def _parse_action_tokens(text: str) -> dict[str, bool]:
+    action_state: dict[str, bool] = {}
+    tokens = _ACTION_TOKEN_PATTERN.findall(str(text or ""))
+    for raw_token in tokens:
+        token = str(raw_token).strip()
+        if not token:
+            continue
+        lowered = token.lower()
+
+        if len(token) == 1:
+            if token.isupper() and lowered in {"a", "b"}:
+                action_state[_BUTTON_ALIAS_TO_ACTION[lowered]] = True
+                continue
+            key_alias_action = _KEY_ALIAS_TO_ACTION.get(lowered)
+            if key_alias_action is not None:
+                action_state[key_alias_action] = True
+                continue
+            button_alias_action = _BUTTON_ALIAS_TO_ACTION.get(lowered)
+            if button_alias_action is not None:
+                action_state[button_alias_action] = True
+                continue
+            return {}
+
+        action_name = _BUTTON_ALIAS_TO_ACTION.get(lowered)
+        if action_name is not None:
+            action_state[action_name] = True
+            continue
+
+        if all(char in _KEY_ALIAS_TO_ACTION for char in lowered):
+            for char in lowered:
+                action_state[_KEY_ALIAS_TO_ACTION[char]] = True
+            continue
+        return {}
+    return action_state
+
+
 def _resolve_hold_ticks(payload: Mapping[str, Any], *, default: int) -> int:
     for key in ("hold_ticks", "holdTicks"):
         value = payload.get(key)
@@ -155,3 +263,8 @@ def _resolve_hold_ticks(payload: Mapping[str, Any], *, default: int) -> int:
             continue
     return max(1, int(default))
 
+
+def _is_repeat_keydown(event: BrowserKeyEvent) -> bool:
+    if event.event_type not in {"keydown", "key_down"}:
+        return False
+    return _coerce_bool(event.payload.get("repeat"), default=False)
