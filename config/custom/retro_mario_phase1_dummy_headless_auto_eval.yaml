@@ -2,13 +2,14 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_phase1
-  description: Stable-retro Mario demo with dummy LLM backend (single-player).
+  name: retro_mario_dummy_headless_auto_eval
+  description: Stable-retro Mario dummy demo in pure headless mode with auto-eval.
 
 custom:
   steps:
     - step: arena
       adapter_id: retro_mario_arena
+    - step: auto_eval
 
 datasets:
   - dataset_id: retro_mario_demo
@@ -35,11 +36,6 @@ role_adapters:
     capabilities:
       - chat_completion
 
-  - adapter_id: retro_websocket_human
-    role_type: human
-    params:
-      source: queue
-
   - adapter_id: retro_mario_arena
     role_type: arena
     params:
@@ -47,7 +43,8 @@ role_adapters:
         impl: retro_env_v1
         game: SuperMarioBros3-Nes-v0
         state: Start
-        display_mode: websocket
+        display_mode: headless
+        obs_image: false
         record_bk2: false
         legal_moves:
           - noop
@@ -70,19 +67,30 @@ role_adapters:
         hold_ticks_min: 1
         hold_ticks_max: 12
         hold_ticks_default: 6
-      human_input:
-        enabled: true
-        host: 0.0.0.0
-        port: 5800
-        fps: 30
-        hold_ticks_default: 6
       players:
         - name: player_0
-          type: human
-          ref: retro_websocket_human
+          type: backend
+          ref: retro_dummy_player
+          max_retries: 0
+          fallback_policy: first_legal
+
+metrics:
+  - metric_id: retro_episode_length_steps
+    implementation: episode_length_steps
+  - metric_id: retro_legal_action_rate
+    implementation: legal_action_rate
+  - metric_id: retro_illegal_action_count
+    implementation: illegal_action_count
+  - metric_id: retro_on_time_rate
+    implementation: on_time_rate
+  - metric_id: retro_completion_flag
+    implementation: completion_flag
+  - metric_id: retro_termination_reason
+    implementation: termination_reason
+    aggregation: categorical_count
 
 tasks:
-  - task_id: retro_mario_demo
+  - task_id: retro_mario_dummy_headless_auto_eval
     dataset_id: retro_mario_demo
     max_samples: 1
     concurrency: 1
@@ -91,4 +99,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_demo_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_dummy_headless_auto_eval_events.jsonl

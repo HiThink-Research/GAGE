@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_openai_ws_rgb_auto_eval
-  description: Stable-retro Mario demo with OpenAI HTTP backend, ws_rgb visualization, and auto-eval metrics.
+  name: retro_mario_openai_ws_rgb_headless_auto_eval
+  description: Stable-retro Mario OpenAI demo with ws_rgb visualization (headless runtime) and auto-eval.
 
 custom:
   steps:
@@ -48,6 +48,7 @@ role_adapters:
         impl: retro_env_v1
         game: SuperMarioBros3-Nes-v0
         state: Start
+        # display_mode=websocket is rendered via ws_rgb, with headless env runtime.
         display_mode: websocket
         obs_image: true
         record_bk2: false
@@ -104,7 +105,7 @@ metrics:
     aggregation: categorical_count
 
 tasks:
-  - task_id: retro_mario_openai_ws_rgb_auto_eval
+  - task_id: retro_mario_openai_ws_rgb_headless_auto_eval
     dataset_id: retro_mario_demo
     max_samples: 1
     concurrency: 1
@@ -113,4 +114,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_ws_rgb_auto_eval_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_ws_rgb_headless_auto_eval_events.jsonl
