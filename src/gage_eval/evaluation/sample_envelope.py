@@ -132,13 +132,22 @@ def _normalize_arena_trace_steps(
     *,
     fallback_timestamp_ms: int,
 ) -> list[dict[str, Any]]:
-    if not isinstance(raw_trace, Sequence) or isinstance(raw_trace, (str, bytes)):
+    trace_source = raw_trace
+    if isinstance(trace_source, Mapping):
+        # NOTE: Keep compatibility with legacy {"schema": "...", "steps": [...]} payloads.
+        legacy_steps = trace_source.get("steps")
+        if isinstance(legacy_steps, Sequence) and not isinstance(legacy_steps, (str, bytes)):
+            trace_source = legacy_steps
+        else:
+            return []
+
+    if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
         return []
 
     normalized: list[dict[str, Any]] = []
 
     # STEP 1: Canonicalize every step to the frozen required field set.
-    for idx, item in enumerate(raw_trace):
+    for idx, item in enumerate(trace_source):
         source = dict(item) if isinstance(item, Mapping) else {}
         timestamp = _coerce_int(source.get("timestamp"), fallback_timestamp_ms)
         obs_ready_ms = _coerce_int(source.get("t_obs_ready_ms"), timestamp)
@@ -333,6 +342,8 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return default
+
+
 def ensure_predict_result_slot(sample: Dict[str, Any], index: int = 0) -> Dict[str, Any]:
     """Ensure `sample["predict_result"][index]` exists and return it.
 
@@ -357,30 +368,32 @@ def ensure_predict_result_slot(sample: Dict[str, Any], index: int = 0) -> Dict[s
     return slot
 
 
-def set_arena_trace(sample: Dict[str, Any], arena_trace: Dict[str, Any], index: int = 0) -> None:
-    """Write arena_trace to `sample["predict_result"][index]`.
+def set_arena_trace(sample: Dict[str, Any], arena_trace: Any, index: int = 0) -> None:
+    """Write canonical arena_trace steps to `sample["predict_result"][index]`.
 
     Args:
         sample: Mutable sample envelope.
-        arena_trace: Arena trace payload.
+        arena_trace: Arena trace payload (preferred: list[dict], legacy: {"steps": [...]}).
         index: Target predict_result index.
     """
 
-    if not isinstance(arena_trace, dict):
-        return
+    normalized = _normalize_arena_trace_steps(
+        arena_trace,
+        fallback_timestamp_ms=int(time.time() * 1000),
+    )
     slot = ensure_predict_result_slot(sample, index=index)
-    slot["arena_trace"] = copy.deepcopy(arena_trace)
+    slot["arena_trace"] = normalized
 
 
-def get_arena_trace(sample: Mapping[str, Any], index: int = 0) -> Optional[Dict[str, Any]]:
-    """Read arena_trace from `sample["predict_result"][index]` when available.
+def get_arena_trace(sample: Mapping[str, Any], index: int = 0) -> Optional[list[dict[str, Any]]]:
+    """Read canonical arena_trace steps from `sample["predict_result"][index]`.
 
     Args:
         sample: Sample mapping.
         index: Target predict_result index.
 
     Returns:
-        Arena trace mapping when present, otherwise None.
+        Canonical trace step list when present, otherwise None.
     """
 
     predict_result = sample.get("predict_result")
@@ -392,10 +405,12 @@ def get_arena_trace(sample: Mapping[str, Any], index: int = 0) -> Optional[Dict[
     slot = predict_result[normalized_index]
     if not isinstance(slot, Mapping):
         return None
-    arena_trace = slot.get("arena_trace")
-    if not isinstance(arena_trace, Mapping):
+    if "arena_trace" not in slot:
         return None
-    return dict(arena_trace)
+    return _normalize_arena_trace_steps(
+        slot.get("arena_trace"),
+        fallback_timestamp_ms=int(time.time() * 1000),
+    )
 
 
 def _should_split_predict_result(model_output: Mapping[str, Any], answer: Any) -> bool:

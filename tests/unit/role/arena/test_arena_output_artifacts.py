@@ -53,7 +53,7 @@ def test_arena_output_includes_arena_trace_when_present() -> None:
         win_direction=None,
         line_length=None,
         replay_path=None,
-        arena_trace={"schema": "gage.trace/v1", "steps": []},
+        arena_trace={"schema": "gage.trace/v1", "steps": [{"step_index": 7}]},
     )
     output = adapter._format_result(result, {"id": "sample-2"}, trace=None)
-    assert output["arena_trace"]["schema"] == "gage.trace/v1"
+    assert output["arena_trace"] == [{"step_index": 7}]

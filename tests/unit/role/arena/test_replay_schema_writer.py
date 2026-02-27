@@ -32,7 +32,7 @@ def test_replay_schema_writer_writes_manifest_and_events(tmp_path: Path) -> None
         scheduler_type="turn",
         result=result,
         move_log=move_log,
-        arena_trace={"steps": [{"step_index": 1}]},
+        arena_trace=[{"step_index": 1}],
         extra_meta={"env_impl": "gomoku_local_v1"},
     )
 
@@ -46,7 +46,7 @@ def test_replay_schema_writer_writes_manifest_and_events(tmp_path: Path) -> None
     assert payload["recording"]["counts"]["action"] == 2
     assert payload["recording"]["counts"]["result"] == 1
     assert payload["result"]["result"] == "win"
-    assert payload["arena_trace"]["steps"][0]["step_index"] == 1
+    assert payload["arena_trace"][0]["step_index"] == 1
 
     events_file = replay_file.parent / "events.jsonl"
     lines = events_file.read_text(encoding="utf-8").strip().splitlines()
@@ -88,3 +88,18 @@ def test_replay_schema_writer_supports_frame_events_and_mode_both(tmp_path: Path
     lines = (replay_file.parent / "events.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert any(json.loads(line).get("type") == "frame" for line in lines)
 
+
+def test_replay_schema_writer_accepts_legacy_trace_mapping_shape(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "run_3"
+    writer = ReplaySchemaWriter(run_dir=run_dir, sample_id="sample_legacy")
+    result = _build_result()
+    replay_path = writer.write(
+        scheduler_type="turn",
+        result=result,
+        move_log=[],
+        arena_trace={"schema": "gage.trace/v1", "steps": [{"step_index": 9}]},
+    )
+
+    replay_file = Path(replay_path)
+    payload = json.loads(replay_file.read_text(encoding="utf-8"))
+    assert payload["arena_trace"][0]["step_index"] == 9

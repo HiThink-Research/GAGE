@@ -7,7 +7,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from gage_eval.role.arena.types import GameResult
 
@@ -34,7 +34,7 @@ class ReplaySchemaWriter:
         scheduler_type: str,
         result: GameResult,
         move_log: Sequence[dict[str, Any]],
-        arena_trace: Optional[dict[str, Any]],
+        arena_trace: Optional[Sequence[Mapping[str, Any]]],
         extra_meta: Optional[dict[str, Any]] = None,
     ) -> str:
         """Write replay schema artifacts and return replay.json path.
@@ -43,7 +43,7 @@ class ReplaySchemaWriter:
             scheduler_type: Arena scheduler kind.
             result: Final game result payload.
             move_log: Action history for event conversion.
-            arena_trace: Optional scheduler trace payload.
+            arena_trace: Optional ordered scheduler trace entries.
             extra_meta: Optional metadata passed from adapter/environment.
 
         Returns:
@@ -154,7 +154,7 @@ class ReplaySchemaWriter:
         result: GameResult,
         action_count: int,
         frame_count: int,
-        arena_trace: Optional[dict[str, Any]],
+        arena_trace: Optional[Sequence[Mapping[str, Any]]],
         extra_meta: dict[str, Any],
     ) -> dict[str, Any]:
         recording_mode = _resolve_recording_mode(action_count, frame_count)
@@ -186,8 +186,9 @@ class ReplaySchemaWriter:
                 "illegal_move_count": int(result.illegal_move_count),
             },
         }
-        if isinstance(arena_trace, dict):
-            payload["arena_trace"] = arena_trace
+        normalized_trace = _normalize_arena_trace_steps(arena_trace)
+        if normalized_trace:
+            payload["arena_trace"] = normalized_trace
         legacy_replay_path = payload["meta"].pop("legacy_replay_path", None)
         if legacy_replay_path:
             payload["files"] = {"legacy_replay_path": str(legacy_replay_path)}
@@ -208,6 +209,20 @@ def _now_ms() -> int:
 def _sanitize_sample_id(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_")
     return cleaned or "unknown"
+
+
+def _normalize_arena_trace_steps(raw_trace: Any) -> list[dict[str, Any]]:
+    trace_source = raw_trace
+    if isinstance(trace_source, Mapping):
+        # NOTE: Keep compatibility with legacy {"schema": "...", "steps": [...]} payloads.
+        legacy_steps = trace_source.get("steps")
+        if isinstance(legacy_steps, Sequence) and not isinstance(legacy_steps, (str, bytes)):
+            trace_source = legacy_steps
+        else:
+            return []
+    if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
+        return []
+    return [dict(item) for item in trace_source if isinstance(item, Mapping)]
 
 
 def _resolve_timestamp_ms(entry: Mapping[str, Any]) -> int:
@@ -303,4 +318,3 @@ def _resolve_result_status(result: GameResult) -> str:
     if status:
         return str(status)
     return str(result.result)
-
