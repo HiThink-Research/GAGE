@@ -22,6 +22,7 @@ from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
 from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
 from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
+from gage_eval.role.arena.frame_capture import FrameCaptureRecorder
 from gage_eval.role.arena.replay_schema_writer import ReplaySchemaWriter
 from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
@@ -118,6 +119,9 @@ class ArenaRoleAdapter(RoleAdapter):
             chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
         )
+        frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
+        if frame_recorder is not None:
+            environment = _FrameCaptureEnvironment(environment, frame_recorder)
         self._maybe_register_ws_display(
             sample=sample,
             environment=environment,
@@ -153,7 +157,12 @@ class ArenaRoleAdapter(RoleAdapter):
         finally:
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
             pass
-        output = self._format_result(result, sample, trace)
+        output = self._format_result(
+            result,
+            sample,
+            trace,
+            frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
+        )
 
         if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
             visualizer.wait_for_finish()
@@ -613,6 +622,8 @@ class ArenaRoleAdapter(RoleAdapter):
         result: GameResult,
         sample: Dict[str, Any],
         trace: Optional[ObservabilityTrace],
+        *,
+        frame_events: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> Dict[str, Any]:
         resolved_status = str(getattr(result, "status", None) or result.result)
         output = {
@@ -644,6 +655,7 @@ class ArenaRoleAdapter(RoleAdapter):
             sample=sample,
             trace=trace,
             output=output,
+            frame_events=frame_events,
         )
         if replay_v1_path:
             if self._resolve_replay_primary_mode():
@@ -799,6 +811,55 @@ class ArenaRoleAdapter(RoleAdapter):
             return False
         return default
 
+    def _build_frame_capture_recorder(
+        self,
+        *,
+        sample: Dict[str, Any],
+        trace: Optional[ObservabilityTrace],
+    ) -> Optional[FrameCaptureRecorder]:
+        """Build frame capture recorder when replay frame capture is enabled."""
+
+        replay_cfg = self._environment_cfg.get("replay")
+        if not isinstance(replay_cfg, Mapping):
+            return None
+        if not self._coerce_bool(replay_cfg.get("enabled"), default=False):
+            return None
+
+        frame_cfg = replay_cfg.get("frame_capture")
+        if not isinstance(frame_cfg, Mapping):
+            return None
+        if not self._coerce_bool(frame_cfg.get("enabled"), default=False):
+            return None
+
+        run_dir = self._resolve_run_dir(trace)
+        if run_dir is None:
+            logger.warning("Frame capture enabled but run_id is missing; skip frame capture.")
+            return None
+        sample_id = self._resolve_sample_id(sample)
+        replay_output_dir = replay_cfg.get("output_dir")
+        replay_dir = ReplaySchemaWriter.resolve_replay_dir(
+            run_dir=run_dir,
+            sample_id=sample_id,
+            output_dir=str(replay_output_dir) if replay_output_dir else None,
+        )
+        return FrameCaptureRecorder(
+            replay_dir=replay_dir,
+            frame_dir_name=str(frame_cfg.get("frame_dir_name") or "frames"),
+            enabled=True,
+            frame_stride=max(1, self._coerce_int(frame_cfg.get("frame_stride"), default=1)),
+            max_frames=max(0, self._coerce_int(frame_cfg.get("max_frames"), default=0)),
+            image_format=str(frame_cfg.get("format") or "jpeg"),
+            jpeg_quality=max(1, min(95, self._coerce_int(frame_cfg.get("quality"), default=75))),
+            include_frame_snapshot=self._coerce_bool(frame_cfg.get("include_frame_snapshot"), default=True),
+        )
+
+    @staticmethod
+    def _coerce_int(value: Any, *, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return int(default)
+
     def _ensure_visualizer(self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]):
         if self._shared_visualizer is not None:
             return self._shared_visualizer, self._shared_visualizer.action_queue
@@ -933,32 +994,107 @@ class ArenaRoleAdapter(RoleAdapter):
             return self._ws_rgb_hub
         host = str(self._human_input_cfg.get("ws_host", self._human_input_cfg.get("host", "127.0.0.1")))
         port = int(self._human_input_cfg.get("ws_port", 5800))
+        allow_origin = str(self._human_input_cfg.get("ws_allow_origin", self._human_input_cfg.get("allow_origin", "*")))
         from gage_eval.tools.ws_rgb_server import WsRgbHubServer
 
-        hub = WsRgbHubServer(host=host, port=port)
+        hub = WsRgbHubServer(host=host, port=port, allow_origin=allow_origin)
         hub.start()
+        logger.info("ArenaRoleAdapter {} ws_rgb hub ready at {}", self.adapter_id, hub.base_url)
         self._ws_rgb_hub = hub
         return self._ws_rgb_hub
 
     def _bind_input_mapper(self, *, env_impl: str):
         """Bind a game-specific mapper for websocket input routing."""
 
-        if "retro" not in str(env_impl).lower():
-            return None
-        from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
-
+        normalized_env_impl = str(env_impl).lower()
         action_schema = self._environment_cfg.get("action_schema")
-        hold_ticks_default = None
-        if isinstance(action_schema, dict):
-            hold_ticks_default = action_schema.get("hold_ticks_default")
-        if hold_ticks_default is None:
-            hold_ticks_default = self._human_input_cfg.get("hold_ticks_default")
-        if hold_ticks_default is None:
-            return RetroInputMapper()
-        try:
-            return RetroInputMapper(default_hold_ticks=int(hold_ticks_default))
-        except (TypeError, ValueError):
-            return RetroInputMapper()
+
+        if "retro" in normalized_env_impl:
+            from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
+
+            hold_ticks_default = None
+            if isinstance(action_schema, dict):
+                hold_ticks_default = action_schema.get("hold_ticks_default")
+            if hold_ticks_default is None:
+                hold_ticks_default = self._human_input_cfg.get("hold_ticks_default")
+            if hold_ticks_default is None:
+                return RetroInputMapper()
+            try:
+                return RetroInputMapper(default_hold_ticks=int(hold_ticks_default))
+            except (TypeError, ValueError):
+                return RetroInputMapper()
+
+        if "mahjong" in normalized_env_impl:
+            from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return MahjongInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        if "doudizhu" in normalized_env_impl:
+            from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return DoudizhuInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        if "pettingzoo" in normalized_env_impl:
+            from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import (
+                PettingZooDiscreteInputMapper,
+            )
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return PettingZooDiscreteInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        if "gomoku" in normalized_env_impl or "tictactoe" in normalized_env_impl:
+            from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            coord_scheme = self._environment_cfg.get("coord_scheme")
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                if action_schema.get("coord_scheme") is not None:
+                    coord_scheme = action_schema.get("coord_scheme")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return GridCoordInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                coord_scheme=str(coord_scheme) if coord_scheme else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        return None
 
     def _build_display_id(self, *, sample: Dict[str, Any], env_impl: str) -> str:
         metadata = sample.get("metadata")
@@ -985,6 +1121,7 @@ class ArenaRoleAdapter(RoleAdapter):
         sample: Dict[str, Any],
         trace: Optional[ObservabilityTrace],
         output: Dict[str, Any],
+        frame_events: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> Optional[str]:
         """Write replay v1 artifacts when enabled by environment.replay."""
 
@@ -1005,7 +1142,10 @@ class ArenaRoleAdapter(RoleAdapter):
         extra_meta: Dict[str, Any] = {
             "adapter_id": self.adapter_id,
             "env_impl": self._environment_cfg.get("impl"),
+            "env_id": self._environment_cfg.get("env_id"),
         }
+        if frame_events:
+            extra_meta["frame_events"] = [dict(item) for item in frame_events if isinstance(item, Mapping)]
         if output.get("game_log_path"):
             extra_meta["game_log_path"] = output.get("game_log_path")
         if result.replay_path:
@@ -1101,6 +1241,12 @@ class _VisualizedEnvironment:
     def get_active_player(self) -> str:
         return self._base.get_active_player()
 
+    def get_last_frame(self):
+        frame_getter = getattr(self._base, "get_last_frame", None)
+        if callable(frame_getter):
+            return frame_getter()
+        return {}
+
     def observe(self, player: str):
         return self._base.observe(player)
 
@@ -1117,6 +1263,9 @@ class _VisualizedEnvironment:
         outcome = self._base.build_result(result=result, reason=reason)
         self._update(outcome, self._last_action)
         return outcome
+
+    def __getattr__(self, item: str):
+        return getattr(self._base, item)
 
     def _update(self, outcome: Optional[GameResult] = None, action=None) -> None:
         try:
@@ -1156,3 +1305,71 @@ class _VisualizedEnvironment:
             )
         except Exception:
             pass
+
+
+class _FrameCaptureEnvironment:
+    """Environment wrapper that captures replay frame events during execution."""
+
+    def __init__(self, base_env, recorder: FrameCaptureRecorder) -> None:
+        self._base = base_env
+        self._recorder = recorder
+        self._step_index = 0
+        self._capture_current(step=0, actor=None, force=True)
+
+    def reset(self) -> None:
+        self._base.reset()
+        self._step_index = 0
+        self._capture_current(step=0, actor=None, force=True)
+
+    def get_active_player(self) -> str:
+        return self._base.get_active_player()
+
+    def get_last_frame(self):
+        frame_getter = getattr(self._base, "get_last_frame", None)
+        if callable(frame_getter):
+            return frame_getter()
+        return {}
+
+    def observe(self, player: str):
+        return self._base.observe(player)
+
+    def apply(self, action) -> Optional[GameResult]:
+        outcome = self._base.apply(action)
+        self._step_index += 1
+        actor = getattr(action, "player", None)
+        self._capture_current(
+            step=self._step_index,
+            actor=str(actor) if actor is not None else None,
+            force=False,
+        )
+        return outcome
+
+    def is_terminal(self) -> bool:
+        return self._base.is_terminal()
+
+    def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
+        return self._base.build_result(result=result, reason=reason)
+
+    def __getattr__(self, item: str):
+        return getattr(self._base, item)
+
+    def _capture_current(
+        self,
+        *,
+        step: int,
+        actor: Optional[str],
+        force: bool,
+    ) -> None:
+        frame_getter = getattr(self._base, "get_last_frame", None)
+        if not callable(frame_getter):
+            return
+        try:
+            frame_payload = frame_getter()
+        except Exception:
+            return
+        self._recorder.capture(
+            frame_payload,
+            step=int(step),
+            actor=actor,
+            force=bool(force),
+        )
