@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from gage_eval.role.arena.interfaces import ArenaEnvironment, Player, Scheduler
 from gage_eval.role.arena.schedulers._scheduler_utils import (
@@ -20,16 +20,18 @@ from gage_eval.role.arena.schedulers._scheduler_utils import (
     set_trace_action_fields,
     think_with_timeout,
 )
-from gage_eval.role.arena.types import GameResult, attach_arena_trace
+from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult, attach_arena_trace
 
 
 class RecordScheduler(Scheduler):
-    """Run turn-like scheduling while producing unified arena trace entries."""
+    """Run fixed-cadence record scheduling while producing unified trace entries."""
 
     def __init__(
         self,
         *,
-        tick_ms: int = 33,
+        record_fps: Optional[int] = 60,
+        tick_ms: Optional[int] = None,
+        max_ticks: Optional[int] = None,
         max_steps: Optional[int] = None,
         action_timeout_ms: Optional[int] = None,
         timeout_fallback_move: str = "NOOP",
@@ -43,8 +45,10 @@ class RecordScheduler(Scheduler):
         """Initialize the scheduler.
 
         Args:
-            tick_ms: Optional pacing interval between steps in milliseconds.
-            max_steps: Optional upper bound on scheduling steps.
+            record_fps: Record sampling frequency when ``tick_ms`` is not set.
+            tick_ms: Optional pacing interval between ticks in milliseconds.
+            max_ticks: Optional upper bound on scheduling ticks.
+            max_steps: Legacy alias of ``max_ticks`` for backward compatibility.
             action_timeout_ms: Optional timeout for per-player think calls.
             timeout_fallback_move: Move submitted when think call times out.
             timeline_id: Optional timeline id attached to trace records.
@@ -55,8 +59,18 @@ class RecordScheduler(Scheduler):
             trace_action_format: Serialization mode for action fields.
         """
 
-        self._tick_ms = max(0, int(tick_ms))
-        self._max_steps = max_steps if max_steps is None else max(1, int(max_steps))
+        self._record_fps = None if record_fps is None else max(1, int(record_fps))
+        self._tick_ms = self._resolve_tick_interval_ms(
+            tick_ms=tick_ms,
+            record_fps=self._record_fps,
+        )
+        if max_ticks is not None:
+            max_tick_bound = max_ticks
+            self._max_tick_reason = "max_ticks"
+        else:
+            max_tick_bound = max_steps
+            self._max_tick_reason = "max_steps"
+        self._max_ticks = None if max_tick_bound is None else max(1, int(max_tick_bound))
         self._action_timeout_ms = (
             None if action_timeout_ms is None else max(1, int(action_timeout_ms))
         )
@@ -93,12 +107,14 @@ class RecordScheduler(Scheduler):
         environment.reset()
         arena_trace: list[dict] = []
         step_index = self._trace_step_index_start
-        emitted_steps = 0
+        tick_index = 0
 
-        # STEP 2: Run loop and emit one trace entry per decision step.
+        # STEP 2: Run the fixed-cadence record loop and emit one trace entry per tick.
         while not environment.is_terminal():
-            if self._max_steps is not None and emitted_steps >= self._max_steps:
-                result = environment.build_result(result="draw", reason="max_steps")
+            tick_started_at = time.monotonic()
+
+            if self._max_ticks is not None and tick_index >= self._max_ticks:
+                result = environment.build_result(result="draw", reason=self._max_tick_reason)
                 return attach_arena_trace(result, arena_trace)
 
             active_player = environment.get_active_player()
@@ -116,10 +132,9 @@ class RecordScheduler(Scheduler):
                 timeline_id=self._timeline_id,
             )
 
-            action, timed_out, error_type = think_with_timeout(
+            action, timed_out, error_type = self._collect_action_for_tick(
                 player=player,
                 observation=observation,
-                timeout_ms=self._action_timeout_ms,
             )
             if action is None:
                 fallback_reason = "timeout" if timed_out else (error_type or "think_exception")
@@ -155,10 +170,98 @@ class RecordScheduler(Scheduler):
                 return attach_arena_trace(outcome, arena_trace)
 
             step_index += 1
-            emitted_steps += 1
-            if self._tick_ms > 0:
-                time.sleep(self._tick_ms / 1000.0)
+            tick_index += 1
+            self._sleep_until_next_tick(tick_started_at=tick_started_at)
 
         # STEP 3: Emit terminal result when environment exits naturally.
         result = environment.build_result(result="draw", reason="terminated")
         return attach_arena_trace(result, arena_trace)
+
+    def _collect_action_for_tick(
+        self,
+        *,
+        player: Player,
+        observation: ArenaObservation,
+    ) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
+        """Collect one action without blocking the scheduler cadence."""
+
+        if self._supports_async_action_api(player):
+            return self._collect_async_action_for_tick(
+                player=player,
+                observation=observation,
+            )
+
+        return think_with_timeout(
+            player=player,
+            observation=observation,
+            timeout_ms=self._resolve_sync_timeout_ms(),
+        )
+
+    def _collect_async_action_for_tick(
+        self,
+        *,
+        player: Player,
+        observation: ArenaObservation,
+    ) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
+        """Collect action from async players with non-blocking polling."""
+
+        has_action = getattr(player, "has_action")
+        pop_action = getattr(player, "pop_action")
+        start_thinking = getattr(player, "start_thinking")
+
+        try:
+            if has_action():
+                return pop_action(), False, None
+        except Exception:
+            return None, False, "think_exception"
+
+        try:
+            start_thinking(observation, deadline_ms=self._action_timeout_ms)
+        except Exception:
+            return None, False, "think_exception"
+
+        try:
+            if has_action():
+                return pop_action(), False, None
+        except Exception:
+            return None, False, "think_exception"
+
+        return None, True, "timeout"
+
+    @staticmethod
+    def _supports_async_action_api(player: Any) -> bool:
+        """Return True when the player implements async polling APIs."""
+
+        return all(
+            callable(getattr(player, method_name, None))
+            for method_name in ("start_thinking", "has_action", "pop_action")
+        )
+
+    @staticmethod
+    def _resolve_tick_interval_ms(*, tick_ms: Optional[int], record_fps: Optional[int]) -> int:
+        """Resolve fixed sampling interval for record scheduler."""
+
+        if tick_ms is not None and int(tick_ms) > 0:
+            return int(tick_ms)
+        if record_fps is not None and int(record_fps) > 0:
+            return max(1, int(round(1000.0 / float(record_fps))))
+        return 33
+
+    def _resolve_sync_timeout_ms(self) -> Optional[int]:
+        """Resolve timeout budget for sync players within one record tick."""
+
+        if self._action_timeout_ms is None:
+            return self._tick_ms if self._tick_ms > 0 else None
+        if self._tick_ms <= 0:
+            return self._action_timeout_ms
+        return min(self._action_timeout_ms, self._tick_ms)
+
+    def _sleep_until_next_tick(self, *, tick_started_at: float) -> None:
+        """Sleep the remaining tick budget to preserve stable sampling cadence."""
+
+        if self._tick_ms <= 0:
+            return
+        elapsed_ms = (time.monotonic() - tick_started_at) * 1000.0
+        remaining_ms = float(self._tick_ms) - elapsed_ms
+        if remaining_ms > 0:
+            time.sleep(remaining_ms / 1000.0)

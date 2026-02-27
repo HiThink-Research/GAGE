@@ -481,10 +481,17 @@ class ArenaRoleAdapter(RoleAdapter):
         if scheduler_type == "turn":
             return TurnScheduler(max_turns=max_turns)
         if scheduler_type == "record":
-            max_steps = eval_cfg.get("max_turns", cfg.get("max_steps", cfg.get("max_turns")))
+            max_ticks = eval_cfg.get(
+                "max_turns",
+                cfg.get("max_ticks", cfg.get("max_steps", cfg.get("max_turns"))),
+            )
+            tick_ms_value = cfg.get("tick_ms")
+            if tick_ms_value is None and cfg.get("record_fps") is None:
+                tick_ms_value = 33
             return RecordScheduler(
-                tick_ms=int(cfg.get("tick_ms", 33)),
-                max_steps=max_steps,
+                record_fps=cfg.get("record_fps"),
+                tick_ms=None if tick_ms_value is None else int(tick_ms_value),
+                max_ticks=max_ticks,
                 action_timeout_ms=cfg.get("action_timeout_ms"),
                 timeout_fallback_move=str(cfg.get("timeout_fallback_move", "NOOP")),
                 timeline_id=cfg.get("timeline_id"),
