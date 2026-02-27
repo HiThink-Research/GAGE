@@ -644,11 +644,9 @@ class ArenaRoleAdapter(RoleAdapter):
         metrics = getattr(result, "metrics", None)
         if isinstance(metrics, dict):
             output["metrics"] = dict(metrics)
-        arena_trace = getattr(result, "arena_trace", None)
-        if isinstance(arena_trace, Mapping):
-            output["arena_trace"] = dict(arena_trace)
-        elif isinstance(arena_trace, Sequence) and not isinstance(arena_trace, (str, bytes)):
-            output["arena_trace"] = list(arena_trace)
+        arena_trace = self._normalize_arena_trace_steps(getattr(result, "arena_trace", None))
+        if arena_trace is not None:
+            output["arena_trace"] = arena_trace
         output.update(self._format_game_log(result.move_log, sample, trace))
         if result.replay_path:
             output["replay_path"] = result.replay_path
@@ -665,6 +663,20 @@ class ArenaRoleAdapter(RoleAdapter):
             else:
                 output["replay_v1_path"] = replay_v1_path
         return output
+
+    @staticmethod
+    def _normalize_arena_trace_steps(raw_trace: Any) -> Optional[list[dict[str, Any]]]:
+        trace_source = raw_trace
+        if isinstance(trace_source, Mapping):
+            # NOTE: Keep compatibility with legacy {"schema": "...", "steps": [...]} payloads.
+            legacy_steps = trace_source.get("steps")
+            if isinstance(legacy_steps, Sequence) and not isinstance(legacy_steps, (str, bytes)):
+                trace_source = legacy_steps
+            else:
+                return []
+        if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
+            return None
+        return [dict(item) for item in trace_source if isinstance(item, Mapping)]
 
     def _format_game_log(
         self,
@@ -1138,7 +1150,7 @@ class ArenaRoleAdapter(RoleAdapter):
             extra_meta["game_log_path"] = output.get("game_log_path")
         if result.replay_path:
             extra_meta["legacy_replay_path"] = result.replay_path
-        arena_trace = output.get("arena_trace")
+        arena_trace = self._normalize_arena_trace_steps(output.get("arena_trace"))
 
         # STEP 3: Persist replay.json + events.jsonl.
         writer = ReplaySchemaWriter(
@@ -1151,7 +1163,7 @@ class ArenaRoleAdapter(RoleAdapter):
                 scheduler_type=scheduler_type,
                 result=result,
                 move_log=list(result.move_log),
-                arena_trace=arena_trace if isinstance(arena_trace, dict) else None,
+                arena_trace=arena_trace,
                 extra_meta=extra_meta,
             )
         except Exception as exc:  # pragma: no cover - defensive filesystem guard

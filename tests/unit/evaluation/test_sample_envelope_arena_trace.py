@@ -20,10 +20,10 @@ def test_sample_envelope_arena_trace_helpers_normalize_predict_result() -> None:
 
     trace_payload = {"schema": "gage.trace/v1", "steps": [{"step_index": 1}]}
     set_arena_trace(sample, trace_payload, index=0)
-    assert sample["predict_result"][0]["arena_trace"]["schema"] == "gage.trace/v1"
+    assert sample["predict_result"][0]["arena_trace"][0]["step_index"] == 1
     loaded = get_arena_trace(sample, index=0)
     assert loaded is not None
-    assert loaded["steps"][0]["step_index"] == 1
+    assert loaded[0]["step_index"] == 1
 
 
 def test_execute_arena_writes_arena_trace_to_predict_result_zero() -> None:
@@ -66,6 +66,5 @@ def test_execute_arena_writes_arena_trace_to_predict_result_zero() -> None:
     assert isinstance(sample["predict_result"], list)
     assert sample["predict_result"]
     trace_payload = sample["predict_result"][0].get("arena_trace")
-    assert isinstance(trace_payload, dict)
-    assert trace_payload["steps"][0]["step_index"] == 2
-
+    assert isinstance(trace_payload, list)
+    assert trace_payload[0]["step_index"] == 2

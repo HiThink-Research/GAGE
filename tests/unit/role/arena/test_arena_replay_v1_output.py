@@ -8,7 +8,11 @@ from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.arena.types import GameResult
 
 
-def _build_result(*, replay_path: str | None = None) -> GameResult:
+def _build_result(
+    *,
+    replay_path: str | None = None,
+    arena_trace: tuple[dict[str, object], ...] | list[dict[str, object]] = (),
+) -> GameResult:
     return GameResult(
         winner="player_0",
         result="win",
@@ -18,6 +22,7 @@ def _build_result(*, replay_path: str | None = None) -> GameResult:
         final_board="{}",
         move_log=[{"index": 1, "player": "player_0", "move": "A1", "raw": "A1"}],
         replay_path=replay_path,
+        arena_trace=arena_trace,
     )
 
 
@@ -32,7 +37,10 @@ def test_arena_result_dual_writes_replay_v1_when_primary_disabled(tmp_path, monk
         },
         scheduler={"type": "turn"},
     )
-    result = _build_result(replay_path="legacy_replay.json")
+    result = _build_result(
+        replay_path="legacy_replay.json",
+        arena_trace=[{"step_index": 1, "player_id": "player_0"}],
+    )
     output = adapter._format_result(result, {"id": "sample 1"}, trace)
 
     assert output["replay_path"] == "legacy_replay.json"
@@ -42,6 +50,7 @@ def test_arena_result_dual_writes_replay_v1_when_primary_disabled(tmp_path, monk
     payload = json.loads(replay_file.read_text(encoding="utf-8"))
     assert payload["schema"] == "gage_replay/v1"
     assert payload["meta"]["run_id"] == "run_dual"
+    assert payload["arena_trace"][0]["step_index"] == 1
 
 
 def test_arena_result_primary_mode_replaces_replay_path(tmp_path, monkeypatch) -> None:
