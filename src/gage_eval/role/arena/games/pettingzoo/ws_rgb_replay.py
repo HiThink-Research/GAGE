@@ -48,7 +48,7 @@ _GAME_VERSIONS: dict[str, str] = {
 class ReplayFrameCursor:
     """Resolve replay frame by elapsed wall-clock time."""
 
-    def __init__(self, frames: Sequence[Mapping[str, Any]], *, fps: float, loop: bool) -> None:
+    def __init__(self, frames: Sequence[Mapping[str, Any]], *, fps: float) -> None:
         self._frames = [dict(item) for item in frames if isinstance(item, Mapping)]
         if not self._frames:
             self._frames = [
@@ -58,25 +58,36 @@ class ReplayFrameCursor:
                 }
             ]
         self._fps = max(0.1, float(fps))
-        self._loop = bool(loop)
-        self._started_at = time.monotonic()
+        self._frame_interval_s = 1.0 / self._fps
+        self._started_at: Optional[float] = None
+        self._last_advance_at: Optional[float] = None
+        self._index = 0
 
     def frame_source(self) -> dict[str, Any]:
         """Return one frame payload for ws_rgb polling."""
 
-        elapsed_s = max(0.0, time.monotonic() - self._started_at)
-        raw_index = int(elapsed_s * self._fps)
-        if self._loop:
-            index = raw_index % len(self._frames)
-        else:
-            index = min(raw_index, len(self._frames) - 1)
-        payload = dict(self._frames[index])
+        # STEP 1: Start replay cursor at first frame pull.
+        now = time.monotonic()
+        if self._started_at is None:
+            self._started_at = now
+            self._last_advance_at = now
+        elif self._index < len(self._frames) - 1:
+            last_advance_at = self._last_advance_at if self._last_advance_at is not None else now
+            elapsed_since_advance = max(0.0, now - last_advance_at)
+            # STEP 2: Advance at most one frame per pull to avoid skipping.
+            if elapsed_since_advance >= self._frame_interval_s:
+                self._index += 1
+                self._last_advance_at = now
+
+        started_at = self._started_at if self._started_at is not None else now
+        elapsed_s = max(0.0, now - started_at)
+        payload = dict(self._frames[self._index])
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
         metadata = dict(metadata)
         metadata["replay_elapsed_s"] = elapsed_s
-        metadata["replay_index"] = index
+        metadata["replay_index"] = self._index
         metadata["replay_total"] = len(self._frames)
         payload["metadata"] = metadata
         return payload
@@ -87,7 +98,6 @@ def build_ws_rgb_replay_display(
     *,
     task_id: str,
     fps: float,
-    loop: bool,
     max_frames: int,
 ) -> dict[str, Any]:
     """Build ws_rgb display payload for one PettingZoo sample record.
@@ -96,7 +106,6 @@ def build_ws_rgb_replay_display(
         sample_record: Top-level sample JSON payload.
         task_id: Task id from sample record.
         fps: Replay fps for frame cursor.
-        loop: Whether replay loops after reaching final frame.
         max_frames: Optional upper bound of replay frames (0 means no cap).
 
     Returns:
@@ -114,7 +123,7 @@ def build_ws_rgb_replay_display(
         env_id=env_id,
         max_frames=max(0, int(max_frames)),
     )
-    cursor = ReplayFrameCursor(frames, fps=float(fps), loop=bool(loop))
+    cursor = ReplayFrameCursor(frames, fps=float(fps))
 
     human_player_id = "player_0"
     metadata = sample.get("metadata")

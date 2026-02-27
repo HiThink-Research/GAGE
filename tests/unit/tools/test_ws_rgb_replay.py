@@ -59,7 +59,6 @@ def test_build_replay_v1_display_prefers_frame_events(tmp_path: Path) -> None:
         sample_record,
         task_id="pettingzoo_pong_dummy_ws_rgb",
         fps=10.0,
-        loop=False,
         max_frames=0,
     )
 
@@ -96,7 +95,6 @@ def test_build_replay_v1_display_returns_none_without_frame_events(tmp_path: Pat
         sample_record,
         task_id="task_no_frame",
         fps=10.0,
-        loop=False,
         max_frames=0,
     )
 

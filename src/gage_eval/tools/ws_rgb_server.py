@@ -607,6 +607,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       replayIndex: -1,
       replayTimer: null,
       replaySpeed: 1.0,
+      lastSnapshotDisplayId: "",
+      lastSnapshotSignature: "",
     };
 
     const el = {
@@ -649,6 +651,30 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         return JSON.parse(JSON.stringify(frame || {}));
       } catch (_) {
         return frame || {};
+      }
+    }
+
+    function buildSnapshotSignature(frame) {
+      if (!frame || typeof frame !== "object") {
+        return String(frame);
+      }
+      const metadata = frame.metadata && typeof frame.metadata === "object" ? frame.metadata : {};
+      const replaySeq = metadata.replay_seq;
+      const replayIndex = metadata.replay_index;
+      const replayStep = metadata.replay_step;
+      if (replaySeq != null || replayIndex != null || replayStep != null) {
+        return `replay:${String(replaySeq ?? "")}:${String(replayIndex ?? "")}:${String(replayStep ?? "")}`;
+      }
+      const moveCount = frame.move_count;
+      const lastMove = frame.last_move;
+      const boardText = frame.board_text;
+      if (moveCount != null || lastMove != null || boardText != null) {
+        return `live:${String(moveCount ?? "")}:${String(lastMove ?? "")}:${String(boardText ?? "")}`;
+      }
+      try {
+        return JSON.stringify(frame);
+      } catch (_) {
+        return String(frame);
       }
     }
 
@@ -759,6 +785,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       state.historyFrames = [];
       state.replayIndex = -1;
       state.replayMode = false;
+      state.lastSnapshotDisplayId = "";
+      state.lastSnapshotSignature = "";
       updateReplayUi();
     }
 
@@ -895,13 +923,27 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           updateReplayUi();
           return;
         }
-        const next = state.replayIndex + 1 >= state.historyFrames.length ? 0 : state.replayIndex + 1;
+        const next = state.replayIndex + 1;
+        if (next >= state.historyFrames.length) {
+          stopReplayPlayback();
+          updateReplayUi();
+          setStatus("Replay reached end.", "status ok");
+          return;
+        }
         renderReplayIndex(next);
       }, tickMs);
       updateReplayUi();
     }
 
     function pushReplaySnapshot(frame, imageDataUrl, imageHint) {
+      const snapshotSignature = buildSnapshotSignature(frame);
+      if (
+        snapshotSignature &&
+        state.lastSnapshotDisplayId === state.selectedDisplayId &&
+        state.lastSnapshotSignature === snapshotSignature
+      ) {
+        return;
+      }
       const snapshot = {
         frame: safeCloneFrame(frame),
         imageDataUrl: imageDataUrl || "",
@@ -910,6 +952,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         timestampMs: Date.now(),
       };
       state.historyFrames.push(snapshot);
+      state.lastSnapshotDisplayId = state.selectedDisplayId;
+      state.lastSnapshotSignature = snapshotSignature;
       if (state.historyFrames.length > state.historyLimit) {
         state.historyFrames.shift();
         if (state.replayIndex > 0) {

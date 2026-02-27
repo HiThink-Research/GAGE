@@ -1,0 +1,86 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: pettingzoo_replay_oneclick_dummy
+custom:
+  steps:
+  - step: arena
+    adapter_id: pettingzoo_arena
+datasets:
+- dataset_id: pz_local
+  loader: jsonl
+  params:
+    path: tests/data/pettingzoo_atari_demo.jsonl
+    streaming: false
+backends:
+- backend_id: pz_dummy_0
+  type: dummy
+  config:
+    responses:
+    - '0'
+    - '1'
+    - '2'
+    cycle: true
+- backend_id: pz_dummy_1
+  type: dummy
+  config:
+    responses:
+    - '2'
+    - '1'
+    - '0'
+    cycle: true
+role_adapters:
+- adapter_id: pz_dummy_0
+  role_type: dut_model
+  backend_id: pz_dummy_0
+  capabilities:
+  - chat_completion
+- adapter_id: pz_dummy_1
+  role_type: dut_model
+  backend_id: pz_dummy_1
+  capabilities:
+  - chat_completion
+- adapter_id: pettingzoo_arena
+  role_type: arena
+  params:
+    environment:
+      impl: pettingzoo_aec_v1
+      env_id: pettingzoo.atari.pong_v3
+      env_kwargs:
+        render_mode: rgb_array
+      include_raw_obs: false
+      use_action_meanings: false
+      replay:
+        enabled: true
+        primary_mode: true
+        frame_capture:
+          enabled: true
+          frame_stride: 1
+          max_frames: 90
+    rules:
+      illegal_policy:
+        retry: 0
+        on_fail: loss
+    scheduler:
+      type: turn
+      max_turns: 30
+    parser:
+      impl: discrete_action_parser_v1
+    players:
+    - name: p0
+      player_id: player_0
+      type: backend
+      ref: pz_dummy_0
+      max_retries: 0
+      fallback_policy: first_legal
+    - name: p1
+      player_id: player_1
+      type: backend
+      ref: pz_dummy_1
+      max_retries: 0
+      fallback_policy: first_legal
+tasks:
+- task_id: pettingzoo_replay_oneclick_dummy
+  dataset_id: pz_local
+  max_samples: 1
+  concurrency: 1
