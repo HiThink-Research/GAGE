@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from queue import Queue
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
+import pytest
 
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
 from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
@@ -139,5 +142,105 @@ def test_ws_rgb_hub_http_viewer_page_available() -> None:
         assert "GAGE ws_rgb Viewer" in html
         assert "/ws_rgb/displays" in html
         assert "/ws_rgb/frame" in html
+        assert "/ws_rgb/frame_image" in html
+    finally:
+        hub.stop()
+
+
+def test_ws_rgb_hub_http_frame_image_endpoint_returns_jpeg() -> None:
+    np = pytest.importorskip("numpy")
+    frame = np.zeros((4, 6, 3), dtype=np.uint8)
+    frame[:, :, 1] = 255
+
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-image",
+                label="pettingzoo",
+                human_player_id="player_0",
+                frame_source=lambda: {"frame_id": 11, "_rgb": frame},
+            )
+        )
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/frame?display_id=display-image"
+        ) as response:  # noqa: S310 - local test endpoint
+            frame_payload = json.loads(response.read().decode("utf-8"))
+        assert frame_payload["ok"] is True
+        assert "_rgb" not in frame_payload["frame"]
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/frame_image?display_id=display-image"
+        ) as response:  # noqa: S310 - local test endpoint
+            jpeg_bytes = response.read()
+            content_type = response.headers.get("Content-Type")
+        assert content_type == "image/jpeg"
+        assert isinstance(jpeg_bytes, bytes)
+        assert len(jpeg_bytes) > 0
+    finally:
+        hub.stop()
+
+
+def test_ws_rgb_hub_http_frame_image_missing_returns_not_found() -> None:
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-no-image",
+                label="text-only",
+                human_player_id="player_0",
+                frame_source=lambda: {"frame_id": 12},
+            )
+        )
+        with urlopen(f"{hub.base_url}/ws_rgb/frame_image?display_id=display-no-image") as _:
+            raise AssertionError("Expected HTTPError for missing frame image")
+    except HTTPError as exc:
+        assert exc.code == 404
+        payload = json.loads(exc.read().decode("utf-8"))
+        assert payload["error"] == "frame_image_missing"
+    finally:
+        hub.stop()
+
+
+def test_ws_rgb_hub_http_frame_image_supports_image_path_payload(tmp_path: Path) -> None:
+    pil_image = pytest.importorskip("PIL.Image")
+
+    image_path = tmp_path / "frame.jpg"
+    pil_image.new("RGB", (4, 4), color=(20, 200, 20)).save(image_path, format="JPEG")
+
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-path-image",
+                label="replay",
+                human_player_id="player_0",
+                frame_source=lambda: {
+                    "frame_id": 21,
+                    "_image_path_abs": str(image_path),
+                    "board_text": "from file",
+                },
+            )
+        )
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/frame?display_id=display-path-image"
+        ) as response:  # noqa: S310 - local test endpoint
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["ok"] is True
+        assert "_image_path_abs" not in payload["frame"]
+
+        with urlopen(
+            f"{hub.base_url}/ws_rgb/frame_image?display_id=display-path-image"
+        ) as response:  # noqa: S310 - local test endpoint
+            image_bytes = response.read()
+            content_type = response.headers.get("Content-Type")
+        assert content_type == "image/jpeg"
+        assert isinstance(image_bytes, bytes)
+        assert len(image_bytes) > 0
     finally:
         hub.stop()
