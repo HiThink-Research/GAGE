@@ -76,6 +76,10 @@ class AutoEvalStep(SampleStep):
         resolved_model_output = resolve_model_output(sample, model_output)
         resolved_judge_output = resolve_judge_output(sample, judge_output)
         resolved_arena_trace = resolve_arena_trace(sample, resolved_model_output)
+        if resolved_arena_trace or "arena_trace" in resolved_model_output:
+            normalized_model_output = dict(resolved_model_output)
+            normalized_model_output["arena_trace"] = resolved_arena_trace
+            resolved_model_output = normalized_model_output
         per_metric_results: Dict[str, Dict] = {}
         logger = self._logger
         worker_count = self._determine_worker_count()

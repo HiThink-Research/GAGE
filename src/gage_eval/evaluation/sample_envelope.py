@@ -413,6 +413,49 @@ def get_arena_trace(sample: Mapping[str, Any], index: int = 0) -> Optional[list[
     )
 
 
+def resolve_arena_trace(
+    sample: Optional[Mapping[str, Any]],
+    model_output: Optional[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Resolve canonical arena_trace steps from model_output or sample envelope.
+
+    Args:
+        sample: Sample mapping that may contain predict_result entries.
+        model_output: Explicit model_output payload when provided.
+
+    Returns:
+        Canonical trace step list, preferring explicit model_output first.
+    """
+
+    fallback_timestamp_ms = int(time.time() * 1000)
+
+    if isinstance(model_output, Mapping):
+        if "arena_trace" in model_output:
+            return _normalize_arena_trace_steps(
+                model_output.get("arena_trace"),
+                fallback_timestamp_ms=fallback_timestamp_ms,
+            )
+        raw_index = model_output.get("index")
+        if isinstance(raw_index, int):
+            resolved = get_arena_trace(sample or {}, index=raw_index)
+            if resolved is not None:
+                return resolved
+
+    resolved_primary = get_arena_trace(sample or {}, index=0)
+    if resolved_primary is not None:
+        return resolved_primary
+
+    if isinstance(sample, Mapping):
+        legacy = sample.get("arena_trace")
+        if legacy is not None:
+            return _normalize_arena_trace_steps(
+                legacy,
+                fallback_timestamp_ms=fallback_timestamp_ms,
+            )
+
+    return []
+
+
 def _should_split_predict_result(model_output: Mapping[str, Any], answer: Any) -> bool:
     if not isinstance(answer, list):
         return False
