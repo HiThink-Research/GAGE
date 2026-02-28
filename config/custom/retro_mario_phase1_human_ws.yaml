@@ -47,7 +47,7 @@ role_adapters:
           impl: info_last_v1
       scheduler:
         type: record
-        tick_ms: 33
+        tick_ms: 333
         
         max_ticks: 3600
       parser:
