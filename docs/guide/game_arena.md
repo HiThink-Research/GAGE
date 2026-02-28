@@ -509,3 +509,21 @@ Common env vars:
 - `REPLAY_PORT` / `FRONTEND_PORT`
 - `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
+
+## 11. VizDoom Arena summary
+
+Guide: [English](vizdoom_arena_summary.md) | [中文](vizdoom_arena_summary_zh.md)
+
+This chapter summarizes the current VizDoom arena status, key config entry points, and runtime expectations for local verification and integration handoff.
+
+## 12. Stable Retro Mario demo guide
+
+Guide: [English](stable_retro_mario_demo_guide.md) | [中文](stable_retro_mario_demo_guide_zh.md)
+
+This chapter provides an end-to-end Retro Mario demo path, including setup notes, run commands, replay checks, and troubleshooting guidance.
+
+## 13. ws_rgb replay usage guide
+
+Guide: [English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
+
+This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.

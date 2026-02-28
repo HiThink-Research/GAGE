@@ -509,3 +509,21 @@ URL 参数（Human / AI）：
 - `REPLAY_PORT` / `FRONTEND_PORT`
 - `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
+
+## 11. VizDoom Arena 概览
+
+文档：[English](vizdoom_arena_summary.md) | [中文](vizdoom_arena_summary_zh.md)
+
+本章节用于说明 VizDoom arena 的当前能力边界、关键配置入口与运行预期，便于本地验证和后续接入对齐。
+
+## 12. 稳定版 Retro Mario Demo 指南
+
+文档：[English](stable_retro_mario_demo_guide.md) | [中文](stable_retro_mario_demo_guide_zh.md)
+
+本章节给出 Retro Mario 的端到端演示路径，包含准备步骤、运行命令、回放校验和常见故障排查。
+
+## 13. ws_rgb 回放使用指南
+
+文档：[English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
+
+本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
