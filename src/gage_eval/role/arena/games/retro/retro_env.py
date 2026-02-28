@@ -23,6 +23,7 @@ from gage_eval.role.arena.games.retro.observation import (
     ObservationBuilder,
 )
 from gage_eval.role.arena.games.retro.replay import ReplaySchemaWriter
+from gage_eval.role.arena.games.retro.human_queue_bridge import ensure_retro_human_queue_bridge
 
 DEFAULT_PLAYER_ID = "player_0"
 
@@ -93,6 +94,7 @@ class StableRetroArenaEnvironment:
             seed: Optional reset seed.
         """
 
+        ensure_retro_human_queue_bridge()
         self._game = str(game) if game else ""
         if not self._game:
             raise ValueError("StableRetroArenaEnvironment requires a non-empty game id")
