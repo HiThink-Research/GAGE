@@ -265,7 +265,6 @@ class StepExecutionContext:
             self._model_output,
             end_time_ms=int(time.time() * 1000),
         )
-        append_predict_result(self.sample, self._model_output)
 
     def execute_judge(self) -> None:
         logger.trace("Executing judge step adapter={}", getattr(self.judge, "_adapter_id", None))

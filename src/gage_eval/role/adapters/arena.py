@@ -400,6 +400,39 @@ class ArenaRoleAdapter(RoleAdapter):
                     env_kwargs[key] = env_cfg.get(key)
             if self._replay_mode_includes_frame(self._resolve_replay_recording_mode()):
                 env_kwargs.setdefault("capture_pov", True)
+        if "retro" in str(impl).lower():
+            for key in (
+                "game",
+                "state",
+                "default_state",
+                "rom_path",
+                "runtime_policy",
+                "display_mode",
+                "record_bk2",
+                "record_dir",
+                "record_filename",
+                "record_path",
+                "action_mapping",
+                "legal_moves",
+                "info_feeder",
+                "action_schema",
+                "token_budget",
+                "frame_stride",
+                "snapshot_stride",
+                "obs_image",
+                "replay_output_dir",
+                "replay_filename",
+                "frame_output_dir",
+                "seed",
+            ):
+                if env_cfg.get(key) is not None:
+                    env_kwargs[key] = env_cfg.get(key)
+            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            if run_id:
+                env_kwargs["run_id"] = str(run_id)
+            if sample_id:
+                env_kwargs["sample_id"] = str(sample_id)
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
         if "mahjong" in str(impl).lower():
@@ -1337,6 +1370,13 @@ class ArenaRoleAdapter(RoleAdapter):
         output_dir = replay_cfg.get("output_dir") if isinstance(replay_cfg, dict) else None
         scheduler_type = str(self._scheduler_cfg.get("type", "turn")).strip().lower() or "turn"
         recording_mode = self._resolve_replay_recording_mode()
+        explicit_mode = (
+            self._normalize_recording_mode(replay_cfg.get("mode"))
+            if isinstance(replay_cfg, Mapping)
+            else None
+        )
+        if frame_events and not self._replay_mode_includes_frame(recording_mode) and explicit_mode is None:
+            recording_mode = "both" if self._replay_mode_includes_action(recording_mode) else "frame"
         move_log = list(result.move_log) if self._replay_mode_includes_action(recording_mode) else []
 
         # STEP 2: Assemble metadata payload for replay manifest.

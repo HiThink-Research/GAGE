@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from queue import Queue
+from queue import Empty, Queue
 from threading import Lock
 import time
 from typing import Any, Dict, Optional, Sequence
@@ -121,6 +121,18 @@ class HumanPlayer:
                 if action is not None:
                     self._async_queue.put(action)
                     return True
+        if self._action_queue is not None:
+            get_nowait = getattr(self._action_queue, "get_nowait", None)
+            if callable(get_nowait):
+                try:
+                    queued_action = get_nowait()
+                except Empty:
+                    queued_action = None
+                if queued_action is not None:
+                    action = self._parse_human_action(observation, str(queued_action))
+                    if action is not None:
+                        self._async_queue.put(action)
+                        return True
         if self._timeout_ms is not None:
             elapsed_ms = (time.monotonic() - started) * 1000.0
             if elapsed_ms >= float(self._timeout_ms):
