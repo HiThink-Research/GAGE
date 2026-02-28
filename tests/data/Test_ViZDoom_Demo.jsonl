@@ -1,0 +1,1 @@
+{"schema_version":"gage.v1","id":"vizdoom_match_0001","task_type":"agent","messages":[{"role":"user","content":[{"type":"text","text":"start"}]}],"references":[],"choices":[],"metadata":{"player_ids":["p0","p1"],"player_names":{"p0":"p0","p1":"p1"},"start_player_id":"p0"},"data_tag":{},"eval_config":{}}

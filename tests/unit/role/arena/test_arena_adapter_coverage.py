@@ -149,6 +149,52 @@ def test_invoke_sync_doudizhu_fills_missing_player_name_from_label(monkeypatch) 
     assert captured_env_kwargs["player_names"]["p0"] == "model-002"
 
 
+def test_invoke_sync_waits_for_pending_players(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        scheduler={"pending_wait_timeout_s": 1.5},
+    )
+
+    class _StubScheduler:
+        def run_loop(self, environment, players) -> GameResult:
+            _ = environment, players
+            return _make_result(move_log=[])
+
+    class _PendingPlayer:
+        def __init__(self) -> None:
+            self.name = "p0"
+            self.wait_calls = 0
+            self.last_timeout_s: float = 0.0
+
+        def wait_for_pending(self, timeout_s: float = 1.0) -> None:
+            self.wait_calls += 1
+            self.last_timeout_s = float(timeout_s)
+
+    pending_player = _PendingPlayer()
+    monkeypatch.setattr(
+        adapter,
+        "_normalize_player_specs",
+        lambda sample: (
+            [{"player_id": "p0", "type": "backend", "ref": "backend.alpha"}],
+            ["p0"],
+            {"p0": "P0"},
+            "p0",
+        ),
+    )
+    monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
+    monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
+    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_build_environment", lambda sample, **kwargs: object())
+    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [pending_player])
+
+    output = adapter._invoke_sync({"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState())
+
+    assert output["result"] == "draw"
+    assert pending_player.wait_calls == 1
+    assert 0.0 < pending_player.last_timeout_s <= 1.5
+
+
 def test_build_environment_for_pettingzoo_forwards_optional_kwargs(monkeypatch) -> None:
     captured_env_kwargs: dict[str, Any] = {}
 

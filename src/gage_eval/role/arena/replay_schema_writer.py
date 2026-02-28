@@ -36,6 +36,7 @@ class ReplaySchemaWriter:
         move_log: Sequence[dict[str, Any]],
         arena_trace: Optional[Sequence[Mapping[str, Any]]],
         extra_meta: Optional[dict[str, Any]] = None,
+        recording_mode: Optional[str] = None,
     ) -> str:
         """Write replay schema artifacts and return replay.json path.
 
@@ -45,6 +46,7 @@ class ReplaySchemaWriter:
             move_log: Action history for event conversion.
             arena_trace: Optional ordered scheduler trace entries.
             extra_meta: Optional metadata passed from adapter/environment.
+            recording_mode: Optional replay recording mode (`action`/`frame`/`both`).
 
         Returns:
             Absolute path to the generated replay.json file.
@@ -57,15 +59,18 @@ class ReplaySchemaWriter:
         events_path = replay_dir / "events.jsonl"
         replay_path = replay_dir / "replay.json"
         meta_extra = dict(extra_meta or {})
+        requested_mode = _normalize_recording_mode(recording_mode)
 
         # STEP 1: Convert move_log entries to action events.
-        action_events = self._build_action_events(move_log)
+        action_events = self._build_action_events(move_log) if _mode_includes_action(requested_mode) else []
 
         # STEP 2: Convert optional frame events and append result event.
         frame_events = self._build_frame_events(
             meta_extra.pop("frame_events", None),
             start_seq=len(action_events) + 1,
         )
+        if not _mode_includes_frame(requested_mode):
+            frame_events = []
         result_event = self._build_result_event(
             seq=len(action_events) + len(frame_events) + 1,
             result=result,
@@ -80,6 +85,7 @@ class ReplaySchemaWriter:
             frame_count=len(frame_events),
             arena_trace=arena_trace,
             extra_meta=meta_extra,
+            recording_mode=requested_mode,
         )
 
         # STEP 4: Persist events and manifest.
@@ -183,8 +189,9 @@ class ReplaySchemaWriter:
         frame_count: int,
         arena_trace: Optional[Sequence[Mapping[str, Any]]],
         extra_meta: dict[str, Any],
+        recording_mode: Optional[str],
     ) -> dict[str, Any]:
-        recording_mode = _resolve_recording_mode(action_count, frame_count)
+        resolved_mode = recording_mode or _resolve_recording_mode(action_count, frame_count)
         payload: dict[str, Any] = {
             "schema": "gage_replay/v1",
             "version": "1.0.0",
@@ -195,7 +202,7 @@ class ReplaySchemaWriter:
                 **extra_meta,
             },
             "recording": {
-                "mode": recording_mode,
+                "mode": resolved_mode,
                 "events_path": "events.jsonl",
                 "counts": {
                     "action": int(action_count),
@@ -338,6 +345,27 @@ def _resolve_recording_mode(action_count: int, frame_count: int) -> str:
     if frame_count > 0:
         return "frame"
     return "action"
+
+
+def _normalize_recording_mode(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    mode = str(value).strip().lower()
+    if mode in {"action", "frame", "both"}:
+        return mode
+    return None
+
+
+def _mode_includes_action(mode: Optional[str]) -> bool:
+    if mode is None:
+        return True
+    return mode in {"action", "both"}
+
+
+def _mode_includes_frame(mode: Optional[str]) -> bool:
+    if mode is None:
+        return True
+    return mode in {"frame", "both"}
 
 
 def _resolve_result_status(result: GameResult) -> str:
