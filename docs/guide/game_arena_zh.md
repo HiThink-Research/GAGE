@@ -462,6 +462,13 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 - Node 报 `ERR_OSSL_EVP_UNSUPPORTED`
   使用 `NODE_OPTIONS=--openssl-legacy-provider`（脚本已自动加上）。
 
+## 10. 扩展清单
+
+1. 在 `src/gage_eval/role/arena/games/<game>/` 增加环境实现。
+2. 注册环境、Context、Parser、Renderer 四类组件。
+3. 增加 demo 配置与测试用例。
+4. 使用 `run.py` 小样本验证联通。
+
 ## 10. 麻将快速上手（showdown）
 
 前置条件：
@@ -499,27 +506,6 @@ URL 参数（Human / AI）：
 - `action_url`：Human 模式动作与聊天提交的后端地址（URL 编码）
 
 常用环境变量：
+- `REPLAY_PORT` / `FRONTEND_PORT`
+- `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
-
-## 11. PettingZoo Atari 支持 (22 款游戏)
-
-GAGE 现已集成 PettingZoo Atari 环境，支持 22 款经典双人游戏（如 Space Invaders, Pong, Boxing 等）。
-
-### 核心特性
-1.  **多游戏支持**：统一通过 `pettingzoo_aec_v1` 适配器接入 22 款游戏。
-2.  **AI控制**：LLM 基于文本观测（Text Observation）进行盲玩决策。
-3.  **自动化回放**：提供“运行即回放”工具，解决 LLM 推理延迟导致的观感卡顿问题。
-
-### 快速上手
-推荐阅读完整的用户手册以获取详细指令：
-
-### 环境要求
-- **依赖项**: `cmake` (编译 Atari 环境所需)
-
-> 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide_zh.md)**
->
-> 包含：
-> *   快速开始 (Quick Start)
-> *   完整游戏列表 (22 Games)
-> *   Dummy/AI 模式切换
-> *   常见问题 (FAQ)

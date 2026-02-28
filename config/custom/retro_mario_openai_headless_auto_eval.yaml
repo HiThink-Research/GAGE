@@ -1,0 +1,102 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: retro_mario_openai_headless_auto_eval
+  description: Stable-retro Mario OpenAI demo in pure headless mode with auto-eval.
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: retro_mario_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: retro_mario_demo
+    loader: jsonl
+    params:
+      path: config/custom/retro_mario_phase1.jsonl
+      streaming: false
+
+backends:
+  - backend_id: retro_openai_http_player
+    type: openai_http
+    config:
+      base_url: https://api.openai.com/v1
+      model: ${RETRO_OPENAI_MODEL:-gpt-4o-mini}
+      require_api_key: true
+      default_params:
+        temperature: 0.2
+        max_tokens: 96
+
+role_adapters:
+  - adapter_id: retro_openai_player_0
+    role_type: dut_model
+    backend_id: retro_openai_http_player
+    capabilities:
+      - chat_completion
+
+  - adapter_id: retro_mario_arena
+    role_type: arena
+    params:
+      environment:
+        impl: retro_env_v1
+        game: SuperMarioBros3-Nes-v0
+        state: Start
+        display_mode: headless
+        obs_image: false
+        record_bk2: false
+        legal_moves:
+          - noop
+          - right
+          - right_run
+          - right_jump
+          - right_run_jump
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 12
+          hold_ticks_default: 6
+        info_feeder:
+          impl: info_last_v1
+      scheduler:
+        type: tick
+        tick_ms: 1200
+        max_ticks: 120
+      parser:
+        impl: retro_action_v1
+        hold_ticks_min: 1
+        hold_ticks_max: 12
+        hold_ticks_default: 6
+      players:
+        - name: player_0
+          type: backend
+          ref: retro_openai_player_0
+          max_retries: 1
+          fallback_policy: first_legal
+
+metrics:
+  - metric_id: retro_episode_length_steps
+    implementation: episode_length_steps
+  - metric_id: retro_legal_action_rate
+    implementation: legal_action_rate
+  - metric_id: retro_illegal_action_count
+    implementation: illegal_action_count
+  - metric_id: retro_on_time_rate
+    implementation: on_time_rate
+  - metric_id: retro_completion_flag
+    implementation: completion_flag
+  - metric_id: retro_termination_reason
+    implementation: termination_reason
+    aggregation: categorical_count
+
+tasks:
+  - task_id: retro_mario_openai_headless_auto_eval
+    dataset_id: retro_mario_demo
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_headless_auto_eval_events.jsonl

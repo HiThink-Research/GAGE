@@ -1255,7 +1255,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       }
     }
 
-    async function sendKeyEvent(type, key) {
+    async function sendKeyEvent(type, key, repeat) {
       if (!state.selectedDisplayId) {
         return;
       }
@@ -1264,7 +1264,12 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       }
       const body = {
         display_id: state.selectedDisplayId,
-        payload: { type, key: String(key || "") },
+        payload: {
+          type,
+          key: String(key || ""),
+          repeat: Boolean(repeat),
+          timestamp_ms: Date.now(),
+        },
         context: {},
       };
       try {
@@ -1409,14 +1414,14 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           return;
         }
         event.preventDefault();
-        sendKeyEvent("keydown", event.key);
+        sendKeyEvent("keydown", event.key, event.repeat);
       });
       window.addEventListener("keyup", (event) => {
         if (!el.keyCaptureToggle.checked || !state.selectedDisplayAcceptsInput) {
           return;
         }
         event.preventDefault();
-        sendKeyEvent("keyup", event.key);
+        sendKeyEvent("keyup", event.key, false);
       });
       window.addEventListener("beforeunload", () => {
         if (state.pollTimer !== null) {

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from queue import Queue
+from queue import Empty, Queue
 import time
 from typing import Any, Dict, Optional, Sequence
 

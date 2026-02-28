@@ -473,6 +473,12 @@ class LLMPlayer:
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)
+        hold_ticks = getattr(parse_result, "hold_ticks", None)
+        if hold_ticks is not None:
+            try:
+                metadata["hold_ticks"] = max(1, int(hold_ticks))
+            except (TypeError, ValueError):
+                pass
         metadata["retry_count"] = max(0, int(retry_count))
         return metadata
 

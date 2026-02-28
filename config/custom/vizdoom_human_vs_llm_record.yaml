@@ -59,15 +59,6 @@ role_adapters:
         impl: vizdoom_env_v1
 #        config_path: src/gage_eval/role/arena/games/vizdoom/_vizdoom.ini
         replay_output_dir: runs/vizdoom_replays
-        replay:
-          enabled: true
-          primary_mode: true
-          mode: both
-          frame:
-            enabled: true
-            stride: 2
-            encoding: jpeg
-            quality: 80
         render_mode: both
         show_pov: false
         show_automap: false
