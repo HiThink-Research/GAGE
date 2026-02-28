@@ -1516,7 +1516,6 @@ class _FrameCaptureEnvironment:
         self._base = base_env
         self._recorder = recorder
         self._step_index = 0
-        self._capture_current(step=0, actor=None, force=True)
 
     def reset(self) -> None:
         self._base.reset()
@@ -1569,9 +1568,78 @@ class _FrameCaptureEnvironment:
             frame_payload = frame_getter()
         except Exception:
             return
+        if not self._has_visible_frame_content(frame_payload):
+            return
         self._recorder.capture(
             frame_payload,
             step=int(step),
             actor=actor,
             force=bool(force),
         )
+
+    @staticmethod
+    def _has_visible_frame_content(frame_payload: Any) -> bool:
+        """Return whether frame payload carries visible replay content."""
+
+        if frame_payload is None:
+            return False
+        if not isinstance(frame_payload, Mapping):
+            return True
+
+        for key in ("_rgb", "rgb", "rgb_array", "frame_rgb", "image_path", "frame_image_path", "_image_path_abs"):
+            if frame_payload.get(key) is not None:
+                return True
+        image = frame_payload.get("image")
+        if isinstance(image, Mapping) and image.get("path"):
+            return True
+
+        board_text = frame_payload.get("board_text")
+        if isinstance(board_text, str) and board_text.strip():
+            return True
+
+        for key in (
+            "public_state",
+            "private_state",
+            "ui_state",
+            "state",
+            "observation",
+            "legal_moves",
+            "legal_actions",
+        ):
+            if _FrameCaptureEnvironment._is_non_empty_value(frame_payload.get(key)):
+                return True
+
+        ignored_keys = {
+            "metadata",
+            "active_player_id",
+            "observer_player_id",
+            "player_id",
+            "player_ids",
+            "player_names",
+            "move_count",
+            "last_move",
+            "reward",
+            "termination",
+            "truncation",
+            "env_id",
+            "agent_id",
+            "timestamp_ms",
+        }
+        for key, value in frame_payload.items():
+            if str(key) in ignored_keys:
+                continue
+            if _FrameCaptureEnvironment._is_non_empty_value(value):
+                return True
+        return False
+
+    @staticmethod
+    def _is_non_empty_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, Mapping):
+            return bool(value)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return len(value) > 0
+        return bool(value)

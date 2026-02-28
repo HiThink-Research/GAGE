@@ -657,6 +657,10 @@ def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, 
         def __init__(self) -> None:
             self._frame_counter = 0
 
+        @staticmethod
+        def reset() -> None:
+            return None
+
         def get_last_frame(self) -> dict[str, Any]:
             self._frame_counter += 1
             return {"board_text": f"frame-{self._frame_counter}", "move_count": self._frame_counter}
@@ -685,6 +689,7 @@ def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, 
     class _StubScheduler:
         @staticmethod
         def run_loop(environment: Any, players: Any) -> GameResult:
+            environment.reset()
             return _make_result(move_log=[])
 
     captured: dict[str, Any] = {}
@@ -728,3 +733,58 @@ def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, 
     assert isinstance(frame_events, list)
     assert len(frame_events) >= 1
     assert frame_events[0]["type"] == "frame"
+
+
+def test_frame_capture_environment_skips_empty_reset_snapshot() -> None:
+    captured: list[dict[str, Any]] = []
+
+    class _Recorder:
+        def capture(
+            self,
+            frame_payload: Any,
+            *,
+            step: int,
+            actor: str | None = None,
+            force: bool = False,
+        ) -> None:
+            captured.append(
+                {
+                    "frame_payload": frame_payload,
+                    "step": step,
+                    "actor": actor,
+                    "force": force,
+                }
+            )
+
+    class _Action:
+        def __init__(self, player: str) -> None:
+            self.player = player
+
+    class _BaseEnv:
+        def __init__(self) -> None:
+            self._frames = [{}, {"board_text": "ready"}]
+            self._index = 0
+
+        def reset(self) -> None:
+            return None
+
+        def get_last_frame(self) -> dict[str, Any]:
+            value = self._frames[min(self._index, len(self._frames) - 1)]
+            self._index += 1
+            return dict(value)
+
+        @staticmethod
+        def apply(action: Any) -> None:
+            _ = action
+            return None
+
+    wrapped = arena_module._FrameCaptureEnvironment(_BaseEnv(), _Recorder())  # noqa: SLF001
+    wrapped.reset()
+
+    assert captured == []
+
+    wrapped.apply(_Action("player_0"))
+    assert len(captured) == 1
+    assert captured[0]["step"] == 1
+    assert captured[0]["actor"] == "player_0"
+    assert captured[0]["frame_payload"]["board_text"] == "ready"

@@ -105,3 +105,54 @@ def test_build_replay_v1_display_returns_none_without_frame_events(tmp_path: Pat
     )
 
     assert display is None
+
+
+def test_build_replay_v1_display_trims_leading_empty_frame(tmp_path: Path) -> None:
+    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_trim"
+    replay_dir.mkdir(parents=True, exist_ok=True)
+    events_path = replay_dir / "events.jsonl"
+    events_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "frame", "seq": 1, "step": 0, "actor": "player_0", "frame": {}}),
+                json.dumps(
+                    {
+                        "type": "frame",
+                        "seq": 2,
+                        "step": 1,
+                        "actor": "player_0",
+                        "frame": {"board_text": "frame-2"},
+                    }
+                ),
+                json.dumps({"type": "result", "seq": 3, "result": "draw"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    replay_manifest = replay_dir / "replay.json"
+    _write_json(
+        replay_manifest,
+        {
+            "schema": "gage_replay/v1",
+            "recording": {"events_path": "events.jsonl"},
+            "meta": {"scheduler_type": "turn"},
+        },
+    )
+    sample_record = {
+        "sample": {
+            "id": "sample_trim",
+            "predict_result": [{"replay_path": str(replay_manifest)}],
+        }
+    }
+
+    display = ws_rgb_replay._build_replay_v1_display(
+        sample_record,
+        task_id="task_trim",
+        fps=10.0,
+        max_frames=0,
+    )
+
+    assert display is not None
+    assert display["frame_count"]() == 1
+    assert display["frame_at"](0)["board_text"] == "frame-2"

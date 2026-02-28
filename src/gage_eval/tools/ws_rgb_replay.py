@@ -205,6 +205,79 @@ def _load_events_jsonl(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _trim_leading_empty_frames(frames: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Trim leading replay frames that do not carry visible content."""
+
+    normalized = [dict(item) for item in frames if isinstance(item, Mapping)]
+    if len(normalized) <= 1:
+        return normalized
+
+    trimmed = list(normalized)
+    while len(trimmed) > 1 and not _has_visible_frame_content(trimmed[0]):
+        trimmed.pop(0)
+    return trimmed
+
+
+def _has_visible_frame_content(frame_payload: Mapping[str, Any]) -> bool:
+    """Return whether one replay frame contains user-visible content."""
+
+    board_text = frame_payload.get("board_text")
+    if isinstance(board_text, str) and board_text.strip():
+        return True
+
+    if _frame_has_image_path(frame_payload):
+        return True
+
+    for key in ("public_state", "private_state", "ui_state", "state", "observation", "legal_moves", "legal_actions"):
+        if _is_non_empty_value(frame_payload.get(key)):
+            return True
+
+    ignored_keys = {
+        "metadata",
+        "active_player_id",
+        "observer_player_id",
+        "player_id",
+        "player_ids",
+        "player_names",
+        "move_count",
+        "last_move",
+        "reward",
+        "termination",
+        "truncation",
+        "env_id",
+        "agent_id",
+    }
+    for key, value in frame_payload.items():
+        if str(key) in ignored_keys:
+            continue
+        if _is_non_empty_value(value):
+            return True
+    return False
+
+
+def _is_non_empty_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Mapping):
+        return bool(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return len(value) > 0
+    return bool(value)
+
+
+def _frame_has_image_path(frame_payload: Mapping[str, Any]) -> bool:
+    for key in ("_image_path_abs", "image_path", "frame_image_path"):
+        path = frame_payload.get(key)
+        if path:
+            return True
+    image = frame_payload.get("image")
+    if isinstance(image, Mapping) and image.get("path"):
+        return True
+    return False
+
+
 def _build_replay_v1_display(
     sample_record: Mapping[str, Any],
     *,
@@ -270,6 +343,7 @@ def _build_replay_v1_display(
                 frame_payload["image"] = {"path": str(image.get("path"))}
         frames.append(frame_payload)
 
+    frames = _trim_leading_empty_frames(frames)
     cursor = ReplayFrameCursor(frames, fps=float(fps))
 
     # STEP 3: Assemble display registration metadata.
