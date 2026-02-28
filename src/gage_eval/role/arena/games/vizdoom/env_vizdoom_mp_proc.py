@@ -19,6 +19,7 @@ except Exception as exc:  # pragma: no cover - depends on local optional deps.
     _VIZDOOM_IMPORT_ERROR = exc
 
 _AUTOMAP_VIZ_MODULE: Any = None
+_MAX_STALE_RESET_RECOVERY_RESTARTS = 2
 
 
 @dataclass
@@ -31,6 +32,7 @@ class ViZDoomMPProcEnvConfig:
     automap_follow: bool = True
     automap_stride: int = 2
     show_pov: bool = True
+    capture_pov: bool = False
     pov_stride: int = 2
     allow_respawn: bool = True
     respawn_grace_steps: int = 60
@@ -125,6 +127,7 @@ def _worker(
     automap_follow: bool,
     automap_stride: int,
     show_pov: bool,
+    capture_pov: bool,
     pov_stride: int,
     allow_respawn: bool,
     respawn_grace_steps: int,
@@ -134,6 +137,7 @@ def _worker(
     _ensure_vizdoom_available()
     game: Optional[DoomGame] = None
     try:
+        collect_pov = bool(show_pov or capture_pov)
         game = DoomGame()
         game.load_config(cfg_path)
 
@@ -238,7 +242,7 @@ def _worker(
                 if show_automap:
                     state = game.get_state()
                     payload["automap"] = None if state is None else state.automap_buffer
-                if show_pov:
+                if collect_pov:
                     state = game.get_state()
                     if state is not None and state.screen_buffer is not None:
                         payload["screen"] = state.screen_buffer
@@ -266,7 +270,7 @@ def _worker(
                         state = game.get_state()
                         if state is not None and state.automap_buffer is not None:
                             payload["automap"] = state.automap_buffer
-                    if show_pov:
+                    if collect_pov:
                         state = game.get_state()
                         if state is not None and state.screen_buffer is not None:
                             payload["screen"] = state.screen_buffer
@@ -290,7 +294,7 @@ def _worker(
                 if show_automap and (automap_stride <= 1 or (t % automap_stride == 0)):
                     state = game.get_state()
                     payload["automap"] = None if state is None else state.automap_buffer
-                if show_pov and (pov_stride <= 1 or (t % pov_stride == 0)):
+                if collect_pov and (pov_stride <= 1 or (t % pov_stride == 0)):
                     state = game.get_state()
                     if state is not None and state.screen_buffer is not None:
                         payload["screen"] = state.screen_buffer
@@ -407,6 +411,7 @@ class ViZDoomMPProcEnv:
                     self.cfg.automap_follow,
                     self.cfg.automap_stride,
                     self.cfg.show_pov,
+                    self.cfg.capture_pov,
                     self.cfg.pov_stride,
                     self.cfg.allow_respawn,
                     self.cfg.respawn_grace_steps,
@@ -428,6 +433,7 @@ class ViZDoomMPProcEnv:
                     self.cfg.automap_follow,
                     self.cfg.automap_stride,
                     self.cfg.show_pov,
+                    self.cfg.capture_pov,
                     self.cfg.pov_stride,
                     self.cfg.allow_respawn,
                     self.cfg.respawn_grace_steps,
@@ -515,62 +521,31 @@ class ViZDoomMPProcEnv:
             self._pov = None
         logger.info("ViZDoomMPProc close done")
 
-    def set_view(self, view: str) -> None:
-        if view not in ("p0", "p1", "both", "none"):
-            return
-        self._view = view
-        if self._host_conn is None or self._join_conn is None:
-            return
-        if view == "p0":
-            host_vis, join_vis = True, False
-        elif view == "p1":
-            host_vis, join_vis = False, True
-        elif view == "both":
-            host_vis, join_vis = True, True
-        else:
-            host_vis, join_vis = False, False
-        try:
-            self._host_conn.send({"type": "set_visible", "visible": host_vis})
-            self._join_conn.send({"type": "set_visible", "visible": join_vis})
-        except Exception:
-            pass
+    def _dispose_runtime_processes(self) -> None:
+        """Terminate host/join child processes and clear connection state."""
 
-    def _toggle_view(self) -> None:
-        if self._view in (None, "p0"):
-            self.set_view("p1")
-        elif self._view == "p1":
-            self.set_view("p0")
-        elif self._view == "both":
-            self.set_view("p0")
-        else:
-            self.set_view("p0")
+        self._terminate_process(self._join_proc, self._join_conn)
+        self._terminate_process(self._host_proc, self._host_conn)
+        self._join_proc = None
+        self._host_proc = None
+        self._join_conn = None
+        self._host_conn = None
+        self.port = None
 
-    def reset(self, seed: Optional[int] = None) -> Dict[int, Any]:
-        if self._host_proc is None or self._join_proc is None:
-            self._start_processes()
+    def _reset_with_existing_processes(
+        self,
+        *,
+        seed: Optional[int],
+        attempts: int,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], bool]:
+        """Reset current host/join processes and return whether stale state persists."""
+
         assert self._host_conn is not None
         assert self._join_conn is not None
 
-        # STEP 1: Reset round state and initialize optional debug windows.
-        self.t = 0
-        self._round_done = False
-        self._last_health = {0: None, 1: None}
-        self._seen_alive = {0: False, 1: False}
-        automap_viz_module = None
-        if self.cfg.show_automap and self._automap_p0 is None:
-            automap_viz_module = automap_viz_module or _load_automap_viz_module()
-            self._automap_p0 = automap_viz_module.init_window(window_name="Automap (p0)", bgr=False)
-        if self.cfg.show_automap and self._automap_p1 is None:
-            automap_viz_module = automap_viz_module or _load_automap_viz_module()
-            self._automap_p1 = automap_viz_module.init_window(window_name="Automap (p1)", bgr=False)
-        if self.cfg.show_pov and self._pov is None:
-            automap_viz_module = automap_viz_module or _load_automap_viz_module()
-            self._pov = automap_viz_module.init_window(window_name="ViZDoom POV", bgr=False)
-
-        # STEP 2: Retry reset when stale intermission/death state leaks into the new round.
         host_msg: Dict[str, Any] = {}
         join_msg: Dict[str, Any] = {}
-        attempts = max(1, int(self.cfg.reset_retry_count))
+        stale_reset = True
         for attempt in range(1, attempts + 1):
             self._host_conn.send({"type": "reset", "seed": seed, "t": self.t})
             self._join_conn.send({"type": "reset", "seed": seed, "t": self.t})
@@ -610,6 +585,92 @@ class ViZDoomMPProcEnv:
                 break
             if attempt < attempts:
                 time.sleep(0.15)
+        return host_msg, join_msg, stale_reset
+
+    def set_view(self, view: str) -> None:
+        if view not in ("p0", "p1", "both", "none"):
+            return
+        self._view = view
+        if self._host_conn is None or self._join_conn is None:
+            return
+        if view == "p0":
+            host_vis, join_vis = True, False
+        elif view == "p1":
+            host_vis, join_vis = False, True
+        elif view == "both":
+            host_vis, join_vis = True, True
+        else:
+            host_vis, join_vis = False, False
+        try:
+            self._host_conn.send({"type": "set_visible", "visible": host_vis})
+            self._join_conn.send({"type": "set_visible", "visible": join_vis})
+        except Exception:
+            pass
+
+    def _toggle_view(self) -> None:
+        if self._view in (None, "p0"):
+            self.set_view("p1")
+        elif self._view == "p1":
+            self.set_view("p0")
+        elif self._view == "both":
+            self.set_view("p0")
+        else:
+            self.set_view("p0")
+
+    def get_pov_frames(self) -> Dict[int, Any]:
+        """Return latest cached POV frames for all players."""
+
+        return dict(self._pov_frames)
+
+    def reset(self, seed: Optional[int] = None) -> Dict[int, Any]:
+        if self._host_proc is None or self._join_proc is None:
+            self._start_processes()
+        assert self._host_conn is not None
+        assert self._join_conn is not None
+
+        # STEP 1: Reset round state and initialize optional debug windows.
+        self.t = 0
+        self._round_done = False
+        self._last_health = {0: None, 1: None}
+        self._seen_alive = {0: False, 1: False}
+        automap_viz_module = None
+        if self.cfg.show_automap and self._automap_p0 is None:
+            automap_viz_module = automap_viz_module or _load_automap_viz_module()
+            self._automap_p0 = automap_viz_module.init_window(window_name="Automap (p0)", bgr=False)
+        if self.cfg.show_automap and self._automap_p1 is None:
+            automap_viz_module = automap_viz_module or _load_automap_viz_module()
+            self._automap_p1 = automap_viz_module.init_window(window_name="Automap (p1)", bgr=False)
+        if self.cfg.show_pov and self._pov is None:
+            automap_viz_module = automap_viz_module or _load_automap_viz_module()
+            self._pov = automap_viz_module.init_window(window_name="ViZDoom POV", bgr=False)
+
+        # STEP 2: Retry reset when stale intermission/death state leaks into the new round.
+        host_msg: Dict[str, Any] = {}
+        join_msg: Dict[str, Any] = {}
+        attempts = max(1, int(self.cfg.reset_retry_count))
+        stale_reset = True
+        for restart_idx in range(_MAX_STALE_RESET_RECOVERY_RESTARTS + 1):
+            if self._host_proc is None or self._join_proc is None:
+                self._start_processes()
+            host_msg, join_msg, stale_reset = self._reset_with_existing_processes(
+                seed=seed,
+                attempts=attempts,
+            )
+            if not stale_reset:
+                break
+            logger.warning(
+                "ViZDoomMPProc reset remained stale after {} attempts; restarting workers ({}/{})",
+                attempts,
+                restart_idx + 1,
+                _MAX_STALE_RESET_RECOVERY_RESTARTS + 1,
+            )
+            if restart_idx >= _MAX_STALE_RESET_RECOVERY_RESTARTS:
+                self._dispose_runtime_processes()
+                raise RuntimeError(
+                    "ViZDoom reset failed: stale death/intermission state persisted after process restarts."
+                )
+            self._dispose_runtime_processes()
+            time.sleep(0.2)
 
         logger.info(
             "ViZDoomMPProc reset done host_done={} join_done={} host_obs={} join_obs={}",
@@ -636,15 +697,15 @@ class ViZDoomMPProcEnv:
                 None if frame1 is None else getattr(frame1, "shape", None),
                 flush=True,
             )
+        frame0 = host_msg.get("screen")
+        frame1 = join_msg.get("screen")
+        if frame0 is not None:
+            self._pov_frames[0] = frame0
+        if frame1 is not None:
+            self._pov_frames[1] = frame1
         if self.cfg.show_pov and self._pov is not None:
             if self.cfg.pov_view in ("p0", "p1", "both", "none"):
                 self._view = self.cfg.pov_view
-            frame0 = host_msg.get("screen")
-            frame1 = join_msg.get("screen")
-            if frame0 is not None:
-                self._pov_frames[0] = frame0
-            if frame1 is not None:
-                self._pov_frames[1] = frame1
             show_pid = 0 if self._view in (None, "p0", "both") else 1
             frame = self._pov_frames.get(show_pid)
             if frame is not None:
@@ -862,13 +923,13 @@ class ViZDoomMPProcEnv:
                     None if frame1 is None else getattr(frame1, "shape", None),
                     flush=True,
                 )
+        frame0 = host_msg.get("screen")
+        frame1 = join_msg.get("screen")
+        if frame0 is not None:
+            self._pov_frames[0] = frame0
+        if frame1 is not None:
+            self._pov_frames[1] = frame1
         if self.cfg.show_pov and self._pov is not None:
-            frame0 = host_msg.get("screen")
-            frame1 = join_msg.get("screen")
-            if frame0 is not None:
-                self._pov_frames[0] = frame0
-            if frame1 is not None:
-                self._pov_frames[1] = frame1
             show_pid = 0 if self._view in (None, "p0", "both") else 1
             frame = self._pov_frames.get(show_pid)
             if frame is not None:

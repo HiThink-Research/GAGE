@@ -76,51 +76,14 @@ class HumanAdapter(RoleAdapter):
             return
         self._ensure_pygame()
 
-    def bind_action_queue(self, action_queue: Optional[Queue[str]]) -> None:
-        """Bind runtime action queue for async polling paths."""
-
-        if action_queue is None:
-            return
-        self._queue = action_queue
-
     def poll_action(
         self, *, timeout_ms: Optional[int] = None, default_action: Optional[str] = None
     ) -> Optional[str]:
-        """Poll one action for async schedulers without blocking by default."""
+        """Poll for a pygame action without blocking the main loop."""
 
-        # STEP 1: Poll configured queue sources used by websocket/gradio human input.
-        if self._source in {"queue", "visualizer"}:
-            return self._poll_queue_action(timeout_ms=timeout_ms, default_action=default_action)
-        if self._source == "auto" and self._queue is not None:
-            return self._poll_queue_action(timeout_ms=timeout_ms, default_action=default_action)
-
-        # STEP 2: Poll pygame sources for local window controls.
-        if self._source == "pygame":
-            return self._read_pygame_action(timeout_ms=timeout_ms, default_action=default_action)
-        return None
-
-    def _poll_queue_action(
-        self, *, timeout_ms: Optional[int], default_action: Optional[str]
-    ) -> Optional[str]:
-        queue = self._queue
-        if queue is None:
-            if default_action is None:
-                return None
-            return str(default_action)
-        try:
-            if timeout_ms is None:
-                value = queue.get_nowait()
-            else:
-                timeout_s = max(0.0, float(timeout_ms) / 1000.0)
-                if timeout_s <= 0:
-                    value = queue.get_nowait()
-                else:
-                    value = queue.get(timeout=timeout_s)
-        except Empty:
-            if default_action is None:
-                return None
-            return str(default_action)
-        return str(value)
+        if self._source != "pygame":
+            return None
+        return self._read_pygame_action(timeout_ms=timeout_ms, default_action=default_action)
 
     def _read_pygame_action(
         self, *, timeout_ms: Optional[int], default_action: Optional[str]

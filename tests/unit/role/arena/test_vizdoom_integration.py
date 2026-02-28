@@ -232,6 +232,33 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
     assert captured_env_kwargs["death_check_warmup_steps"] == 6
 
 
+def test_arena_adapter_enables_capture_pov_when_replay_mode_includes_frame(monkeypatch) -> None:
+    captured_env_kwargs: dict[str, Any] = {}
+
+    class _CapturedEnv:
+        def __init__(self, **kwargs: Any) -> None:
+            captured_env_kwargs.update(kwargs)
+
+    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={
+            "impl": "vizdoom_env_v1",
+            "show_pov": False,
+            "replay": {"enabled": True, "mode": "both"},
+        },
+    )
+
+    adapter._build_environment(
+        {"metadata": {}},
+        player_ids=["p0", "p1"],
+        player_names={"p0": "P0", "p1": "P1"},
+    )
+
+    assert captured_env_kwargs["show_pov"] is False
+    assert captured_env_kwargs["capture_pov"] is True
+
+
 def test_arena_adapter_rejects_subprocess_player() -> None:
     adapter = ArenaRoleAdapter(adapter_id="arena")
     with pytest.raises(ValueError, match="Unsupported player type: subprocess"):

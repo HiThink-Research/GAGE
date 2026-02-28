@@ -165,6 +165,44 @@ class _QueueReadyAsyncPlayer:
         return self._ready.pop(0)
 
 
+class _DelayedAsyncRecordPlayer:
+    def __init__(self, name: str, moves: list[str], *, ready_after_polls: int = 5) -> None:
+        self.name = name
+        self._moves = list(moves)
+        self._ready_after_polls = max(1, int(ready_after_polls))
+        self._inflight = False
+        self._poll_count = 0
+        self._ready: list[ArenaAction] = []
+        self.start_calls = 0
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        if self._inflight or self._ready:
+            return False
+        self._inflight = True
+        self._poll_count = 0
+        self.start_calls += 1
+        return True
+
+    def has_action(self) -> bool:
+        if self._ready:
+            return True
+        if not self._inflight:
+            return False
+        self._poll_count += 1
+        if self._poll_count < self._ready_after_polls:
+            return False
+        move = self._moves.pop(0) if self._moves else "NOOP"
+        self._ready.append(ArenaAction(player=self.name, move=move, raw=move, metadata={}))
+        return True
+
+    def pop_action(self) -> ArenaAction:
+        action = self._ready.pop(0)
+        self._inflight = False
+        self._poll_count = 0
+        return action
+
+
 def test_record_scheduler_timeout_fallback_and_trace() -> None:
     environment = _SingleActionEnv()
     player = _StaticPlayer("p0", "UP", delay_s=0.05)
@@ -186,6 +224,27 @@ def test_record_scheduler_timeout_fallback_and_trace() -> None:
     assert trace["trace_state"] == "done"
     assert trace["player_id"] == "p0"
     assert trace["action_applied"] == "NOOP"
+
+
+def test_record_scheduler_keeps_sampling_cadence_with_async_player() -> None:
+    environment = _TwoTickDictEnv(max_ticks=3)
+    player = _DelayedAsyncRecordPlayer("p0", ["A"], ready_after_polls=5)
+    scheduler = RecordScheduler(
+        tick_ms=1,
+        action_timeout_ms=30000,
+        timeout_fallback_move="NOOP",
+    )
+
+    started_at = time.perf_counter()
+    result = scheduler.run_loop(environment, [player])
+    elapsed_s = time.perf_counter() - started_at
+
+    assert elapsed_s < 1.0
+    assert [action.move for action in environment.applied_actions] == ["NOOP", "NOOP", "A"]
+    assert result.move_count == 3
+    assert result.arena_trace
+    assert [entry["timeout"] for entry in result.arena_trace] == [True, True, False]
+    assert player.start_calls >= 1
 
 
 def test_record_scheduler_trace_options_are_configurable() -> None:

@@ -94,9 +94,6 @@ class HumanPlayer:
             self._pending_observation = observation
 
         adapter = getattr(self._role_manager, "get_adapter", lambda _id: None)(self._adapter_id)
-        bind_action_queue = getattr(adapter, "bind_action_queue", None)
-        if callable(bind_action_queue):
-            bind_action_queue(self._action_queue)
         ensure_input_ready = getattr(adapter, "ensure_input_ready", None)
         if callable(ensure_input_ready):
             ensure_input_ready()

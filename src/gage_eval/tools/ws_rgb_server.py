@@ -30,6 +30,16 @@ _FRAME_IMAGE_PATH_KEYS = ("_image_path_abs", "image_path", "frame_image_path")
 _FRAME_INTERNAL_KEYS = {"_rgb", "_image_path_abs"}
 
 
+def _is_client_disconnect_error(error: BaseException) -> bool:
+    """Return whether an error indicates client-side connection close."""
+
+    if isinstance(error, (BrokenPipeError, ConnectionResetError)):
+        return True
+    if isinstance(error, OSError):
+        return int(getattr(error, "errno", -1)) in {32, 104}
+    return False
+
+
 def _sanitize_frame_payload(frame: Any) -> Any:
     """Remove internal image-only fields before returning JSON payload."""
 
@@ -163,6 +173,8 @@ class DisplayRegistration:
     label: str
     human_player_id: str
     frame_source: Callable[[], Any]
+    frame_at: Optional[Callable[[int], Any]] = None
+    frame_count: Optional[Callable[[], int]] = None
     input_mapper: Optional[GameInputMapper] = None
     legal_moves: Optional[list[str]] = None
     action_queue: Any = None
@@ -263,12 +275,22 @@ class WsRgbHubServer:
         items: list[dict[str, Any]] = []
         for display_id in sorted(self._displays.keys()):
             reg = self._displays[display_id]
+            replay_seekable = callable(reg.frame_at) and callable(reg.frame_count)
+            replay_total: Optional[int] = None
+            if replay_seekable:
+                try:
+                    replay_total = max(0, int(reg.frame_count()))
+                except Exception:
+                    replay_total = None
             items.append(
                 {
                     "display_id": reg.display_id,
                     "label": reg.label,
                     "human_player_id": reg.human_player_id,
                     "legal_moves": list(reg.legal_moves or []),
+                    "accepts_input": reg.input_mapper is not None,
+                    "replay_seekable": replay_seekable,
+                    "replay_total": replay_total,
                     "running": self._running,
                 }
             )
@@ -298,23 +320,33 @@ class WsRgbHubServer:
 
         return f"{self.base_url}/ws_rgb/viewer"
 
-    def broadcast_frame(self, display_id: str) -> dict[str, Any]:
-        """Fetch one latest frame payload from display frame_source."""
+    def broadcast_frame(self, display_id: str, *, replay_index: Optional[int] = None) -> dict[str, Any]:
+        """Fetch one latest frame payload from display frame source."""
 
         registration = self._displays.get(str(display_id))
         if registration is None:
             return {"ok": False, "error": "display_not_found", "display_id": str(display_id)}
-        frame = registration.frame_source()
+        frame, error = self._resolve_frame_payload(registration, replay_index=replay_index)
+        if error:
+            return {"ok": False, "error": error, "display_id": registration.display_id}
         sanitized = _sanitize_frame_payload(frame)
         return {"ok": True, "display_id": registration.display_id, "frame": sanitized}
 
-    def broadcast_frame_image(self, display_id: str, *, quality: int = 80) -> dict[str, Any]:
+    def broadcast_frame_image(
+        self,
+        display_id: str,
+        *,
+        quality: int = 80,
+        replay_index: Optional[int] = None,
+    ) -> dict[str, Any]:
         """Fetch and encode one latest frame image as JPEG bytes."""
 
         registration = self._displays.get(str(display_id))
         if registration is None:
             return {"ok": False, "error": "display_not_found", "display_id": str(display_id)}
-        frame_payload = registration.frame_source()
+        frame_payload, error = self._resolve_frame_payload(registration, replay_index=replay_index)
+        if error:
+            return {"ok": False, "error": error, "display_id": registration.display_id}
         frame_image_path = _extract_image_path(frame_payload)
         if frame_image_path:
             image_bytes, content_type, error = _read_image_file(frame_image_path)
@@ -336,6 +368,64 @@ class WsRgbHubServer:
             "content_type": "image/jpeg",
             "image_bytes": jpeg_bytes,
         }
+
+    def load_replay_frames(self, display_id: str, *, limit: int = 0) -> dict[str, Any]:
+        """Load replay frames for one display when indexed replay is supported."""
+
+        registration = self._displays.get(str(display_id))
+        if registration is None:
+            return {"ok": False, "error": "display_not_found", "display_id": str(display_id)}
+        if not callable(registration.frame_at) or not callable(registration.frame_count):
+            return {"ok": False, "error": "replay_buffer_unsupported", "display_id": registration.display_id}
+        try:
+            total = max(0, int(registration.frame_count()))
+        except Exception:
+            return {"ok": False, "error": "replay_count_failed", "display_id": registration.display_id}
+
+        # STEP 1: Resolve requested load window against available replay size.
+        requested = max(0, int(limit))
+        load_total = total if requested <= 0 else min(total, requested)
+
+        # STEP 2: Materialize and sanitize replay frames for browser consumption.
+        frames: list[Any] = []
+        for index in range(load_total):
+            try:
+                raw_frame = registration.frame_at(index)
+            except Exception:
+                return {
+                    "ok": False,
+                    "error": "replay_frame_fetch_failed",
+                    "display_id": registration.display_id,
+                    "index": index,
+                }
+            frames.append(_sanitize_frame_payload(raw_frame))
+        return {
+            "ok": True,
+            "display_id": registration.display_id,
+            "total": total,
+            "loaded": load_total,
+            "frames": frames,
+        }
+
+    @staticmethod
+    def _resolve_frame_payload(
+        registration: DisplayRegistration,
+        *,
+        replay_index: Optional[int],
+    ) -> tuple[Any, Optional[str]]:
+        if replay_index is None:
+            return registration.frame_source(), None
+        frame_at = registration.frame_at
+        if not callable(frame_at):
+            return None, "replay_index_unsupported"
+        try:
+            normalized_index = max(0, int(replay_index))
+        except (TypeError, ValueError):
+            return None, "invalid_replay_index"
+        try:
+            return frame_at(normalized_index), None
+        except Exception:
+            return None, "replay_index_fetch_failed"
 
     def handle_input(
         self,
@@ -553,7 +643,6 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       </div>
       <div class="row">
         <button id="captureToggleBtn" type="button">Capture: ON</button>
-        <button id="clearReplayBtn" type="button">Clear Buffer</button>
         <button id="replayToggleBtn" type="button">Start Replay</button>
         <button id="replayStepPrevBtn" type="button">Step -</button>
         <button id="replayStepNextBtn" type="button">Step +</button>
@@ -597,6 +686,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     const state = {
       displays: [],
       selectedDisplayId: "",
+      selectedDisplayAcceptsInput: false,
+      selectedDisplayReplaySeekable: false,
       pollTimer: null,
       pollMs: 200,
       liveFrameImageUrl: "",
@@ -607,6 +698,12 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       replayIndex: -1,
       replayTimer: null,
       replaySpeed: 1.0,
+      lastSnapshotDisplayId: "",
+      lastSnapshotSignature: "",
+      captureCount: 0,
+      replaySeekDragging: false,
+      replayBufferLoading: false,
+      replayBufferLoadedForDisplay: "",
     };
 
     const el = {
@@ -619,7 +716,6 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       sendActionBtn: document.getElementById("sendActionBtn"),
       keyCaptureToggle: document.getElementById("keyCaptureToggle"),
       captureToggleBtn: document.getElementById("captureToggleBtn"),
-      clearReplayBtn: document.getElementById("clearReplayBtn"),
       replayToggleBtn: document.getElementById("replayToggleBtn"),
       replayStepPrevBtn: document.getElementById("replayStepPrevBtn"),
       replayStepNextBtn: document.getElementById("replayStepNextBtn"),
@@ -649,6 +745,64 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         return JSON.parse(JSON.stringify(frame || {}));
       } catch (_) {
         return frame || {};
+      }
+    }
+
+    function getSelectedDisplay() {
+      if (!state.selectedDisplayId) {
+        return null;
+      }
+      return state.displays.find((item) => String(item.display_id || "") === state.selectedDisplayId) || null;
+    }
+
+    function updateInputUi() {
+      const selected = getSelectedDisplay();
+      const acceptsInput = Boolean(selected && selected.accepts_input);
+      const replaySeekable = Boolean(selected && selected.replay_seekable);
+      state.selectedDisplayAcceptsInput = acceptsInput;
+      state.selectedDisplayReplaySeekable = replaySeekable;
+      const disabled = !state.selectedDisplayId || !acceptsInput;
+      el.actionInput.disabled = disabled;
+      el.sendActionBtn.disabled = disabled;
+      el.keyCaptureToggle.disabled = disabled;
+      if (disabled) {
+        el.keyCaptureToggle.checked = false;
+      }
+    }
+
+    function buildReplayImageEndpoint(index) {
+      if (!state.selectedDisplayId) {
+        return "";
+      }
+      const query = new URLSearchParams({
+        display_id: state.selectedDisplayId,
+        replay_index: String(Math.max(0, Number(index || "0"))),
+        t: String(Date.now()),
+      });
+      return `/ws_rgb/frame_image?${query.toString()}`;
+    }
+
+    function buildSnapshotSignature(frame) {
+      if (!frame || typeof frame !== "object") {
+        return String(frame);
+      }
+      const metadata = frame.metadata && typeof frame.metadata === "object" ? frame.metadata : {};
+      const replaySeq = metadata.replay_seq;
+      const replayIndex = metadata.replay_index;
+      const replayStep = metadata.replay_step;
+      if (replaySeq != null || replayIndex != null || replayStep != null) {
+        return `replay:${String(replaySeq ?? "")}:${String(replayIndex ?? "")}:${String(replayStep ?? "")}`;
+      }
+      const moveCount = frame.move_count;
+      const lastMove = frame.last_move;
+      const boardText = frame.board_text;
+      if (moveCount != null || lastMove != null || boardText != null) {
+        return `live:${String(moveCount ?? "")}:${String(lastMove ?? "")}:${String(boardText ?? "")}`;
+      }
+      try {
+        return JSON.stringify(frame);
+      } catch (_) {
+        return String(frame);
       }
     }
 
@@ -727,6 +881,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     function updateReplayUi() {
       const total = state.historyFrames.length;
       const hasFrames = total > 0;
+      const canReplay = total > 1;
       if (!hasFrames) {
         state.replayIndex = -1;
       } else if (state.replayIndex < 0) {
@@ -738,18 +893,31 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       el.captureToggleBtn.textContent = state.captureEnabled ? "Capture: ON" : "Capture: OFF";
       el.replayToggleBtn.textContent = state.replayTimer === null ? "Start Replay" : "Pause Replay";
       el.replaySeek.max = String(Math.max(0, total - 1));
-      el.replaySeek.value = String(Math.max(0, state.replayIndex));
-      el.replaySeek.disabled = !hasFrames;
-      el.clearReplayBtn.disabled = !hasFrames;
-      el.replayToggleBtn.disabled = !hasFrames;
-      el.replayStepPrevBtn.disabled = !hasFrames;
-      el.replayStepNextBtn.disabled = !hasFrames;
+      if (!state.replaySeekDragging) {
+        el.replaySeek.value = String(Math.max(0, state.replayIndex));
+      }
+      el.replaySeek.disabled = !canReplay;
+      el.replayToggleBtn.disabled = !canReplay;
+      el.replayStepPrevBtn.disabled = !canReplay;
+      el.replayStepNextBtn.disabled = !canReplay;
       el.replayLiveBtn.disabled = !state.replayMode;
+      updateInputUi();
 
       const mode = state.replayMode ? "replay" : "live";
-      const indexText = hasFrames ? `${state.replayIndex + 1}/${total}` : "0/0";
+      const globalTotal = Math.max(state.captureCount, total);
+      const selectedSnapshot = hasFrames ? state.historyFrames[Math.max(0, state.replayIndex)] : null;
+      let currentCaptureIndex = 0;
+      if (selectedSnapshot && Number.isFinite(Number(selectedSnapshot.captureIndex))) {
+        currentCaptureIndex = Number(selectedSnapshot.captureIndex);
+      } else if (hasFrames) {
+        currentCaptureIndex = Math.max(1, globalTotal - (total - 1 - state.replayIndex));
+      }
+      const indexText = hasFrames ? `${currentCaptureIndex}/${globalTotal}` : "0/0";
+      const bufferText = hasFrames ? `${state.replayIndex + 1}/${total}` : "0/0";
+      const droppedText = state.captureCount > total ? ` | dropped=${state.captureCount - total}` : "";
+      const singleFrameText = hasFrames && !canReplay ? " | single_frame_only=true" : "";
       setReplayStatus(
-        `Replay buffer: ${total} frame(s) | mode=${mode} | index=${indexText} | speed=${state.replaySpeed.toFixed(2)}x`,
+        `Replay buffer: ${total} frame(s) | mode=${mode} | index=${indexText} | buffer=${bufferText}${droppedText}${singleFrameText} | speed=${state.replaySpeed.toFixed(2)}x`,
         state.replayMode ? "status ok" : "status",
       );
     }
@@ -759,6 +927,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       state.historyFrames = [];
       state.replayIndex = -1;
       state.replayMode = false;
+      state.lastSnapshotDisplayId = "";
+      state.lastSnapshotSignature = "";
+      state.captureCount = 0;
+      state.replayBufferLoadedForDisplay = "";
       updateReplayUi();
     }
 
@@ -778,13 +950,17 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       }
       if (state.displays.length === 0) {
         state.selectedDisplayId = "";
+        state.selectedDisplayAcceptsInput = false;
+        state.selectedDisplayReplaySeekable = false;
         resetReplayBuffer();
+        updateInputUi();
         clearFrameImage("No display registered yet.");
         return;
       }
       const hasOld = state.displays.some((item) => String(item.display_id || "") === oldSelected);
       state.selectedDisplayId = hasOld ? oldSelected : String(state.displays[0].display_id || "");
       el.displaySelect.value = state.selectedDisplayId;
+      updateInputUi();
     }
 
     async function refreshDisplays() {
@@ -796,7 +972,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           return;
         }
         const mode = state.replayMode ? "replay" : "live";
-        setStatus(`Connected. display_id=${state.selectedDisplayId} mode=${mode}`, "status ok");
+        const replayFlag = state.selectedDisplayReplaySeekable ? " replay_buffer=available" : "";
+        if (state.selectedDisplayAcceptsInput) {
+          setStatus(`Connected. display_id=${state.selectedDisplayId} mode=${mode}${replayFlag}`, "status ok");
+        } else {
+          setStatus(
+            `Connected. display_id=${state.selectedDisplayId} mode=${mode}${replayFlag} (input disabled: no input mapper)`,
+            "status warn",
+          );
+        }
       } catch (error) {
         setStatus(`Refresh displays failed: ${error.message}`, "status error");
       }
@@ -833,6 +1017,54 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       return { ok: true, blob };
     }
 
+    async function preloadReplayBuffer() {
+      if (!state.selectedDisplayId || !state.selectedDisplayReplaySeekable) {
+        return;
+      }
+      if (state.replayBufferLoading) {
+        return;
+      }
+      state.replayBufferLoading = true;
+      try {
+        const query = new URLSearchParams({ display_id: state.selectedDisplayId });
+        const payload = await apiJson(`/ws_rgb/replay_buffer?${query.toString()}`);
+        const frames = Array.isArray(payload.frames) ? payload.frames : [];
+
+        // STEP 1: Replace local replay buffer from server-side replay payload.
+        stopReplayPlayback();
+        state.historyFrames = frames.map((frame, index) => ({
+          frame: safeCloneFrame(frame),
+          imageDataUrl: "",
+          imageEndpoint: buildReplayImageEndpoint(index),
+          imageHint: "Replay image loaded on demand.",
+          displayId: state.selectedDisplayId,
+          timestampMs: Date.now(),
+          captureIndex: index + 1,
+        }));
+        state.captureCount = state.historyFrames.length;
+        state.lastSnapshotDisplayId = "";
+        state.lastSnapshotSignature = "";
+        state.replayIndex = state.historyFrames.length > 0 ? 0 : -1;
+        state.replayMode = state.historyFrames.length > 0;
+        state.replayBufferLoadedForDisplay = state.selectedDisplayId;
+
+        // STEP 2: Render first snapshot immediately so user can inspect without waiting.
+        if (state.historyFrames.length > 0) {
+          applySnapshotToPanels(state.historyFrames[0]);
+          updateReplayUi();
+          setStatus(`Replay buffer loaded. frames=${state.historyFrames.length}`, "status ok");
+        } else {
+          updateReplayUi();
+          clearFrameImage("No replay frames available.");
+          setStatus("Replay buffer is empty.", "status warn");
+        }
+      } catch (error) {
+        setStatus(`Load replay buffer failed: ${error.message}`, "status error");
+      } finally {
+        state.replayBufferLoading = false;
+      }
+    }
+
     function applyFrameToPanels(frame) {
       const boardText = frame.board_text != null ? String(frame.board_text) : "(no board_text)";
       el.boardText.textContent = boardText;
@@ -844,6 +1076,11 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       if (snapshot.imageDataUrl) {
         releaseLiveFrameImage();
         showFrameImageSource(snapshot.imageDataUrl, snapshot.imageHint || "replay image", "ok");
+        return;
+      }
+      if (snapshot.imageEndpoint) {
+        releaseLiveFrameImage();
+        showFrameImageSource(snapshot.imageEndpoint, snapshot.imageHint || "replay image", "ok");
         return;
       }
       clearFrameImage(snapshot.imageHint || "No RGB frame available in snapshot.");
@@ -886,8 +1123,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         setStatus("Replay buffer is empty.", "status warn");
         return;
       }
+      if (state.historyFrames.length <= 1) {
+        setStatus("Replay requires at least 2 captured frames.", "status warn");
+        return;
+      }
       setReplayMode(true);
       stopReplayPlayback();
+      if (state.replayIndex >= state.historyFrames.length - 1) {
+        state.replayIndex = 0;
+      }
       const tickMs = Math.max(20, Math.round(state.pollMs / Math.max(0.1, state.replaySpeed)));
       state.replayTimer = setInterval(() => {
         if (state.historyFrames.length === 0) {
@@ -895,21 +1139,39 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           updateReplayUi();
           return;
         }
-        const next = state.replayIndex + 1 >= state.historyFrames.length ? 0 : state.replayIndex + 1;
+        const next = state.replayIndex + 1;
+        if (next >= state.historyFrames.length) {
+          stopReplayPlayback();
+          updateReplayUi();
+          setStatus("Replay reached end.", "status ok");
+          return;
+        }
         renderReplayIndex(next);
       }, tickMs);
       updateReplayUi();
     }
 
     function pushReplaySnapshot(frame, imageDataUrl, imageHint) {
+      const snapshotSignature = buildSnapshotSignature(frame);
+      if (
+        snapshotSignature &&
+        state.lastSnapshotDisplayId === state.selectedDisplayId &&
+        state.lastSnapshotSignature === snapshotSignature
+      ) {
+        return;
+      }
+      state.captureCount += 1;
       const snapshot = {
         frame: safeCloneFrame(frame),
         imageDataUrl: imageDataUrl || "",
         imageHint: imageHint || "No RGB frame available in snapshot.",
         displayId: state.selectedDisplayId,
         timestampMs: Date.now(),
+        captureIndex: state.captureCount,
       };
       state.historyFrames.push(snapshot);
+      state.lastSnapshotDisplayId = state.selectedDisplayId;
+      state.lastSnapshotSignature = snapshotSignature;
       if (state.historyFrames.length > state.historyLimit) {
         state.historyFrames.shift();
         if (state.replayIndex > 0) {
@@ -971,6 +1233,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       if (!state.selectedDisplayId) {
         return;
       }
+      if (!state.selectedDisplayAcceptsInput) {
+        setStatus("Selected display does not accept input.", "status warn");
+        return;
+      }
       const body = {
         display_id: state.selectedDisplayId,
         payload: { type: "action", action: actionValue },
@@ -991,6 +1257,9 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
     async function sendKeyEvent(type, key, repeat) {
       if (!state.selectedDisplayId) {
+        return;
+      }
+      if (!state.selectedDisplayAcceptsInput) {
         return;
       }
       const body = {
@@ -1016,6 +1285,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
     async function pollTick() {
       await refreshDisplays();
+      if (state.selectedDisplayReplaySeekable) {
+        if (
+          !state.replayBufferLoading &&
+          state.replayBufferLoadedForDisplay !== state.selectedDisplayId
+        ) {
+          await preloadReplayBuffer();
+        }
+        return;
+      }
       if (!state.replayMode) {
         await fetchFrame();
       }
@@ -1043,6 +1321,11 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           resetReplayBuffer();
           clearFrameImage("Display switched. Waiting frame...");
         }
+        updateInputUi();
+        if (state.selectedDisplayReplaySeekable) {
+          preloadReplayBuffer();
+          return;
+        }
         fetchFrame();
       });
       el.applyPollBtn.addEventListener("click", () => {
@@ -1057,6 +1340,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       });
       el.fetchFrameBtn.addEventListener("click", () => {
         setReplayMode(false);
+        if (state.selectedDisplayReplaySeekable) {
+          preloadReplayBuffer();
+          return;
+        }
         fetchFrame();
       });
       el.sendActionBtn.addEventListener("click", () => {
@@ -1070,9 +1357,6 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       el.captureToggleBtn.addEventListener("click", () => {
         state.captureEnabled = !state.captureEnabled;
         updateReplayUi();
-      });
-      el.clearReplayBtn.addEventListener("click", () => {
-        resetReplayBuffer();
       });
       el.replayToggleBtn.addEventListener("click", () => {
         if (state.replayTimer === null) {
@@ -1094,6 +1378,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       });
       el.replayLiveBtn.addEventListener("click", () => {
         setReplayMode(false);
+        if (state.selectedDisplayReplaySeekable) {
+          preloadReplayBuffer();
+          return;
+        }
         fetchFrame();
       });
       el.replaySpeedSelect.addEventListener("change", () => {
@@ -1105,20 +1393,31 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           updateReplayUi();
         }
       });
-      el.replaySeek.addEventListener("input", () => {
+      const applyReplaySeek = () => {
         setReplayMode(true);
         stopReplayPlayback();
         renderReplayIndex(Number(el.replaySeek.value || "0"));
+      };
+      el.replaySeek.addEventListener("pointerdown", () => {
+        state.replaySeekDragging = true;
       });
+      el.replaySeek.addEventListener("pointerup", () => {
+        state.replaySeekDragging = false;
+      });
+      el.replaySeek.addEventListener("change", () => {
+        state.replaySeekDragging = false;
+        applyReplaySeek();
+      });
+      el.replaySeek.addEventListener("input", applyReplaySeek);
       window.addEventListener("keydown", (event) => {
-        if (!el.keyCaptureToggle.checked) {
+        if (!el.keyCaptureToggle.checked || !state.selectedDisplayAcceptsInput) {
           return;
         }
         event.preventDefault();
         sendKeyEvent("keydown", event.key, event.repeat);
       });
       window.addEventListener("keyup", (event) => {
-        if (!el.keyCaptureToggle.checked) {
+        if (!el.keyCaptureToggle.checked || !state.selectedDisplayAcceptsInput) {
           return;
         }
         event.preventDefault();
@@ -1138,7 +1437,11 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       updateReplayUi();
       bindEvents();
       await refreshDisplays();
-      await fetchFrame();
+      if (state.selectedDisplayReplaySeekable) {
+        await preloadReplayBuffer();
+      } else {
+        await fetchFrame();
+      }
       restartPolling();
     }
 
@@ -1179,8 +1482,22 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
             if not display_id:
                 self._send_json({"ok": False, "error": "missing_display_id"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            payload = self._hub().broadcast_frame(display_id)
-            status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.NOT_FOUND
+            replay_index, replay_index_error = self._parse_optional_int_param(params, "replay_index")
+            if replay_index_error:
+                self._send_json({"ok": False, "error": replay_index_error}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self._hub().broadcast_frame(display_id, replay_index=replay_index)
+            status = self._map_frame_error_status(str(payload.get("error") or "")) if not payload.get("ok") else HTTPStatus.OK
+            self._send_json(payload, status=status)
+            return
+        if parsed.path == "/ws_rgb/replay_buffer":
+            display_id = self._first_param(params, "display_id")
+            if not display_id:
+                self._send_json({"ok": False, "error": "missing_display_id"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            limit = self._parse_int_param(params, "limit", default=0)
+            payload = self._hub().load_replay_frames(display_id, limit=max(0, int(limit)))
+            status = self._map_replay_buffer_error_status(str(payload.get("error") or "")) if not payload.get("ok") else HTTPStatus.OK
             self._send_json(payload, status=status)
             return
         if parsed.path in {"/ws_rgb/frame_image", "/ws_rgb/frame.jpg"}:
@@ -1189,7 +1506,11 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "missing_display_id"}, status=HTTPStatus.BAD_REQUEST)
                 return
             quality = self._parse_int_param(params, "quality", default=80)
-            payload = self._hub().broadcast_frame_image(display_id, quality=quality)
+            replay_index, replay_index_error = self._parse_optional_int_param(params, "replay_index")
+            if replay_index_error:
+                self._send_json({"ok": False, "error": replay_index_error}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self._hub().broadcast_frame_image(display_id, quality=quality, replay_index=replay_index)
             if payload.get("ok"):
                 content_type = str(payload.get("content_type") or "image/jpeg")
                 image_bytes = payload.get("image_bytes")
@@ -1262,15 +1583,52 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
             return int(default)
 
     @staticmethod
+    def _parse_optional_int_param(
+        params: Mapping[str, list[str]],
+        key: str,
+    ) -> tuple[Optional[int], Optional[str]]:
+        raw = _WsRgbRequestHandler._first_param(params, key)
+        if raw is None:
+            return None, None
+        try:
+            return int(raw), None
+        except (TypeError, ValueError):
+            return None, f"invalid_{key}"
+
+    @staticmethod
     def _map_frame_image_error_status(error: str) -> HTTPStatus:
         if error in {"display_not_found", "frame_image_missing"}:
             return HTTPStatus.NOT_FOUND
+        if error in {"replay_index_unsupported", "invalid_replay_index"}:
+            return HTTPStatus.BAD_REQUEST
+        if error == "replay_index_fetch_failed":
+            return HTTPStatus.INTERNAL_SERVER_ERROR
         if error in {"pillow_missing", "numpy_missing"}:
             return HTTPStatus.SERVICE_UNAVAILABLE
         if error.startswith("jpeg_encode_failed:"):
             return HTTPStatus.INTERNAL_SERVER_ERROR
         if error in {"frame_image_invalid", "frame_image_invalid_shape"}:
             return HTTPStatus.UNPROCESSABLE_ENTITY
+        return HTTPStatus.BAD_REQUEST
+
+    @staticmethod
+    def _map_frame_error_status(error: str) -> HTTPStatus:
+        if error == "display_not_found":
+            return HTTPStatus.NOT_FOUND
+        if error in {"replay_index_unsupported", "invalid_replay_index"}:
+            return HTTPStatus.BAD_REQUEST
+        if error == "replay_index_fetch_failed":
+            return HTTPStatus.INTERNAL_SERVER_ERROR
+        return HTTPStatus.BAD_REQUEST
+
+    @staticmethod
+    def _map_replay_buffer_error_status(error: str) -> HTTPStatus:
+        if error == "display_not_found":
+            return HTTPStatus.NOT_FOUND
+        if error in {"replay_buffer_unsupported", "replay_count_failed"}:
+            return HTTPStatus.BAD_REQUEST
+        if error == "replay_frame_fetch_failed":
+            return HTTPStatus.INTERNAL_SERVER_ERROR
         return HTTPStatus.BAD_REQUEST
 
     def _read_json_body(self) -> Optional[dict[str, Any]]:
@@ -1298,27 +1656,42 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, payload: Mapping[str, Any], *, status: HTTPStatus) -> None:
         body = json.dumps(dict(payload), ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self._send_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:  # pragma: no cover - exercised in integration
+            if _is_client_disconnect_error(exc):
+                return
+            raise
 
     def _send_html(self, html: str, *, status: HTTPStatus) -> None:
         body = str(html).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self._send_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:  # pragma: no cover - exercised in integration
+            if _is_client_disconnect_error(exc):
+                return
+            raise
 
     def _send_binary(self, body: bytes, *, status: HTTPStatus, content_type: str) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", str(content_type))
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self._send_cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", str(content_type))
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:  # pragma: no cover - exercised in integration
+            if _is_client_disconnect_error(exc):
+                return
+            raise

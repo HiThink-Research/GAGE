@@ -302,6 +302,13 @@ def think_with_timeout(
         Tuple ``(action, timed_out, error_type)``.
     """
 
+    if _supports_async_action_api(player):
+        return _think_with_async_action_api(
+            player=player,
+            observation=observation,
+            timeout_ms=timeout_ms,
+        )
+
     if timeout_ms is None:
         try:
             return player.think(observation), False, None
@@ -334,6 +341,58 @@ def think_with_timeout(
     if tag == "ok":
         return payload, False, None
     return None, False, "think_exception"
+
+
+def _supports_async_action_api(player: Any) -> bool:
+    return all(
+        callable(getattr(player, method_name, None))
+        for method_name in ("start_thinking", "has_action", "pop_action")
+    )
+
+
+def _think_with_async_action_api(
+    *,
+    player: Any,
+    observation: ArenaObservation,
+    timeout_ms: Optional[int],
+) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
+    """Collect action via async player polling API.
+
+    Args:
+        player: Player object implementing async action methods.
+        observation: Observation payload to feed the player.
+        timeout_ms: Optional timeout in milliseconds.
+
+    Returns:
+        Tuple ``(action, timed_out, error_type)``.
+    """
+
+    start_thinking = getattr(player, "start_thinking")
+    has_action = getattr(player, "has_action")
+    pop_action = getattr(player, "pop_action")
+
+    try:
+        start_thinking(observation, deadline_ms=timeout_ms)
+    except Exception:
+        return None, False, "think_exception"
+
+    deadline_monotonic: Optional[float] = None
+    if timeout_ms is not None:
+        timeout_s = max(0.0, float(timeout_ms) / 1000.0)
+        if timeout_s <= 0:
+            return None, True, "timeout"
+        deadline_monotonic = time.monotonic() + timeout_s
+
+    while True:
+        try:
+            if has_action():
+                return pop_action(), False, None
+        except Exception:
+            return None, False, "think_exception"
+
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return None, True, "timeout"
+        time.sleep(0.005)
 
 
 def apply_action_map(environment: Any, action_map: dict[str, ArenaAction]) -> Optional[GameResult]:

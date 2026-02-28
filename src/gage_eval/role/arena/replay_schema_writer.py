@@ -7,7 +7,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from gage_eval.role.arena.types import GameResult
 
@@ -34,8 +34,9 @@ class ReplaySchemaWriter:
         scheduler_type: str,
         result: GameResult,
         move_log: Sequence[dict[str, Any]],
-        arena_trace: Optional[Any],
+        arena_trace: Optional[Sequence[Mapping[str, Any]]],
         extra_meta: Optional[dict[str, Any]] = None,
+        recording_mode: Optional[str] = None,
     ) -> str:
         """Write replay schema artifacts and return replay.json path.
 
@@ -43,8 +44,9 @@ class ReplaySchemaWriter:
             scheduler_type: Arena scheduler kind.
             result: Final game result payload.
             move_log: Action history for event conversion.
-            arena_trace: Optional scheduler trace payload.
+            arena_trace: Optional ordered scheduler trace entries.
             extra_meta: Optional metadata passed from adapter/environment.
+            recording_mode: Optional replay recording mode (`action`/`frame`/`both`).
 
         Returns:
             Absolute path to the generated replay.json file.
@@ -57,15 +59,18 @@ class ReplaySchemaWriter:
         events_path = replay_dir / "events.jsonl"
         replay_path = replay_dir / "replay.json"
         meta_extra = dict(extra_meta or {})
+        requested_mode = _normalize_recording_mode(recording_mode)
 
         # STEP 1: Convert move_log entries to action events.
-        action_events = self._build_action_events(move_log)
+        action_events = self._build_action_events(move_log) if _mode_includes_action(requested_mode) else []
 
         # STEP 2: Convert optional frame events and append result event.
         frame_events = self._build_frame_events(
             meta_extra.pop("frame_events", None),
             start_seq=len(action_events) + 1,
         )
+        if not _mode_includes_frame(requested_mode):
+            frame_events = []
         result_event = self._build_result_event(
             seq=len(action_events) + len(frame_events) + 1,
             result=result,
@@ -80,6 +85,7 @@ class ReplaySchemaWriter:
             frame_count=len(frame_events),
             arena_trace=arena_trace,
             extra_meta=meta_extra,
+            recording_mode=requested_mode,
         )
 
         # STEP 4: Persist events and manifest.
@@ -181,10 +187,11 @@ class ReplaySchemaWriter:
         result: GameResult,
         action_count: int,
         frame_count: int,
-        arena_trace: Optional[Any],
+        arena_trace: Optional[Sequence[Mapping[str, Any]]],
         extra_meta: dict[str, Any],
+        recording_mode: Optional[str],
     ) -> dict[str, Any]:
-        recording_mode = _resolve_recording_mode(action_count, frame_count)
+        resolved_mode = recording_mode or _resolve_recording_mode(action_count, frame_count)
         payload: dict[str, Any] = {
             "schema": "gage_replay/v1",
             "version": "1.0.0",
@@ -195,7 +202,7 @@ class ReplaySchemaWriter:
                 **extra_meta,
             },
             "recording": {
-                "mode": recording_mode,
+                "mode": resolved_mode,
                 "events_path": "events.jsonl",
                 "counts": {
                     "action": int(action_count),
@@ -213,13 +220,9 @@ class ReplaySchemaWriter:
                 "illegal_move_count": int(result.illegal_move_count),
             },
         }
-        if isinstance(arena_trace, Mapping):
-            payload["arena_trace"] = dict(arena_trace)
-        elif isinstance(arena_trace, Sequence) and not isinstance(arena_trace, (str, bytes)):
-            payload["arena_trace"] = [
-                dict(item) if isinstance(item, Mapping) else item
-                for item in arena_trace
-            ]
+        normalized_trace = _normalize_arena_trace_steps(arena_trace)
+        if normalized_trace:
+            payload["arena_trace"] = normalized_trace
         legacy_replay_path = payload["meta"].pop("legacy_replay_path", None)
         if legacy_replay_path:
             payload["files"] = {"legacy_replay_path": str(legacy_replay_path)}
@@ -240,6 +243,20 @@ def _now_ms() -> int:
 def _sanitize_sample_id(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value)).strip("_")
     return cleaned or "unknown"
+
+
+def _normalize_arena_trace_steps(raw_trace: Any) -> list[dict[str, Any]]:
+    trace_source = raw_trace
+    if isinstance(trace_source, Mapping):
+        # NOTE: Keep compatibility with legacy {"schema": "...", "steps": [...]} payloads.
+        legacy_steps = trace_source.get("steps")
+        if isinstance(legacy_steps, Sequence) and not isinstance(legacy_steps, (str, bytes)):
+            trace_source = legacy_steps
+        else:
+            return []
+    if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
+        return []
+    return [dict(item) for item in trace_source if isinstance(item, Mapping)]
 
 
 def _resolve_timestamp_ms(entry: Mapping[str, Any]) -> int:
@@ -328,6 +345,27 @@ def _resolve_recording_mode(action_count: int, frame_count: int) -> str:
     if frame_count > 0:
         return "frame"
     return "action"
+
+
+def _normalize_recording_mode(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    mode = str(value).strip().lower()
+    if mode in {"action", "frame", "both"}:
+        return mode
+    return None
+
+
+def _mode_includes_action(mode: Optional[str]) -> bool:
+    if mode is None:
+        return True
+    return mode in {"action", "both"}
+
+
+def _mode_includes_frame(mode: Optional[str]) -> bool:
+    if mode is None:
+        return True
+    return mode in {"frame", "both"}
 
 
 def _resolve_result_status(result: GameResult) -> str:
