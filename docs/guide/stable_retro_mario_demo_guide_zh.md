@@ -2,9 +2,14 @@
 
 本文只总结当前仓库里的 **YAML 配置方式**，不依赖本地运行产物。
 
-## 1. 适用范围与边界
+## 1. 前期准备
 
-本指南只基于受版本管理的配置文件与代码行为总结。
+​	从https://archive.org/download/super-mario-bros-3-nes/Super%20Mario%20Bros.%203.nes
+​	下载游戏rom，记录保存的文件夹
+​	安装stable retro
+
+​	执行
+​	python -m retro.import "rom保存路径"
 
 ## 2. Mario 相关 YAML（当前存在）
 

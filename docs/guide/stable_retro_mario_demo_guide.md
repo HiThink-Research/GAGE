@@ -2,9 +2,17 @@
 
 This guide focuses on the **YAML configuration patterns** currently in this repository, not on local runtime artifacts.
 
-## 1. Scope and Boundary
+## 1. Preparation
 
-This guide is based on tracked configuration files and code behavior.
+1. Download the game ROM from:
+   `https://archive.org/download/super-mario-bros-3-nes/Super%20Mario%20Bros.%203.nes`
+2. Keep the folder path where the ROM is saved.
+3. Install `stable-retro`.
+4. Run:
+
+```bash
+python -m retro.import "<rom_save_path>"
+```
 
 ## 2. Mario YAML Files (Current)
 
