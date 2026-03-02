@@ -16,6 +16,9 @@ Copy and execute the following commands:
 # 1. Set the game name (supports 22 games, see list below)
 export GAME="space_invaders"
 export RUN_ID="pz_${GAME}_auto_$(date +%s)"
+# Force game_log to be inlined into sample.json (compatible with ws_rgb_replay)
+export GAGE_EVAL_GAME_LOG_INLINE_LIMIT=-1
+export GAGE_EVAL_GAME_LOG_INLINE_BYTES=0
 
 # 2. Run AI simulation
 python run.py \
@@ -24,7 +27,8 @@ python run.py \
   --run-id "$RUN_ID"
 
 # 3. Start web replay service (new ws_rgb flow, auto-open by default)
-SAMPLE_JSON="$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)"
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -type f -name "*.json" | head -n 1)"
+[ -n "$SAMPLE_JSON" ] || { echo "No sample file found under runs/$RUN_ID/samples"; exit 1; }
 PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
   --sample-json "$SAMPLE_JSON" \
   --host 127.0.0.1 \
@@ -113,7 +117,11 @@ Use the unified `ws_rgb` web-based flow instead.
 
 ```bash
 RUN_ID=<your_run_id>
-SAMPLE_JSON="$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)"
+# If you hit sample_game_log_missing, rerun run.py with these two env vars first
+export GAGE_EVAL_GAME_LOG_INLINE_LIMIT=-1
+export GAGE_EVAL_GAME_LOG_INLINE_BYTES=0
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -type f -name "*.json" | head -n 1)"
+[ -n "$SAMPLE_JSON" ] || { echo "No sample file found under runs/$RUN_ID/samples"; exit 1; }
 
 PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
   --sample-json "$SAMPLE_JSON" \
