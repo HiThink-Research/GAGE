@@ -14,7 +14,12 @@ from gage_eval.observability.logger import ObservableLogger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.metrics import MetricRegistry, MetricInstance, MetricContext
-from gage_eval.evaluation.sample_envelope import resolve_judge_output, resolve_model_output, snapshot_sample
+from gage_eval.evaluation.sample_envelope import (
+    resolve_arena_trace,
+    resolve_judge_output,
+    resolve_model_output,
+    snapshot_sample,
+)
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 
@@ -70,6 +75,11 @@ class AutoEvalStep(SampleStep):
     ) -> None:
         resolved_model_output = resolve_model_output(sample, model_output)
         resolved_judge_output = resolve_judge_output(sample, judge_output)
+        resolved_arena_trace = resolve_arena_trace(sample, resolved_model_output)
+        if resolved_arena_trace or "arena_trace" in resolved_model_output:
+            normalized_model_output = dict(resolved_model_output)
+            normalized_model_output["arena_trace"] = resolved_arena_trace
+            resolved_model_output = normalized_model_output
         per_metric_results: Dict[str, Dict] = {}
         logger = self._logger
         worker_count = self._determine_worker_count()
@@ -100,6 +110,7 @@ class AutoEvalStep(SampleStep):
             "task_id": task_id,
             "sample": snapshot_sample(sample),
             "model_output": resolved_model_output,
+            "arena_trace": resolved_arena_trace,
             "judge_output": resolved_judge_output,
             "metrics": per_metric_results,
         }

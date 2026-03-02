@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
@@ -36,3 +37,23 @@ def test_arena_output_externalizes_large_game_log(tmp_path, monkeypatch) -> None
     assert output["game_log_total"] == 2
     assert output["game_log_truncated"] is True
     assert len(output.get("game_log_preview", [])) == 1
+
+
+def test_arena_output_includes_arena_trace_when_present() -> None:
+    adapter = ArenaRoleAdapter(adapter_id="arena")
+    result = SimpleNamespace(
+        winner=None,
+        result="draw",
+        reason=None,
+        move_count=0,
+        illegal_move_count=0,
+        final_board="",
+        move_log=[],
+        rule_profile=None,
+        win_direction=None,
+        line_length=None,
+        replay_path=None,
+        arena_trace={"schema": "gage.trace/v1", "steps": [{"step_index": 7}]},
+    )
+    output = adapter._format_result(result, {"id": "sample-2"}, trace=None)
+    assert output["arena_trace"] == [{"step_index": 7}]

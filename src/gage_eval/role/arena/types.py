@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Optional, Sequence
 
 
@@ -70,3 +70,82 @@ class GameResult:
     win_direction: Optional[str] = None
     line_length: Optional[int] = None
     replay_path: Optional[str] = None
+    arena_trace: Sequence[dict[str, Any]] = field(default_factory=tuple)
+
+
+def attach_arena_trace(
+    result: GameResult,
+    arena_trace: Sequence[dict[str, Any]],
+) -> GameResult:
+    """Attach scheduler-produced arena trace to a GameResult.
+
+    Args:
+        result: The immutable GameResult instance returned by the environment.
+        arena_trace: Ordered per-step trace entries produced by the scheduler.
+
+    Returns:
+        A new GameResult instance with ``arena_trace`` populated.
+    """
+
+    return replace(result, arena_trace=tuple(arena_trace))
+
+
+@dataclass(frozen=True)
+class ArenaTraceStep:
+    """Canonical per-step arena trace contract."""
+
+    step_index: int
+    trace_state: str
+    timestamp: int
+    player_id: str
+    action_raw: Any
+    action_applied: Any
+    t_obs_ready_ms: int
+    t_action_submitted_ms: int
+    timeout: bool
+    is_action_legal: bool
+    retry_count: int
+    illegal_reason: Optional[str] = None
+    info: Optional[dict[str, Any]] = None
+    reward: Optional[dict[str, float]] = None
+    timeline_id: Optional[str] = None
+    deadline_ms: Optional[int] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serializes the trace step to dict."""
+
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ArenaFooter:
+    """Canonical arena footer under `predict_result[0].game_arena`."""
+
+    end_time_ms: int
+    total_steps: int
+    winner_player_id: Optional[str]
+    termination_reason: str
+    ranks: Optional[list[Any]] = None
+    final_scores: Optional[dict[str, float]] = None
+    episode_returns: Optional[dict[str, float]] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serializes footer to dict."""
+
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ArenaHeader:
+    """Canonical arena header under `sample.metadata.game_arena`."""
+
+    engine_id: str
+    seed: int
+    mode: str
+    players: list[dict[str, Any]]
+    start_time_ms: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serializes header to dict."""
+
+        return asdict(self)

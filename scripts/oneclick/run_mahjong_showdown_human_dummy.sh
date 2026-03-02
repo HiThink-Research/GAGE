@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON_BIN="${ROOT}/.venv/bin/python"
+PYTHON_BIN="/opt/homebrew/Caskroom/miniforge/base/envs/GAGE/bin/python"
 CFG="${CFG:-${ROOT}/config/custom/mahjong_human_vs_3_dummy.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT}/runs}"
 RUN_ID="${RUN_ID:-mahjong_showdown_human_dummy_$(date +%Y%m%d_%H%M%S)}"

@@ -3,10 +3,65 @@
 This document is the standard guide for running **PettingZoo Atari** games within the GAGE framework.
 Whether you want to run AI battles, test environment configurations, or replay recorded games, this manual covers it all.
 
+## 0. Install ROMs First in a Fresh Environment (One-Time Setup)
+
+PettingZoo Atari requires ROM installation before environment startup. Without ROMs, initialization fails (common error includes `ROM is missing`).
+
+Use the **same Python interpreter as `run.py`** for every command below:
+
+```bash
+# 0) Pick the same interpreter used by run.py
+# Replace it with your conda/venv python if needed
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+echo "PYTHON_BIN=$PYTHON_BIN"
+"$PYTHON_BIN" -m pip -V
+
+# 1) Install Atari dependencies
+"$PYTHON_BIN" -m pip install -U \
+  "pettingzoo[atari]>=1.24.3" \
+  "shimmy[atari]>=1.0.0" \
+  "AutoROM[accept-rom-license]>=0.6.1"
+
+# 2) Download and install ROMs
+# NOTE: Use module invocation to avoid broken AutoROM shebangs after env migration
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
+```
+
+Run a minimal ROM verification right after installation:
+
+```bash
+"$PYTHON_BIN" - <<'PY'
+from pettingzoo.atari import pong_v3
+
+env = pong_v3.env(render_mode="rgb_array")
+env.reset(seed=0)
+print("PettingZoo Atari ROM check: OK")
+env.close()
+PY
+```
+
+If setup still fails:
+
+- `AutoROM: bad interpreter` or `AutoROM: command not found`
+```bash
+"$PYTHON_BIN" -m pip install --force-reinstall "AutoROM[accept-rom-license]>=0.6.1"
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
+```
+- ROM is still missing: install explicitly to `multi_agent_ale_py/roms`
+```bash
+ROM_DIR="$("$PYTHON_BIN" - <<'PY'
+import importlib.resources as r
+print(r.files("multi_agent_ale_py") / "roms")
+PY
+)"
+echo "ROM_DIR=$ROM_DIR"
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license --install-dir "$ROM_DIR"
+```
+
 ## 1. Quick Start
 
 We recommend the **"Run & Replay"** automation workflow.
-This allows you to see the AI's decision-making process and visually enjoy the battle smoothly via a Pygame window.
+This allows you to inspect AI decisions and watch matches directly in the `ws_rgb` web viewer.
 
 ### Example: Running Space Invaders
 
@@ -16,6 +71,9 @@ Copy and execute the following commands:
 # 1. Set the game name (supports 22 games, see list below)
 export GAME="space_invaders"
 export RUN_ID="pz_${GAME}_auto_$(date +%s)"
+# Force game_log to be inlined into sample.json (compatible with ws_rgb_replay)
+export GAGE_EVAL_GAME_LOG_INLINE_LIMIT=-1
+export GAGE_EVAL_GAME_LOG_INLINE_BYTES=0
 
 # 2. Run AI simulation
 python run.py \
@@ -23,12 +81,21 @@ python run.py \
   --output-dir runs \
   --run-id "$RUN_ID"
 
-# 3. Launch Replay
-python scripts/replay_pettingzoo.py \
-  "$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)" \
-  17
+# 3. Start web replay service (new ws_rgb flow, auto-open by default)
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -type f -name "*.json" | head -n 1)"
+[ -n "$SAMPLE_JSON" ] || { echo "No sample file found under runs/$RUN_ID/samples"; exit 1; }
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
+  --sample-json "$SAMPLE_JSON" \
+  --host 127.0.0.1 \
+  --port 5800 \
+  --fps 12 \
+  --game pettingzoo \
+  --auto-open 1
+
+# 4. Manual fallback if browser did not open automatically
+echo "http://127.0.0.1:5800/ws_rgb/viewer"
 ```
-*(Note: `17` means 17ms/frame, approx. 60FPS real-time speed)*
+*(Note: `--auto-open 1` relies on desktop/browser availability. In headless environments, open the URL manually.)*
 
 ---
 
@@ -96,21 +163,41 @@ We offer two running configurations: **Dummy** (for testing) and **AI** (for act
 
 ---
 
-## 4. Replay Tool
+## 4. Web Replay Tool (ws_rgb Viewer)
 
-If you have finished a task (e.g., queued in the background) and want to view the recording afterwards, use `scripts/replay_pettingzoo.py`.
+`scripts/replay_pettingzoo.py` is a legacy replay path and is no longer recommended.
+Use the unified `ws_rgb` web-based flow instead.
 
-### Basic Usage
+### 4.1 Post-run replay (from existing artifacts)
 
 ```bash
-python scripts/replay_pettingzoo.py <path_to_json_sample> <delay_ms>
+RUN_ID=<your_run_id>
+# If you hit sample_game_log_missing, rerun run.py with these two env vars first
+export GAGE_EVAL_GAME_LOG_INLINE_LIMIT=-1
+export GAGE_EVAL_GAME_LOG_INLINE_BYTES=0
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -type f -name "*.json" | head -n 1)"
+[ -n "$SAMPLE_JSON" ] || { echo "No sample file found under runs/$RUN_ID/samples"; exit 1; }
+
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
+  --sample-json "$SAMPLE_JSON" \
+  --host 127.0.0.1 \
+  --port 5800 \
+  --fps 12 \
+  --game pettingzoo \
+  --auto-open 1
 ```
 
-*   **`path_to_json_sample`**: `runs/<run_id>/samples/.../*.json` file.
-*   **`delay_ms`**: Frame delay in milliseconds.
-    *   `17`: 60 FPS (Normal speed)
-    *   `100`: 10 FPS (Slow motion)
-    *   `0`: Turbo (Fast forward)
+Viewer URL:
+`http://127.0.0.1:5800/ws_rgb/viewer`
+
+### 4.2 One-click run with auto-open (live view)
+
+```bash
+AUTO_OPEN=1 \
+CONFIG=config/custom/pettingzoo/pong_dummy_ws_rgb.yaml \
+RUN_ID="pz_pong_ws_$(date +%Y%m%d_%H%M%S)" \
+bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
+```
 
 ---
 

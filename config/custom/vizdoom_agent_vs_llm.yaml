@@ -1,0 +1,112 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: vizdoom_human_vs_llm_incremental
+  description: ViZDoom arena demo (Human vs LLM) without subprocess players.
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: vizdoom_human_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: vizdoom_demo_dataset
+    loader: jsonl
+    params:
+      path: tests/data/Test_ViZDoom_Demo.jsonl
+      preprocess: grid_game_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: vizdoom_litellm
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-5.2
+      generation_parameters:
+        max_new_tokens: 256
+        temperature: 0.2
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: vizdoom_llm_adapter
+    role_type: dut_model
+    backend_id: vizdoom_litellm
+    capabilities:
+      - chat_completion
+
+  - adapter_id: vizdoom_human
+    role_type: human
+    params:
+      source: pygame
+      window_title: "GAGE ViZDoom Human Input"
+      key_map:
+        left: "2"
+        a: "2"
+        right: "3"
+        d: "3"
+        space: "1"
+        j: "1"
+
+  - adapter_id: vizdoom_human_arena
+    role_type: arena
+    params:
+      environment:
+        impl: vizdoom_env_v1
+#        config_path: src/gage_eval/role/arena/games/vizdoom/_vizdoom.ini
+        replay_output_dir: runs/vizdoom_replays
+        replay:
+          enabled: true
+          primary_mode: true
+          mode: both
+          frame:
+            enabled: true
+            stride: 2
+            encoding: jpeg
+            quality: 80
+        render_mode: both
+        show_pov: false
+        show_automap: false
+        use_single_process: false
+        max_steps: 20000
+        action_repeat: 4
+        sleep_s: 0.00
+        obs_image: true
+        no_attack_seconds: 0
+        allow_partial_actions: true
+      scheduler:
+        type: tick
+        tick_ms: 20
+      parser:
+        impl: vizdoom_parser_v1
+      players:
+        - name: p0
+          type: human
+          ref: vizdoom_human
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+        - name: p1
+          type: backend
+          ref: vizdoom_llm_adapter
+          max_retries: 1
+          fallback_policy: first_legal
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+
+metrics: []
+
+tasks:
+  - task_id: vizdoom_human_vs_llm_incremental_task
+    dataset_id: vizdoom_demo_dataset
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_human_vs_llm_incremental_events.jsonl

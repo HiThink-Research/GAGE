@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import io
+import time
+from queue import Queue
+from threading import Lock, Thread
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
@@ -28,6 +33,8 @@ class LLMPlayer:
         legal_moves_limit: int = 40,
         sampling_params: Optional[Dict[str, Any]] = None,
         fallback_policy: str = "none",
+        timeout_ms: Optional[int] = None,
+        timeout_fallback_move: Optional[str] = None,
     ) -> None:
         self.name = name
         self._adapter_id = adapter_id
@@ -39,13 +46,26 @@ class LLMPlayer:
         self._legal_moves_limit = max(0, int(legal_moves_limit))
         self._sampling_params = dict(sampling_params or {})
         self._fallback_policy = str(fallback_policy or "none").lower()
+        self._timeout_ms = None if timeout_ms is None else max(1, int(timeout_ms))
+        self._timeout_fallback_move = (
+            None if timeout_fallback_move is None else str(timeout_fallback_move)
+        )
         self._base_messages = list(sample.get("messages") or [])
+        self._async_lock = Lock()
+        self._async_queue: Queue[ArenaAction] = Queue()
+        self._async_inflight = False
+        self._async_thread: Optional[Thread] = None
+        self._async_start_ts: Optional[float] = None
+        self._async_timeout_ms: Optional[float] = None
+        self._async_timeout_logged = False
 
     def think(self, observation: ArenaObservation) -> ArenaAction:
         """Produce an action using the LLM adapter."""
 
         prompt_text = self._format_observation(observation)
-        messages = self._base_messages + [self._build_user_message(prompt_text)]
+        image_fragment = self._build_image_fragment(observation)
+        logger.debug("LLMPlayer {} prompt (text-only):\n{}", self.name, prompt_text)
+        messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
@@ -59,7 +79,9 @@ class LLMPlayer:
                 reason=parse_result.error,
                 legal_moves=self._truncate_legal_moves(observation.legal_actions_items),
             )
-            raw_text = self._invoke_model(self._base_messages + [self._build_user_message(rethink_prompt)])
+            raw_text = self._invoke_model(
+                self._base_messages + [self._build_user_message(rethink_prompt, image_fragment)]
+            )
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             retries += 1
 
@@ -78,7 +100,7 @@ class LLMPlayer:
                     fallback_move,
                     parse_result.error,
                 )
-                metadata = self._build_action_metadata(parse_result)
+                metadata = self._build_action_metadata(parse_result, retry_count=retries)
                 metadata["error"] = parse_result.error
                 metadata["fallback"] = self._fallback_policy
                 return ArenaAction(
@@ -88,7 +110,7 @@ class LLMPlayer:
                     metadata=metadata,
                 )
 
-        metadata = self._build_action_metadata(parse_result)
+        metadata = self._build_action_metadata(parse_result, retry_count=retries)
         if parse_result.error:
             metadata["error"] = parse_result.error
         return ArenaAction(
@@ -97,6 +119,84 @@ class LLMPlayer:
             raw=raw_text,
             metadata=metadata,
         )
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        """Start thinking asynchronously if no request is in-flight."""
+
+        effective_timeout_ms = (
+            self._timeout_ms if self._timeout_ms is not None else deadline_ms
+        )
+        with self._async_lock:
+            if self._async_inflight or not self._async_queue.empty():
+                return False
+            self._async_inflight = True
+            self._async_start_ts = time.monotonic()
+            self._async_timeout_ms = (
+                None if effective_timeout_ms is None else float(effective_timeout_ms)
+            )
+            self._async_timeout_logged = False
+
+        def _run() -> None:
+            try:
+                action = self.think(observation)
+            except Exception as exc:
+                if self._is_shutdown_error(exc):
+                    logger.debug("LLMPlayer {} async think canceled during shutdown: {}", self.name, exc)
+                else:
+                    logger.warning("LLMPlayer {} async think failed: {}", self.name, exc)
+                action = None
+            if action is not None:
+                self._async_queue.put(action)
+            with self._async_lock:
+                self._async_inflight = False
+
+        thread = Thread(target=_run, daemon=True)
+        self._async_thread = thread
+        thread.start()
+        return True
+
+    def has_action(self) -> bool:
+        """Return True if an async action is ready."""
+
+        if not self._async_queue.empty():
+            return True
+        with self._async_lock:
+            if not self._async_inflight:
+                return False
+            started = self._async_start_ts
+            timeout_ms = self._async_timeout_ms
+            timeout_logged = self._async_timeout_logged
+        if started is None or timeout_ms is None:
+            return False
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        if elapsed_ms >= timeout_ms and not timeout_logged:
+            logger.warning(
+                "LLMPlayer {} async timeout after {}ms; awaiting late response",
+                self.name,
+                int(elapsed_ms),
+            )
+            with self._async_lock:
+                self._async_timeout_logged = True
+        return False
+
+    def pop_action(self) -> ArenaAction:
+        """Pop the next async action."""
+
+        action = self._async_queue.get_nowait()
+        with self._async_lock:
+            self._async_inflight = False
+            self._async_start_ts = None
+            self._async_timeout_ms = None
+            self._async_timeout_logged = False
+        return action
+
+    def wait_for_pending(self, timeout_s: float = 1.0) -> None:
+        """Wait briefly for any in-flight async call to finish."""
+
+        thread = self._async_thread
+        if thread is None:
+            return
+        thread.join(timeout=max(0.0, float(timeout_s)))
 
     def _invoke_model(self, messages: Sequence[Dict[str, Any]]) -> str:
         payload = {
@@ -113,12 +213,53 @@ class LLMPlayer:
         logger.debug("LLMPlayer {} output={}", self.name, raw_text)
         return raw_text
 
+    @staticmethod
+    def _is_shutdown_error(exc: Exception) -> bool:
+        """Return True if the error indicates runtime shutdown in progress."""
+
+        message = str(exc).strip().lower()
+        if not message:
+            return False
+        return (
+            "cannot schedule new futures after shutdown" in message
+            or "rolepool" in message
+            or "is shut down" in message
+        )
+
     def _format_observation(self, observation: ArenaObservation) -> str:
+        if self._is_vizdoom_observation(observation):
+            return self._format_vizdoom_observation(observation)
         if self._should_use_pettingzoo_prompt(observation):
             return self._format_pettingzoo_observation(observation)
         if self._should_use_card_prompt(observation):
             return self._format_card_observation(observation)
         return self._format_grid_observation(observation)
+
+    def _format_vizdoom_observation(self, observation: ArenaObservation) -> str:
+        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
+        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
+        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
+        tick = metadata.get("t")
+        reward = metadata.get("reward")
+        status_lines = [
+            f"- Legal actions: {legal_hint}",
+        ]
+        if tick is not None:
+            status_lines.append(f"- Tick: {tick}")
+        if reward is not None:
+            status_lines.append(f"- Last reward: {reward}")
+        lines = [
+            "You are playing ViZDoom.",
+            observation.view_text,
+            "",
+            "Status:",
+            *status_lines,
+            "",
+            "Instructions:",
+            "- Choose exactly one action id from the legal actions list.",
+            "- Output ONLY the action id as an integer (no extra text).",
+        ]
+        return "\n".join(lines)
 
     def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
         legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
@@ -209,9 +350,20 @@ class LLMPlayer:
         game_type = str(metadata.get("game_type", "")).lower()
         if game_type == "doudizhu":
             return True
+        if game_type == "vizdoom":
+            return False
         if isinstance(observation.metadata.get("public_state"), dict):
             return True
         return "Public State:" in observation.view_text
+
+    def _is_vizdoom_observation(self, observation: ArenaObservation) -> bool:
+        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
+        obs_game_type = str(metadata.get("game_type", "")).lower()
+        if obs_game_type == "vizdoom":
+            return True
+        sample_meta = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
+        sample_game_type = str(sample_meta.get("game_type", "")).lower()
+        return sample_game_type == "vizdoom"
 
     def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
         metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
@@ -256,14 +408,78 @@ class LLMPlayer:
         return list(legal_moves[: self._legal_moves_limit])
 
     @staticmethod
-    def _build_user_message(text: str) -> Dict[str, Any]:
-        return {"role": "user", "content": [{"type": "text", "text": text}]}
+    def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        content = [{"type": "text", "text": text}]
+        if image_fragment:
+            content.append(image_fragment)
+        return {"role": "user", "content": content}
 
-    def _build_action_metadata(self, parse_result) -> Dict[str, Any]:
+    def _build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
+        view = observation.view or {}
+        image = view.get("image")
+        if image is None:
+            return None
+        data_url = self._resolve_image_data_url(image)
+        if not data_url:
+            return None
+        return {"type": "image_url", "image_url": {"url": data_url}}
+
+    def _resolve_image_data_url(self, image: Any) -> Optional[str]:
+        if isinstance(image, str):
+            if image.startswith("data:"):
+                return image
+            return None
+        if not isinstance(image, dict):
+            return None
+        if image.get("data_url"):
+            return str(image["data_url"])
+        if image.get("url"):
+            return str(image["url"])
+        if image.get("encoding") != "raw_base64":
+            return None
+        raw_b64 = image.get("data")
+        shape = image.get("shape") or []
+        dtype = str(image.get("dtype", ""))
+        if not raw_b64 or not isinstance(shape, list) or len(shape) < 2:
+            return None
+        if "uint8" not in dtype:
+            return None
+        try:
+            from PIL import Image
+        except ImportError:
+            logger.warning("Pillow not installed; skipping image conversion for arena prompt")
+            return None
+        try:
+            raw = base64.b64decode(str(raw_b64))
+            height = int(shape[0])
+            width = int(shape[1])
+            channels = int(shape[2]) if len(shape) > 2 else 1
+            if channels == 4:
+                mode = "RGBA"
+            elif channels == 3:
+                mode = "RGB"
+            else:
+                mode = "L"
+            img = Image.frombytes(mode, (width, height), raw)
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG")
+            data = base64.b64encode(buffer.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{data}"
+        except Exception:
+            return None
+
+    def _build_action_metadata(self, parse_result, *, retry_count: int = 0) -> Dict[str, Any]:
         metadata = {"player_type": "backend"}
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)
+        hold_ticks = getattr(parse_result, "hold_ticks", None)
+        if hold_ticks is not None:
+            try:
+                metadata["hold_ticks"] = max(1, int(hold_ticks))
+            except (TypeError, ValueError):
+                pass
+        metadata["retry_count"] = max(0, int(retry_count))
         return metadata
 
 

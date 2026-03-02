@@ -440,7 +440,7 @@ If you need to start manually, you can split it into three steps:
 
 1) Start Replay Server:
 ```bash
-PYTHONPATH=src /Users/shuo/code/GAGE/.venv/bin/python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
+PYTHONPATH=src python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
 ```
 
 2) Start Frontend:
@@ -451,7 +451,7 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 3) Run Backend Inference:
 ```bash
-/Users/shuo/code/GAGE/.venv/bin/python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
+python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
 ```
 
 ### 9.8 FAQ
@@ -461,6 +461,13 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 - Node reports `ERR_OSSL_EVP_UNSUPPORTED`
   Use `NODE_OPTIONS=--openssl-legacy-provider` (the script already includes this).
+
+## 10. Extension checklist
+
+1. Add a new environment under `src/gage_eval/role/arena/games/<game>/`.
+2. Register environment, context, parser, and renderer to their registries.
+3. Add demo configs and tests under `config/custom/` and `tests/unit/`.
+4. Validate via `run.py` with a small `max_samples`.
 
 ## 10. Mahjong quickstart (showdown)
 
@@ -499,27 +506,31 @@ URL params (Human/AI):
 - `action_url`: backend action endpoint (URL-encoded)
 
 Common env vars:
+- `REPLAY_PORT` / `FRONTEND_PORT`
+- `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
 
-## 11. PettingZoo Atari Support (22 Games)
+## 11. ViZDoom setup guide
 
-GAGE has integrated PettingZoo Atari environments, supporting 22 classic two-player games (e.g. Space Invaders, Pong, Boxing).
+Guide: [English](vizdoom_setup_guide.md) | [中文](vizdoom_setup_guide_zh.md)
 
-### Core Features
-1.  **Multi-game Support**: Unified access to 22 games via the `pettingzoo_aec_v1` adapter.
-2.  **AI Control**: LLMs play blindly based on Text Observations.
-3.  **Auto Replay**: Provides a "Run & Replay" tool to visualize matches smoothly, bypassing LLM inference latency.
+This chapter explains how to install the ViZDoom environment, run the local game modes, and verify replay output.
 
-### Quick Start
-Refer to the full user guide for detailed instructions:
+## 12. Stable Retro Mario demo guide
 
-### Environment Requirements
-- **Dependencies**: `cmake` (Required for building Atari environments)
+Guide: [English](stable_retro_mario_demo_guide.md) | [中文](stable_retro_mario_demo_guide_zh.md)
 
-> 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide.md)**
->
-> Includes:
-> *   Quick Start
-> *   Full Game List (22 Games)
-> *   Dummy/AI Modes
-> *   FAQ
+This chapter provides an end-to-end Retro Mario demo path, including setup notes, run commands, replay checks, and troubleshooting guidance.
+
+## 13. ws_rgb replay usage guide
+
+Guide: [English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
+Runtime integration and live rendering guide: [English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
+
+This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.
+
+## 14. PettingZoo Atari two-player guide
+
+Guide: [English](pettingzoo_user_guide.md) | [中文](pettingzoo_user_guide_zh.md)
+
+This chapter links the PettingZoo Atari two-player integration, run flow, and ws_rgb web replay usage in GAGE for Game Arena onboarding.

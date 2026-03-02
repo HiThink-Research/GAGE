@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON_BIN="${ROOT}/.venv/bin/python" # Assuming venv location
+PYTHON_BIN="/opt/homebrew/Caskroom/miniforge/base/envs/GAGE/bin/python"
 OUTPUT_DIR="${ROOT}/runs"
 REPLAY_PORT="${REPLAY_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"

@@ -2,4 +2,6 @@
 
 from __future__ import annotations
 
-__all__ = []
+from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
+
+__all__ = ["PettingZooDiscreteInputMapper"]
