@@ -3,6 +3,60 @@
 本文档是 **PettingZoo Atari** 游戏在 GAGE 框架下的标准使用指南。
 无论您是想运行 AI 对战，还是测试环境配置，或者是回放录像，都可以参考本手册。
 
+## 0. 新环境先安装 ROM（仅首次）
+
+PettingZoo Atari 必须先完成 ROM 安装，否则环境初始化会失败（常见报错包含 `ROM is missing`）。
+
+请务必使用和 `run.py` **同一个 Python 解释器**执行下面命令：
+
+```bash
+# 0) 选择与 run.py 一致的解释器（按需改成你的 conda/venv python）
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+echo "PYTHON_BIN=$PYTHON_BIN"
+"$PYTHON_BIN" -m pip -V
+
+# 1) 安装 Atari 依赖
+"$PYTHON_BIN" -m pip install -U \
+  "pettingzoo[atari]>=1.24.3" \
+  "shimmy[atari]>=1.0.0" \
+  "AutoROM[accept-rom-license]>=0.6.1"
+
+# 2) 下载并安装 ROM
+# NOTE: 使用模块方式，避免 AutoROM 脚本 shebang 指向旧环境导致失败
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
+```
+
+安装后建议立即做一次最小校验：
+
+```bash
+"$PYTHON_BIN" - <<'PY'
+from pettingzoo.atari import pong_v3
+
+env = pong_v3.env(render_mode="rgb_array")
+env.reset(seed=0)
+print("PettingZoo Atari ROM check: OK")
+env.close()
+PY
+```
+
+若仍失败，按下面排查：
+
+- `AutoROM: bad interpreter` 或 `AutoROM: command not found`
+```bash
+"$PYTHON_BIN" -m pip install --force-reinstall "AutoROM[accept-rom-license]>=0.6.1"
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
+```
+- 仍提示 ROM 缺失，显式安装到 `multi_agent_ale_py/roms`
+```bash
+ROM_DIR="$("$PYTHON_BIN" - <<'PY'
+import importlib.resources as r
+print(r.files("multi_agent_ale_py") / "roms")
+PY
+)"
+echo "ROM_DIR=$ROM_DIR"
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license --install-dir "$ROM_DIR"
+```
+
 ## 1. 快速开始 (Quick Start)
 
 我们推荐使用 **"运行即回放" (Run & Replay)** 的自动化流程。

@@ -23,10 +23,44 @@ Run from repository root:
 cd /path/to/GAGE
 ```
 
-PettingZoo Atari needs ROM setup on first run:
+PettingZoo Atari needs ROM setup before first run in a fresh environment. Use the same Python interpreter as `run.py`:
 
 ```bash
-AutoROM --accept-license
+# 0) Pick the same interpreter used by run.py
+# Replace it with your conda/venv python if needed
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+echo "PYTHON_BIN=$PYTHON_BIN"
+"$PYTHON_BIN" -m pip -V
+
+# 1) Install Atari dependencies
+"$PYTHON_BIN" -m pip install -U \
+  "pettingzoo[atari]>=1.24.3" \
+  "shimmy[atari]>=1.0.0" \
+  "AutoROM[accept-rom-license]>=0.6.1"
+
+# 2) Download and install ROMs
+# NOTE: Use module invocation to avoid broken AutoROM shebangs after env migration
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
+```
+
+Minimal verification (recommended):
+
+```bash
+"$PYTHON_BIN" - <<'PY'
+from pettingzoo.atari import pong_v3
+
+env = pong_v3.env(render_mode="rgb_array")
+env.reset(seed=0)
+print("PettingZoo Atari ROM check: OK")
+env.close()
+PY
+```
+
+If you hit `AutoROM: bad interpreter` or `AutoROM: command not found`:
+
+```bash
+"$PYTHON_BIN" -m pip install --force-reinstall "AutoROM[accept-rom-license]>=0.6.1"
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
 ```
 
 For AI mode:

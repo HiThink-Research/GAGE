@@ -123,6 +123,10 @@ class HumanPlayer:
         if callable(poll_action):
             action_text = poll_action(timeout_ms=0, default_action=None)
             if action_text:
+                target_player_id, _ = self._extract_queued_action_payload(action_text)
+                if target_player_id and target_player_id != self.name:
+                    self._requeue_action(action_text)
+                    return False
                 action = self._parse_human_action(observation, action_text)
                 if action is not None:
                     self._async_queue.put(action)

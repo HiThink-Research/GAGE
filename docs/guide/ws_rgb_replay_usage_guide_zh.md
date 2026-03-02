@@ -23,10 +23,43 @@
 cd /path/to/GAGE
 ```
 
-PettingZoo Atari 首次运行需安装 ROM：
+PettingZoo Atari 在新环境首次运行前，需先安装 ROM。请使用与 `run.py` 相同的 Python 解释器执行：
 
 ```bash
-AutoROM --accept-license
+# 0) 选择与 run.py 一致的解释器（按需改成你的 conda/venv python）
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
+echo "PYTHON_BIN=$PYTHON_BIN"
+"$PYTHON_BIN" -m pip -V
+
+# 1) 安装 Atari 依赖
+"$PYTHON_BIN" -m pip install -U \
+  "pettingzoo[atari]>=1.24.3" \
+  "shimmy[atari]>=1.0.0" \
+  "AutoROM[accept-rom-license]>=0.6.1"
+
+# 2) 下载并安装 ROM
+# NOTE: 使用模块方式，避免 AutoROM 脚本 shebang 指向旧环境导致失败
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
+```
+
+最小校验（建议执行）：
+
+```bash
+"$PYTHON_BIN" - <<'PY'
+from pettingzoo.atari import pong_v3
+
+env = pong_v3.env(render_mode="rgb_array")
+env.reset(seed=0)
+print("PettingZoo Atari ROM check: OK")
+env.close()
+PY
+```
+
+若遇到 `AutoROM: bad interpreter` / `AutoROM: command not found`：
+
+```bash
+"$PYTHON_BIN" -m pip install --force-reinstall "AutoROM[accept-rom-license]>=0.6.1"
+"$PYTHON_BIN" -m AutoROM.AutoROM --accept-license
 ```
 
 AI 模式需设置 Key：
