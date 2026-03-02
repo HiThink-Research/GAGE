@@ -45,23 +45,7 @@ conda activate GAGE
 pip install -r requirements.txt
 ```
 
-### 3.3 Install ViZDoom Dependencies
-
-The main `requirements.txt` already includes `pygame`, but ViZDoom itself must also be installed.
-
-Recommended:
-
-```bash
-pip install -r requirements-vizdoom.txt
-```
-
-Equivalent minimal install:
-
-```bash
-pip install vizdoom pygame
-```
-
-### 3.4 Verify Installation
+### 3.3 Verify Installation
 
 ```bash
 python - <<'PY'

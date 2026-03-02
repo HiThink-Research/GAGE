@@ -510,11 +510,11 @@ URL 参数（Human / AI）：
 - `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
 
-## 11. VizDoom Arena 概览
+## 11. ViZDoom 环境安装与启动指南
 
-文档：[English](vizdoom_arena_summary.md) | [中文](vizdoom_arena_summary_zh.md)
+文档：[English](vizdoom_setup_guide.md) | [中文](vizdoom_setup_guide_zh.md)
 
-本章节用于说明 VizDoom arena 的当前能力边界、关键配置入口与运行预期，便于本地验证和后续接入对齐。
+本章节用于说明 ViZDoom 的环境安装方式、本地启动命令以及回放验证方式。
 
 ## 12. 稳定版 Retro Mario Demo 指南
 

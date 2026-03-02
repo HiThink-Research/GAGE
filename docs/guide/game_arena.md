@@ -510,11 +510,11 @@ Common env vars:
 - `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
 
-## 11. VizDoom Arena summary
+## 11. ViZDoom setup guide
 
-Guide: [English](vizdoom_arena_summary.md) | [中文](vizdoom_arena_summary_zh.md)
+Guide: [English](vizdoom_setup_guide.md) | [中文](vizdoom_setup_guide_zh.md)
 
-This chapter summarizes the current VizDoom arena status, key config entry points, and runtime expectations for local verification and integration handoff.
+This chapter explains how to install the ViZDoom environment, run the local game modes, and verify replay output.
 
 ## 12. Stable Retro Mario demo guide
 
