@@ -44,3 +44,5 @@ AutoROM[accept-rom-license]>=0.6.1
 opencv-python-headless>=4.8.0
 pygame>=2.3.0
 
+# Vizdoom
+vizdoom>=1.2.4

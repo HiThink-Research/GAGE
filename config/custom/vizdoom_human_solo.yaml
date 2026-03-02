@@ -9,6 +9,7 @@ custom:
   steps:
     - step: arena
       adapter_id: vizdoom_human_arena
+    - step: auto_eval
 
 datasets:
   - dataset_id: vizdoom_demo_dataset
