@@ -24,24 +24,27 @@ class PettingZooDiscreteInputMapper(GameInputMapper):
     def __init__(
         self,
         *,
-        key_map: Optional[Mapping[str, str]] = None,
+        key_map: Optional[Mapping[str, Any]] = None,
         enforce_legal_moves: bool = True,
     ) -> None:
         """Initializes mapper settings.
 
         Args:
             key_map: Optional shortcut mapping from keyboard key to action text.
+                Each value can be:
+                - A plain action string (for example: ``"1"``).
+                - A dict with ``move``/``action`` and optional ``player_id``.
             enforce_legal_moves: Whether to reject actions missing from legal moves context.
         """
 
-        resolved_key_map: dict[str, str] = {}
+        resolved_key_map: dict[str, tuple[str, Optional[str]]] = {}
         if isinstance(key_map, Mapping):
-            for raw_key, raw_action in key_map.items():
+            for raw_key, raw_value in key_map.items():
                 key_name = _normalize_key(raw_key)
-                action_text = str(raw_action or "").strip()
+                action_text, target_player_id = _parse_key_binding(raw_value)
                 if not key_name or not action_text:
                     continue
-                resolved_key_map[key_name] = action_text
+                resolved_key_map[key_name] = (action_text, target_player_id)
         self._key_map = resolved_key_map
         self._enforce_legal_moves = bool(enforce_legal_moves)
 
@@ -53,7 +56,7 @@ class PettingZooDiscreteInputMapper(GameInputMapper):
     ) -> Sequence[HumanActionEvent]:
         # STEP 1: Resolve one candidate action from payload fields or shortcuts.
         legal_moves = _extract_legal_moves(context)
-        candidate = self._resolve_action_text(event=event, legal_moves=legal_moves)
+        candidate, mapped_player_id = self._resolve_action_text(event=event, legal_moves=legal_moves)
         if not candidate:
             return []
 
@@ -63,7 +66,7 @@ class PettingZooDiscreteInputMapper(GameInputMapper):
             return []
 
         # STEP 3: Emit queue-ready action payload for the current human player.
-        player_id = str(context.get("human_player_id") or "player_0")
+        player_id = str(mapped_player_id or context.get("human_player_id") or "player_0")
         return [
             HumanActionEvent(
                 player_id=player_id,
@@ -82,7 +85,7 @@ class PettingZooDiscreteInputMapper(GameInputMapper):
         *,
         event: BrowserKeyEvent,
         legal_moves: Sequence[str],
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], Optional[str]]:
         payload = event.payload
 
         # STEP 1: Prefer explicit action fields from browser payload.
@@ -92,12 +95,12 @@ class PettingZooDiscreteInputMapper(GameInputMapper):
                 continue
             action_text = str(value).strip()
             if action_text:
-                return action_text
+                return action_text, None
 
         # STEP 2: Resolve indexed action when frontend sends selected index.
         indexed = _resolve_index_action(payload, legal_moves)
         if indexed:
-            return indexed
+            return indexed, None
 
         # STEP 3: Fallback to keyboard shortcuts for keydown events.
         if event.event_type in _KEYDOWN_TYPES and event.key:
@@ -105,7 +108,7 @@ class PettingZooDiscreteInputMapper(GameInputMapper):
             if mapped:
                 return mapped
 
-        return None
+        return None, None
 
     def _resolve_legal_action(
         self,
@@ -161,3 +164,21 @@ def _extract_legal_moves(context: Mapping[str, Any]) -> list[str]:
 
 def _normalize_key(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _parse_key_binding(value: Any) -> tuple[Optional[str], Optional[str]]:
+    if isinstance(value, Mapping):
+        action_value = (
+            value.get("move")
+            or value.get("action")
+            or value.get("value")
+            or value.get("text")
+        )
+        action_text = str(action_value or "").strip()
+        player_value = value.get("player_id") or value.get("playerId") or value.get("player")
+        player_id = str(player_value).strip() if player_value is not None else None
+        if player_id == "":
+            player_id = None
+        return (action_text or None), player_id
+    action_text = str(value or "").strip()
+    return (action_text or None), None

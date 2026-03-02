@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gage_eval.tools import ws_rgb_replay
 
 
@@ -156,3 +158,31 @@ def test_build_replay_v1_display_trims_leading_empty_frame(tmp_path: Path) -> No
     assert display is not None
     assert display["frame_count"]() == 1
     assert display["frame_at"](0)["board_text"] == "frame-2"
+
+
+def test_maybe_open_browser_uses_webbrowser_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def _fake_open(url: str) -> bool:
+        calls.append(url)
+        return True
+
+    monkeypatch.setattr(ws_rgb_replay.webbrowser, "open", _fake_open)
+
+    ws_rgb_replay._maybe_open_browser("http://127.0.0.1:5800/ws_rgb/viewer", enabled=True)
+
+    assert calls == ["http://127.0.0.1:5800/ws_rgb/viewer"]
+
+
+def test_maybe_open_browser_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def _fake_open(url: str) -> bool:
+        calls.append(url)
+        return True
+
+    monkeypatch.setattr(ws_rgb_replay.webbrowser, "open", _fake_open)
+
+    ws_rgb_replay._maybe_open_browser("http://127.0.0.1:5800/ws_rgb/viewer", enabled=False)
+
+    assert calls == []

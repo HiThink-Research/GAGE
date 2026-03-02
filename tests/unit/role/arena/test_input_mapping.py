@@ -210,3 +210,31 @@ def test_pettingzoo_discrete_input_mapper_filters_illegal() -> None:
         context=context,
     )
     assert illegal == []
+
+
+def test_pettingzoo_discrete_input_mapper_supports_dual_player_keyboard_map() -> None:
+    mapper = PettingZooDiscreteInputMapper(
+        key_map={
+            "a": {"move": "3", "player_id": "player_0"},
+            "d": {"move": "2", "player_id": "player_0"},
+            "j": {"move": "3", "player_id": "player_1"},
+            "l": {"move": "2", "player_id": "player_1"},
+        }
+    )
+    context = {"human_player_id": "player_0", "legal_moves": ["0", "1", "2", "3", "4", "5"]}
+
+    p0_actions = mapper.handle_browser_event(
+        {"type": "keydown", "key": "a"},
+        context=context,
+    )
+    assert len(p0_actions) == 1
+    assert p0_actions[0].player_id == "player_0"
+    assert p0_actions[0].move == "3"
+
+    p1_actions = mapper.handle_browser_event(
+        {"type": "keydown", "key": "l"},
+        context=context,
+    )
+    assert len(p1_actions) == 1
+    assert p1_actions[0].player_id == "player_1"
+    assert p1_actions[0].move == "2"

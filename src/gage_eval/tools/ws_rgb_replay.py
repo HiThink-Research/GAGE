@@ -6,6 +6,7 @@ import argparse
 import json
 import signal
 import time
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Protocol, Sequence
@@ -36,6 +37,7 @@ class WsRgbReplayOptions:
     fps: float
     max_frames: int
     game: Optional[str]
+    auto_open: bool
 
 
 class ReplayFrameCursor:
@@ -122,6 +124,13 @@ def _parse_args() -> argparse.Namespace:
         choices=("pettingzoo",),
         default=None,
         help="Optional explicit game key. When omitted, inferred from task metadata.",
+    )
+    parser.add_argument(
+        "--auto-open",
+        type=int,
+        choices=(0, 1),
+        default=0,
+        help="Auto open browser viewer URL after server startup (0/1).",
     )
     return parser.parse_args()
 
@@ -416,6 +425,7 @@ def _serve_replay(
             action_queue=None,
         )
     )
+    _maybe_open_browser(hub.viewer_url, enabled=options.auto_open)
 
     stop_flag = {"stop": False}
 
@@ -446,8 +456,20 @@ def main() -> None:
         fps=float(args.fps),
         max_frames=max(0, int(args.max_frames)),
         game=str(args.game) if args.game else None,
+        auto_open=bool(int(args.auto_open)),
     )
     _serve_replay(sample_record=sample_record, task_id=task_id, options=options)
+
+
+def _maybe_open_browser(viewer_url: str, *, enabled: bool) -> None:
+    """Opens viewer URL in default browser when auto-open is enabled."""
+
+    if not enabled:
+        return
+    try:
+        webbrowser.open(viewer_url)
+    except Exception:
+        return
 
 
 if __name__ == "__main__":

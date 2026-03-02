@@ -63,7 +63,10 @@ def test_ws_rgb_hub_register_list_broadcast_and_route_input() -> None:
         )
         assert response["ok"] is True
         assert response["queued"] == 1
-        assert queue.get_nowait() == "MOVE:j"
+        queued_payload = json.loads(queue.get_nowait())
+        assert queued_payload["player_id"] == "player_0"
+        assert queued_payload["move"] == "MOVE:j"
+        assert queued_payload["raw"] == "MOVE:j"
     finally:
         hub.stop()
 
@@ -147,7 +150,10 @@ def test_ws_rgb_hub_http_endpoints() -> None:
             payload = json.loads(response.read().decode("utf-8"))
         assert payload["ok"] is True
         assert payload["queued"] == 1
-        assert queue.get_nowait() == "MOVE:k"
+        queued_payload = json.loads(queue.get_nowait())
+        assert queued_payload["player_id"] == "player_0"
+        assert queued_payload["move"] == "MOVE:k"
+        assert queued_payload["raw"] == "MOVE:k"
     finally:
         hub.stop()
 

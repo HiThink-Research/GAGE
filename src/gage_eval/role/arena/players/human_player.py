@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from queue import Empty, Queue
 from threading import Lock
 import time
@@ -69,7 +70,12 @@ class HumanPlayer:
         with self._role_manager.borrow_role(self._adapter_id) as role:
             output = role.invoke(payload, self._trace) if role else {}
         raw_text = _extract_text(output)
-        parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
+        target_player_id, parsed_input = self._extract_queued_action_payload(raw_text)
+        if target_player_id and target_player_id != self.name:
+            metadata = {"player_type": "human", "retry_count": 0, "error": "target_player_mismatch"}
+            return ArenaAction(player=self.name, move="", raw=raw_text, metadata=metadata)
+        parse_text = parsed_input if parsed_input is not None else raw_text
+        parse_result = self._parser.parse(parse_text, legal_moves=observation.legal_actions_items)
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
         metadata = self._build_action_metadata(parse_result)
@@ -129,7 +135,13 @@ class HumanPlayer:
                 except Empty:
                     queued_action = None
                 if queued_action is not None:
-                    action = self._parse_human_action(observation, str(queued_action))
+                    target_player_id, queued_text = self._extract_queued_action_payload(queued_action)
+                    if target_player_id and target_player_id != self.name:
+                        self._requeue_action(queued_action)
+                        return False
+                    if queued_text is None:
+                        return False
+                    action = self._parse_human_action(observation, queued_text)
                     if action is not None:
                         self._async_queue.put(action)
                         return True
@@ -217,10 +229,80 @@ class HumanPlayer:
                 pass
         return metadata
 
+    def _extract_queued_action_payload(
+        self,
+        raw_payload: Any,
+    ) -> tuple[Optional[str], Optional[str]]:
+        payload: Optional[Dict[str, Any]] = None
+        if isinstance(raw_payload, dict):
+            payload = dict(raw_payload)
+        elif isinstance(raw_payload, str):
+            stripped = raw_payload.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    payload = parsed
+
+        if payload is None:
+            text = str(raw_payload).strip()
+            return None, text or None
+
+        target_player_value = self._first_non_none(
+            payload.get("player_id"),
+            payload.get("playerId"),
+            payload.get("player"),
+        )
+        target_player_id = str(target_player_value).strip() if target_player_value is not None else None
+        if target_player_id == "":
+            target_player_id = None
+
+        action_value = self._first_non_none(
+            payload.get("move"),
+            payload.get("action"),
+            payload.get("raw"),
+            payload.get("text"),
+            payload.get("value"),
+        )
+        if action_value is None:
+            return target_player_id, None
+        action_text = str(action_value).strip()
+        if not action_text:
+            return target_player_id, None
+        return target_player_id, action_text
+
+    def _requeue_action(self, queued_action: Any) -> None:
+        queue = self._action_queue
+        if queue is None:
+            return
+        try:
+            put_nowait = getattr(queue, "put_nowait", None)
+            if callable(put_nowait):
+                put_nowait(queued_action)
+                return
+            put = getattr(queue, "put", None)
+            if callable(put):
+                put(queued_action)
+        except Exception:
+            return
+
+    @staticmethod
+    def _first_non_none(*values: Any) -> Any:
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
     def _parse_human_action(
         self, observation: ArenaObservation, action_text: str
     ) -> Optional[ArenaAction]:
-        parse_result = self._parser.parse(action_text, legal_moves=observation.legal_actions_items)
+        target_player_id, parsed_input = self._extract_queued_action_payload(action_text)
+        if target_player_id and target_player_id != self.name:
+            return None
+        parse_text = parsed_input if parsed_input is not None else str(action_text)
+        parse_result = self._parser.parse(parse_text, legal_moves=observation.legal_actions_items)
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
         metadata = self._build_action_metadata(parse_result)

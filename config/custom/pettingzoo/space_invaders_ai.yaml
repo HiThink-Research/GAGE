@@ -48,7 +48,7 @@ role_adapters:
         env_id: pettingzoo.atari.space_invaders_v2
         env_kwargs:
           render_mode: human
-          max_cycles: 300
+          max_cycles: 3000
         seed: 1234
         include_raw_obs: false
         use_action_meanings: true
@@ -58,7 +58,7 @@ role_adapters:
           on_fail: loss
       scheduler:
         type: turn
-        max_turns: 300
+        max_turns: 3000
       parser:
         impl: discrete_action_parser_v1
       players:

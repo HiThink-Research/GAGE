@@ -463,7 +463,15 @@ class WsRgbHubServer:
             return 0
         queued = 0
         for action in actions:
-            payload = action.to_queue_payload()
+            payload = json.dumps(
+                {
+                    "player_id": str(action.player_id or ""),
+                    "move": str(action.move or ""),
+                    "raw": str(action.raw or action.move or ""),
+                    "metadata": dict(action.metadata or {}),
+                },
+                ensure_ascii=False,
+            )
             if hasattr(action_queue, "put_nowait"):
                 action_queue.put_nowait(payload)
             else:

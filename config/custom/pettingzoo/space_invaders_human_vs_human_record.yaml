@@ -1,0 +1,125 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: pettingzoo_space_invaders_human_vs_human_record
+  description: PettingZoo Atari space_invaders demo (Human vs Human, record scheduler).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: pettingzoo_space_invaders_human_record_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: pettingzoo_space_invaders_human_record_demo
+    loader: jsonl
+    params:
+      path: tests/data/pettingzoo_atari_demo.jsonl
+      streaming: false
+
+role_adapters:
+  - adapter_id: pz_human_queue
+    role_type: human
+    params:
+      source: queue
+
+  - adapter_id: pettingzoo_space_invaders_human_record_arena
+    role_type: arena
+    params:
+      environment:
+        impl: pettingzoo_aec_v1
+        env_id: pettingzoo.atari.space_invaders_v2
+        # display_mode=websocket enables ws_rgb display registration in ArenaRoleAdapter.
+        display_mode: websocket
+        env_kwargs:
+          render_mode: rgb_array
+          max_cycles: 1800
+        seed: 1234
+        include_raw_obs: false
+        use_action_meanings: false
+        action_schema:
+          key_map:
+            # Player 0 (left hand): Q/W/E + A/S/D
+            q:
+              move: "5"
+              player_id: player_0
+            w:
+              move: "1"
+              player_id: player_0
+            e:
+              move: "4"
+              player_id: player_0
+            a:
+              move: "3"
+              player_id: player_0
+            s:
+              move: "0"
+              player_id: player_0
+            d:
+              move: "2"
+              player_id: player_0
+            # Player 1 (right hand): U/I/O + J/K/L
+            u:
+              move: "5"
+              player_id: player_1
+            i:
+              move: "1"
+              player_id: player_1
+            o:
+              move: "4"
+              player_id: player_1
+            j:
+              move: "3"
+              player_id: player_1
+            k:
+              move: "0"
+              player_id: player_1
+            l:
+              move: "2"
+              player_id: player_1
+      rules:
+        illegal_policy:
+          retry: -1
+          on_fail: draw
+      scheduler:
+        type: record
+        tick_ms: 100
+        max_ticks: 1800
+        action_timeout_ms: 100
+        timeout_fallback_move: "0"
+      parser:
+        impl: discrete_action_parser_v1
+      human_input:
+        enabled: true
+        host: 0.0.0.0
+        port: 8001
+        allow_origin: "*"
+        ws_host: 0.0.0.0
+        ws_port: 5800
+        ws_allow_origin: "*"
+      players:
+        - name: player_0
+          type: human
+          ref: pz_human_queue
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+        - name: player_1
+          type: human
+          ref: pz_human_queue
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+
+metrics: []
+
+tasks:
+  - task_id: pettingzoo_space_invaders_human_vs_human_record
+    dataset_id: pettingzoo_space_invaders_human_record_demo
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/pettingzoo_space_invaders_human_vs_human_record_events.jsonl

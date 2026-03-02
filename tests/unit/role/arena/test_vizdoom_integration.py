@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
@@ -167,6 +168,41 @@ def test_human_player_async_polls_queue_source_adapter() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "human"
+
+
+def test_human_player_async_queue_payload_respects_target_player_id() -> None:
+    from queue import Queue
+
+    observation = _build_vizdoom_observation()
+    queue: Queue[str] = Queue()
+    queue.put(json.dumps({"player_id": "p1", "move": "1"}, ensure_ascii=False))
+    queue.put(json.dumps({"player_id": "p0", "move": "2"}, ensure_ascii=False))
+
+    adapter = HumanAdapter(adapter_id="human_queue", source="queue")
+    role_manager = _RoleManagerStub(adapter=adapter)
+    player = HumanPlayer(
+        name="p0",
+        adapter_id="human_queue",
+        role_manager=role_manager,
+        sample={},
+        parser=_ParserStub(),
+        action_queue=queue,
+        timeout_ms=100,
+    )
+
+    assert player.start_thinking(observation, deadline_ms=100) is True
+    for _ in range(20):
+        if player.has_action():
+            break
+        time.sleep(0.005)
+
+    action = player.pop_action()
+    assert action.move == "2"
+    assert action.metadata["player_type"] == "human"
+
+    requeued = json.loads(queue.get_nowait())
+    assert requeued["player_id"] == "p1"
+    assert requeued["move"] == "1"
 
 
 def test_llm_player_async_returns_action() -> None:
