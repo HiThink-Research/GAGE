@@ -4,7 +4,7 @@
 
 ## 1. 前期准备
 
-​	从https://archive.org/download/super-mario-bros-3-nes/Super%20Mario%20Bros.%203.nes
+​	从https://archive.org/download/super-mario-bros-3-nes/Super%20Mario%20Bros.%203.nes (仅适用于x86)
 ​	下载游戏rom，记录保存的文件夹
 ​	安装stable retro
 

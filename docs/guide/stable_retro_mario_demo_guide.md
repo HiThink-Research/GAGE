@@ -5,7 +5,7 @@ This guide focuses on the **YAML configuration patterns** currently in this repo
 ## 1. Preparation
 
 1. Download the game ROM from:
-   `https://archive.org/download/super-mario-bros-3-nes/Super%20Mario%20Bros.%203.nes`
+   `https://archive.org/download/super-mario-bros-3-nes/Super%20Mario%20Bros.%203.nes` (only for x86)
 2. Keep the folder path where the ROM is saved.
 3. Install `stable-retro`.
 4. Run:
