@@ -5,6 +5,9 @@
 本文档说明如何使用统一 `ws_rgb` 回放链路进行对局回放。
 命令内容与 `docs/local/指令精简.md` 保持一致。
 
+如果需要查看 `ws_rgb` 的在线渲染、输入路由与接入契约（不止回放），请参考：
+`docs/guide/ws_rgb_runtime_dev_guide_zh.md`
+
 ## 1. 范围
 
 - 回放查看页面：`/ws_rgb/viewer`
@@ -103,7 +106,8 @@ PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_
   --host 127.0.0.1 \
   --port 5800 \
   --fps 12 \
-  --game pettingzoo
+  --game pettingzoo \
+  --auto-open 1
 ```
 
 AI 运行：
@@ -123,15 +127,16 @@ PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_
   --host 127.0.0.1 \
   --port 5800 \
   --fps 12 \
-  --game pettingzoo
+  --game pettingzoo \
+  --auto-open 1
 ```
 
 ## 4. 说明与排查
 
 - `ws_rgb_replay` 启动后会打印 viewer 地址。
+- 可通过 `--auto-open 1` 自动打开浏览器（无图形环境时请手动访问）。
 - `/ws_rgb/frame_image` 过程中出现 `BrokenPipeError`，通常是浏览器取消了旧请求，服务端已做容错处理。
 - 回放失败时请检查：
   - `runs/<run_id>/samples` 下是否存在 sample JSON
   - sample 的 `predict_result[*].replay_path/replay_v1_path` 是否存在回放产物
   - 端口是否冲突（`--port`）
-

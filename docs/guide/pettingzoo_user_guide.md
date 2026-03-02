@@ -6,7 +6,7 @@ Whether you want to run AI battles, test environment configurations, or replay r
 ## 1. Quick Start
 
 We recommend the **"Run & Replay"** automation workflow.
-This allows you to see the AI's decision-making process and visually enjoy the battle smoothly via a Pygame window.
+This allows you to inspect AI decisions and watch matches directly in the `ws_rgb` web viewer.
 
 ### Example: Running Space Invaders
 
@@ -23,12 +23,20 @@ python run.py \
   --output-dir runs \
   --run-id "$RUN_ID"
 
-# 3. Launch Replay
-python scripts/replay_pettingzoo.py \
-  "$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)" \
-  17
+# 3. Start web replay service (new ws_rgb flow, auto-open by default)
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)"
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
+  --sample-json "$SAMPLE_JSON" \
+  --host 127.0.0.1 \
+  --port 5800 \
+  --fps 12 \
+  --game pettingzoo \
+  --auto-open 1
+
+# 4. Manual fallback if browser did not open automatically
+echo "http://127.0.0.1:5800/ws_rgb/viewer"
 ```
-*(Note: `17` means 17ms/frame, approx. 60FPS real-time speed)*
+*(Note: `--auto-open 1` relies on desktop/browser availability. In headless environments, open the URL manually.)*
 
 ---
 
@@ -96,21 +104,37 @@ We offer two running configurations: **Dummy** (for testing) and **AI** (for act
 
 ---
 
-## 4. Replay Tool
+## 4. Web Replay Tool (ws_rgb Viewer)
 
-If you have finished a task (e.g., queued in the background) and want to view the recording afterwards, use `scripts/replay_pettingzoo.py`.
+`scripts/replay_pettingzoo.py` is a legacy replay path and is no longer recommended.
+Use the unified `ws_rgb` web-based flow instead.
 
-### Basic Usage
+### 4.1 Post-run replay (from existing artifacts)
 
 ```bash
-python scripts/replay_pettingzoo.py <path_to_json_sample> <delay_ms>
+RUN_ID=<your_run_id>
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)"
+
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
+  --sample-json "$SAMPLE_JSON" \
+  --host 127.0.0.1 \
+  --port 5800 \
+  --fps 12 \
+  --game pettingzoo \
+  --auto-open 1
 ```
 
-*   **`path_to_json_sample`**: `runs/<run_id>/samples/.../*.json` file.
-*   **`delay_ms`**: Frame delay in milliseconds.
-    *   `17`: 60 FPS (Normal speed)
-    *   `100`: 10 FPS (Slow motion)
-    *   `0`: Turbo (Fast forward)
+Viewer URL:
+`http://127.0.0.1:5800/ws_rgb/viewer`
+
+### 4.2 One-click run with auto-open (live view)
+
+```bash
+AUTO_OPEN=1 \
+CONFIG=config/custom/pettingzoo/pong_dummy_ws_rgb.yaml \
+RUN_ID="pz_pong_ws_$(date +%Y%m%d_%H%M%S)" \
+bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
+```
 
 ---
 

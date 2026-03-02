@@ -5,6 +5,9 @@ English | [中文](ws_rgb_replay_usage_guide_zh.md)
 This guide explains how to run and replay game matches with the unified `ws_rgb` replay flow.
 All commands are aligned with `docs/local/指令精简.md`.
 
+For live rendering, input routing, and integration contracts (beyond replay), see:
+`docs/guide/ws_rgb_runtime_dev_guide.md`
+
 ## 1. Scope
 
 - Replay viewer endpoint: `/ws_rgb/viewer`
@@ -103,7 +106,8 @@ PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_
   --host 127.0.0.1 \
   --port 5800 \
   --fps 12 \
-  --game pettingzoo
+  --game pettingzoo \
+  --auto-open 1
 ```
 
 AI run:
@@ -123,15 +127,16 @@ PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_
   --host 127.0.0.1 \
   --port 5800 \
   --fps 12 \
-  --game pettingzoo
+  --game pettingzoo \
+  --auto-open 1
 ```
 
 ## 4. Notes and Troubleshooting
 
 - Viewer URL is printed by `ws_rgb_replay` at startup.
+- Use `--auto-open 1` to open the browser automatically (open manually in headless environments).
 - `BrokenPipeError` during `/ws_rgb/frame_image` usually means the browser canceled a request; server now tolerates this.
 - If replay cannot start, check:
   - `RUN_ID` exists under `runs/<run_id>/samples`
   - the selected sample has replay artifacts in `predict_result[*].replay_path/replay_v1_path`
   - port is free (`--port`)
-

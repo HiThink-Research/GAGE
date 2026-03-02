@@ -525,5 +525,12 @@ URL 参数（Human / AI）：
 ## 13. ws_rgb 回放使用指南
 
 文档：[English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
+运行时接入与在线渲染文档：[English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
 
 本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
+
+## 14. PettingZoo Atari 双人对战指南
+
+文档：[English](pettingzoo_user_guide.md) | [中文](pettingzoo_user_guide_zh.md)
+
+本章节汇总 PettingZoo Atari 双人对战在 GAGE 中的接入、运行与网页回放（ws_rgb）使用方式，供 Game Arena 接入开发参考。

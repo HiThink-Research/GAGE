@@ -525,5 +525,12 @@ This chapter provides an end-to-end Retro Mario demo path, including setup notes
 ## 13. ws_rgb replay usage guide
 
 Guide: [English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
+Runtime integration and live rendering guide: [English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
 
 This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.
+
+## 14. PettingZoo Atari two-player guide
+
+Guide: [English](pettingzoo_user_guide.md) | [中文](pettingzoo_user_guide_zh.md)
+
+This chapter links the PettingZoo Atari two-player integration, run flow, and ws_rgb web replay usage in GAGE for Game Arena onboarding.
