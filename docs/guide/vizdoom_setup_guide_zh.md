@@ -77,7 +77,7 @@ PY
 启动前先进入仓库根目录：
 
 ```bash
-cd /Users/zzzck/PyProject/GAGE
+cd /path/to/GAGE
 ```
 
 ## 5. API Key 设置

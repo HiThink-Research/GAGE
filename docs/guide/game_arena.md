@@ -440,7 +440,7 @@ If you need to start manually, you can split it into three steps:
 
 1) Start Replay Server:
 ```bash
-PYTHONPATH=src /Users/shuo/code/GAGE/.venv/bin/python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
+PYTHONPATH=src python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
 ```
 
 2) Start Frontend:
@@ -451,7 +451,7 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 3) Run Backend Inference:
 ```bash
-/Users/shuo/code/GAGE/.venv/bin/python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
+python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
 ```
 
 ### 9.8 FAQ

@@ -77,7 +77,7 @@ PY
 Before running the game:
 
 ```bash
-cd /Users/zzzck/PyProject/GAGE
+cd /path/to/GAGE
 ```
 
 ## 5. API Key Setup

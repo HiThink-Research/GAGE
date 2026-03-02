@@ -20,13 +20,13 @@
 在仓库根目录执行：
 
 ```bash
-cd /Users/shuo/code/GAGE
+cd /path/to/GAGE
 ```
 
 PettingZoo Atari 首次运行需安装 ROM：
 
 ```bash
-/Users/shuo/mamba/envs/gage/bin/AutoROM --accept-license
+AutoROM --accept-license
 ```
 
 AI 模式需设置 Key：
@@ -81,7 +81,7 @@ bash scripts/oneclick/run_game_replay_oneclick.sh \
 bash scripts/oneclick/run_game_replay_oneclick.sh \
   --game mahjong \
   --mode ai \
-  --python-bin /Users/shuo/mamba/envs/gage/bin/python \
+  --python-bin "$(command -v python)" \
   --run-id mahjong_ai_replay_demo
 ```
 
@@ -92,7 +92,7 @@ bash scripts/oneclick/run_game_replay_oneclick.sh \
 Dummy 运行：
 
 ```bash
-/Users/shuo/mamba/envs/gage/bin/python run.py --config config/custom/pettingzoo/pong_dummy.yaml --output-dir runs --run-id pettingzoo_dummy_run
+python run.py --config config/custom/pettingzoo/pong_dummy.yaml --output-dir runs --run-id pettingzoo_dummy_run
 ```
 
 从产物启动回放：
@@ -101,7 +101,7 @@ Dummy 运行：
 RUN_ID=pettingzoo_dummy_run
 SAMPLE_JSON=$(find "runs/${RUN_ID}/samples" -name '*.json' | head -n 1)
 
-PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_replay \
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
   --sample-json "$SAMPLE_JSON" \
   --host 127.0.0.1 \
   --port 5800 \
@@ -113,7 +113,7 @@ PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_
 AI 运行：
 
 ```bash
-/Users/shuo/mamba/envs/gage/bin/python run.py --config config/custom/pettingzoo/pong_ai.yaml --output-dir runs --run-id pettingzoo_ai_run
+python run.py --config config/custom/pettingzoo/pong_ai.yaml --output-dir runs --run-id pettingzoo_ai_run
 ```
 
 从产物启动回放：
@@ -122,7 +122,7 @@ AI 运行：
 RUN_ID=pettingzoo_ai_run
 SAMPLE_JSON=$(find "runs/${RUN_ID}/samples" -name '*.json' | head -n 1)
 
-PYTHONPATH=src /Users/shuo/mamba/envs/gage/bin/python -m gage_eval.tools.ws_rgb_replay \
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
   --sample-json "$SAMPLE_JSON" \
   --host 127.0.0.1 \
   --port 5800 \

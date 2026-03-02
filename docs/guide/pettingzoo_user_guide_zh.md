@@ -165,7 +165,7 @@ Atari 游戏启动时通常有几秒钟的过场动画（如闪烁的 "INSERT CO
 ### 6.1 启动对局
 
 ```bash
-cd /Users/shuo/code/GAGE
+cd /path/to/GAGE
 PYTHONPATH=src ./.venv/bin/python run.py \
   --config config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml \
   --output-dir runs \

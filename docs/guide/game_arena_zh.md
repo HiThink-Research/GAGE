@@ -440,7 +440,7 @@ players:
 
 1) 启动回放服务：
 ```bash
-PYTHONPATH=src /Users/shuo/code/GAGE/.venv/bin/python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
+PYTHONPATH=src python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
 ```
 
 2) 启动前端：
@@ -451,7 +451,7 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 3) 运行后端推理：
 ```bash
-/Users/shuo/code/GAGE/.venv/bin/python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
+python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
 ```
 
 ### 9.8 常见问题
