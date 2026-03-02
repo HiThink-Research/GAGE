@@ -6,7 +6,6 @@
 - Node.js + npm
 - 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install`
 - 设置密钥：`OPENAI_API_KEY`（或 `LITELLM_API_KEY`）
-- run_doudizhu_showdown 中 PYTHON_BIN 指向对应环境
 
 一键启动：
 ```bash
@@ -26,20 +25,6 @@ scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
 - `FRONTEND_PORT` / `REPLAY_PORT`：前端与回放服务端口（端口被占用会自动顺延）
 - `AUTO_OPEN=0`：禁用自动打开浏览器
 - `FRONTEND_DIR`：前端目录（默认 `frontend/rlcard-showdown`）
-
-## 脚本流程说明（对应 `scripts/oneclick/run_doudizhu_showdown.sh`）
-
-脚本主要流程如下：
-1. 解析项目根目录与 Python 路径，读取默认配置 `config/custom/doudizhu_litellm_local.yaml`。
-2. 检查 `OPENAI_API_KEY` / `LITELLM_API_KEY`、Node.js/npm、前端依赖是否就绪。
-3. 自动选择空闲端口并启动 replay server。
-4. 启动前端 `npm run start` 并尝试自动打开回放页面。
-5. 运行 `run.py` 执行对局，输出回放链接。
-
-脚本内置默认值（必要时可直接修改脚本）：
-- `PYTHON_BIN`：Python 解释器路径（默认指向项目内 venv）。
-- `CFG`：运行配置文件路径（默认 `config/custom/doudizhu_litellm_local.yaml`）。
-- `SAMPLE_ID`：回放样本 ID（默认 `doudizhu_litellm_0001`）。
 
 ## 回放与输出说明
 
@@ -243,7 +228,7 @@ players:
 
 1) 启动回放服务：
 ```bash
-PYTHONPATH=src /Users/shuo/code/GAGE/.venv/bin/python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
+PYTHONPATH=src python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
 ```
 
 2) 启动前端：
@@ -254,7 +239,7 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 3) 运行后端推理：
 ```bash
-/Users/shuo/code/GAGE/.venv/bin/python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
+python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
 ```
 
 ## 常见问题

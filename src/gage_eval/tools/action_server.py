@@ -85,18 +85,38 @@ class ActionRequestHandler(BaseHTTPRequestHandler):
             if isinstance(payload, dict):
                 action = payload.get("action") or payload.get("move")
                 chat = payload.get("chat")
+                player_id = (
+                    payload.get("player_id")
+                    or payload.get("playerId")
+                    or payload.get("player")
+                    or payload.get("player_idx")
+                    or payload.get("playerIdx")
+                )
                 if action:
-                    if chat:
-                        return json.dumps(
-                            {"action": str(action), "chat": str(chat)},
-                            ensure_ascii=False,
-                        )
+                    if chat or player_id:
+                        action_payload = {"action": str(action)}
+                        if chat:
+                            action_payload["chat"] = str(chat)
+                        if player_id:
+                            action_payload["player_id"] = str(player_id)
+                        return json.dumps(action_payload, ensure_ascii=False)
                     return str(action)
             if body_text:
                 return body_text
 
         params = parse_qs(parsed_url.query)
         action = _first_param(params, "action") or _first_param(params, "move")
+        player_id = (
+            _first_param(params, "player_id")
+            or _first_param(params, "playerId")
+            or _first_param(params, "player_idx")
+            or _first_param(params, "playerIdx")
+        )
+        if action and player_id:
+            return json.dumps(
+                {"action": str(action), "player_id": str(player_id)},
+                ensure_ascii=False,
+            )
         return str(action) if action else ""
 
     def _extract_chat(self, parsed_url) -> tuple[str, Optional[str]]:

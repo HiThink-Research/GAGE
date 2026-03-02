@@ -6,7 +6,7 @@
 ## 1. 快速开始 (Quick Start)
 
 我们推荐使用 **"运行即回放" (Run & Replay)** 的自动化流程。
-这不仅能让您看到 AI 的决策过程，还能通过 Pygame 窗口直观地欣赏对战画面。
+这不仅能让您看到 AI 的决策过程，还能通过 `ws_rgb` 网页端直观查看对战画面。
 
 ### 示例：运行 Space Invaders
 
@@ -23,12 +23,20 @@ python run.py \
   --output-dir runs \
   --run-id "$RUN_ID"
 
-# 3. 启动回放
-python scripts/replay_pettingzoo.py \
-  "$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)" \
-  17
+# 3. 启动网页回放服务（ws_rgb 新链路，默认自动弹出浏览器）
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)"
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
+  --sample-json "$SAMPLE_JSON" \
+  --host 127.0.0.1 \
+  --port 5800 \
+  --fps 12 \
+  --game pettingzoo \
+  --auto-open 1
+
+# 4. 如果未自动弹出，手动打开
+echo "http://127.0.0.1:5800/ws_rgb/viewer"
 ```
-*(注：`17` 代表 17ms/帧，即 60FPS 实时速度)*
+*(注：`--auto-open 1` 依赖默认浏览器环境；若无图形环境请用手动地址打开。)*
 
 ---
 
@@ -61,7 +69,6 @@ GAGE 目前已完美适配以下 **22 款双人 Atari 游戏**：
 | `volleyball_pong` | 排球 |
 | `wizard_of_wor` | 巫师瓦尔 |
 
-要运行其他游戏，只需将环境变量修改为对应 ID 即可：
 要运行其他游戏，只需将环境变量修改为对应 ID 即可：
 `export GAME="boxing"`
 
@@ -97,21 +104,37 @@ GAGE 目前已完美适配以下 **22 款双人 Atari 游戏**：
 
 ---
 
-## 4. 回放工具 (Replay Tool)
+## 4. 网页回放工具 (ws_rgb Viewer)
 
-如果您已经跑完了一个任务（比如在后台排队跑的），想事后查看录像，可以使用 `scripts/replay_pettingzoo.py`。
+`scripts/replay_pettingzoo.py` 属于旧版回放路径，已不再推荐。
+当前统一使用 `ws_rgb` 网页查看链路。
 
-### 基础用法
+### 4.1 跑后回放（基于已有产物）
 
 ```bash
-python scripts/replay_pettingzoo.py <path_to_json_sample> <delay_ms>
+RUN_ID=<your_run_id>
+SAMPLE_JSON="$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)"
+
+PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
+  --sample-json "$SAMPLE_JSON" \
+  --host 127.0.0.1 \
+  --port 5800 \
+  --fps 12 \
+  --game pettingzoo \
+  --auto-open 1
 ```
 
-*   **`path_to_json_sample`**: `runs/<run_id>/samples/.../*.json` 文件。
-*   **`delay_ms`**: 帧间隔。
-    *   `17`: 60 FPS (正常速度)
-    *   `100`: 10 FPS (慢动作分析)
-    *   `0`: 极速 (快进)
+网页地址：
+`http://127.0.0.1:5800/ws_rgb/viewer`
+
+### 4.2 一键启动并自动打开网页（实时查看）
+
+```bash
+AUTO_OPEN=1 \
+CONFIG=config/custom/pettingzoo/pong_dummy_ws_rgb.yaml \
+RUN_ID="pz_pong_ws_$(date +%Y%m%d_%H%M%S)" \
+bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
+```
 
 ---
 
@@ -128,3 +151,90 @@ Atari 游戏启动时通常有几秒钟的过场动画（如闪烁的 "INSERT CO
 
 ### Q3: 如何修改游戏时长？
 **A**: 修改 `config/custom/pettingzoo/<game>_ai.yaml` 中的 `max_cycles` 和 `max_turns` 参数。目前默认为 3000 帧（约 50秒）。
+
+---
+
+## 6. Space Invaders 双人 Human 操作说明（Record Scheduler）
+
+本节对应配置文件：
+`config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml`
+
+开发者链路文档（架构/时序/排障）：
+`docs/guide/ws_rgb_runtime_dev_guide_zh.md`
+
+### 6.1 启动对局
+
+```bash
+cd /path/to/GAGE
+PYTHONPATH=src ./.venv/bin/python run.py \
+  --config config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml \
+  --output-dir runs \
+  --run-id pz_space_invaders_h2h_record
+```
+
+启动后打开 viewer：
+`http://127.0.0.1:5800/ws_rgb/viewer`
+
+### 6.2 动作编号说明
+
+当前配置使用离散数字动作（`use_action_meanings: false`）：
+
+- `0`: NOOP（不操作）
+- `1`: FIRE（开火）
+- `2`: RIGHT（右移）
+- `3`: LEFT（左移）
+- `4`: RIGHTFIRE（右移并开火）
+- `5`: LEFTFIRE（左移并开火）
+
+### 6.3 键盘映射（viewer Key Capture）
+
+当前已配置为「一个键盘双人对战」：
+
+- `player_0`（左手区，`Q/W/E + A/S/D`）
+- `Q` -> `5`（LEFTFIRE）
+- `W` -> `1`（FIRE）
+- `E` -> `4`（RIGHTFIRE）
+- `A` -> `3`（LEFT）
+- `S` -> `0`（NOOP）
+- `D` -> `2`（RIGHT）
+- `player_1`（右手区，`U/I/O + J/K/L`）
+- `U` -> `5`（LEFTFIRE）
+- `I` -> `1`（FIRE）
+- `O` -> `4`（RIGHTFIRE）
+- `J` -> `3`（LEFT）
+- `K` -> `0`（NOOP）
+- `L` -> `2`（RIGHT）
+
+### 6.4 双人输入方式
+
+在 viewer 页面勾选 `Key Capture` 后，以上两套按键会自动分别路由到：
+- 左手按键 -> `player_0`
+- 右手按键 -> `player_1`
+
+也就是说，两名玩家可以直接在一个键盘上同时操作，不需要再手工调用接口切换 `human_player_id`。
+
+先查看当前 `display_id`：
+
+```bash
+curl -s http://127.0.0.1:5800/ws_rgb/displays
+```
+
+示例：向 `player_1` 发送动作 `1`（开火）：
+
+```bash
+curl -s -X POST http://127.0.0.1:5800/ws_rgb/input \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "display_id":"task:pz_atari_demo_1:pettingzoo_space_invaders_human_record_arena:pettingzoo_aec_v1",
+    "payload":{"type":"action","action":"1"},
+    "context":{"human_player_id":"player_1"}
+  }'
+```
+
+也可走 action server（`8001`）：
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/tournament/action \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"1","player_id":"player_1"}'
+```

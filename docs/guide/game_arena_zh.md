@@ -440,7 +440,7 @@ players:
 
 1) 启动回放服务：
 ```bash
-PYTHONPATH=src /Users/shuo/code/GAGE/.venv/bin/python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
+PYTHONPATH=src python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
 ```
 
 2) 启动前端：
@@ -451,7 +451,7 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 3) 运行后端推理：
 ```bash
-/Users/shuo/code/GAGE/.venv/bin/python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
+python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
 ```
 
 ### 9.8 常见问题
@@ -461,6 +461,13 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 - Node 报 `ERR_OSSL_EVP_UNSUPPORTED`
   使用 `NODE_OPTIONS=--openssl-legacy-provider`（脚本已自动加上）。
+
+## 10. 扩展清单
+
+1. 在 `src/gage_eval/role/arena/games/<game>/` 增加环境实现。
+2. 注册环境、Context、Parser、Renderer 四类组件。
+3. 增加 demo 配置与测试用例。
+4. 使用 `run.py` 小样本验证联通。
 
 ## 10. 麻将快速上手（showdown）
 
@@ -499,27 +506,31 @@ URL 参数（Human / AI）：
 - `action_url`：Human 模式动作与聊天提交的后端地址（URL 编码）
 
 常用环境变量：
+- `REPLAY_PORT` / `FRONTEND_PORT`
+- `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
 
-## 11. PettingZoo Atari 支持 (22 款游戏)
+## 11. VizDoom Arena 概览
 
-GAGE 现已集成 PettingZoo Atari 环境，支持 22 款经典双人游戏（如 Space Invaders, Pong, Boxing 等）。
+文档：[English](vizdoom_arena_summary.md) | [中文](vizdoom_arena_summary_zh.md)
 
-### 核心特性
-1.  **多游戏支持**：统一通过 `pettingzoo_aec_v1` 适配器接入 22 款游戏。
-2.  **AI控制**：LLM 基于文本观测（Text Observation）进行盲玩决策。
-3.  **自动化回放**：提供“运行即回放”工具，解决 LLM 推理延迟导致的观感卡顿问题。
+本章节用于说明 VizDoom arena 的当前能力边界、关键配置入口与运行预期，便于本地验证和后续接入对齐。
 
-### 快速上手
-推荐阅读完整的用户手册以获取详细指令：
+## 12. 稳定版 Retro Mario Demo 指南
 
-### 环境要求
-- **依赖项**: `cmake` (编译 Atari 环境所需)
+文档：[English](stable_retro_mario_demo_guide.md) | [中文](stable_retro_mario_demo_guide_zh.md)
 
-> 📖 **[PettingZoo Atari User Guide](./pettingzoo_user_guide_zh.md)**
->
-> 包含：
-> *   快速开始 (Quick Start)
-> *   完整游戏列表 (22 Games)
-> *   Dummy/AI 模式切换
-> *   常见问题 (FAQ)
+本章节给出 Retro Mario 的端到端演示路径，包含准备步骤、运行命令、回放校验和常见故障排查。
+
+## 13. ws_rgb 回放使用指南
+
+文档：[English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
+运行时接入与在线渲染文档：[English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
+
+本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
+
+## 14. PettingZoo Atari 双人对战指南
+
+文档：[English](pettingzoo_user_guide.md) | [中文](pettingzoo_user_guide_zh.md)
+
+本章节汇总 PettingZoo Atari 双人对战在 GAGE 中的接入、运行与网页回放（ws_rgb）使用方式，供 Game Arena 接入开发参考。

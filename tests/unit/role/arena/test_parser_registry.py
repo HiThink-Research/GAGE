@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from gage_eval.registry import registry
 from gage_eval.role.arena.parsers.gomoku_parser import GomokuParser, GridParser
+from gage_eval.role.arena.parsers.vizdoom_parser import VizDoomParser
 
 
 def test_parser_registry_resolves_gomoku() -> None:
@@ -24,3 +25,15 @@ def test_parser_registry_resolves_grid_parser() -> None:
     result = parser.parse("2,2", legal_moves=["2,2", "3,3"])
 
     assert result.coord == "2,2"
+
+
+def test_parser_registry_resolves_vizdoom_parser() -> None:
+    parser_cls = registry.get("parser_impls", "vizdoom_parser_v1")
+
+    assert parser_cls is VizDoomParser
+
+    parser = parser_cls(default_action=0)
+    result = parser.parse('{"action": 2}', legal_moves=["1", "2", "3"])
+
+    assert result.coord == "2"
+    assert result.error is None
