@@ -44,5 +44,10 @@ AutoROM[accept-rom-license]>=0.6.1
 opencv-python-headless>=4.8.0
 pygame>=2.3.0
 
+# Stable-Retro Mario Integration
+stable-retro>=0.9.8
+gymnasium>=0.28.0
+pyglet>=1.3.2,<2.0
+
 # Vizdoom
 vizdoom>=1.2.4
