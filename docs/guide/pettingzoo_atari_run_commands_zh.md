@@ -1,27 +1,29 @@
-# PettingZoo Atari Run Commands
+# PettingZoo Atari 启动命令
 
-English | [中文](pettingzoo_atari_run_commands_zh.md)
+[English](pettingzoo_atari_run_commands.md) | 中文
 
-This document lists the execution commands for all integrated PettingZoo Atari games.
-Run these commands from the project root.
+本文档列出当前已接入的全部 PettingZoo Atari 游戏启动命令。
+请在项目根目录执行这些命令。
 
-## 1. Replay Tool (Visualizing Games)
+## 1. 回放工具（查看游戏过程）
 
-Use the replay tool to watch recorded games smoothly (without LLM latency).
+使用回放工具可以平滑查看已录制对局，不受 LLM 推理延迟影响。
 
 ```bash
-# Usage: python scripts/replay_pettingzoo.py <sample_json> <delay_ms>
-# delay_ms: 17 = 60fps (realtime), 100 = 10fps (slow)
+# 用法：python scripts/replay_pettingzoo.py <sample_json> <delay_ms>
+# delay_ms: 17 = 60fps（接近实时），100 = 10fps（较慢）
 
 python scripts/replay_pettingzoo.py \
   runs/pz_boxing_dummy/samples/task_pettingzoo_boxing_dummy/pettingzoo_boxing_dummy_pz_atari_demo_1.json \
   50
 ```
 
-## 2. AI Agents (Requires OpenAI API Key)
-Use these configs to run games with LLM-powered agents.
+## 2. AI Agents（需要 OpenAI API Key）
+
+使用这些配置运行 LLM 驱动的对战。
 
 ### Basketball Pong (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/basketball_pong_ai.yaml \
@@ -30,6 +32,7 @@ python run.py \
 ```
 
 ### Boxing (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/boxing_ai.yaml \
@@ -38,6 +41,7 @@ python run.py \
 ```
 
 ### Combat Plane (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/combat_plane_ai.yaml \
@@ -46,6 +50,7 @@ python run.py \
 ```
 
 ### Combat Tank (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/combat_tank_ai.yaml \
@@ -54,6 +59,7 @@ python run.py \
 ```
 
 ### Double Dunk (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/double_dunk_ai.yaml \
@@ -62,6 +68,7 @@ python run.py \
 ```
 
 ### Entombed Competitive (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/entombed_competitive_ai.yaml \
@@ -70,6 +77,7 @@ python run.py \
 ```
 
 ### Entombed Cooperative (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/entombed_cooperative_ai.yaml \
@@ -78,6 +86,7 @@ python run.py \
 ```
 
 ### Flag Capture (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/flag_capture_ai.yaml \
@@ -86,6 +95,7 @@ python run.py \
 ```
 
 ### Foozpong (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/foozpong_ai.yaml \
@@ -94,6 +104,7 @@ python run.py \
 ```
 
 ### Ice Hockey (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/ice_hockey_ai.yaml \
@@ -102,6 +113,7 @@ python run.py \
 ```
 
 ### Joust (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/joust_ai.yaml \
@@ -110,6 +122,7 @@ python run.py \
 ```
 
 ### Mario Bros (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/mario_bros_ai.yaml \
@@ -118,6 +131,7 @@ python run.py \
 ```
 
 ### Maze Craze (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/maze_craze_ai.yaml \
@@ -126,6 +140,7 @@ python run.py \
 ```
 
 ### Othello (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/othello_ai.yaml \
@@ -134,6 +149,7 @@ python run.py \
 ```
 
 ### Pong (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/pong_ai.yaml \
@@ -142,6 +158,7 @@ python run.py \
 ```
 
 ### Space Invaders (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/space_invaders_ai.yaml \
@@ -150,6 +167,7 @@ python run.py \
 ```
 
 ### Space War (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/space_war_ai.yaml \
@@ -158,6 +176,7 @@ python run.py \
 ```
 
 ### Surround (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/surround_ai.yaml \
@@ -166,6 +185,7 @@ python run.py \
 ```
 
 ### Tennis (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/tennis_ai.yaml \
@@ -174,6 +194,7 @@ python run.py \
 ```
 
 ### Video Checkers (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/video_checkers_ai.yaml \
@@ -182,6 +203,7 @@ python run.py \
 ```
 
 ### Volleyball Pong (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/volleyball_pong_ai.yaml \
@@ -190,6 +212,7 @@ python run.py \
 ```
 
 ### Wizard of Wor (AI)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/wizard_of_wor_ai.yaml \
@@ -197,11 +220,13 @@ python run.py \
   --run-id pz_wizard_of_wor
 ```
 
-## 3. Dummy Agents (No API Key Required)
-Use these configs to test environment installation and rendering without LLM costs.
-Agents will move randomly (fixed with `fallback_policy` to ensure legal moves).
+## 3. Dummy Agents（不需要 API Key）
+
+使用这些配置验证环境安装和渲染，不产生 LLM 调用成本。
+Agent 会随机行动，并通过 `fallback_policy` 保证动作合法。
 
 ### Basketball Pong (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/basketball_pong_dummy.yaml \
@@ -210,6 +235,7 @@ python run.py \
 ```
 
 ### Boxing (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/boxing_dummy.yaml \
@@ -218,6 +244,7 @@ python run.py \
 ```
 
 ### Combat Plane (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/combat_plane_dummy.yaml \
@@ -226,6 +253,7 @@ python run.py \
 ```
 
 ### Combat Tank (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/combat_tank_dummy.yaml \
@@ -234,6 +262,7 @@ python run.py \
 ```
 
 ### Double Dunk (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/double_dunk_dummy.yaml \
@@ -242,6 +271,7 @@ python run.py \
 ```
 
 ### Entombed Competitive (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/entombed_competitive_dummy.yaml \
@@ -250,6 +280,7 @@ python run.py \
 ```
 
 ### Entombed Cooperative (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/entombed_cooperative_dummy.yaml \
@@ -258,6 +289,7 @@ python run.py \
 ```
 
 ### Flag Capture (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/flag_capture_dummy.yaml \
@@ -266,6 +298,7 @@ python run.py \
 ```
 
 ### Foozpong (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/foozpong_dummy.yaml \
@@ -274,6 +307,7 @@ python run.py \
 ```
 
 ### Ice Hockey (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/ice_hockey_dummy.yaml \
@@ -282,6 +316,7 @@ python run.py \
 ```
 
 ### Joust (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/joust_dummy.yaml \
@@ -290,6 +325,7 @@ python run.py \
 ```
 
 ### Mario Bros (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/mario_bros_dummy.yaml \
@@ -298,6 +334,7 @@ python run.py \
 ```
 
 ### Maze Craze (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/maze_craze_dummy.yaml \
@@ -306,6 +343,7 @@ python run.py \
 ```
 
 ### Othello (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/othello_dummy.yaml \
@@ -314,6 +352,7 @@ python run.py \
 ```
 
 ### Pong (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/pong_dummy.yaml \
@@ -322,6 +361,7 @@ python run.py \
 ```
 
 ### Space Invaders (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/space_invaders_dummy.yaml \
@@ -330,6 +370,7 @@ python run.py \
 ```
 
 ### Space War (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/space_war_dummy.yaml \
@@ -338,6 +379,7 @@ python run.py \
 ```
 
 ### Surround (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/surround_dummy.yaml \
@@ -346,6 +388,7 @@ python run.py \
 ```
 
 ### Tennis (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/tennis_dummy.yaml \
@@ -354,6 +397,7 @@ python run.py \
 ```
 
 ### Video Checkers (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/video_checkers_dummy.yaml \
@@ -362,6 +406,7 @@ python run.py \
 ```
 
 ### Volleyball Pong (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/volleyball_pong_dummy.yaml \
@@ -370,6 +415,7 @@ python run.py \
 ```
 
 ### Wizard of Wor (Dummy)
+
 ```bash
 python run.py \
   --config config/custom/pettingzoo/wizard_of_wor_dummy.yaml \
@@ -377,22 +423,24 @@ python run.py \
   --run-id pz_wizard_of_wor_dummy
 ```
 
-## 4. Automation: Run & Replay (Recommended)
-Use this workflow to run an AI game and automatically start the replay viewer immediately after it finishes.
+## 4. 自动化：运行后立即回放（推荐）
 
-**Generic Command (Copy & Paste):**
+这个流程用于先运行一局 AI 对战，然后在结束后立即启动回放查看。
+
+**通用命令（可直接复制）：**
+
 ```bash
-# 1. Set the game name (e.g., space_invaders, boxing, pong)
+# 1. 设置游戏名，例如 space_invaders、boxing、pong
 export GAME="space_invaders"
 export RUN_ID="pz_${GAME}_auto_$(date +%s)"
 
-# 2. Run AI simulation
+# 2. 运行 AI 对战
 python run.py \
   --config config/custom/pettingzoo/${GAME}_ai.yaml \
   --output-dir runs \
   --run-id "$RUN_ID"
 
-# 3. Launch Replay
+# 3. 启动回放
 python scripts/replay_pettingzoo.py \
   "$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)" \
   17
