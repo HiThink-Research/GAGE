@@ -332,3 +332,17 @@ python run.py \
 | --- | --- | --- |
 | **`audio_path_root`** | The root directory where the downloaded MMSU data is stored. | *Valid System Path* |
 
+
+### Inverse IFEval
+is a novel benchmark designed to evaluate large language models' (LLMs) ability to follow counterintuitive instructions that deliberately deviate from conventional training paradigms. The dataset challenges models to override their ingrained training conventions and faithfully execute instructions that conflict with standard cognitive patterns or annotation norms.
+
+#### Execution Command
+
+Use the following command to initiate the benchmark process:
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/inverse_ifeval/inverse_ifeval_qwen_omni_suite.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id inverse_ifeval
+```

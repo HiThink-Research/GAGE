@@ -1,3 +1,4 @@
+
 # gage-eval 基准测试指南
 
 本文档提供当前 `gage-eval-main/` 仓库中已有 benchmark 配置的执行命令和说明。
@@ -382,3 +383,18 @@ python run.py \
 | 参数 | 描述 | 支持的取值 |
 | --- | --- | --- |
 | **`audio_path_root`** | 存储 MMSU 数据的根目录。 | *有效系统路径 (Path)* |
+
+### Inverse IFEval
+
+是一个新颖的基准测试，旨在评估大型语言模型（LLM）遵循反直觉指令的能力，这些指令刻意偏离了传统的训练范式。该数据集挑战模型克服其根深蒂固的训练惯例，忠实地执行与标准认知模式或标注规范相冲突的指令。
+
+#### Execution Command
+
+使用以下命令启动基准测试流程：
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/inverse_ifeval/inverse_ifeval_qwen_omni_suite.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id inverse_ifeval
+```

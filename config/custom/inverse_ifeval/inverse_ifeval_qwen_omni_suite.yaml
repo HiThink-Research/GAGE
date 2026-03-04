@@ -45,50 +45,50 @@ backends:
   - backend_id: qwen25_omni_backend
     type: litellm
     config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
       provider: openai
-      api_base: ${INVERSE_IFEVAL_API_BASE:-http://127.0.0.1:1234/v1}
-      api_key: ${INVERSE_IFEVAL_API_KEY:-dummy}
-      model: ${QWEN25_OMNI_MODEL:-Qwen/Qwen2.5-Omni-7B}
       generation_parameters:
         max_new_tokens: 512
         temperature: 0.0
       streaming: false
+      max_retries: 6
 
   - backend_id: qwen3_omni_backend
     type: litellm
     config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
       provider: openai
-      api_base: ${INVERSE_IFEVAL_API_BASE:-http://127.0.0.1:1234/v1}
-      api_key: ${INVERSE_IFEVAL_API_KEY:-dummy}
-      model: ${QWEN3_OMNI_MODEL:-qwen3-omni-flash}
       generation_parameters:
         max_new_tokens: 512
         temperature: 0.0
       streaming: false
+      max_retries: 6
 
   - backend_id: inverse_ifeval_judge_backend
     type: litellm
     config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
       provider: openai
-      api_base: ${INVERSE_IFEVAL_JUDGE_API_BASE:-http://127.0.0.1:1234/v1}
-      api_key: ${INVERSE_IFEVAL_JUDGE_API_KEY:-dummy}
-      model: ${INVERSE_IFEVAL_JUDGE_MODEL:-qwen3-omni-flash}
-      generation_parameters:
-        max_new_tokens: 128
-        temperature: 0.0
-      streaming: false
-
-  - backend_id: qwen3_vl_30b_a3b_backend
-    type: litellm
-    config:
-      provider: openai
-      api_base: ${INVERSE_IFEVAL_API_BASE:-http://127.0.0.1:1234/v1}
-      api_key: ${INVERSE_IFEVAL_API_KEY:-dummy}
-      model: ${QWEN3_VL_30B_A3B_MODEL:-Qwen/Qwen3-VL-30B-A3B}
       generation_parameters:
         max_new_tokens: 512
         temperature: 0.0
       streaming: false
+      max_retries: 6
+
+  - backend_id: qwen3_vl_30b_a3b_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
 
 role_adapters:
   - adapter_id: dut_qwen25_omni
@@ -128,6 +128,7 @@ metrics:
 tasks:
   - task_id: inverse_ifeval_qwen25_omni
     dataset_id: inverse_ifeval_test
+    max_samples: 10
     steps:
       - step: inference
         adapter_id: dut_qwen25_omni
@@ -135,20 +136,3 @@ tasks:
         adapter_id: judge_inverse_ifeval
       - step: auto_eval
 
-  - task_id: inverse_ifeval_qwen3_omni
-    dataset_id: inverse_ifeval_test
-    steps:
-      - step: inference
-        adapter_id: dut_qwen3_omni
-      - step: judge
-        adapter_id: judge_inverse_ifeval
-      - step: auto_eval
-
-  - task_id: inverse_ifeval_qwen3_vl_30b_a3b
-    dataset_id: inverse_ifeval_test
-    steps:
-      - step: inference
-        adapter_id: dut_qwen3_vl_30b_a3b
-      - step: judge
-        adapter_id: judge_inverse_ifeval
-      - step: auto_eval

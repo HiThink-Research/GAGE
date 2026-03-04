@@ -110,7 +110,6 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(_LAZY_EXPORTS))
-=======
 from gage_eval.metrics.builtin.gomoku import (
     GomokuAverageTurnsMetric,
     GomokuIllegalRateMetric,
@@ -175,7 +174,6 @@ from gage_eval.metrics.builtin.arena import (
     TimeoutCountMetric,
     WinFlagPerPlayerMetric,
     WinnerPlayerIdMetric)
-
 from gage_eval.metrics.builtin.inverse_ifeval import (
     InverseIFEvalJudgePassRateMetric,
     InverseIFEvalPassRateMetric,
