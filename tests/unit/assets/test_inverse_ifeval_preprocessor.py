@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gage_eval.assets.datasets.preprocessors.inverse_ifeval_preprocessor import InverseIFEvalPreprocessor
+from gage_eval.assets.datasets.preprocessors.inverse_ifeval.inverse_ifeval_preprocessor import InverseIFEvalPreprocessor
 
 
 @pytest.mark.fast
