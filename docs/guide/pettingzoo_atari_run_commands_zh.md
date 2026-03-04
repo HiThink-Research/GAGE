@@ -2,446 +2,126 @@
 
 [English](pettingzoo_atari_run_commands.md) | 中文
 
-本文档列出当前已接入的全部 PettingZoo Atari 游戏启动命令。
+本文档列出当前已接入的全部 PettingZoo Atari 游戏脚本化启动命令。
 请在项目根目录执行这些命令。
 
-## 1. 回放工具（查看游戏过程）
+## 1. 标准脚本
 
-使用回放工具可以平滑查看已录制对局，不受 LLM 推理延迟影响。
+| 类型 | 脚本 | 用途 |
+| --- | --- | --- |
+| 启动游戏 | `scripts/oneclick/run_pettingzoo_game.sh` | PettingZoo 的标准启动入口，支持 AI、Dummy、ws dummy 和 human record |
+| 回放 | `scripts/oneclick/run_pettingzoo_replay.sh` | 通过 `run_id` 回放一局已完成对局 |
+| 实时查看辅助脚本 | `scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh` | 适用于 `space_invaders_dummy_ws_rgb` 冒烟验证的专用 ws_rgb 辅助脚本 |
+| 运行后立即回放 | `scripts/oneclick/run_game_replay_oneclick.sh` | 先跑一个代表性 PettingZoo 配置，再自动打开 replay |
 
-```bash
-# 用法：python scripts/replay_pettingzoo.py <sample_json> <delay_ms>
-# delay_ms: 17 = 60fps（接近实时），100 = 10fps（较慢）
+## 2. 回放脚本
 
-python scripts/replay_pettingzoo.py \
-  runs/pz_boxing_dummy/samples/task_pettingzoo_boxing_dummy/pettingzoo_boxing_dummy_pz_atari_demo_1.json \
-  50
-```
-
-## 2. AI Agents（需要 OpenAI API Key）
-
-使用这些配置运行 LLM 驱动的对战。
-
-### Basketball Pong (AI)
+回放一局已完成对局：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/basketball_pong_ai.yaml \
-  --output-dir runs \
-  --run-id pz_basketball_pong
+bash scripts/oneclick/run_pettingzoo_replay.sh <run_id>
 ```
 
-### Boxing (AI)
+示例：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/boxing_ai.yaml \
-  --output-dir runs \
-  --run-id pz_boxing
+bash scripts/oneclick/run_pettingzoo_replay.sh pettingzoo_space_invaders_ai_20260303_120000
 ```
 
-### Combat Plane (AI)
+## 3. AI 启动命令
+
+先设置 API Key：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/combat_plane_ai.yaml \
-  --output-dir runs \
-  --run-id pz_combat_plane
+export OPENAI_API_KEY="<YOUR_KEY>"
 ```
 
-### Combat Tank (AI)
+全部已接入 AI 游戏：
+
+| Game ID | 脚本命令 |
+| --- | --- |
+| `basketball_pong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game basketball_pong --mode ai` |
+| `boxing` | `bash scripts/oneclick/run_pettingzoo_game.sh --game boxing --mode ai` |
+| `combat_plane` | `bash scripts/oneclick/run_pettingzoo_game.sh --game combat_plane --mode ai` |
+| `combat_tank` | `bash scripts/oneclick/run_pettingzoo_game.sh --game combat_tank --mode ai` |
+| `double_dunk` | `bash scripts/oneclick/run_pettingzoo_game.sh --game double_dunk --mode ai` |
+| `entombed_competitive` | `bash scripts/oneclick/run_pettingzoo_game.sh --game entombed_competitive --mode ai` |
+| `entombed_cooperative` | `bash scripts/oneclick/run_pettingzoo_game.sh --game entombed_cooperative --mode ai` |
+| `flag_capture` | `bash scripts/oneclick/run_pettingzoo_game.sh --game flag_capture --mode ai` |
+| `foozpong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game foozpong --mode ai` |
+| `ice_hockey` | `bash scripts/oneclick/run_pettingzoo_game.sh --game ice_hockey --mode ai` |
+| `joust` | `bash scripts/oneclick/run_pettingzoo_game.sh --game joust --mode ai` |
+| `mario_bros` | `bash scripts/oneclick/run_pettingzoo_game.sh --game mario_bros --mode ai` |
+| `maze_craze` | `bash scripts/oneclick/run_pettingzoo_game.sh --game maze_craze --mode ai` |
+| `othello` | `bash scripts/oneclick/run_pettingzoo_game.sh --game othello --mode ai` |
+| `pong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game pong --mode ai` |
+| `space_invaders` | `bash scripts/oneclick/run_pettingzoo_game.sh --game space_invaders --mode ai` |
+| `space_war` | `bash scripts/oneclick/run_pettingzoo_game.sh --game space_war --mode ai` |
+| `surround` | `bash scripts/oneclick/run_pettingzoo_game.sh --game surround --mode ai` |
+| `tennis` | `bash scripts/oneclick/run_pettingzoo_game.sh --game tennis --mode ai` |
+| `video_checkers` | `bash scripts/oneclick/run_pettingzoo_game.sh --game video_checkers --mode ai` |
+| `volleyball_pong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game volleyball_pong --mode ai` |
+| `wizard_of_wor` | `bash scripts/oneclick/run_pettingzoo_game.sh --game wizard_of_wor --mode ai` |
+
+## 4. Dummy 启动命令
+
+全部已接入 Dummy 游戏：
+
+| Game ID | 脚本命令 |
+| --- | --- |
+| `basketball_pong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game basketball_pong --mode dummy` |
+| `boxing` | `bash scripts/oneclick/run_pettingzoo_game.sh --game boxing --mode dummy` |
+| `combat_plane` | `bash scripts/oneclick/run_pettingzoo_game.sh --game combat_plane --mode dummy` |
+| `combat_tank` | `bash scripts/oneclick/run_pettingzoo_game.sh --game combat_tank --mode dummy` |
+| `double_dunk` | `bash scripts/oneclick/run_pettingzoo_game.sh --game double_dunk --mode dummy` |
+| `entombed_competitive` | `bash scripts/oneclick/run_pettingzoo_game.sh --game entombed_competitive --mode dummy` |
+| `entombed_cooperative` | `bash scripts/oneclick/run_pettingzoo_game.sh --game entombed_cooperative --mode dummy` |
+| `flag_capture` | `bash scripts/oneclick/run_pettingzoo_game.sh --game flag_capture --mode dummy` |
+| `foozpong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game foozpong --mode dummy` |
+| `ice_hockey` | `bash scripts/oneclick/run_pettingzoo_game.sh --game ice_hockey --mode dummy` |
+| `joust` | `bash scripts/oneclick/run_pettingzoo_game.sh --game joust --mode dummy` |
+| `mario_bros` | `bash scripts/oneclick/run_pettingzoo_game.sh --game mario_bros --mode dummy` |
+| `maze_craze` | `bash scripts/oneclick/run_pettingzoo_game.sh --game maze_craze --mode dummy` |
+| `othello` | `bash scripts/oneclick/run_pettingzoo_game.sh --game othello --mode dummy` |
+| `pong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game pong --mode dummy` |
+| `space_invaders` | `bash scripts/oneclick/run_pettingzoo_game.sh --game space_invaders --mode dummy` |
+| `space_war` | `bash scripts/oneclick/run_pettingzoo_game.sh --game space_war --mode dummy` |
+| `surround` | `bash scripts/oneclick/run_pettingzoo_game.sh --game surround --mode dummy` |
+| `tennis` | `bash scripts/oneclick/run_pettingzoo_game.sh --game tennis --mode dummy` |
+| `video_checkers` | `bash scripts/oneclick/run_pettingzoo_game.sh --game video_checkers --mode dummy` |
+| `volleyball_pong` | `bash scripts/oneclick/run_pettingzoo_game.sh --game volleyball_pong --mode dummy` |
+| `wizard_of_wor` | `bash scripts/oneclick/run_pettingzoo_game.sh --game wizard_of_wor --mode dummy` |
+
+## 5. ws_rgb 与 Human Record 快捷模式
+
+推荐的 ws_rgb 冒烟验证：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/combat_tank_ai.yaml \
-  --output-dir runs \
-  --run-id pz_combat_tank
+bash scripts/oneclick/run_pettingzoo_game.sh --game space_invaders --mode ws_dummy
 ```
 
-### Double Dunk (AI)
+Human vs Human record 模式：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/double_dunk_ai.yaml \
-  --output-dir runs \
-  --run-id pz_double_dunk
+bash scripts/oneclick/run_pettingzoo_game.sh --game space_invaders --mode human_record
 ```
 
-### Entombed Competitive (AI)
+## 6. 运行后立即回放的一键辅助
+
+如果你想一条命令完成“运行 + 回放”，仍然可以用：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/entombed_competitive_ai.yaml \
-  --output-dir runs \
-  --run-id pz_entombed_competitive
+bash scripts/oneclick/run_game_replay_oneclick.sh --game pettingzoo --mode dummy
 ```
 
-### Entombed Cooperative (AI)
+或者：
 
 ```bash
-python run.py \
-  --config config/custom/pettingzoo/entombed_cooperative_ai.yaml \
-  --output-dir runs \
-  --run-id pz_entombed_cooperative
+OPENAI_API_KEY="<YOUR_KEY>" \
+bash scripts/oneclick/run_game_replay_oneclick.sh --game pettingzoo --mode ai
 ```
 
-### Flag Capture (AI)
+说明：
 
-```bash
-python run.py \
-  --config config/custom/pettingzoo/flag_capture_ai.yaml \
-  --output-dir runs \
-  --run-id pz_flag_capture
-```
-
-### Foozpong (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/foozpong_ai.yaml \
-  --output-dir runs \
-  --run-id pz_foozpong
-```
-
-### Ice Hockey (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/ice_hockey_ai.yaml \
-  --output-dir runs \
-  --run-id pz_ice_hockey
-```
-
-### Joust (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/joust_ai.yaml \
-  --output-dir runs \
-  --run-id pz_joust
-```
-
-### Mario Bros (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/mario_bros_ai.yaml \
-  --output-dir runs \
-  --run-id pz_mario_bros
-```
-
-### Maze Craze (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/maze_craze_ai.yaml \
-  --output-dir runs \
-  --run-id pz_maze_craze
-```
-
-### Othello (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/othello_ai.yaml \
-  --output-dir runs \
-  --run-id pz_othello
-```
-
-### Pong (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/pong_ai.yaml \
-  --output-dir runs \
-  --run-id pz_pong
-```
-
-### Space Invaders (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/space_invaders_ai.yaml \
-  --output-dir runs \
-  --run-id pz_space_invaders
-```
-
-### Space War (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/space_war_ai.yaml \
-  --output-dir runs \
-  --run-id pz_space_war
-```
-
-### Surround (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/surround_ai.yaml \
-  --output-dir runs \
-  --run-id pz_surround
-```
-
-### Tennis (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/tennis_ai.yaml \
-  --output-dir runs \
-  --run-id pz_tennis
-```
-
-### Video Checkers (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/video_checkers_ai.yaml \
-  --output-dir runs \
-  --run-id pz_video_checkers
-```
-
-### Volleyball Pong (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/volleyball_pong_ai.yaml \
-  --output-dir runs \
-  --run-id pz_volleyball_pong
-```
-
-### Wizard of Wor (AI)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/wizard_of_wor_ai.yaml \
-  --output-dir runs \
-  --run-id pz_wizard_of_wor
-```
-
-## 3. Dummy Agents（不需要 API Key）
-
-使用这些配置验证环境安装和渲染，不产生 LLM 调用成本。
-Agent 会随机行动，并通过 `fallback_policy` 保证动作合法。
-
-### Basketball Pong (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/basketball_pong_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_basketball_pong_dummy
-```
-
-### Boxing (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/boxing_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_boxing_dummy
-```
-
-### Combat Plane (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/combat_plane_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_combat_plane_dummy
-```
-
-### Combat Tank (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/combat_tank_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_combat_tank_dummy
-```
-
-### Double Dunk (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/double_dunk_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_double_dunk_dummy
-```
-
-### Entombed Competitive (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/entombed_competitive_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_entombed_competitive_dummy
-```
-
-### Entombed Cooperative (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/entombed_cooperative_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_entombed_cooperative_dummy
-```
-
-### Flag Capture (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/flag_capture_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_flag_capture_dummy
-```
-
-### Foozpong (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/foozpong_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_foozpong_dummy
-```
-
-### Ice Hockey (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/ice_hockey_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_ice_hockey_dummy
-```
-
-### Joust (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/joust_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_joust_dummy
-```
-
-### Mario Bros (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/mario_bros_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_mario_bros_dummy
-```
-
-### Maze Craze (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/maze_craze_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_maze_craze_dummy
-```
-
-### Othello (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/othello_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_othello_dummy
-```
-
-### Pong (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/pong_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_pong_dummy
-```
-
-### Space Invaders (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/space_invaders_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_space_invaders_dummy
-```
-
-### Space War (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/space_war_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_space_war_dummy
-```
-
-### Surround (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/surround_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_surround_dummy
-```
-
-### Tennis (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/tennis_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_tennis_dummy
-```
-
-### Video Checkers (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/video_checkers_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_video_checkers_dummy
-```
-
-### Volleyball Pong (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/volleyball_pong_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_volleyball_pong_dummy
-```
-
-### Wizard of Wor (Dummy)
-
-```bash
-python run.py \
-  --config config/custom/pettingzoo/wizard_of_wor_dummy.yaml \
-  --output-dir runs \
-  --run-id pz_wizard_of_wor_dummy
-```
-
-## 4. 自动化：运行后立即回放（推荐）
-
-这个流程用于先运行一局 AI 对战，然后在结束后立即启动回放查看。
-
-**通用命令（可直接复制）：**
-
-```bash
-# 1. 设置游戏名，例如 space_invaders、boxing、pong
-export GAME="space_invaders"
-export RUN_ID="pz_${GAME}_auto_$(date +%s)"
-
-# 2. 运行 AI 对战
-python run.py \
-  --config config/custom/pettingzoo/${GAME}_ai.yaml \
-  --output-dir runs \
-  --run-id "$RUN_ID"
-
-# 3. 启动回放
-python scripts/replay_pettingzoo.py \
-  "$(find runs/$RUN_ID/samples -name "*.json" | head -n 1)" \
-  17
-```
+- 这个辅助脚本使用的是代表性 PettingZoo 配置，不是上面那套完整的按游戏矩阵。
+- 如果你要按具体游戏启动，优先使用 `run_pettingzoo_game.sh`。

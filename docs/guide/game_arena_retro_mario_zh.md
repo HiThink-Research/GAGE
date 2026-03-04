@@ -2,21 +2,25 @@
 
 [English](game_arena_retro_mario.md) | 中文
 
-这是当前仓库里 stable-retro Mario 的标准 Game Arena 文档，统一整理了准备步骤、启动命令、回放方式和关键参数位置。
+这是当前仓库里 stable-retro Mario 的标准 Game Arena 文档，统一整理了准备步骤、脚本化启动方式、回放方式和关键参数位置。
 
 ## 1. 概览
 
-当前仓库里的 Retro Mario 仍然是纯配置驱动，还没有 Mario 专用的一键启动脚本。标准路径是：
+Retro Mario 现在已经统一到脚本入口，覆盖以下常见路径：
 
-1. 先把 ROM 导入 stable-retro。
-2. 从 `config/custom/` 里选择一个 YAML 配置。
-3. 通过 `python run.py --config ...` 启动。
-4. 如果配置启用了 websocket，就在运行中打开 ws_rgb；否则运行后再回放。
+- Dummy + ws_rgb 冒烟验证
+- OpenAI + ws_rgb 实时查看
+- Human + ws_rgb 人类控制
+- Dummy 或 OpenAI 的 headless 运行
+
+实际运行行为仍由 YAML 配置决定，但启动和回放入口已经统一收口到 `scripts/oneclick/`。
 
 ## 2. 标准入口文件
 
 | 类型 | 路径 | 用途 |
 | --- | --- | --- |
+| 标准启动脚本 | `scripts/oneclick/run_retro_mario_game.sh` | Mario 常见模式的统一启动入口 |
+| 回放脚本 | `scripts/oneclick/run_retro_mario_replay.sh` | 通过 `run_id` 回放一局已完成运行 |
 | Dummy ws_rgb 配置 | `config/custom/retro_mario_phase1_dummy_ws.yaml` | 最快的实时查看冒烟验证 |
 | Human ws_rgb 配置 | `config/custom/retro_mario_phase1_human_ws.yaml` | 人类手动控制 Mario |
 | OpenAI ws_rgb 配置 | `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml` | API 驱动的实时查看 Demo |
@@ -58,12 +62,9 @@ export RETRO_OPENAI_MODEL="gpt-4o-mini"
 ### 4.1 推荐冒烟路径：dummy + ws_rgb
 
 ```bash
-export RETRO_WS_RGB_PORT=5800
-
-env PYTHONPATH=src python run.py \
-  --config config/custom/retro_mario_phase1_dummy_ws.yaml \
-  --output-dir runs \
-  --run-id retro_mario_dummy_ws
+bash scripts/oneclick/run_retro_mario_game.sh \
+  --mode dummy_ws \
+  --run-id "retro_mario_dummy_ws_$(date +%Y%m%d_%H%M%S)"
 ```
 
 默认实时查看地址：
@@ -72,25 +73,54 @@ env PYTHONPATH=src python run.py \
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
+标准启动脚本的执行顺序：
+
+1. 选择 Python 解释器。
+2. 按 `--mode` 解析 YAML；如果传了 `--config`，就直接使用显式配置。
+3. 校验配置文件路径。
+4. 对 OpenAI 模式检查 API Key。
+5. 执行 `python run.py --config ...`。
+6. 对 websocket 模式打印 viewer 地址或 human 输入端口提示。
+
+`run_retro_mario_game.sh` 当前支持的模式：
+
+- `dummy_ws`
+- `openai_ws`
+- `human_ws`
+- `dummy_headless`
+- `openai_headless`
+
+常用启动参数：
+
+- `--mode`：从上面的模式列表中选择
+- `--config`：显式 YAML 路径，会覆盖脚本内置映射
+- `--run-id`：写入 `runs/` 的运行编号
+- `--output-dir`：输出目录，默认 `runs`
+- `--python-bin`：指定 Python 解释器
+
+常用环境变量：
+
+- `RETRO_WS_RGB_PORT`：websocket 模式的 ws_rgb 端口
+- `OPENAI_API_KEY`：`openai_ws` 和 `openai_headless` 必需
+- `LITELLM_API_KEY`：可作为 OpenAI 模式的回退 key 来源
+- `RETRO_OPENAI_MODEL`：如果配置支持，可作为模型名覆盖
+
 ### 4.2 OpenAI + ws_rgb
 
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
-export RETRO_WS_RGB_PORT=5800
 
-env PYTHONPATH=src python run.py \
-  --config config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml \
-  --output-dir runs \
-  --run-id retro_mario_openai_ws
+bash scripts/oneclick/run_retro_mario_game.sh \
+  --mode openai_ws \
+  --run-id "retro_mario_openai_ws_$(date +%Y%m%d_%H%M%S)"
 ```
 
 ### 4.3 Human + ws_rgb
 
 ```bash
-env PYTHONPATH=src python run.py \
-  --config config/custom/retro_mario_phase1_human_ws.yaml \
-  --output-dir runs \
-  --run-id retro_mario_human_ws
+bash scripts/oneclick/run_retro_mario_game.sh \
+  --mode human_ws \
+  --run-id "retro_mario_human_ws_$(date +%Y%m%d_%H%M%S)"
 ```
 
 当前 human 配置里的默认值：
@@ -110,13 +140,32 @@ env PYTHONPATH=src python run.py \
 ### 4.4 Headless 路径
 
 ```bash
-env PYTHONPATH=src python run.py \
-  --config config/custom/retro_mario_phase1_dummy_headless_auto_eval.yaml \
-  --output-dir runs \
-  --run-id retro_mario_dummy_headless
+bash scripts/oneclick/run_retro_mario_game.sh \
+  --mode dummy_headless \
+  --run-id "retro_mario_dummy_headless_$(date +%Y%m%d_%H%M%S)"
 ```
 
 如果你只想做离线验证、不需要 ws_rgb，就使用 headless 配置。
+
+OpenAI headless 示例：
+
+```bash
+export OPENAI_API_KEY="<YOUR_KEY>"
+
+bash scripts/oneclick/run_retro_mario_game.sh \
+  --mode openai_headless \
+  --run-id "retro_mario_openai_headless_$(date +%Y%m%d_%H%M%S)"
+```
+
+### 4.5 显式配置覆盖
+
+如果你想保留脚本入口，但手动指定 YAML，可以直接用 `--config`：
+
+```bash
+bash scripts/oneclick/run_retro_mario_game.sh \
+  --config config/custom/retro_mario_phase1_dummy_ws.yaml \
+  --run-id "retro_mario_custom_$(date +%Y%m%d_%H%M%S)"
+```
 
 ## 5. 启动顺序
 
@@ -124,18 +173,20 @@ env PYTHONPATH=src python run.py \
 
 1. 安装 `stable-retro`。
 2. 用 `python -m retro.import` 导入 ROM。
-3. 选择一个 YAML 配置。
-4. 只有 OpenAI 配置才需要设置 API Key。
-5. 执行 `python run.py --config ...`。
-6. 对 websocket 配置，在运行中打开 `ws_rgb/viewer`；对已有产物，再单独启动 replay。
+3. 选择一个标准 `--mode`，或者指定 `--config`。
+4. 只有 OpenAI 模式才需要设置 API Key。
+5. 执行 `scripts/oneclick/run_retro_mario_game.sh`。
+6. 对 websocket 模式，在运行中打开 `ws_rgb/viewer`；对已有产物，再执行 `scripts/oneclick/run_retro_mario_replay.sh <run_id>`。
 
 ## 6. 关键参数与修改位置
 
 | 项目 | 修改位置 | 含义 |
 | --- | --- | --- |
-| API Key | Shell 环境变量 `OPENAI_API_KEY` | `retro_mario_openai_*` 配置会读取它 |
+| API Key | Shell 环境变量 `OPENAI_API_KEY` 或 `LITELLM_API_KEY` | OpenAI 模式必需；脚本接受这两个变量 |
+| 启动模式 | `run_retro_mario_game.sh --mode` | 选择 `dummy_ws`、`openai_ws`、`human_ws`、`dummy_headless`、`openai_headless` |
+| 自定义配置 | `run_retro_mario_game.sh --config` | 跳过脚本内置映射，直接使用指定 YAML |
 | 模型名 | `RETRO_OPENAI_MODEL` 或 `backends[].config.model` | 选择 OpenAI 模型 |
-| 实时查看端口 | `human_input.ws_port` 或环境变量 `RETRO_WS_RGB_PORT` | websocket 配置的 ws_rgb 端口 |
+| 实时查看端口 | `human_input.ws_port` 或环境变量 `RETRO_WS_RGB_PORT` | websocket 配置的 ws_rgb 端口；脚本会透传这个环境变量 |
 | 显示模式 | `environment.display_mode` | `websocket` 用于实时查看，`headless` 用于离线运行 |
 | 合法动作 | `environment.legal_moves` | 暴露给玩家的动作集合 |
 | 持续帧数 | `environment.action_schema.hold_ticks_*` 和 `parser.hold_ticks_*` | 宏动作持续多久，以及默认值/上下界 |
@@ -143,6 +194,9 @@ env PYTHONPATH=src python run.py \
 | Human 输入 FPS | `human_input.fps` | human 模式下输入采样频率 |
 | Replay 模式 | `environment.replay.mode` | 决定写出 `action`、`frame` 或 `both` |
 | Replay 帧采样 | `environment.replay.frame_capture.*` | 控制帧采样步长、格式和帧数上限 |
+| 回放 FPS | `run_retro_mario_replay.sh` 的环境变量 `FPS` | 跑后回放的播放速度 |
+| 回放地址 | `run_retro_mario_replay.sh` 的环境变量 `HOST` / `PORT` | 回放服务监听地址 |
+| 回放帧数上限 | `run_retro_mario_replay.sh` 的环境变量 `MAX_FRAMES` | 限制回放最大帧数 |
 
 补充说明：
 
@@ -161,24 +215,25 @@ runs/<run_id>/
 可用单个 sample 产物启动回放：
 
 ```bash
-RUN_ID="<your_run_id>"
-SAMPLE_JSON="$(find "runs/${RUN_ID}/samples" -type f -name '*.json' | head -n 1)"
-REPLAY_PORT="${RETRO_REPLAY_PORT:-5800}"
-
-env PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
-  --sample-json "$SAMPLE_JSON" \
-  --host 0.0.0.0 \
-  --port "${REPLAY_PORT}" \
-  --fps 12
+bash scripts/oneclick/run_retro_mario_replay.sh <run_id>
 ```
+
+常用回放环境变量：
+
+- `PYTHON_BIN`：回放脚本使用的 Python 解释器
+- `HOST`：监听地址，默认 `127.0.0.1`
+- `PORT`：监听端口，默认 `5800`
+- `FPS`：播放 FPS，默认 `12`
+- `MAX_FRAMES`：最大回放帧数，默认 `0` 表示不限制
+- `AUTO_OPEN`：设为 `1` 时自动打开浏览器
 
 回放地址：
 
 ```text
-http://127.0.0.1:<REPLAY_PORT>/ws_rgb/viewer
+http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
-启动回放前，建议先确认 sample JSON 里存在 `replay_path` 字段。
+启动回放前，建议先确认 sample JSON 里存在 `replay_path` 等 replay 相关字段。
 
 ## 8. 旧文档
 

@@ -2,7 +2,7 @@
 
 English | [中文](game_arena_pettingzoo_zh.md)
 
-This is the canonical Game Arena guide for PettingZoo Atari in this repository. It consolidates installation, demo startup, replay, and parameter-tuning notes into one place.
+This is the canonical Game Arena guide for PettingZoo Atari in this repository. It consolidates installation, script-based startup, replay, and parameter-tuning notes into one place.
 
 ## 1. Overview
 
@@ -12,19 +12,21 @@ PettingZoo Atari currently covers three common paths:
 - LLM vs LLM run for API-backed evaluation
 - Human vs Human record run for browser-based interaction
 
-Use this guide as the standard entry. Older PettingZoo docs are kept for reference only.
+These paths now share a common script entry. Use this guide as the standard entry. Older PettingZoo docs are kept for reference only.
 
 ## 2. Canonical Files
 
 | Type | Path | Purpose |
 | --- | --- | --- |
-| One-click script | `scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh` | Start a ws_rgb demo and auto-open the viewer when possible |
+| Standard startup script | `scripts/oneclick/run_pettingzoo_game.sh` | Main entry for per-game Dummy, AI, ws_rgb Dummy, and human record runs |
+| Replay script | `scripts/oneclick/run_pettingzoo_replay.sh` | Replay one finished run by `run_id` |
+| ws_rgb helper | `scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh` | Specialized helper for the `space_invaders_dummy_ws_rgb` smoke test |
 | Config directory | `config/custom/pettingzoo/` | All PettingZoo game configs live here |
-| Recommended dummy config | `config/custom/pettingzoo/pong_dummy_ws_rgb.yaml` | Fastest ws_rgb smoke test |
+| Recommended dummy config | `config/custom/pettingzoo/space_invaders_dummy_ws_rgb.yaml` | Recommended ws_rgb smoke test that matches the legacy PettingZoo examples |
 | Recommended AI config | `config/custom/pettingzoo/space_invaders_ai.yaml` | Standard LLM demo |
 | Human record config | `config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml` | Browser-based human input |
-| Supplemental command index | `docs/guide/pettingzoo_atari_run_commands.md` | Full per-game AI and Dummy command list |
-| Replay tool | `src/gage_eval/tools/ws_rgb_replay.py` | Start post-run replay from sample artifacts |
+| Supplemental command index | `docs/guide/pettingzoo_atari_run_commands.md` | Full per-game AI and Dummy script list |
+| Replay tool | `src/gage_eval/tools/ws_rgb_replay.py` | Underlying replay server used by the replay script |
 
 ## 3. Prerequisites
 
@@ -44,9 +46,9 @@ Recommended ROM check:
 
 ```bash
 "$PYTHON_BIN" - <<'PY'
-from pettingzoo.atari import pong_v3
+from pettingzoo.atari import space_invaders_v2
 
-env = pong_v3.env(render_mode="rgb_array")
+env = space_invaders_v2.env(render_mode="rgb_array")
 env.reset(seed=0)
 print("PettingZoo Atari ROM check: OK")
 env.close()
@@ -55,101 +57,131 @@ PY
 
 ## 4. Startup Paths
 
-### 4.1 Recommended smoke test: one-click ws_rgb dummy run
+### 4.1 Recommended smoke test: ws_rgb dummy run
 
 ```bash
-CONFIG=config/custom/pettingzoo/pong_dummy_ws_rgb.yaml \
-RUN_ID="pz_pong_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
+bash scripts/oneclick/run_pettingzoo_game.sh \
+  --game space_invaders \
+  --mode ws_dummy \
+  --run-id "pettingzoo_space_invaders_ws_dummy_$(date +%Y%m%d_%H%M%S)"
+```
+
+What the standard startup script does:
+
+1. Picks a Python executable.
+2. Resolves the config from `--game` and `--mode`, unless `--config` is provided.
+3. Validates the config path.
+4. Exports replay-friendly `GAGE_EVAL_GAME_LOG_INLINE_*` defaults.
+5. Runs `python run.py --config ...`.
+6. Prints the live viewer URL for websocket modes.
+
+If you want the specialized helper for the default `space_invaders_dummy_ws_rgb` config, use:
+
+```bash
+CONFIG=config/custom/pettingzoo/space_invaders_dummy_ws_rgb.yaml \
 bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
 ```
 
-What the script does:
+Supported startup modes in `run_pettingzoo_game.sh`:
 
-1. Picks a Python executable.
-2. Validates the config path.
-3. Picks a free `WS_RGB_PORT`.
-4. Runs `python run.py --config ...`.
-5. Waits for `/ws_rgb/viewer` and auto-opens it when desktop support is available.
+- `dummy`: Maps to `<game>_dummy.yaml`
+- `ai`: Maps to `<game>_ai.yaml`
+- `ws_dummy`: Maps to `<game>_dummy_ws_rgb.yaml`
+- `human_record`: Currently fixed to `space_invaders_human_vs_human_record.yaml`
 
-Useful script environment variables:
+Useful startup options:
 
-- `CONFIG`: Config file to run
-- `PYTHON_BIN`: Python executable
-- `RUN_ID`: Run id under `runs/`
-- `OUTPUT_DIR`: Output directory
-- `WS_RGB_PORT`: Preferred viewer port, auto-incremented if occupied
-- `AUTO_OPEN`: Set `0` to disable browser auto-open
-- `WAIT_TIMEOUT_S`: Viewer readiness timeout
+- `--game`: PettingZoo game id such as `space_invaders`, `boxing`, or `pong`
+- `--mode`: `dummy`, `ai`, `ws_dummy`, or `human_record`
+- `--config`: Explicit YAML path; overrides the `--game` and `--mode` mapping
+- `--run-id`: Output run id under `runs/`
+- `--output-dir`: Output directory, default `runs`
+- `--python-bin`: Explicit Python interpreter path
+
+Useful environment variables:
+
+- `WS_RGB_PORT`: Preferred viewer port for websocket modes
+- `OPENAI_API_KEY`: Required for `ai` mode
+- `LITELLM_API_KEY`: Accepted fallback; the script copies it into `OPENAI_API_KEY`
+- `GAGE_EVAL_GAME_LOG_INLINE_LIMIT` and `GAGE_EVAL_GAME_LOG_INLINE_BYTES`: Auto-set by the script unless you override them
 
 ### 4.2 LLM run
 
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
-export GAME="space_invaders"
-export RUN_ID="pz_${GAME}_ai_$(date +%Y%m%d_%H%M%S)"
 
-python run.py \
-  --config "config/custom/pettingzoo/${GAME}_ai.yaml" \
-  --output-dir runs \
-  --run-id "$RUN_ID"
+bash scripts/oneclick/run_pettingzoo_game.sh \
+  --game space_invaders \
+  --mode ai \
+  --run-id "pettingzoo_space_invaders_ai_$(date +%Y%m%d_%H%M%S)"
 ```
 
-If you plan to replay from sample artifacts later, set these before the run:
-
-```bash
-export GAGE_EVAL_GAME_LOG_INLINE_LIMIT=-1
-export GAGE_EVAL_GAME_LOG_INLINE_BYTES=0
-```
+You can also keep the key in `LITELLM_API_KEY`; the startup script reuses it automatically for `ai` mode.
 
 ### 4.3 Human vs Human record run
 
 ```bash
-PYTHONPATH=src python run.py \
-  --config config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml \
-  --output-dir runs \
-  --run-id pz_space_invaders_h2h_record
+bash scripts/oneclick/run_pettingzoo_game.sh \
+  --game space_invaders \
+  --mode human_record \
+  --run-id "pettingzoo_space_invaders_human_record_$(date +%Y%m%d_%H%M%S)"
 ```
 
-Default viewer URL:
+Default runtime endpoints printed by the script:
 
-```text
-http://127.0.0.1:5800/ws_rgb/viewer
-```
+- Viewer URL: `http://127.0.0.1:5800/ws_rgb/viewer`
+- Input queue: `http://127.0.0.1:8001`
 
 Default key map in `space_invaders_human_vs_human_record.yaml`:
 
 - `player_0`: `Q/W/E/A/S/D`
 - `player_1`: `U/I/O/J/K/L`
 
+### 4.4 Explicit config override
+
+Use `--config` if you want the script wrapper but need a custom YAML path:
+
+```bash
+bash scripts/oneclick/run_pettingzoo_game.sh \
+  --config config/custom/pettingzoo/boxing_dummy.yaml \
+  --run-id "pettingzoo_boxing_custom_$(date +%Y%m%d_%H%M%S)"
+```
+
 ## 5. Execution Order
 
-The repository currently follows this order for PettingZoo demos:
+The repository now follows this order for PettingZoo demos:
 
 1. Install PettingZoo Atari dependencies and ROMs.
-2. Choose one config under `config/custom/pettingzoo/`.
-3. Set API keys only when the selected config uses an LLM backend.
-4. Start the run either with `run_pettingzoo_ws_rgb_viewer.sh` or with `python run.py`.
-5. Open the viewer during the run for `display_mode: websocket` configs, or start `ws_rgb_replay` after the run.
+2. Decide the game and startup mode, or prepare a custom config path.
+3. Set API keys only when using `--mode ai`.
+4. Start the run with `scripts/oneclick/run_pettingzoo_game.sh`.
+5. Open the viewer during the run for `ws_dummy` or `human_record`.
+6. Start `scripts/oneclick/run_pettingzoo_replay.sh <run_id>` after the run if you want post-run playback.
 
 ## 6. Key Parameters and Where to Change Them
 
 | Item | Where to change | Meaning |
 | --- | --- | --- |
-| API key | Shell env: `OPENAI_API_KEY` | Required by `*_ai.yaml` configs that use OpenAI backends |
-| Game selection | Config filename and `environment.env_id` | Switch the Atari game and runtime env id |
+| API key | Shell env: `OPENAI_API_KEY` or `LITELLM_API_KEY` | Required by `--mode ai`; the script accepts either and normalizes to `OPENAI_API_KEY` |
+| Game selection | `run_pettingzoo_game.sh --game` or config `environment.env_id` | Switch the Atari game and runtime env id |
+| Startup mode | `run_pettingzoo_game.sh --mode` | Select `dummy`, `ai`, `ws_dummy`, or `human_record` |
+| Custom config | `run_pettingzoo_game.sh --config` | Bypass the built-in game-to-config mapping |
 | Runtime length | `environment.env_kwargs.max_cycles` | Environment frame limit |
 | Arena turn cap | `scheduler.max_turns` | Arena-side maximum turn count |
 | Viewer mode | `environment.display_mode` | Use `websocket` for ws_rgb live view |
-| Viewer host/port | `human_input.ws_host` / `human_input.ws_port` | Bind address for the live viewer |
-| Replay playback FPS | `python -m gage_eval.tools.ws_rgb_replay --fps` | Replay speed in the post-run viewer |
+| Viewer host/port | `human_input.ws_host` / `human_input.ws_port` and env `WS_RGB_PORT` | Bind address for the live viewer; the script passes `WS_RGB_PORT` through |
+| Replay playback FPS | Env `FPS` for `run_pettingzoo_replay.sh` | Replay speed in the post-run viewer |
+| Replay host/port | Env `HOST` and `PORT` for `run_pettingzoo_replay.sh` | Replay server bind address |
+| Replay frame cap | Env `MAX_FRAMES` for `run_pettingzoo_replay.sh` | Stop replay after a fixed number of frames |
 | Action labels | `environment.use_action_meanings` | `true` shows names such as `FIRE`, `LEFT`; `false` uses numeric ids |
 | Human key mapping | `environment.action_schema.key_map` | Browser key-to-action mapping for record-mode human control |
 | Human input endpoint | `human_input.host` / `human_input.port` | Queue input server for record-mode human control |
+| Inlined replay log | Env `GAGE_EVAL_GAME_LOG_INLINE_LIMIT` and `GAGE_EVAL_GAME_LOG_INLINE_BYTES` | Keep the game log inside sample JSON so replay works without a rerun |
 
 Notes:
 
 - Most game configs use `max_cycles: 300`; `space_invaders_*` uses `3000`.
-- The one-click script controls only the preferred viewer port. The actual game behavior still comes from the selected YAML.
+- The startup script only wraps config selection and shared runtime defaults. Game behavior still comes from the selected YAML.
 
 ## 7. Outputs and Replay
 
@@ -162,18 +194,17 @@ runs/<run_id>/
 For post-run replay:
 
 ```bash
-export RUN_ID="<your_run_id>"
-export GAGE_EVAL_GAME_LOG_INLINE_LIMIT=-1
-export GAGE_EVAL_GAME_LOG_INLINE_BYTES=0
-SAMPLE_JSON="$(find "runs/${RUN_ID}/samples" -type f -name '*.json' | head -n 1)"
-
-PYTHONPATH=src python -m gage_eval.tools.ws_rgb_replay \
-  --sample-json "$SAMPLE_JSON" \
-  --host 127.0.0.1 \
-  --port 5800 \
-  --fps 12 \
-  --game pettingzoo
+bash scripts/oneclick/run_pettingzoo_replay.sh <run_id>
 ```
+
+Useful replay environment variables:
+
+- `PYTHON_BIN`: Python executable used by the replay script
+- `HOST`: Bind host, default `127.0.0.1`
+- `PORT`: Bind port, default `5800`
+- `FPS`: Playback FPS, default `12`
+- `MAX_FRAMES`: Frame cap, default `0` for unlimited
+- `AUTO_OPEN`: Set `1` to auto-open the browser viewer
 
 Default replay URL:
 
