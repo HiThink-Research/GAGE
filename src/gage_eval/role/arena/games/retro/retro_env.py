@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import importlib
 import json
 import os
@@ -11,6 +12,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
 
 from gage_eval.registry import registry
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
@@ -247,12 +253,34 @@ class StableRetroArenaEnvironment:
             raw = frame.tobytes()
         except Exception:
             return None
+        data_b64 = base64.b64encode(raw).decode("ascii")
+        data_url = self._build_image_data_url(frame)
         return {
             "encoding": "raw_base64",
-            "data": base64.b64encode(raw).decode("ascii"),
+            "data": data_b64,
+            "data_url": data_url,
             "shape": normalized_shape,
             "dtype": str(getattr(frame, "dtype", "unknown")),
         }
+
+    @staticmethod
+    def _build_image_data_url(frame: Any) -> Optional[str]:
+        """Encode a frame into an in-memory JPEG data URL when Pillow is available."""
+
+        if Image is None:
+            return None
+        try:
+            image = Image.fromarray(frame)
+            if image.mode not in {"RGB", "RGBA", "L"}:
+                image = image.convert("RGB")
+            if image.mode == "RGBA":
+                image = image.convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=85, optimize=True)
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{encoded}"
+        except Exception:
+            return None
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         if self._terminal:

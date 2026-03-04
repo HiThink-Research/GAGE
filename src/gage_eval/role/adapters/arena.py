@@ -13,6 +13,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger
 
+from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
@@ -55,6 +56,7 @@ class ArenaRoleAdapter(RoleAdapter):
         visualizer: Optional[Dict[str, Any]] = None,
         human_input: Optional[Dict[str, Any]] = None,
         players: Optional[Sequence[Dict[str, Any]]] = None,
+        prompt_renderer: Optional[PromptRenderer] = None,
         capabilities=(),
         role_type: str = "arena",
         **_,
@@ -68,6 +70,7 @@ class ArenaRoleAdapter(RoleAdapter):
         self._visualizer_cfg = dict(visualizer or {})
         self._human_input_cfg = dict(human_input or {})
         self._player_specs = list(players or [])
+        self._prompt_renderer = prompt_renderer
         self._shared_visualizer = None
         self._action_server = None
         self._ws_rgb_hub = None
@@ -669,6 +672,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         fallback_policy=spec.get("fallback_policy", "none"),
                         timeout_ms=spec.get("timeout_ms"),
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
+                        prompt_renderer=self._prompt_renderer,
                     )
                 )
             elif player_type == "agent":
@@ -685,6 +689,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         max_retries=int(spec.get("max_retries", 0)),
                         legal_moves_limit=int(spec.get("legal_moves_limit", 40)),
                         sampling_params=spec.get("sampling_params"),
+                        prompt_renderer=self._prompt_renderer,
                     )
                 )
             elif player_type == "human":

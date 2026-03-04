@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import base64
 import io
 import time
@@ -11,6 +12,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
+from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
@@ -35,6 +37,7 @@ class LLMPlayer:
         fallback_policy: str = "none",
         timeout_ms: Optional[int] = None,
         timeout_fallback_move: Optional[str] = None,
+        prompt_renderer: Optional[PromptRenderer] = None,
     ) -> None:
         self.name = name
         self._adapter_id = adapter_id
@@ -50,7 +53,9 @@ class LLMPlayer:
         self._timeout_fallback_move = (
             None if timeout_fallback_move is None else str(timeout_fallback_move)
         )
+        self._prompt_renderer = prompt_renderer
         self._base_messages = list(sample.get("messages") or [])
+        self._backward_prompt_logged_reasons: set[str] = set()
         self._async_lock = Lock()
         self._async_queue: Queue[ArenaAction] = Queue()
         self._async_inflight = False
@@ -65,7 +70,11 @@ class LLMPlayer:
         prompt_text = self._format_observation(observation)
         image_fragment = self._build_image_fragment(observation)
         logger.debug("LLMPlayer {} prompt (text-only):\n{}", self.name, prompt_text)
-        messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
+        messages = self._build_turn_messages(
+            observation=observation,
+            prompt_text=prompt_text,
+            image_fragment=image_fragment,
+        )
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
@@ -79,9 +88,14 @@ class LLMPlayer:
                 reason=parse_result.error,
                 legal_moves=self._truncate_legal_moves(observation.legal_actions_items),
             )
-            raw_text = self._invoke_model(
-                self._base_messages + [self._build_user_message(rethink_prompt, image_fragment)]
+            retry_messages = self._build_turn_messages(
+                observation=observation,
+                prompt_text=rethink_prompt,
+                image_fragment=image_fragment,
+                retry_reason=parse_result.error,
+                last_output=raw_text,
             )
+            raw_text = self._invoke_model(retry_messages)
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             retries += 1
 
@@ -406,6 +420,152 @@ class LLMPlayer:
         if len(legal_moves) <= self._legal_moves_limit:
             return list(legal_moves)
         return list(legal_moves[: self._legal_moves_limit])
+
+    def _build_turn_messages(
+        self,
+        *,
+        observation: ArenaObservation,
+        prompt_text: str,
+        image_fragment: Optional[Dict[str, Any]],
+        retry_reason: Optional[str] = None,
+        last_output: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        legacy_messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
+        if not self._prompt_renderer:
+            self._log_backward_prompt_usage("missing_prompt_renderer")
+            return legacy_messages
+
+        prompt_payload = self._build_prompt_payload(
+            observation=observation,
+            prompt_text=prompt_text,
+            retry_reason=retry_reason,
+            last_output=last_output,
+            legacy_messages=legacy_messages,
+            has_image=image_fragment is not None,
+        )
+        context = PromptContext(
+            sample=self._sample,
+            payload=prompt_payload,
+            history=[],
+            extras={
+                "adapter_id": self._adapter_id,
+                "role_type": "arena_player",
+                "player_id": self.name,
+            },
+        )
+        try:
+            rendered = self._prompt_renderer.render(context)
+        except Exception as exc:
+            logger.warning(
+                "LLMPlayer {} prompt renderer failed, fallback to backward-compatible prompt: {}",
+                self.name,
+                exc,
+            )
+            self._log_backward_prompt_usage("render_error")
+            return legacy_messages
+
+        if rendered.messages is not None:
+            return self._append_image_fragment(
+                rendered.messages,
+                image_fragment=image_fragment,
+                fallback_text=prompt_text,
+            )
+        if rendered.prompt:
+            return self._base_messages + [self._build_user_message(rendered.prompt, image_fragment)]
+
+        self._log_backward_prompt_usage("empty_render")
+        return legacy_messages
+
+    def _build_prompt_payload(
+        self,
+        *,
+        observation: ArenaObservation,
+        prompt_text: str,
+        retry_reason: Optional[str],
+        last_output: Optional[str],
+        legacy_messages: Sequence[Dict[str, Any]],
+        has_image: bool,
+    ) -> Dict[str, Any]:
+        metadata = dict(observation.metadata) if isinstance(observation.metadata, dict) else {}
+        legal_moves = list(observation.legal_actions_items or [])
+        return {
+            "instruction": prompt_text,
+            "prompt_text": prompt_text,
+            "messages": list(legacy_messages),
+            "player_id": self.name,
+            "game_type": self._resolve_game_type(metadata),
+            "retry_reason": str(retry_reason or ""),
+            "last_model_output": str(last_output or ""),
+            "has_image": bool(has_image),
+            "active_player": observation.active_player,
+            "last_action": observation.last_action,
+            "legal_moves": legal_moves,
+            "arena_observation": {
+                "view_text": observation.view_text,
+                "legal_moves": legal_moves,
+                "active_player": observation.active_player,
+                "last_action": observation.last_action,
+                "metadata": metadata,
+            },
+        }
+
+    def _resolve_game_type(self, observation_metadata: Dict[str, Any]) -> str:
+        obs_game_type = observation_metadata.get("game_type")
+        if isinstance(obs_game_type, str) and obs_game_type.strip():
+            return obs_game_type
+        sample_metadata = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
+        sample_game_type = sample_metadata.get("game_type") if isinstance(sample_metadata, dict) else None
+        if isinstance(sample_game_type, str) and sample_game_type.strip():
+            return sample_game_type
+        env_id = observation_metadata.get("env_id")
+        if isinstance(env_id, str) and env_id.strip():
+            return env_id
+        return "unknown"
+
+    def _log_backward_prompt_usage(self, reason: str) -> None:
+        if reason in self._backward_prompt_logged_reasons:
+            return
+        self._backward_prompt_logged_reasons.add(reason)
+        if reason == "missing_prompt_renderer":
+            logger.info(
+                "LLMPlayer {} using backward-compatible prompt assembly (no prompt renderer configured)",
+                self.name,
+            )
+            return
+        logger.warning(
+            "LLMPlayer {} using backward-compatible prompt assembly (reason={})",
+            self.name,
+            reason,
+        )
+
+    @staticmethod
+    def _append_image_fragment(
+        messages: Sequence[Dict[str, Any]],
+        *,
+        image_fragment: Optional[Dict[str, Any]],
+        fallback_text: str,
+    ) -> list[Dict[str, Any]]:
+        normalized: list[Dict[str, Any]] = [
+            copy.deepcopy(message) for message in messages if isinstance(message, dict)
+        ]
+        if not image_fragment:
+            return normalized
+
+        fragment = copy.deepcopy(image_fragment)
+        for idx in range(len(normalized) - 1, -1, -1):
+            message = normalized[idx]
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                content.append(fragment)
+                return normalized
+            if isinstance(content, str):
+                message["content"] = [{"type": "text", "text": content}, fragment]
+                return normalized
+
+        normalized.append(LLMPlayer._build_user_message(fallback_text, fragment))
+        return normalized
 
     @staticmethod
     def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
