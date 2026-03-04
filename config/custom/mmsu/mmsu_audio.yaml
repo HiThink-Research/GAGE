@@ -50,8 +50,8 @@ backends:
 role_adapters:
   - adapter_id: dut_mmsu_qwen
     role_type: dut_model
-    #backend_id: litellm_backend
-    backend_id: vllm_backend
+    backend_id: litellm_backend
+    #backend_id: vllm_backend
     capabilities:
       - chat_completion
 
