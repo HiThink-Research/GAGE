@@ -55,3 +55,16 @@ def test_retro_action_parser_build_action_dict_includes_hold_ticks():
 
     payload = parser.build_action_dict(player="player_0", parse_result=parsed)
     assert payload == {"player": "player_0", "move": "noop", "raw": '{"move":"noop","hold_ticks":4}', "hold_ticks": 4}
+
+
+def test_retro_action_parser_build_rethink_prompt_keeps_json_schema_literal():
+    parser = RetroActionParser(hold_ticks_min=1, hold_ticks_max=12, default_hold_ticks=6)
+
+    prompt = parser.build_rethink_prompt(
+        last_output="bad output",
+        reason="illegal_move",
+        legal_moves=["noop", "right"],
+    )
+
+    assert '{"move": "<legal_move_or_key_combo>", "hold_ticks": <int>}' in prompt
+    assert "Legal moves: noop, right." in prompt

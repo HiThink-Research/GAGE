@@ -40,3 +40,5 @@ def test_doudizhu_chat_queue_records_messages():
     assert chat_log
     assert chat_log[-1]["text"] == "hello"
     assert chat_log[-1]["player_id"] == "player_0"
+    assert observation.prompt is not None
+    assert observation.prompt.payload.get("game_type") == "doudizhu"

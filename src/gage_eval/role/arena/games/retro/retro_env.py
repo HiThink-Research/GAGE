@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import importlib
 import json
 import os
@@ -12,6 +13,11 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
+
 from gage_eval.registry import registry
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 from gage_eval.role.arena.games.retro.action_codec import RetroActionCodec
@@ -20,6 +26,7 @@ from gage_eval.role.arena.games.retro.observation import (
     InfoDeltaFeeder,
     InfoFeeder,
     InfoLastFeeder,
+    InfoNoneFeeder,
     ObservationBuilder,
 )
 from gage_eval.role.arena.games.retro.replay import ReplaySchemaWriter
@@ -183,6 +190,8 @@ class StableRetroArenaEnvironment:
             reward_total=self._reward_total,
             controls=controls,
             image=image_payload,
+            game_type=self._game,
+            env_id=self._game,
         )
 
     def get_last_frame(self) -> Optional[Any]:
@@ -247,12 +256,34 @@ class StableRetroArenaEnvironment:
             raw = frame.tobytes()
         except Exception:
             return None
+        data_b64 = base64.b64encode(raw).decode("ascii")
+        data_url = self._build_image_data_url(frame)
         return {
             "encoding": "raw_base64",
-            "data": base64.b64encode(raw).decode("ascii"),
+            "data": data_b64,
+            "data_url": data_url,
             "shape": normalized_shape,
             "dtype": str(getattr(frame, "dtype", "unknown")),
         }
+
+    @staticmethod
+    def _build_image_data_url(frame: Any) -> Optional[str]:
+        """Encode a frame into an in-memory JPEG data URL when Pillow is available."""
+
+        if Image is None:
+            return None
+        try:
+            image = Image.fromarray(frame)
+            if image.mode not in {"RGB", "RGBA", "L"}:
+                image = image.convert("RGB")
+            if image.mode == "RGBA":
+                image = image.convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=85, optimize=True)
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{encoded}"
+        except Exception:
+            return None
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         if self._terminal:
@@ -656,6 +687,8 @@ class StableRetroArenaEnvironment:
             return InfoLastFeeder()
         impl = str(info_feeder.get("impl") or info_feeder.get("name") or "info_last_v1").lower()
         params = dict(info_feeder.get("params") or {})
+        if impl in {"info_none_v1", "none", "off", "disabled"}:
+            return InfoNoneFeeder()
         if impl in {"info_delta_v1", "delta", "info_delta"}:
             return InfoDeltaFeeder(window_size=int(params.get("window_size", 8) or 8))
         return InfoLastFeeder()

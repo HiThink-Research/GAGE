@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import base64
+import hashlib
 import io
 import time
 from queue import Queue
@@ -11,6 +13,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
+from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
@@ -35,6 +38,8 @@ class LLMPlayer:
         fallback_policy: str = "none",
         timeout_ms: Optional[int] = None,
         timeout_fallback_move: Optional[str] = None,
+        prompt_renderer: Optional[PromptRenderer] = None,
+        scheduler_mode: Optional[str] = None,
     ) -> None:
         self.name = name
         self._adapter_id = adapter_id
@@ -50,7 +55,10 @@ class LLMPlayer:
         self._timeout_fallback_move = (
             None if timeout_fallback_move is None else str(timeout_fallback_move)
         )
+        self._prompt_renderer = prompt_renderer
+        self._scheduler_mode = str(scheduler_mode or "").strip() or None
         self._base_messages = list(sample.get("messages") or [])
+        self._backward_prompt_logged_reasons: set[str] = set()
         self._async_lock = Lock()
         self._async_queue: Queue[ArenaAction] = Queue()
         self._async_inflight = False
@@ -64,8 +72,12 @@ class LLMPlayer:
 
         prompt_text = self._format_observation(observation)
         image_fragment = self._build_image_fragment(observation)
-        logger.debug("LLMPlayer {} prompt (text-only):\n{}", self.name, prompt_text)
-        messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
+        logger.debug("LLMPlayer {} observation prompt seed (text-only):\n{}", self.name, prompt_text)
+        messages = self._build_turn_messages(
+            observation=observation,
+            prompt_text=prompt_text,
+            image_fragment=image_fragment,
+        )
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
@@ -79,9 +91,14 @@ class LLMPlayer:
                 reason=parse_result.error,
                 legal_moves=self._truncate_legal_moves(observation.legal_actions_items),
             )
-            raw_text = self._invoke_model(
-                self._base_messages + [self._build_user_message(rethink_prompt, image_fragment)]
+            retry_messages = self._build_turn_messages(
+                observation=observation,
+                prompt_text=rethink_prompt,
+                image_fragment=image_fragment,
+                retry_reason=parse_result.error,
+                last_output=raw_text,
             )
+            raw_text = self._invoke_model(retry_messages)
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             retries += 1
 
@@ -199,6 +216,11 @@ class LLMPlayer:
         thread.join(timeout=max(0.0, float(timeout_s)))
 
     def _invoke_model(self, messages: Sequence[Dict[str, Any]]) -> str:
+        logger.debug(
+            "LLMPlayer {} outbound messages:\n{}",
+            self.name,
+            self._summarize_messages_for_log(messages),
+        )
         payload = {
             "sample": self._sample,
             "messages": messages,
@@ -214,6 +236,18 @@ class LLMPlayer:
         return raw_text
 
     @staticmethod
+    def _summarize_messages_for_log(messages: Sequence[Dict[str, Any]]) -> str:
+        lines: list[str] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                lines.append(f"[{index}:unknown] {message}")
+                continue
+            role = str(message.get("role") or "unknown")
+            content = LLMPlayer._format_message_content_for_log(message.get("content"))
+            lines.append(f"[{index}:{role}] {content}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _is_shutdown_error(exc: Exception) -> bool:
         """Return True if the error indicates runtime shutdown in progress."""
 
@@ -226,68 +260,66 @@ class LLMPlayer:
             or "is shut down" in message
         )
 
+    @staticmethod
+    def _format_message_content_for_log(content: Any) -> str:
+        if isinstance(content, list):
+            parts: list[str] = []
+            for fragment in content:
+                if isinstance(fragment, dict):
+                    fragment_type = str(fragment.get("type") or "")
+                    if fragment_type == "text":
+                        text = fragment.get("text")
+                        if text is not None:
+                            parts.append(str(text))
+                        continue
+                    if fragment_type in {"image", "image_url"}:
+                        parts.append(LLMPlayer._format_image_reference_for_log(fragment))
+                        continue
+                if fragment is not None:
+                    parts.append(str(fragment))
+            return " ".join(part for part in parts if part).strip()
+        return "" if content is None else str(content)
+
+    @staticmethod
+    def _format_image_reference_for_log(fragment: Dict[str, Any]) -> str:
+        image_url = fragment.get("image_url")
+        url: Optional[str] = None
+        if isinstance(image_url, dict):
+            raw_url = image_url.get("url")
+            if raw_url is not None:
+                url = str(raw_url)
+        elif isinstance(image_url, str):
+            url = image_url
+        elif isinstance(fragment.get("url"), str):
+            url = str(fragment["url"])
+        elif isinstance(fragment.get("image"), str):
+            url = str(fragment["image"])
+
+        if not url:
+            return "<image_ref:missing>"
+        if url.startswith("data:"):
+            header = url.split(",", 1)[0]
+            digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+            return f"<image_ref:{header};sha1={digest};chars={len(url)}>"
+        if len(url) > 180:
+            return f"<image_ref:{url[:180]}...>"
+        return f"<image_ref:{url}>"
+
     def _format_observation(self, observation: ArenaObservation) -> str:
-        if self._is_vizdoom_observation(observation):
-            return self._format_vizdoom_observation(observation)
-        if self._should_use_pettingzoo_prompt(observation):
-            return self._format_pettingzoo_observation(observation)
+        prompt_spec = self._extract_prompt_spec(observation)
+        instruction = prompt_spec.get("instruction")
+        renderer_instruction = prompt_spec.get("renderer_instruction")
+        if isinstance(instruction, str) and instruction.strip():
+            if (
+                self._prompt_renderer
+                and isinstance(renderer_instruction, str)
+                and renderer_instruction.strip()
+            ):
+                return renderer_instruction
+            return instruction
         if self._should_use_card_prompt(observation):
             return self._format_card_observation(observation)
         return self._format_grid_observation(observation)
-
-    def _format_vizdoom_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        tick = metadata.get("t")
-        reward = metadata.get("reward")
-        status_lines = [
-            f"- Legal actions: {legal_hint}",
-        ]
-        if tick is not None:
-            status_lines.append(f"- Tick: {tick}")
-        if reward is not None:
-            status_lines.append(f"- Last reward: {reward}")
-        lines = [
-            "You are playing ViZDoom.",
-            observation.view_text,
-            "",
-            "Status:",
-            *status_lines,
-            "",
-            "Instructions:",
-            "- Choose exactly one action id from the legal actions list.",
-            "- Output ONLY the action id as an integer (no extra text).",
-        ]
-        return "\n".join(lines)
-
-    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
-        last_action = observation.last_action or "None"
-
-        instructions = [
-            "- Choose exactly one action from the legal moves list.",
-            "- Output ONLY the action label or id on the last line.",
-            "- Do not output explanations or extra text.",
-        ]
-        if any(self._normalize_move(move) == "fire" for move in legal_moves):
-            instructions.append("- Prefer FIRE when available.")
-        elif any(self._normalize_move(move) == "noop" for move in legal_moves):
-            instructions.append("- Avoid NOOP unless it is the only legal move.")
-
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {last_action}",
-            "\nEnvironment:",
-            observation.view_text,
-            "\nLegal moves:",
-            legal_hint,
-            "\nInstructions:",
-            *instructions,
-        ]
-        return "\n".join(lines)
 
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
         legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
@@ -356,23 +388,23 @@ class LLMPlayer:
             return True
         return "Public State:" in observation.view_text
 
-    def _is_vizdoom_observation(self, observation: ArenaObservation) -> bool:
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        obs_game_type = str(metadata.get("game_type", "")).lower()
-        if obs_game_type == "vizdoom":
-            return True
-        sample_meta = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
-        sample_game_type = str(sample_meta.get("game_type", "")).lower()
-        return sample_game_type == "vizdoom"
-
-    def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        env_id = str(metadata.get("env_id", "")).lower()
-        return "pettingzoo" in env_id
-
     @staticmethod
-    def _normalize_move(move: str) -> str:
-        return str(move).strip().lower()
+    def _extract_prompt_spec(observation: ArenaObservation) -> Dict[str, Any]:
+        prompt = getattr(observation, "prompt", None)
+        if prompt is None:
+            return {}
+        if isinstance(prompt, dict):
+            return {
+                "instruction": prompt.get("instruction"),
+                "renderer_instruction": prompt.get("renderer_instruction"),
+                "payload": prompt.get("payload") if isinstance(prompt.get("payload"), dict) else {},
+            }
+        payload = getattr(prompt, "payload", {})
+        return {
+            "instruction": getattr(prompt, "instruction", None),
+            "renderer_instruction": getattr(prompt, "renderer_instruction", None),
+            "payload": payload if isinstance(payload, dict) else {},
+        }
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
         metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
@@ -406,6 +438,264 @@ class LLMPlayer:
         if len(legal_moves) <= self._legal_moves_limit:
             return list(legal_moves)
         return list(legal_moves[: self._legal_moves_limit])
+
+    def _build_turn_messages(
+        self,
+        *,
+        observation: ArenaObservation,
+        prompt_text: str,
+        image_fragment: Optional[Dict[str, Any]],
+        retry_reason: Optional[str] = None,
+        last_output: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        legacy_messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
+        if not self._prompt_renderer:
+            self._log_backward_prompt_usage("missing_prompt_renderer")
+            return legacy_messages
+
+        prompt_payload = self._build_prompt_payload(
+            observation=observation,
+            prompt_text=prompt_text,
+            retry_reason=retry_reason,
+            last_output=last_output,
+            legacy_messages=legacy_messages,
+            has_image=image_fragment is not None,
+        )
+        context = PromptContext(
+            sample=self._sample,
+            payload=prompt_payload,
+            history=[],
+            extras={
+                "adapter_id": self._adapter_id,
+                "role_type": "arena_player",
+                "player_id": self.name,
+            },
+        )
+        try:
+            rendered = self._prompt_renderer.render(context)
+        except Exception as exc:
+            logger.warning(
+                "LLMPlayer {} prompt renderer failed, fallback to backward-compatible prompt: {}",
+                self.name,
+                exc,
+            )
+            self._log_backward_prompt_usage("render_error")
+            return legacy_messages
+
+        if rendered.messages is not None:
+            messages = self._append_image_fragment(
+                rendered.messages,
+                image_fragment=image_fragment,
+                fallback_text=prompt_text,
+            )
+            if not self._has_user_message(messages):
+                messages.append(self._build_user_message(prompt_text, image_fragment))
+            return messages
+        if rendered.prompt:
+            return self._base_messages + [self._build_user_message(rendered.prompt, image_fragment)]
+
+        self._log_backward_prompt_usage("empty_render")
+        return legacy_messages
+
+    def _build_prompt_payload(
+        self,
+        *,
+        observation: ArenaObservation,
+        prompt_text: str,
+        retry_reason: Optional[str],
+        last_output: Optional[str],
+        legacy_messages: Sequence[Dict[str, Any]],
+        has_image: bool,
+    ) -> Dict[str, Any]:
+        metadata = dict(observation.metadata) if isinstance(observation.metadata, dict) else {}
+        context = dict(observation.context) if isinstance(observation.context, dict) else {}
+        legal_moves = list(observation.legal_actions_items or [])
+        action_schema = metadata.get("action_schema")
+        action_schema_config = (
+            dict(metadata.get("action_schema_config"))
+            if isinstance(metadata.get("action_schema_config"), dict)
+            else {}
+        )
+        hold_ticks = {
+            "min": action_schema_config.get("hold_ticks_min"),
+            "max": action_schema_config.get("hold_ticks_max"),
+            "default": action_schema_config.get("hold_ticks_default"),
+        }
+        mode = self._resolve_mode(context)
+        observation_mode = context.get("mode")
+        env_id = metadata.get("env_id")
+        payload: Dict[str, Any] = {
+            "instruction": prompt_text,
+            "prompt_text": prompt_text,
+            "messages": list(self._base_messages),
+            "legacy_messages": list(legacy_messages),
+            "player_id": self.name,
+            "game_type": self._resolve_game_type(metadata),
+            "env_id": str(env_id) if env_id else "",
+            "retry_reason": str(retry_reason or ""),
+            "last_model_output": str(last_output or ""),
+            "has_image": bool(has_image),
+            "mode": mode,
+            "scheduler_mode": mode,
+            "observation_mode": str(observation_mode) if observation_mode is not None else "",
+            "active_player": observation.active_player,
+            "last_action": observation.last_action,
+            "legal_moves": legal_moves,
+            "action_schema": str(action_schema) if action_schema is not None else "",
+            "action_schema_config": action_schema_config,
+            "hold_ticks": hold_ticks,
+            "arena_observation": {
+                "view_text": observation.view_text,
+                "legal_moves": legal_moves,
+                "active_player": observation.active_player,
+                "last_action": observation.last_action,
+                "metadata": metadata,
+                "context": context,
+            },
+        }
+        prompt_spec = self._extract_prompt_spec(observation)
+        prompt_payload = prompt_spec.get("payload")
+        if isinstance(prompt_payload, dict) and prompt_payload:
+            payload = self._merge_payload_dicts(payload, prompt_payload)
+
+        # STEP 1: Enforce per-request fields derived from runtime state.
+        payload["instruction"] = prompt_text
+        payload["prompt_text"] = prompt_text
+        payload["messages"] = list(self._base_messages)
+        payload["legacy_messages"] = list(legacy_messages)
+        payload["player_id"] = self.name
+        payload["retry_reason"] = str(retry_reason or "")
+        payload["last_model_output"] = str(last_output or "")
+        payload["has_image"] = bool(has_image)
+
+        # STEP 2: Keep scheduler mode aligned with the active scheduler.
+        payload["mode"] = mode
+        payload["scheduler_mode"] = mode
+        if observation_mode is not None and str(observation_mode).strip():
+            payload["observation_mode"] = str(observation_mode)
+        elif "observation_mode" not in payload:
+            payload["observation_mode"] = ""
+
+        # STEP 3: Guarantee essential observation fields for prompt templates.
+        payload.setdefault("game_type", self._resolve_game_type(metadata))
+        payload.setdefault("env_id", str(env_id) if env_id else "")
+        payload.setdefault("active_player", observation.active_player)
+        payload.setdefault("last_action", observation.last_action)
+        payload.setdefault("legal_moves", legal_moves)
+        payload.setdefault("action_schema", str(action_schema) if action_schema is not None else "")
+        payload.setdefault("action_schema_config", action_schema_config)
+        payload.setdefault("hold_ticks", hold_ticks)
+        payload.setdefault(
+            "arena_observation",
+            {
+                "view_text": observation.view_text,
+                "legal_moves": legal_moves,
+                "active_player": observation.active_player,
+                "last_action": observation.last_action,
+                "metadata": metadata,
+                "context": context,
+            },
+        )
+        return payload
+
+    @staticmethod
+    def _merge_payload_dicts(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+        merged: Dict[str, Any] = copy.deepcopy(base)
+        for key, value in overrides.items():
+            if (
+                key in merged
+                and isinstance(merged[key], dict)
+                and isinstance(value, dict)
+            ):
+                merged[key] = LLMPlayer._merge_payload_dicts(merged[key], value)
+            else:
+                merged[key] = copy.deepcopy(value)
+        return merged
+
+    def _resolve_mode(self, observation_context: Dict[str, Any]) -> str:
+        scheduler_mode = self._scheduler_mode
+        if scheduler_mode:
+            return scheduler_mode
+        context_mode = observation_context.get("mode")
+        if context_mode is not None and str(context_mode).strip():
+            return str(context_mode)
+        return "unknown"
+
+    def _resolve_game_type(self, observation_metadata: Dict[str, Any]) -> str:
+        obs_game_type = observation_metadata.get("game_type")
+        if isinstance(obs_game_type, str) and obs_game_type.strip():
+            return obs_game_type
+        sample_metadata = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
+        sample_game_type = sample_metadata.get("game_type") if isinstance(sample_metadata, dict) else None
+        if isinstance(sample_game_type, str) and sample_game_type.strip():
+            return sample_game_type
+        env_id = observation_metadata.get("env_id")
+        if isinstance(env_id, str) and env_id.strip():
+            return env_id
+        return "unknown"
+
+    def _log_backward_prompt_usage(self, reason: str) -> None:
+        if reason in self._backward_prompt_logged_reasons:
+            return
+        self._backward_prompt_logged_reasons.add(reason)
+        if reason == "missing_prompt_renderer":
+            logger.info(
+                "LLMPlayer {} using backward-compatible prompt assembly (no prompt renderer configured)",
+                self.name,
+            )
+            return
+        logger.warning(
+            "LLMPlayer {} using backward-compatible prompt assembly (reason={})",
+            self.name,
+            reason,
+        )
+
+    @staticmethod
+    def _append_image_fragment(
+        messages: Sequence[Dict[str, Any]],
+        *,
+        image_fragment: Optional[Dict[str, Any]],
+        fallback_text: str,
+    ) -> list[Dict[str, Any]]:
+        normalized: list[Dict[str, Any]] = [
+            copy.deepcopy(message) for message in messages if isinstance(message, dict)
+        ]
+        if not image_fragment:
+            return normalized
+
+        fragment = copy.deepcopy(image_fragment)
+        for idx in range(len(normalized) - 1, -1, -1):
+            message = normalized[idx]
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                if LLMPlayer._has_image_content(content):
+                    return normalized
+                content.append(fragment)
+                return normalized
+            if isinstance(content, str):
+                message["content"] = [{"type": "text", "text": content}, fragment]
+                return normalized
+
+        normalized.append(LLMPlayer._build_user_message(fallback_text, fragment))
+        return normalized
+
+    @staticmethod
+    def _has_user_message(messages: Sequence[Dict[str, Any]]) -> bool:
+        for message in messages:
+            if isinstance(message, dict) and message.get("role") == "user":
+                return True
+        return False
+
+    @staticmethod
+    def _has_image_content(content: Sequence[Any]) -> bool:
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "image_url":
+                return True
+        return False
 
     @staticmethod
     def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

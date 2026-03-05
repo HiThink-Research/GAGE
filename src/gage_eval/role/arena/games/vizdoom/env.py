@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, Optional, Sequence
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.games.vizdoom.observation import ViZDoomPromptBuilder
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 DEFAULT_ACTION_LABELS = ("turn_left", "turn_right", "move_forward", "move_backward", "attack")
@@ -188,6 +189,7 @@ class ViZDoomArenaEnvironment:
         self._start_ts = time.time()
         self._active_idx = 0
         self._last_frame_payload: Dict[str, Any] = {}
+        self._prompt_builder = ViZDoomPromptBuilder()
 
     def reset(self) -> None:
         """Reset the environment to its initial state."""
@@ -257,21 +259,34 @@ class ViZDoomArenaEnvironment:
             "done": bool(self._done),
             "t": int(self._tick),
         }
+        metadata = {
+            "game_type": "vizdoom",
+            "player_id": player_id,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            **extra,
+        }
+        prompt = self._prompt_builder.build(
+            game_id=self._cfg.game_id,
+            active_player=player_id,
+            legal_actions=legal_items,
+            action_mapping={str(key): str(value) for key, value in ACTION_ID_MAPPING.items()},
+            tick=self._tick,
+            step=self._tick,
+            last_reward=float(self._last_rewards.get(idx, 0.0)),
+            view_text=str(view.get("text") or ""),
+            metadata=metadata,
+        )
         return ArenaObservation(
             board_text="",
             legal_moves=[str(item) for item in legal_items],
             active_player=player_id,
-            metadata={
-                "game_type": "vizdoom",
-                "player_id": player_id,
-                "player_ids": list(self._player_ids),
-                "player_names": dict(self._player_names),
-                **extra,
-            },
+            metadata=metadata,
             view=view,
             legal_actions=legal_actions,
             context=context,
             last_move=None,
+            prompt=prompt,
         )
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
