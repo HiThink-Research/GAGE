@@ -673,6 +673,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         timeout_ms=spec.get("timeout_ms"),
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
                         prompt_renderer=self._prompt_renderer,
+                        scheduler_mode=self._scheduler_cfg.get("type"),
                     )
                 )
             elif player_type == "agent":

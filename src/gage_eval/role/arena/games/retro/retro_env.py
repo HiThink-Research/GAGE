@@ -26,6 +26,7 @@ from gage_eval.role.arena.games.retro.observation import (
     InfoDeltaFeeder,
     InfoFeeder,
     InfoLastFeeder,
+    InfoNoneFeeder,
     ObservationBuilder,
 )
 from gage_eval.role.arena.games.retro.replay import ReplaySchemaWriter
@@ -189,6 +190,8 @@ class StableRetroArenaEnvironment:
             reward_total=self._reward_total,
             controls=controls,
             image=image_payload,
+            game_type=self._game,
+            env_id=self._game,
         )
 
     def get_last_frame(self) -> Optional[Any]:
@@ -684,6 +687,8 @@ class StableRetroArenaEnvironment:
             return InfoLastFeeder()
         impl = str(info_feeder.get("impl") or info_feeder.get("name") or "info_last_v1").lower()
         params = dict(info_feeder.get("params") or {})
+        if impl in {"info_none_v1", "none", "off", "disabled"}:
+            return InfoNoneFeeder()
         if impl in {"info_delta_v1", "delta", "info_delta"}:
             return InfoDeltaFeeder(window_size=int(params.get("window_size", 8) or 8))
         return InfoLastFeeder()

@@ -69,6 +69,9 @@ def test_pettingzoo_env_basic_loop():
 
     observation = adapter.observe(active_player)
     assert observation.legal_moves == ["0", "1", "2"]
+    assert observation.prompt is not None
+    assert "Legal moves:" in observation.prompt.instruction
+    assert observation.prompt.payload.get("env_id") == ""
 
     result = adapter.apply(ArenaAction(player=active_player, move="1", raw="1"))
     assert result is None
@@ -114,3 +117,4 @@ def test_pettingzoo_env_disable_action_meanings_uses_numeric_moves():
     observation = adapter.observe(active_player)
     assert observation.legal_moves[:3] == ["0", "1", "2"]
     assert "NOOP" not in observation.legal_moves
+    assert observation.prompt is not None

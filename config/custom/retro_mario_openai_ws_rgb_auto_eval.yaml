@@ -34,13 +34,16 @@ prompts:
     renderer: jinja_chat
     params:
       role: system
-      include_existing: true
+      include_existing: false
     template: |
       You are a precise retro game action planner for {{ payload.game_type }}.
-      Follow these rules:
-      - Return exactly one legal move.
-      - Never invent actions outside legal moves.
-      - Keep output concise and machine-parseable.
+      Scheduler mode: {{ payload.mode }}.
+      Output policy:
+      - Return exactly ONE JSON object on the last line.
+      - JSON schema: {"move":"<legal_move_or_key_combo>","hold_ticks":<int>}.
+      - "move" must be selected from the legal moves list.
+      - "hold_ticks" must be in {{ payload.hold_ticks.min }}-{{ payload.hold_ticks.max }} (default {{ payload.hold_ticks.default }}).
+      - Do not output extra text before or after the JSON object.
       {% if payload.retry_reason %}
       Retry reason from previous output: {{ payload.retry_reason }}.
       {% endif %}
@@ -84,7 +87,7 @@ role_adapters:
           hold_ticks_max: 12
           hold_ticks_default: 6
         info_feeder:
-          impl: info_last_v1
+          impl: info_none_v1
         replay:
           enabled: true
           primary_mode: true
