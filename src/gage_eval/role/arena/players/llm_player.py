@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import copy
-import base64
 import hashlib
-import io
 import time
 from queue import Queue
 from threading import Lock, Thread
@@ -13,9 +10,10 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
-from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderer
+from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.arena.interfaces import MoveParser
+from gage_eval.role.arena.prompt_composer import ArenaPromptComposer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.utils.messages import stringify_message_content
 
@@ -58,6 +56,12 @@ class LLMPlayer:
         self._prompt_renderer = prompt_renderer
         self._scheduler_mode = str(scheduler_mode or "").strip() or None
         self._base_messages = list(sample.get("messages") or [])
+        self._prompt_composer = ArenaPromptComposer(
+            sample=self._sample,
+            prompt_renderer=self._prompt_renderer,
+            scheduler_mode=self._scheduler_mode,
+            legal_moves_limit=self._legal_moves_limit,
+        )
         self._backward_prompt_logged_reasons: set[str] = set()
         self._async_lock = Lock()
         self._async_queue: Queue[ArenaAction] = Queue()
@@ -306,138 +310,29 @@ class LLMPlayer:
         return f"<image_ref:{url}>"
 
     def _format_observation(self, observation: ArenaObservation) -> str:
-        prompt_spec = self._extract_prompt_spec(observation)
-        instruction = prompt_spec.get("instruction")
-        renderer_instruction = prompt_spec.get("renderer_instruction")
-        if isinstance(instruction, str) and instruction.strip():
-            if (
-                self._prompt_renderer
-                and isinstance(renderer_instruction, str)
-                and renderer_instruction.strip()
-            ):
-                return renderer_instruction
-            return instruction
-        if self._should_use_card_prompt(observation):
-            return self._format_card_observation(observation)
-        return self._format_grid_observation(observation)
+        return self._prompt_composer.format_observation(
+            observation,
+            prefer_renderer_instruction=self._prompt_renderer is not None,
+        )
 
     def _format_grid_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
-
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_action or 'First move'}",
-            "\nCurrent Board:",
-            observation.view_text,
-            "\nStatus:",
-            f"- Legal moves (truncated): {legal_hint}",
-            "\nInstructions:",
-            "- Analyze the board.",
-            "- Select the best coordinate for your move.",
-            "- Output your move as a single coordinate (e.g., 'H8').",
-        ]
-        return "\n".join(lines)
+        return self._prompt_composer.format_grid_observation(observation)
 
     def _format_card_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
-        chat_mode = str(observation.metadata.get("chat_mode", "off")).lower()
-        include_chat = chat_mode in {"ai-only", "all"}
-        instructions = [
-            "- Choose exactly one legal action string from the legal moves.",
-        ]
-        if include_chat:
-            instructions.extend(
-                [
-                    "- Include a short table-talk line every turn.",
-                    '- Output JSON: {"action": "<action>", "chat": "<short line>"}',
-                ]
-            )
-        else:
-            instructions.append("- Output the action string only.")
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_action or 'First move'}",
-        ]
-        team_hint = self._build_team_hint(observation)
-        if team_hint:
-            lines.append(team_hint)
-        lines.extend(
-            [
-                "\nCurrent State:",
-                observation.view_text,
-                "\nStatus:",
-                f"- Legal moves (preview): {legal_hint}",
-                "\nInstructions:",
-                *instructions,
-            ]
-        )
-        return "\n".join(lines)
+        return self._prompt_composer.format_card_observation(observation)
 
     def _should_use_card_prompt(self, observation: ArenaObservation) -> bool:
-        metadata = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
-        game_type = str(metadata.get("game_type", "")).lower()
-        if game_type == "doudizhu":
-            return True
-        if game_type == "vizdoom":
-            return False
-        if isinstance(observation.metadata.get("public_state"), dict):
-            return True
-        return "Public State:" in observation.view_text
+        return self._prompt_composer.should_use_card_prompt(observation)
 
     @staticmethod
     def _extract_prompt_spec(observation: ArenaObservation) -> Dict[str, Any]:
-        prompt = getattr(observation, "prompt", None)
-        if prompt is None:
-            return {}
-        if isinstance(prompt, dict):
-            return {
-                "instruction": prompt.get("instruction"),
-                "renderer_instruction": prompt.get("renderer_instruction"),
-                "payload": prompt.get("payload") if isinstance(prompt.get("payload"), dict) else {},
-            }
-        payload = getattr(prompt, "payload", {})
-        return {
-            "instruction": getattr(prompt, "instruction", None),
-            "renderer_instruction": getattr(prompt, "renderer_instruction", None),
-            "payload": payload if isinstance(payload, dict) else {},
-        }
+        return ArenaPromptComposer.extract_prompt_spec(observation)
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        public_state = metadata.get("public_state")
-        if not isinstance(public_state, dict):
-            return ""
-        landlord_id = public_state.get("landlord_id")
-        if not landlord_id:
-            return ""
-        player_id = metadata.get("player_id") or observation.active_player
-        if not player_id:
-            return ""
-        player_ids = metadata.get("player_ids")
-        if not isinstance(player_ids, list):
-            player_ids = []
-        if player_id == landlord_id:
-            opponents = [str(pid) for pid in player_ids if pid and pid != landlord_id]
-            opponent_label = ", ".join(opponents) if opponents else "the two peasants"
-            return f"Role: Landlord. Opponents: {opponent_label}."
-        teammates = [
-            str(pid)
-            for pid in player_ids
-            if pid and pid not in {player_id, landlord_id}
-        ]
-        teammate_label = ", ".join(teammates) if teammates else "the other peasant"
-        return f"Role: Peasant. Teammate: {teammate_label}. Coordinate to beat landlord {landlord_id}."
+        return self._prompt_composer.build_team_hint(observation)
 
     def _truncate_legal_moves(self, legal_moves: Sequence[str]) -> Sequence[str]:
-        if self._legal_moves_limit <= 0:
-            return []
-        if len(legal_moves) <= self._legal_moves_limit:
-            return list(legal_moves)
-        return list(legal_moves[: self._legal_moves_limit])
+        return self._prompt_composer.truncate_legal_moves(legal_moves)
 
     def _build_turn_messages(
         self,
@@ -448,54 +343,25 @@ class LLMPlayer:
         retry_reason: Optional[str] = None,
         last_output: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
-        legacy_messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
-        if not self._prompt_renderer:
-            self._log_backward_prompt_usage("missing_prompt_renderer")
-            return legacy_messages
-
-        prompt_payload = self._build_prompt_payload(
+        result = self._prompt_composer.build_turn_messages(
+            player_id=self.name,
+            adapter_id=self._adapter_id,
+            base_messages=self._base_messages,
             observation=observation,
             prompt_text=prompt_text,
+            image_fragment=image_fragment,
             retry_reason=retry_reason,
             last_output=last_output,
-            legacy_messages=legacy_messages,
-            has_image=image_fragment is not None,
         )
-        context = PromptContext(
-            sample=self._sample,
-            payload=prompt_payload,
-            history=[],
-            extras={
-                "adapter_id": self._adapter_id,
-                "role_type": "arena_player",
-                "player_id": self.name,
-            },
-        )
-        try:
-            rendered = self._prompt_renderer.render(context)
-        except Exception as exc:
+        if result.fallback_reason == "render_error":
             logger.warning(
                 "LLMPlayer {} prompt renderer failed, fallback to backward-compatible prompt: {}",
                 self.name,
-                exc,
+                result.render_error_message or "unknown error",
             )
-            self._log_backward_prompt_usage("render_error")
-            return legacy_messages
-
-        if rendered.messages is not None:
-            messages = self._append_image_fragment(
-                rendered.messages,
-                image_fragment=image_fragment,
-                fallback_text=prompt_text,
-            )
-            if not self._has_user_message(messages):
-                messages.append(self._build_user_message(prompt_text, image_fragment))
-            return messages
-        if rendered.prompt:
-            return self._base_messages + [self._build_user_message(rendered.prompt, image_fragment)]
-
-        self._log_backward_prompt_usage("empty_render")
-        return legacy_messages
+        if result.fallback_reason:
+            self._log_backward_prompt_usage(result.fallback_reason)
+        return result.messages
 
     def _build_prompt_payload(
         self,
@@ -507,132 +373,26 @@ class LLMPlayer:
         legacy_messages: Sequence[Dict[str, Any]],
         has_image: bool,
     ) -> Dict[str, Any]:
-        metadata = dict(observation.metadata) if isinstance(observation.metadata, dict) else {}
-        context = dict(observation.context) if isinstance(observation.context, dict) else {}
-        legal_moves = list(observation.legal_actions_items or [])
-        action_schema = metadata.get("action_schema")
-        action_schema_config = (
-            dict(metadata.get("action_schema_config"))
-            if isinstance(metadata.get("action_schema_config"), dict)
-            else {}
+        return self._prompt_composer.build_prompt_payload(
+            player_id=self.name,
+            base_messages=self._base_messages,
+            observation=observation,
+            prompt_text=prompt_text,
+            retry_reason=retry_reason,
+            last_output=last_output,
+            legacy_messages=legacy_messages,
+            has_image=has_image,
         )
-        hold_ticks = {
-            "min": action_schema_config.get("hold_ticks_min"),
-            "max": action_schema_config.get("hold_ticks_max"),
-            "default": action_schema_config.get("hold_ticks_default"),
-        }
-        mode = self._resolve_mode(context)
-        observation_mode = context.get("mode")
-        env_id = metadata.get("env_id")
-        payload: Dict[str, Any] = {
-            "instruction": prompt_text,
-            "prompt_text": prompt_text,
-            "messages": list(self._base_messages),
-            "legacy_messages": list(legacy_messages),
-            "player_id": self.name,
-            "game_type": self._resolve_game_type(metadata),
-            "env_id": str(env_id) if env_id else "",
-            "retry_reason": str(retry_reason or ""),
-            "last_model_output": str(last_output or ""),
-            "has_image": bool(has_image),
-            "mode": mode,
-            "scheduler_mode": mode,
-            "observation_mode": str(observation_mode) if observation_mode is not None else "",
-            "active_player": observation.active_player,
-            "last_action": observation.last_action,
-            "legal_moves": legal_moves,
-            "action_schema": str(action_schema) if action_schema is not None else "",
-            "action_schema_config": action_schema_config,
-            "hold_ticks": hold_ticks,
-            "arena_observation": {
-                "view_text": observation.view_text,
-                "legal_moves": legal_moves,
-                "active_player": observation.active_player,
-                "last_action": observation.last_action,
-                "metadata": metadata,
-                "context": context,
-            },
-        }
-        prompt_spec = self._extract_prompt_spec(observation)
-        prompt_payload = prompt_spec.get("payload")
-        if isinstance(prompt_payload, dict) and prompt_payload:
-            payload = self._merge_payload_dicts(payload, prompt_payload)
-
-        # STEP 1: Enforce per-request fields derived from runtime state.
-        payload["instruction"] = prompt_text
-        payload["prompt_text"] = prompt_text
-        payload["messages"] = list(self._base_messages)
-        payload["legacy_messages"] = list(legacy_messages)
-        payload["player_id"] = self.name
-        payload["retry_reason"] = str(retry_reason or "")
-        payload["last_model_output"] = str(last_output or "")
-        payload["has_image"] = bool(has_image)
-
-        # STEP 2: Keep scheduler mode aligned with the active scheduler.
-        payload["mode"] = mode
-        payload["scheduler_mode"] = mode
-        if observation_mode is not None and str(observation_mode).strip():
-            payload["observation_mode"] = str(observation_mode)
-        elif "observation_mode" not in payload:
-            payload["observation_mode"] = ""
-
-        # STEP 3: Guarantee essential observation fields for prompt templates.
-        payload.setdefault("game_type", self._resolve_game_type(metadata))
-        payload.setdefault("env_id", str(env_id) if env_id else "")
-        payload.setdefault("active_player", observation.active_player)
-        payload.setdefault("last_action", observation.last_action)
-        payload.setdefault("legal_moves", legal_moves)
-        payload.setdefault("action_schema", str(action_schema) if action_schema is not None else "")
-        payload.setdefault("action_schema_config", action_schema_config)
-        payload.setdefault("hold_ticks", hold_ticks)
-        payload.setdefault(
-            "arena_observation",
-            {
-                "view_text": observation.view_text,
-                "legal_moves": legal_moves,
-                "active_player": observation.active_player,
-                "last_action": observation.last_action,
-                "metadata": metadata,
-                "context": context,
-            },
-        )
-        return payload
 
     @staticmethod
     def _merge_payload_dicts(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
-        merged: Dict[str, Any] = copy.deepcopy(base)
-        for key, value in overrides.items():
-            if (
-                key in merged
-                and isinstance(merged[key], dict)
-                and isinstance(value, dict)
-            ):
-                merged[key] = LLMPlayer._merge_payload_dicts(merged[key], value)
-            else:
-                merged[key] = copy.deepcopy(value)
-        return merged
+        return ArenaPromptComposer.merge_payload_dicts(base, overrides)
 
     def _resolve_mode(self, observation_context: Dict[str, Any]) -> str:
-        scheduler_mode = self._scheduler_mode
-        if scheduler_mode:
-            return scheduler_mode
-        context_mode = observation_context.get("mode")
-        if context_mode is not None and str(context_mode).strip():
-            return str(context_mode)
-        return "unknown"
+        return self._prompt_composer.resolve_mode(observation_context)
 
     def _resolve_game_type(self, observation_metadata: Dict[str, Any]) -> str:
-        obs_game_type = observation_metadata.get("game_type")
-        if isinstance(obs_game_type, str) and obs_game_type.strip():
-            return obs_game_type
-        sample_metadata = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
-        sample_game_type = sample_metadata.get("game_type") if isinstance(sample_metadata, dict) else None
-        if isinstance(sample_game_type, str) and sample_game_type.strip():
-            return sample_game_type
-        env_id = observation_metadata.get("env_id")
-        if isinstance(env_id, str) and env_id.strip():
-            return env_id
-        return "unknown"
+        return self._prompt_composer.resolve_game_type(observation_metadata)
 
     def _log_backward_prompt_usage(self, reason: str) -> None:
         if reason in self._backward_prompt_logged_reasons:
@@ -657,106 +417,29 @@ class LLMPlayer:
         image_fragment: Optional[Dict[str, Any]],
         fallback_text: str,
     ) -> list[Dict[str, Any]]:
-        normalized: list[Dict[str, Any]] = [
-            copy.deepcopy(message) for message in messages if isinstance(message, dict)
-        ]
-        if not image_fragment:
-            return normalized
-
-        fragment = copy.deepcopy(image_fragment)
-        for idx in range(len(normalized) - 1, -1, -1):
-            message = normalized[idx]
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, list):
-                if LLMPlayer._has_image_content(content):
-                    return normalized
-                content.append(fragment)
-                return normalized
-            if isinstance(content, str):
-                message["content"] = [{"type": "text", "text": content}, fragment]
-                return normalized
-
-        normalized.append(LLMPlayer._build_user_message(fallback_text, fragment))
-        return normalized
+        return ArenaPromptComposer.append_image_fragment(
+            messages,
+            image_fragment=image_fragment,
+            fallback_text=fallback_text,
+        )
 
     @staticmethod
     def _has_user_message(messages: Sequence[Dict[str, Any]]) -> bool:
-        for message in messages:
-            if isinstance(message, dict) and message.get("role") == "user":
-                return True
-        return False
+        return ArenaPromptComposer.has_user_message(messages)
 
     @staticmethod
     def _has_image_content(content: Sequence[Any]) -> bool:
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "image_url":
-                return True
-        return False
+        return ArenaPromptComposer.has_image_content(content)
 
     @staticmethod
     def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        content = [{"type": "text", "text": text}]
-        if image_fragment:
-            content.append(image_fragment)
-        return {"role": "user", "content": content}
+        return ArenaPromptComposer.build_user_message(text, image_fragment)
 
     def _build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
-        view = observation.view or {}
-        image = view.get("image")
-        if image is None:
-            return None
-        data_url = self._resolve_image_data_url(image)
-        if not data_url:
-            return None
-        return {"type": "image_url", "image_url": {"url": data_url}}
+        return self._prompt_composer.build_image_fragment(observation)
 
     def _resolve_image_data_url(self, image: Any) -> Optional[str]:
-        if isinstance(image, str):
-            if image.startswith("data:"):
-                return image
-            return None
-        if not isinstance(image, dict):
-            return None
-        if image.get("data_url"):
-            return str(image["data_url"])
-        if image.get("url"):
-            return str(image["url"])
-        if image.get("encoding") != "raw_base64":
-            return None
-        raw_b64 = image.get("data")
-        shape = image.get("shape") or []
-        dtype = str(image.get("dtype", ""))
-        if not raw_b64 or not isinstance(shape, list) or len(shape) < 2:
-            return None
-        if "uint8" not in dtype:
-            return None
-        try:
-            from PIL import Image
-        except ImportError:
-            logger.warning("Pillow not installed; skipping image conversion for arena prompt")
-            return None
-        try:
-            raw = base64.b64decode(str(raw_b64))
-            height = int(shape[0])
-            width = int(shape[1])
-            channels = int(shape[2]) if len(shape) > 2 else 1
-            if channels == 4:
-                mode = "RGBA"
-            elif channels == 3:
-                mode = "RGB"
-            else:
-                mode = "L"
-            img = Image.frombytes(mode, (width, height), raw)
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG")
-            data = base64.b64encode(buffer.getvalue()).decode("ascii")
-            return f"data:image/jpeg;base64,{data}"
-        except Exception:
-            return None
+        return self._prompt_composer.resolve_image_data_url(image)
 
     def _build_action_metadata(self, parse_result, *, retry_count: int = 0) -> Dict[str, Any]:
         metadata = {"player_type": "backend"}
