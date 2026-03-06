@@ -489,7 +489,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GAGE ws_rgb Viewer</title>
+  <title>GAGE Game Play Viewer</title>
   <style>
     :root {
       color-scheme: dark;
@@ -631,7 +631,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 <body>
   <div class="shell">
     <div class="panel">
-      <div class="title">GAGE ws_rgb Viewer</div>
+      <div class="title">GAGE Game Play Viewer</div>
       <div class="row">
         <label for="displaySelect">Display:</label>
         <select id="displaySelect"></select>
@@ -673,7 +673,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
     <div class="split">
       <div class="panel">
-        <div class="title">Frame board_text</div>
+        <div class="title">Frame text</div>
         <pre id="boardText">(waiting frame)</pre>
       </div>
       <div class="panel">
@@ -1074,7 +1074,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
 
     function applyFrameToPanels(frame) {
-      const boardText = frame.board_text != null ? String(frame.board_text) : "(no board_text)";
+      const boardText = frame.board_text != null ? String(frame.board_text) : "(no text)";
       el.boardText.textContent = boardText;
       el.frameJson.textContent = JSON.stringify(frame, null, 2);
     }
