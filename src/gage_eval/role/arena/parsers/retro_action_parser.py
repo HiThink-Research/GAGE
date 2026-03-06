@@ -16,7 +16,7 @@ DEFAULT_RETHINK_TEMPLATE = (
     "Your last output was: '{last_output}'.\n"
     "Instructions:\n"
     "- Output ONE JSON object on the last line.\n"
-    '- Schema: {"move": "<legal_move_or_key_combo>", "hold_ticks": <int>}.\n'
+    '- Schema: {{"move": "<legal_move_or_key_combo>", "hold_ticks": <int>}}.\n'
     "- You may also use key aliases for `move` (W/A/S/D + J/K/L). Example: `d+j+k`.\n"
     "Legal moves: {legal_moves}."
 )

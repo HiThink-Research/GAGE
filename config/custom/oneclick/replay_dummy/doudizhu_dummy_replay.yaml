@@ -38,6 +38,31 @@ backends:
     - '777'
     - '888'
     cycle: true
+prompts:
+- prompt_id: doudizhu_turn_prompt_v1
+  renderer: jinja_chat
+  params:
+    role: system
+    include_existing: false
+  template: |
+    You are a precise Doudizhu action planner.
+    Scheduler mode: {{ payload.mode }}.
+    Output policy:
+    - Return exactly one legal action from the legal moves list.
+    - Legal moves: {{ payload.legal_moves | join(", ") }}.
+    {% if payload.include_chat %}
+    - Include a short table-talk line every turn.
+    - Output JSON: {"action":"<action>","chat":"<short line>"}.
+    {% else %}
+    - Output the legal action string only.
+    {% endif %}
+    - Do not output extra text.
+    {% if payload.retry_reason %}
+    Retry reason from previous output: {{ payload.retry_reason }}.
+    {% endif %}
+    {% if payload.last_model_output %}
+    Previous model output: {{ payload.last_model_output }}.
+    {% endif %}
 role_adapters:
 - adapter_id: ddz_dummy_0
   role_type: dut_model
@@ -56,6 +81,7 @@ role_adapters:
   - chat_completion
 - adapter_id: doudizhu_arena
   role_type: arena
+  prompt_id: doudizhu_turn_prompt_v1
   params:
     environment:
       impl: doudizhu_arena_v1

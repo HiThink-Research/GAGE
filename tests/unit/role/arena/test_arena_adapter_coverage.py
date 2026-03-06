@@ -11,6 +11,8 @@ from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordI
 from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
 from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
+from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
+from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import ArenaObservation, GameResult
 
@@ -232,6 +234,36 @@ def test_build_environment_for_pettingzoo_forwards_optional_kwargs(monkeypatch) 
     assert captured_env_kwargs["agent_map"] == {"first_0": "p0"}
 
 
+def test_build_players_forwards_scheme_configuration() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        players=[
+            {
+                "player_id": "p0",
+                "type": "backend",
+                "ref": "backend.alpha",
+                "scheme_id": "S6_text_image_action_hist",
+                "scheme_params": {"action_history_len": 3, "delta_key_limit": 5},
+            }
+        ],
+    )
+
+    players = adapter._build_players(
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        role_manager=object(),
+        parser=object(),
+        trace=None,
+        action_queue=None,
+        player_specs=adapter._player_specs,
+    )
+
+    assert len(players) == 1
+    assert isinstance(players[0], LLMPlayer)
+    assert players[0]._scheme_id == "S6_text_image_action_hist"
+    assert players[0]._action_history_len == 3
+    assert players[0]._delta_key_limit == 5
+
+
 def test_build_environment_for_mahjong_forwards_run_context_and_models(monkeypatch) -> None:
     captured_env_kwargs: dict[str, Any] = {}
     chat_queue = object()
@@ -373,6 +405,17 @@ def test_bind_input_mapper_returns_pettingzoo_mapper() -> None:
     assert isinstance(mapper, PettingZooDiscreteInputMapper)
 
 
+def test_bind_input_mapper_returns_vizdoom_mapper() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "vizdoom_env_v1"},
+    )
+
+    mapper = adapter._bind_input_mapper(env_impl="vizdoom_env_v1")
+
+    assert isinstance(mapper, ViZDoomInputMapper)
+
+
 def test_maybe_register_ws_display_for_mahjong() -> None:
     class _Hub:
         def __init__(self) -> None:
@@ -507,6 +550,40 @@ def test_maybe_register_ws_display_for_pettingzoo() -> None:
     registration = hub.registrations[0]
     assert registration.display_id == "task-4:sample-4:arena:pettingzoo_aec_v1"
     assert isinstance(registration.input_mapper, PettingZooDiscreteInputMapper)
+
+
+def test_maybe_register_ws_display_for_vizdoom() -> None:
+    class _Hub:
+        def __init__(self) -> None:
+            self.registrations: list[Any] = []
+
+        def register_display(self, registration: Any) -> None:
+            self.registrations.append(registration)
+
+    class _Environment:
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"frame_id": 5}
+
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "vizdoom_env_v1", "display_mode": "websocket"},
+    )
+    hub = _Hub()
+    adapter._ensure_ws_rgb_hub = lambda: hub  # type: ignore[method-assign]
+
+    adapter._maybe_register_ws_display(
+        sample={"id": "sample-5", "task_id": "task-5", "metadata": {}},
+        environment=_Environment(),
+        action_queue=None,
+        player_specs=[{"type": "human", "player_id": "p0"}],
+        env_impl="vizdoom_env_v1",
+    )
+
+    assert len(hub.registrations) == 1
+    registration = hub.registrations[0]
+    assert registration.display_id == "task-5:sample-5:arena:vizdoom_env_v1"
+    assert isinstance(registration.input_mapper, ViZDoomInputMapper)
 
 
 def test_format_result_keeps_small_game_log_and_trace_fields() -> None:

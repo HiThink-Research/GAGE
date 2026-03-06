@@ -510,17 +510,17 @@ Common env vars:
 - `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
 
-## 11. ViZDoom setup guide
+## 11. ViZDoom guide
 
-Guide: [English](vizdoom_setup_guide.md) | [中文](vizdoom_setup_guide_zh.md)
+Guide: [English](game_arena_vizdoom.md) | [中文](game_arena_vizdoom_zh.md)
 
-This chapter explains how to install the ViZDoom environment, run the local game modes, and verify replay output.
+This chapter is the canonical ViZDoom entry. It consolidates installation, startup scripts, replay flow, and key parameter locations.
 
-## 12. Stable Retro Mario demo guide
+## 12. Stable Retro Mario guide
 
-Guide: [English](stable_retro_mario_demo_guide.md) | [中文](stable_retro_mario_demo_guide_zh.md)
+Guide: [English](game_arena_retro_mario.md) | [中文](game_arena_retro_mario_zh.md)
 
-This chapter provides an end-to-end Retro Mario demo path, including setup notes, run commands, replay checks, and troubleshooting guidance.
+This chapter is the canonical Retro Mario entry. It consolidates ROM setup, config-driven startup, replay flow, and key parameter locations.
 
 ## 13. ws_rgb replay usage guide
 
@@ -529,8 +529,8 @@ Runtime integration and live rendering guide: [English](ws_rgb_runtime_dev_guide
 
 This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.
 
-## 14. PettingZoo Atari two-player guide
+## 14. PettingZoo Atari guide
 
-Guide: [English](pettingzoo_user_guide.md) | [中文](pettingzoo_user_guide_zh.md)
+Guide: [English](game_arena_pettingzoo.md) | [中文](game_arena_pettingzoo_zh.md)
 
-This chapter links the PettingZoo Atari two-player integration, run flow, and ws_rgb web replay usage in GAGE for Game Arena onboarding.
+This chapter is the canonical PettingZoo entry. It consolidates ROM installation, demo startup flow, replay usage, and key parameter locations.

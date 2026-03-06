@@ -510,17 +510,17 @@ URL 参数（Human / AI）：
 - `GAGE_EVAL_SAVE_DIR`
 - `OPENAI_API_KEY`
 
-## 11. ViZDoom 环境安装与启动指南
+## 11. ViZDoom 指南
 
-文档：[English](vizdoom_setup_guide.md) | [中文](vizdoom_setup_guide_zh.md)
+文档：[English](game_arena_vizdoom.md) | [中文](game_arena_vizdoom_zh.md)
 
-本章节用于说明 ViZDoom 的环境安装方式、本地启动命令以及回放验证方式。
+本章节是 ViZDoom 的标准入口，统一整理了安装、启动脚本、回放流程和关键参数位置。
 
-## 12. 稳定版 Retro Mario Demo 指南
+## 12. Retro Mario 指南
 
-文档：[English](stable_retro_mario_demo_guide.md) | [中文](stable_retro_mario_demo_guide_zh.md)
+文档：[English](game_arena_retro_mario.md) | [中文](game_arena_retro_mario_zh.md)
 
-本章节给出 Retro Mario 的端到端演示路径，包含准备步骤、运行命令、回放校验和常见故障排查。
+本章节是 Retro Mario 的标准入口，统一整理了 ROM 准备、配置驱动启动、回放流程和关键参数位置。
 
 ## 13. ws_rgb 回放使用指南
 
@@ -529,8 +529,8 @@ URL 参数（Human / AI）：
 
 本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
 
-## 14. PettingZoo Atari 双人对战指南
+## 14. PettingZoo Atari 指南
 
-文档：[English](pettingzoo_user_guide.md) | [中文](pettingzoo_user_guide_zh.md)
+文档：[English](game_arena_pettingzoo.md) | [中文](game_arena_pettingzoo_zh.md)
 
-本章节汇总 PettingZoo Atari 双人对战在 GAGE 中的接入、运行与网页回放（ws_rgb）使用方式，供 Game Arena 接入开发参考。
+本章节是 PettingZoo 的标准入口，统一整理了 ROM 安装、Demo 启动流程、回放使用方式和关键参数位置。

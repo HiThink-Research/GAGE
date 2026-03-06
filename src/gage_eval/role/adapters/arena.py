@@ -13,6 +13,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger
 
+from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
@@ -55,6 +56,7 @@ class ArenaRoleAdapter(RoleAdapter):
         visualizer: Optional[Dict[str, Any]] = None,
         human_input: Optional[Dict[str, Any]] = None,
         players: Optional[Sequence[Dict[str, Any]]] = None,
+        prompt_renderer: Optional[PromptRenderer] = None,
         capabilities=(),
         role_type: str = "arena",
         **_,
@@ -68,6 +70,7 @@ class ArenaRoleAdapter(RoleAdapter):
         self._visualizer_cfg = dict(visualizer or {})
         self._human_input_cfg = dict(human_input or {})
         self._player_specs = list(players or [])
+        self._prompt_renderer = prompt_renderer
         self._shared_visualizer = None
         self._action_server = None
         self._ws_rgb_hub = None
@@ -669,6 +672,10 @@ class ArenaRoleAdapter(RoleAdapter):
                         fallback_policy=spec.get("fallback_policy", "none"),
                         timeout_ms=spec.get("timeout_ms"),
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
+                        prompt_renderer=self._prompt_renderer,
+                        scheduler_mode=self._scheduler_cfg.get("type"),
+                        scheme_id=spec.get("scheme_id"),
+                        scheme_params=spec.get("scheme_params"),
                     )
                 )
             elif player_type == "agent":
@@ -685,6 +692,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         max_retries=int(spec.get("max_retries", 0)),
                         legal_moves_limit=int(spec.get("legal_moves_limit", 40)),
                         sampling_params=spec.get("sampling_params"),
+                        prompt_renderer=self._prompt_renderer,
                     )
                 )
             elif player_type == "human":
@@ -1302,6 +1310,22 @@ class ArenaRoleAdapter(RoleAdapter):
                     default=True,
                 )
             return PettingZooDiscreteInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        if "vizdoom" in normalized_env_impl:
+            from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return ViZDoomInputMapper(
                 key_map=key_map if isinstance(key_map, Mapping) else None,
                 enforce_legal_moves=enforce_legal_moves,
             )

@@ -639,7 +639,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       </div>
       <div class="row">
         <label for="pollMsInput">Poll ms:</label>
-        <input id="pollMsInput" type="number" min="50" max="2000" step="10" value="200" />
+        <input id="pollMsInput" type="number" min="20" max="2000" step="10" value="20" />
         <button id="applyPollBtn" type="button">Apply</button>
         <button id="fetchFrameBtn" type="button">Fetch Once</button>
       </div>
@@ -697,7 +697,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       selectedDisplayAcceptsInput: false,
       selectedDisplayReplaySeekable: false,
       pollTimer: null,
-      pollMs: 200,
+      pollMs: 20,
       liveFrameImageUrl: "",
       captureEnabled: true,
       historyFrames: [],
@@ -1337,8 +1337,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         fetchFrame();
       });
       el.applyPollBtn.addEventListener("click", () => {
-        const parsed = Number(el.pollMsInput.value || "200");
-        state.pollMs = Number.isFinite(parsed) ? Math.max(50, Math.min(2000, parsed)) : 200;
+        const parsed = Number(el.pollMsInput.value || "20");
+        state.pollMs = Number.isFinite(parsed) ? Math.max(20, Math.min(2000, parsed)) : 20;
         el.pollMsInput.value = String(state.pollMs);
         restartPolling();
         if (state.replayTimer !== null) {

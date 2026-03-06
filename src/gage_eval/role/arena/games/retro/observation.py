@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
-from gage_eval.role.arena.types import ArenaObservation
+from gage_eval.role.arena.types import ArenaObservation, ArenaPromptSpec
 
 
 @dataclass(frozen=True)
@@ -84,6 +84,22 @@ class InfoDeltaFeeder(InfoFeeder):
         return text, payload
 
 
+class InfoNoneFeeder(InfoFeeder):
+    """Disable info projection in the observation view text."""
+
+    def build(
+        self,
+        *,
+        info_history: Sequence[dict[str, Any]],
+        raw_info: dict[str, Any],
+        token_budget: int,
+    ) -> tuple[str, dict[str, Any]]:
+        del info_history
+        del raw_info
+        del token_budget
+        return "", {}
+
+
 class ObservationBuilder:
     """Builds retro observations aligned with the section-15 contracts."""
 
@@ -106,9 +122,12 @@ class ObservationBuilder:
         reward_total: float,
         controls: Optional[dict[str, Any]] = None,
         image: Optional[dict[str, Any]] = None,
+        game_type: str = "retro",
+        env_id: Optional[str] = None,
     ) -> ArenaObservation:
         """Build an ArenaObservation plus the section-15 dict payload."""
 
+        legal_move_items = [str(move) for move in legal_moves]
         info_text, info_extra = self._info_feeder.build(
             info_history=info_history,
             raw_info=raw_info,
@@ -123,34 +142,173 @@ class ObservationBuilder:
         controls_block = self._format_controls_block(controls)
         if controls_block:
             view_text = f"{view_text}\n\n{controls_block}"
-        action_hint = self._action_schema.format_prompt(legal_moves)
+        action_hint = self._action_schema.format_prompt(legal_move_items)
+        action_schema_config = {
+            "hold_ticks_min": int(self._action_schema.hold_ticks_min),
+            "hold_ticks_max": int(self._action_schema.hold_ticks_max),
+            "hold_ticks_default": int(self._action_schema.default_hold_ticks),
+        }
+        game_label = str(game_type or "retro")
+        env_label = str(env_id or game_label)
+        prompt_instruction = self._format_prompt_instruction(
+            view_text=view_text,
+            legal_moves=legal_move_items,
+            action_schema=action_hint,
+        )
+        prompt_renderer_instruction = self._format_renderer_instruction(
+            view_text=view_text,
+            legal_moves=legal_move_items,
+        )
+        prompt_payload = self._build_prompt_payload(
+            player_id=player_id,
+            game_type=game_label,
+            env_id=env_label,
+            active_player=active_player,
+            last_move=last_move,
+            legal_moves=legal_move_items,
+            action_schema=action_hint,
+            action_schema_config=action_schema_config,
+            tick=tick,
+            decision_count=decision_count,
+            reward_total=reward_total,
+            info=dict(raw_info),
+            controls=dict(controls or {}),
+            view_text=view_text,
+        )
         observation_dict = _build_observation_dict(
             view_text=view_text,
             image=image,
-            legal_actions=[str(move) for move in legal_moves],
+            legal_actions=legal_move_items,
             active_player=active_player,
             tick=tick,
             step=decision_count,
             info=raw_info,
-            extra={"info_projection": info_extra, "action_schema": action_hint, "controls": controls or {}},
+            extra={
+                "info_projection": info_extra,
+                "action_schema": action_hint,
+                "action_schema_config": action_schema_config,
+                "controls": controls or {},
+            },
         )
+        metadata = {
+            "game_type": game_label,
+            "player_id": player_id,
+            "observation_dict": observation_dict,
+            "action_schema": action_hint,
+            "action_schema_config": action_schema_config,
+            "token_budget": self._token_budget,
+            "last_move": last_move,
+            "observation_extra": observation_dict.get("extra", {}),
+        }
+        if env_id:
+            metadata["env_id"] = str(env_id)
+
         return ArenaObservation(
             board_text=view_text,
-            legal_moves=list(legal_moves),
+            legal_moves=legal_move_items,
             active_player=active_player,
             last_move=last_move,
-            metadata={
-                "player_id": player_id,
-                "observation_dict": observation_dict,
-                "action_schema": action_hint,
-                "token_budget": self._token_budget,
-                "last_move": last_move,
-                "observation_extra": observation_dict.get("extra", {}),
-            },
+            metadata=metadata,
             view=observation_dict.get("view"),
             legal_actions={"items": list(observation_dict.get("legal_actions") or [])},
             context=observation_dict.get("context"),
+            prompt=ArenaPromptSpec(
+                instruction=prompt_instruction,
+                renderer_instruction=prompt_renderer_instruction,
+                payload=prompt_payload,
+            ),
         )
+
+    @staticmethod
+    def _format_prompt_instruction(
+        *,
+        view_text: str,
+        legal_moves: Sequence[str],
+        action_schema: str,
+    ) -> str:
+        legal_hint = ", ".join([str(move) for move in legal_moves]) if legal_moves else "none"
+        lines = [
+            "You are playing a retro game environment.",
+            view_text,
+            "",
+            "Status:",
+            f"- Legal moves: {legal_hint}",
+            "",
+            "Instructions:",
+            *str(action_schema or "").splitlines(),
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_renderer_instruction(*, view_text: str, legal_moves: Sequence[str]) -> str:
+        legal_hint = ", ".join([str(move) for move in legal_moves]) if legal_moves else "none"
+        lines = [
+            "You are playing a retro game environment.",
+            view_text,
+            "",
+            "Status:",
+            f"- Legal moves: {legal_hint}",
+            "",
+            "Instructions:",
+            "- Follow the system prompt for output format and policy.",
+            "- Choose one move from the legal moves list.",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_prompt_payload(
+        *,
+        player_id: str,
+        game_type: str,
+        env_id: str,
+        active_player: str,
+        last_move: Optional[str],
+        legal_moves: Sequence[str],
+        action_schema: str,
+        action_schema_config: dict[str, Any],
+        tick: int,
+        decision_count: int,
+        reward_total: float,
+        info: dict[str, Any],
+        controls: dict[str, Any],
+        view_text: str,
+    ) -> dict[str, Any]:
+        hold_ticks = {
+            "min": action_schema_config.get("hold_ticks_min"),
+            "max": action_schema_config.get("hold_ticks_max"),
+            "default": action_schema_config.get("hold_ticks_default"),
+        }
+        return {
+            "player_id": str(player_id),
+            "game_type": str(game_type),
+            "env_id": str(env_id),
+            "mode": "tick",
+            "scheduler_mode": "tick",
+            "observation_mode": "tick",
+            "legal_moves": [str(move) for move in legal_moves],
+            "action_schema": str(action_schema),
+            "action_schema_config": dict(action_schema_config),
+            "hold_ticks": hold_ticks,
+            "arena_observation": {
+                "view_text": str(view_text),
+                "legal_moves": [str(move) for move in legal_moves],
+                "active_player": str(active_player),
+                "last_action": None if last_move is None else str(last_move),
+                "metadata": {
+                    "game_type": str(game_type),
+                    "env_id": str(env_id),
+                    "player_id": str(player_id),
+                    "reward_total": float(reward_total),
+                    "info": dict(info),
+                    "controls": dict(controls),
+                },
+                "context": {
+                    "mode": "tick",
+                    "step": int(decision_count),
+                    "tick": int(tick),
+                },
+            },
+        }
 
     @staticmethod
     def _format_view_text(
@@ -165,9 +323,10 @@ class ObservationBuilder:
             f"Decision step: {decision_count}",
             f"Tick: {tick}",
             f"Reward total: {reward_total:.3f}",
-            "Info:",
-            info_text or "{}",
         ]
+        normalized_info = str(info_text or "").strip()
+        if normalized_info:
+            lines.extend(["Info:", normalized_info])
         return "\n".join(lines)
 
     @staticmethod
@@ -261,5 +420,6 @@ __all__ = [
     "InfoDeltaFeeder",
     "InfoFeeder",
     "InfoLastFeeder",
+    "InfoNoneFeeder",
     "ObservationBuilder",
 ]

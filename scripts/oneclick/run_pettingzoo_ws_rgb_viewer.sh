@@ -2,21 +2,23 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG="${CONFIG:-${ROOT}/config/custom/pettingzoo/pong_dummy_ws_rgb.yaml}"
+CONFIG="${CONFIG:-${ROOT}/config/custom/pettingzoo/space_invaders_dummy_ws_rgb.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT}/runs}"
-RUN_ID="${RUN_ID:-pz_pong_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)}"
+RUN_ID="${RUN_ID:-pettingzoo_space_invaders_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)}"
 WS_RGB_PORT="${WS_RGB_PORT:-5800}"
 AUTO_OPEN="${AUTO_OPEN:-1}"
 WAIT_TIMEOUT_S="${WAIT_TIMEOUT_S:-45}"
 
 if [ -n "${PYTHON_BIN:-}" ]; then
   PYTHON_EXEC="${PYTHON_BIN}"
-elif [ -x "/Users/shuo/mamba/envs/gage/bin/python" ]; then
-  PYTHON_EXEC="/Users/shuo/mamba/envs/gage/bin/python"
 elif [ -x "${ROOT}/.venv/bin/python" ]; then
   PYTHON_EXEC="${ROOT}/.venv/bin/python"
 else
   PYTHON_EXEC="python3"
+fi
+
+if [ -z "${OPENAI_API_KEY:-}" ] && [ -n "${LITELLM_API_KEY:-}" ]; then
+  export OPENAI_API_KEY="${LITELLM_API_KEY}"
 fi
 
 if [ ! -f "${CONFIG}" ]; then
@@ -103,6 +105,7 @@ echo "[ws_rgb] log: ${LOG_FILE}"
 echo "[ws_rgb] viewer: ${VIEWER_URL}"
 
 (
+  PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
   WS_RGB_PORT="${WS_RGB_PORT}" "${PYTHON_EXEC}" "${ROOT}/run.py" \
     --config "${CONFIG}" \
     --output-dir "${OUTPUT_DIR}" \
