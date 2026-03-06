@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import os
+from pathlib import Path
 import time
 from queue import Queue
 from threading import Lock, Thread
@@ -16,6 +19,12 @@ from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.prompt_composer import ArenaPromptComposer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.utils.messages import stringify_message_content
+
+_DEFAULT_DEBUG_IMAGE_DUMP_MAX = 0
+_DEFAULT_DEBUG_IMAGE_DUMP_STRIDE = 1
+_ENV_DEBUG_IMAGE_DUMP_DIR = "GAGE_ARENA_DEBUG_IMAGE_DUMP_DIR"
+_ENV_DEBUG_IMAGE_DUMP_MAX = "GAGE_ARENA_DEBUG_IMAGE_DUMP_MAX"
+_ENV_DEBUG_IMAGE_DUMP_STRIDE = "GAGE_ARENA_DEBUG_IMAGE_DUMP_STRIDE"
 
 
 class LLMPlayer:
@@ -38,6 +47,8 @@ class LLMPlayer:
         timeout_fallback_move: Optional[str] = None,
         prompt_renderer: Optional[PromptRenderer] = None,
         scheduler_mode: Optional[str] = None,
+        scheme_id: Optional[str] = None,
+        scheme_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.name = name
         self._adapter_id = adapter_id
@@ -61,7 +72,35 @@ class LLMPlayer:
             prompt_renderer=self._prompt_renderer,
             scheduler_mode=self._scheduler_mode,
             legal_moves_limit=self._legal_moves_limit,
+            scheme_id=scheme_id,
+            scheme_params=scheme_params,
         )
+        self._scheme_id = self._prompt_composer.scheme_id
+        self._scheme_explicitly_configured = self._prompt_composer.scheme_explicitly_configured
+        self._action_history_len = self._prompt_composer.action_history_len
+        self._delta_key_limit = self._prompt_composer.delta_key_limit
+        self._telemetry_limit = self._prompt_composer.telemetry_limit
+        self._debug_image_dump_dir = self._resolve_debug_image_dump_dir(
+            (scheme_params or {}).get("debug_image_dump_dir")
+            if isinstance(scheme_params, dict)
+            else None
+        )
+        self._debug_image_dump_max = self._coerce_non_negative_int(
+            (scheme_params or {}).get("debug_image_dump_max", os.getenv(_ENV_DEBUG_IMAGE_DUMP_MAX))
+            if isinstance(scheme_params, dict)
+            else os.getenv(_ENV_DEBUG_IMAGE_DUMP_MAX),
+            default=_DEFAULT_DEBUG_IMAGE_DUMP_MAX,
+        )
+        self._debug_image_dump_stride = self._coerce_positive_int(
+            (scheme_params or {}).get(
+                "debug_image_dump_stride",
+                os.getenv(_ENV_DEBUG_IMAGE_DUMP_STRIDE),
+            )
+            if isinstance(scheme_params, dict)
+            else os.getenv(_ENV_DEBUG_IMAGE_DUMP_STRIDE),
+            default=_DEFAULT_DEBUG_IMAGE_DUMP_STRIDE,
+        )
+        self._debug_image_dump_count = 0
         self._backward_prompt_logged_reasons: set[str] = set()
         self._async_lock = Lock()
         self._async_queue: Queue[ArenaAction] = Queue()
@@ -70,6 +109,14 @@ class LLMPlayer:
         self._async_start_ts: Optional[float] = None
         self._async_timeout_ms: Optional[float] = None
         self._async_timeout_logged = False
+        if self._debug_image_dump_dir and self._debug_image_dump_max > 0:
+            logger.info(
+                "LLMPlayer {} image dump enabled: dir={} max={} stride={}",
+                self.name,
+                self._debug_image_dump_dir,
+                self._debug_image_dump_max,
+                self._debug_image_dump_stride,
+            )
 
     def think(self, observation: ArenaObservation) -> ArenaAction:
         """Produce an action using the LLM adapter."""
@@ -82,10 +129,16 @@ class LLMPlayer:
             prompt_text=prompt_text,
             image_fragment=image_fragment,
         )
+        self._log_request_media_summary(
+            observation=observation,
+            messages=messages,
+            phase="primary",
+        )
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
         parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
+        self._log_parse_result(parse_result, phase="primary")
 
         # STEP 2: Retry with rethink prompts when parsing fails or is illegal.
         retries = 0
@@ -102,8 +155,14 @@ class LLMPlayer:
                 retry_reason=parse_result.error,
                 last_output=raw_text,
             )
+            self._log_request_media_summary(
+                observation=observation,
+                messages=retry_messages,
+                phase=f"retry_{retries + 1}",
+            )
             raw_text = self._invoke_model(retry_messages)
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
+            self._log_parse_result(parse_result, phase=f"retry_{retries + 1}")
             retries += 1
 
         if parse_result.error and observation.legal_actions_items:
@@ -124,22 +183,26 @@ class LLMPlayer:
                 metadata = self._build_action_metadata(parse_result, retry_count=retries)
                 metadata["error"] = parse_result.error
                 metadata["fallback"] = self._fallback_policy
-                return ArenaAction(
+                action = ArenaAction(
                     player=self.name,
                     move=fallback_move,
                     raw=raw_text,
                     metadata=metadata,
                 )
+                self._remember_interaction(observation, action)
+                return action
 
         metadata = self._build_action_metadata(parse_result, retry_count=retries)
         if parse_result.error:
             metadata["error"] = parse_result.error
-        return ArenaAction(
+        action = ArenaAction(
             player=self.name,
             move=parse_result.coord or "",
             raw=raw_text,
             metadata=metadata,
         )
+        self._remember_interaction(observation, action)
+        return action
 
     def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
         """Start thinking asynchronously if no request is in-flight."""
@@ -321,8 +384,20 @@ class LLMPlayer:
     def _format_card_observation(self, observation: ArenaObservation) -> str:
         return self._prompt_composer.format_card_observation(observation)
 
+    def _format_vizdoom_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_vizdoom_observation(observation)
+
+    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_pettingzoo_observation(observation)
+
     def _should_use_card_prompt(self, observation: ArenaObservation) -> bool:
         return self._prompt_composer.should_use_card_prompt(observation)
+
+    def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
+        return self._prompt_composer.should_use_pettingzoo_prompt(observation)
+
+    def _is_vizdoom_observation(self, observation: ArenaObservation) -> bool:
+        return self._prompt_composer.is_vizdoom_observation(observation)
 
     @staticmethod
     def _extract_prompt_spec(observation: ArenaObservation) -> Dict[str, Any]:
@@ -436,13 +511,23 @@ class LLMPlayer:
         return ArenaPromptComposer.build_user_message(text, image_fragment)
 
     def _build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
-        return self._prompt_composer.build_image_fragment(observation)
+        image_fragment = self._prompt_composer.build_image_fragment(observation)
+        if not image_fragment:
+            return None
+        image_url = image_fragment.get("image_url")
+        data_url = image_url.get("url") if isinstance(image_url, dict) else None
+        if isinstance(data_url, str):
+            self._maybe_dump_request_image(observation=observation, data_url=data_url)
+        return image_fragment
 
     def _resolve_image_data_url(self, image: Any) -> Optional[str]:
         return self._prompt_composer.resolve_image_data_url(image)
 
     def _build_action_metadata(self, parse_result, *, retry_count: int = 0) -> Dict[str, Any]:
-        metadata = {"player_type": "backend"}
+        metadata = {"player_type": "backend", "scheme_id": self._scheme_id}
+        decision_reason = getattr(parse_result, "reason", None)
+        if decision_reason:
+            metadata["decision_reason"] = str(decision_reason)
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)
@@ -454,6 +539,188 @@ class LLMPlayer:
                 pass
         metadata["retry_count"] = max(0, int(retry_count))
         return metadata
+
+    def _remember_interaction(self, observation: ArenaObservation, action: ArenaAction) -> None:
+        """Stores the latest observation/action pair for temporal prompts."""
+
+        self._prompt_composer.remember_interaction(observation, action)
+
+    def _resolve_observation_step(self, observation: ArenaObservation) -> Optional[int]:
+        """Extracts one step index token from the observation."""
+
+        return self._prompt_composer.resolve_observation_step(observation)
+
+    def _log_parse_result(self, parse_result: Any, *, phase: str) -> None:
+        """Logs parser output details for debugging prompt adherence."""
+
+        logger.debug(
+            "LLMPlayer {} parse_result: phase={} action={} error={} decision_reason={}",
+            self.name,
+            str(phase),
+            getattr(parse_result, "coord", None),
+            getattr(parse_result, "error", None),
+            getattr(parse_result, "reason", None),
+        )
+
+    def _log_request_media_summary(
+        self,
+        *,
+        observation: ArenaObservation,
+        messages: Sequence[Dict[str, Any]],
+        phase: str,
+    ) -> None:
+        """Log request image statistics for one model invocation."""
+
+        fallback_shape = self._extract_observation_image_shape(observation)
+        image_details = _summarize_message_images(messages, fallback_shape=fallback_shape)
+        image_status = self._resolve_image_status(
+            observation=observation,
+            image_count=len(image_details),
+        )
+        logger.debug(
+            "LLMPlayer {} request media: phase={} scheme_id={} step={} image_status={} "
+            "image_count={} image_details={}",
+            self.name,
+            str(phase),
+            self._scheme_id,
+            self._resolve_observation_step(observation),
+            image_status,
+            len(image_details),
+            image_details,
+        )
+
+    def _resolve_image_status(
+        self,
+        *,
+        observation: ArenaObservation,
+        image_count: int,
+    ) -> str:
+        """Classify whether images are expected or attached for this request."""
+
+        if image_count > 0:
+            return "attached"
+        if not self._prompt_composer.scheme_supports_image():
+            return "scheme_without_image"
+        view = observation.view if isinstance(observation.view, dict) else {}
+        image = view.get("image") if isinstance(view, dict) else None
+        if image is None:
+            return "observation_image_missing"
+        return "image_fragment_unavailable"
+
+    @staticmethod
+    def _extract_observation_image_shape(
+        observation: ArenaObservation,
+    ) -> Optional[tuple[int, int]]:
+        """Extract `(width, height)` from observation image metadata when available."""
+
+        view = observation.view if isinstance(observation.view, dict) else {}
+        image = view.get("image") if isinstance(view, dict) else None
+        if isinstance(image, dict):
+            shape = image.get("shape")
+            if isinstance(shape, list) and len(shape) >= 2:
+                try:
+                    height = int(shape[0])
+                    width = int(shape[1])
+                    if width > 0 and height > 0:
+                        return (width, height)
+                except (TypeError, ValueError):
+                    pass
+            width = image.get("width")
+            height = image.get("height")
+            if width is not None and height is not None:
+                try:
+                    parsed_width = int(width)
+                    parsed_height = int(height)
+                    if parsed_width > 0 and parsed_height > 0:
+                        return (parsed_width, parsed_height)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def _maybe_dump_request_image(self, *, observation: ArenaObservation, data_url: str) -> None:
+        """Save a bounded number of request images for debugging."""
+
+        if not self._debug_image_dump_dir:
+            return
+        if self._debug_image_dump_max <= 0:
+            return
+        if self._debug_image_dump_count >= self._debug_image_dump_max:
+            return
+
+        # STEP 1: Check step-based sampling before decoding payload.
+        step = self._resolve_observation_step(observation)
+        if (
+            self._debug_image_dump_stride > 1
+            and step is not None
+            and int(step) % int(self._debug_image_dump_stride) != 0
+        ):
+            return
+
+        # STEP 2: Decode and persist one snapshot image.
+        image_bytes, extension, error = _decode_data_url_image(data_url)
+        if image_bytes is None:
+            logger.debug(
+                "LLMPlayer {} skipped image dump due to decode error: {}",
+                self.name,
+                error or "unknown",
+            )
+            return
+        try:
+            dump_dir = Path(self._debug_image_dump_dir).expanduser()
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            step_token = "na" if step is None else str(int(step))
+            safe_player = str(self.name or "player").replace("/", "_")
+            safe_scheme = str(self._scheme_id or "scheme").replace("/", "_")
+            file_name = (
+                f"{safe_player}_{safe_scheme}_step_{step_token}_"
+                f"{self._debug_image_dump_count:03d}.{extension}"
+            )
+            path = dump_dir / file_name
+            path.write_bytes(image_bytes)
+            self._debug_image_dump_count += 1
+            logger.info(
+                "LLMPlayer {} saved prompt image snapshot {}/{} path={} step={}",
+                self.name,
+                self._debug_image_dump_count,
+                self._debug_image_dump_max,
+                str(path),
+                step_token,
+            )
+        except Exception as exc:
+            logger.warning(
+                "LLMPlayer {} failed to dump prompt image: {}",
+                self.name,
+                str(exc),
+            )
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, *, default: int) -> int:
+        """Coerces a value into a positive integer fallback."""
+
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return int(default)
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+        """Coerces a value into a non-negative integer fallback."""
+
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return int(default)
+
+    @staticmethod
+    def _resolve_debug_image_dump_dir(configured_dir: Any) -> Optional[str]:
+        """Resolve one debug dump directory from scheme params or environment."""
+
+        candidates = [configured_dir, os.getenv(_ENV_DEBUG_IMAGE_DUMP_DIR)]
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return None
 
 
 def _format_player_label(observation: ArenaObservation, player_id: str) -> str:
@@ -480,3 +747,114 @@ def _extract_text(output: Any) -> str:
             if isinstance(last, dict):
                 return stringify_message_content(last.get("content"))
     return "" if output is None else str(output)
+
+
+def _summarize_message_images(
+    messages: Sequence[Dict[str, Any]],
+    *,
+    fallback_shape: Optional[tuple[int, int]] = None,
+) -> list[dict[str, Any]]:
+    """Collect image count and size metadata from chat messages."""
+
+    details: list[dict[str, Any]] = []
+    for message_index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for content_index, item in enumerate(content):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip().lower() != "image_url":
+                continue
+            url = _resolve_image_url(item.get("image_url"))
+            summary = _summarize_image_url(url)
+            summary["index"] = len(details)
+            summary["message_index"] = message_index
+            summary["content_index"] = content_index
+            if fallback_shape and "width" not in summary and "height" not in summary:
+                summary["width"] = fallback_shape[0]
+                summary["height"] = fallback_shape[1]
+            details.append(summary)
+    return details
+
+
+def _resolve_image_url(value: Any) -> Optional[str]:
+    """Resolve image URL payload from one message image fragment."""
+
+    if isinstance(value, dict):
+        url = value.get("url")
+        return str(url) if isinstance(url, str) else None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _summarize_image_url(url: Optional[str]) -> dict[str, Any]:
+    """Build one compact summary for an image URL payload."""
+
+    if not url:
+        return {"source": "missing", "error": "url_missing"}
+    if not isinstance(url, str):
+        return {"source": "invalid", "error": "url_not_string"}
+    if not url.startswith("data:"):
+        return {"source": "remote_url", "url_length": len(url)}
+
+    header, separator, payload = url.partition(",")
+    if not separator:
+        return {"source": "data_url", "error": "invalid_data_url_header"}
+
+    mime_segment = header[len("data:") :]
+    media_type = mime_segment.split(";", 1)[0] or "application/octet-stream"
+    is_base64 = ";base64" in mime_segment.lower()
+    summary: dict[str, Any] = {
+        "source": "data_url",
+        "media_type": media_type,
+        "payload_chars": len(payload),
+        "is_base64": is_base64,
+    }
+    if is_base64:
+        summary["decoded_bytes"] = _estimate_base64_decoded_bytes(payload)
+    return summary
+
+
+def _estimate_base64_decoded_bytes(payload: str) -> int:
+    """Estimate decoded bytes for one base64 payload without full decoding."""
+
+    compact = "".join(str(payload).split())
+    if not compact:
+        return 0
+    padding = len(compact) - len(compact.rstrip("="))
+    estimated = (len(compact) * 3) // 4 - padding
+    return max(0, int(estimated))
+
+
+def _decode_data_url_image(data_url: str) -> tuple[Optional[bytes], str, Optional[str]]:
+    """Decode one data URL image payload into raw file bytes."""
+
+    if not isinstance(data_url, str):
+        return None, "jpg", "data_url_not_string"
+    if not data_url.startswith("data:"):
+        return None, "jpg", "unsupported_image_url"
+    header, separator, payload = data_url.partition(",")
+    if not separator:
+        return None, "jpg", "invalid_data_url"
+    if ";base64" not in header.lower():
+        return None, "jpg", "data_url_not_base64"
+
+    media_type = header[len("data:") :].split(";", 1)[0].strip().lower()
+    extension = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/bmp": "bmp",
+    }.get(media_type, "jpg")
+    try:
+        image_bytes = base64.b64decode(payload, validate=False)
+    except Exception:
+        return None, extension, "base64_decode_failed"
+    if not image_bytes:
+        return None, extension, "empty_image_payload"
+    return image_bytes, extension, None

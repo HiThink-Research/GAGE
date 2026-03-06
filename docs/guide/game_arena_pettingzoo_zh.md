@@ -8,8 +8,8 @@
 
 PettingZoo Atari 目前主要覆盖三类启动路径：
 
-- Dummy 路径，用于验证环境和 viewer
-- LLM 对战路径，用于 API 驱动评测
+- LLM 对战 + ws_rgb 路径，用于浏览器实时查看
+- 标准 LLM 路径，用于 API 驱动评测
 - Human vs Human record 路径，用于浏览器交互
 
 这三类路径现在都统一收口到脚本入口。本指南是标准入口。旧的 PettingZoo 文档先保留，但不再作为主入口。
@@ -20,10 +20,10 @@ PettingZoo Atari 目前主要覆盖三类启动路径：
 | --- | --- | --- |
 | 标准启动脚本 | `scripts/oneclick/run_pettingzoo_game.sh` | PettingZoo 的主启动入口，支持按游戏启动 Dummy、AI、ws_rgb Dummy 和 human record |
 | 回放脚本 | `scripts/oneclick/run_pettingzoo_replay.sh` | 通过 `run_id` 回放一局已完成对局 |
-| ws_rgb 辅助脚本 | `scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh` | `space_invaders_dummy_ws_rgb` 冒烟验证的专用辅助脚本 |
+| ws_rgb 辅助脚本 | `scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh` | 通用 ws_rgb helper，会等待 viewer 可访问后再继续 |
 | 配置目录 | `config/custom/pettingzoo/` | 所有 PettingZoo 游戏配置都在这里 |
-| 推荐 dummy 配置 | `config/custom/pettingzoo/space_invaders_dummy_ws_rgb.yaml` | 与旧版 PettingZoo 文档一致的推荐 ws_rgb 冒烟验证 |
-| 推荐 AI 配置 | `config/custom/pettingzoo/space_invaders_ai.yaml` | 标准 LLM Demo |
+| 推荐 AI ws_rgb 配置 | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | 推荐的 LLM vs LLM + 浏览器实时查看示例 |
+| 标准 AI 配置 | `config/custom/pettingzoo/space_invaders_ai.yaml` | 不带 ws_rgb 实时查看的标准 LLM Demo |
 | Human record 配置 | `config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml` | 浏览器输入的人类对战 |
 | 补充命令索引 | `docs/guide/pettingzoo_atari_run_commands.md` | 按游戏列出的完整 AI / Dummy 脚本启动命令 |
 | 回放工具 | `src/gage_eval/tools/ws_rgb_replay.py` | 回放脚本底层使用的 replay server |
@@ -57,7 +57,27 @@ PY
 
 ## 4. 启动路径
 
-### 4.1 推荐冒烟路径：ws_rgb dummy 运行
+### 4.1 推荐启动示例：LLM vs LLM + ws_rgb 实时查看
+
+```bash
+OPENAI_API_KEY="<YOUR_KEY>" \
+RUN_ID="pettingzoo_space_invaders_ai_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
+CONFIG=config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml \
+bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
+```
+
+如果你的目标是“AI 在玩游戏，同时浏览器里能看到实时画面”，文档里推荐的就是这条命令。
+
+这个 ws_rgb helper 的执行顺序：
+
+1. 选择 Python 解释器。
+2. 校验配置文件路径。
+3. 选择一个可用的 `WS_RGB_PORT`。
+4. 在后台启动 `python run.py --config ...`。
+5. 等待 `http://127.0.0.1:<port>/ws_rgb/viewer` 可访问。
+6. 打印可用的 viewer 地址，并按配置决定是否自动打开浏览器。
+
+如果你想跑一个只看环境链路的 dummy websocket 版本，可以执行：
 
 ```bash
 bash scripts/oneclick/run_pettingzoo_game.sh \
@@ -66,20 +86,13 @@ bash scripts/oneclick/run_pettingzoo_game.sh \
   --run-id "pettingzoo_space_invaders_ws_dummy_$(date +%Y%m%d_%H%M%S)"
 ```
 
-标准启动脚本的执行顺序：
-
-1. 选择 Python 解释器。
-2. 按 `--game` 和 `--mode` 解析配置文件；如果传了 `--config`，就直接使用显式配置。
-3. 校验配置文件路径。
-4. 自动补上适合回放的 `GAGE_EVAL_GAME_LOG_INLINE_*` 默认值。
-5. 执行 `python run.py --config ...`。
-6. 对 websocket 模式打印 viewer 地址。
-
-如果你想使用专用辅助脚本来跑默认的 `space_invaders_dummy_ws_rgb`，可以执行：
+如果你想继续使用标准启动脚本来跑一个不带 websocket 实时查看的 AI 版本，可以执行：
 
 ```bash
-CONFIG=config/custom/pettingzoo/space_invaders_dummy_ws_rgb.yaml \
-bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
+bash scripts/oneclick/run_pettingzoo_game.sh \
+  --game space_invaders \
+  --mode ai \
+  --run-id "pettingzoo_space_invaders_ai_$(date +%Y%m%d_%H%M%S)"
 ```
 
 `run_pettingzoo_game.sh` 当前支持的模式：
@@ -105,7 +118,7 @@ bash scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh
 - `LITELLM_API_KEY`：可作为 `OPENAI_API_KEY` 的回退来源
 - `GAGE_EVAL_GAME_LOG_INLINE_LIMIT` 和 `GAGE_EVAL_GAME_LOG_INLINE_BYTES`：脚本默认会自动设置，除非你手动覆盖
 
-### 4.2 LLM 对战路径
+### 4.2 标准 LLM 对战路径
 
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
@@ -154,8 +167,8 @@ bash scripts/oneclick/run_pettingzoo_game.sh \
 1. 安装 PettingZoo Atari 依赖和 ROM。
 2. 决定要跑的游戏和模式，或者准备一个自定义配置路径。
 3. 只有在使用 `--mode ai` 时才设置 API Key。
-4. 用 `scripts/oneclick/run_pettingzoo_game.sh` 启动。
-5. 对 `ws_dummy` 和 `human_record`，在运行中打开 viewer。
+4. 文档里的 AI 实时查看路径使用 `scripts/oneclick/run_pettingzoo_ws_rgb_viewer.sh`；其他模式继续用 `scripts/oneclick/run_pettingzoo_game.sh`。
+5. 对 `human_record`，在运行中打开 viewer；AI ws_rgb helper 会自动等待 viewer 就绪。
 6. 如果要跑后回放，再执行 `scripts/oneclick/run_pettingzoo_replay.sh <run_id>`。
 
 ## 6. 关键参数与修改位置

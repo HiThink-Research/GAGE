@@ -1,8 +1,9 @@
+import base64
 from unittest.mock import MagicMock
 
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
-from gage_eval.role.arena.types import ArenaObservation, ArenaPromptSpec
+from gage_eval.role.arena.types import ArenaAction, ArenaObservation, ArenaPromptSpec
 
 
 def test_llm_player_uses_game_owned_prompt_instruction() -> None:
@@ -301,3 +302,170 @@ def test_summarize_messages_for_log_includes_http_image_reference() -> None:
 
     assert "remote image" in summary
     assert "<image_ref:https://example.com/sample.jpg>" in summary
+
+
+def test_llm_player_scheme_prompt_overrides_game_owned_instruction_for_vizdoom() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S3_text_image_current",
+    )
+    observation = _build_vizdoom_observation(step=3, health=100, reward=0.0)
+    observation.prompt = ArenaPromptSpec(
+        instruction="Game-owned instruction should not dominate scheme prompt.",
+        payload={},
+    )
+
+    prompt = player._format_observation(observation)
+
+    assert "Perspective:" in prompt
+    assert "Reason: <short reason>" in prompt
+    assert "Game-owned instruction should not dominate scheme prompt." not in prompt
+
+
+def test_llm_player_scheme_s1_suppresses_image_payload() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S1_rich_text_only",
+    )
+
+    image_fragment = player._build_image_fragment(_build_vizdoom_observation(step=1, health=100, reward=0.0))
+
+    assert image_fragment is None
+
+
+def test_llm_player_scheme_s6_v2_includes_action_outcome_history() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S6_v2_text_image_action_outcome_hist",
+    )
+    first_observation = _build_vizdoom_observation(step=4, health=100, reward=0.0)
+    second_observation = _build_vizdoom_observation(step=5, health=95, reward=0.5)
+    player._remember_interaction(
+        first_observation,
+        ArenaAction(player="p0", move="2", raw="2", metadata={"player_type": "backend"}),
+    )
+    player._remember_interaction(
+        second_observation,
+        ArenaAction(player="p0", move="1", raw="1", metadata={"player_type": "backend"}),
+    )
+
+    prompt = player._format_observation(_build_vizdoom_observation(step=6, health=94, reward=1.0))
+
+    assert "Recent action and outcome history (oldest to newest):" in prompt
+    assert "step=4: action=2 -> outcome@step=5: HEALTH:-5" in prompt
+    assert "Action: <action_id>" in prompt
+    assert "Reason: <short reason>" in prompt
+
+
+def test_llm_player_scheme_prompt_in_renderer_mode_uses_observation_snapshot() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        prompt_renderer=MagicMock(),
+        scheme_id="S3_text_image_current",
+    )
+    prompt = player._format_observation(_build_vizdoom_observation(step=6, health=94, reward=1.0))
+
+    assert "Observation snapshot for the current ViZDoom turn." in prompt
+    assert "Current state:" in prompt
+    assert "Instructions:" not in prompt
+
+
+def test_llm_player_vizdoom_prompt_payload_contains_strategy_blocks() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S6_v2_text_image_action_outcome_hist",
+    )
+    first_observation = _build_vizdoom_observation(step=4, health=100, reward=0.0)
+    second_observation = _build_vizdoom_observation(step=5, health=95, reward=0.5)
+    player._remember_interaction(
+        first_observation,
+        ArenaAction(player="p0", move="2", raw="2", metadata={"player_type": "backend"}),
+    )
+    player._remember_interaction(
+        second_observation,
+        ArenaAction(player="p0", move="1", raw="1", metadata={"player_type": "backend"}),
+    )
+    payload = player._build_prompt_payload(
+        observation=_build_vizdoom_observation(step=6, health=94, reward=1.0),
+        prompt_text="placeholder",
+        retry_reason=None,
+        last_output=None,
+        legacy_messages=[],
+        has_image=True,
+    )
+
+    assert payload["scheme_id"] == "S6_v2_text_image_action_outcome_hist"
+    assert payload["scheme_supports_image"] is True
+    strategy = payload["vizdoom_strategy"]
+    assert strategy["scheme_id"] == "S6_v2_text_image_action_outcome_hist"
+    assert "Perspective:" not in strategy["perspective_block"]
+    assert strategy["has_action_outcome_history_block"] is True
+    assert "step=4: action=2 -> outcome@step=5: HEALTH:-5" in strategy["action_outcome_history_block"]
+
+
+def test_build_action_metadata_contains_decision_reason() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S3_text_image_current",
+    )
+    parse_result = type("ParseResult", (), {"reason": "move left then fire", "chat_text": None, "hold_ticks": None})()
+
+    metadata = player._build_action_metadata(parse_result, retry_count=1)
+
+    assert metadata["scheme_id"] == "S3_text_image_current"
+    assert metadata["decision_reason"] == "move left then fire"
+    assert metadata["retry_count"] == 1
+
+
+def _build_image_payload() -> dict[str, str | list[int]]:
+    raw = base64.b64encode(bytes([0, 0, 0])).decode("ascii")
+    return {
+        "encoding": "raw_base64",
+        "data": raw,
+        "shape": [1, 1, 3],
+        "dtype": "uint8",
+    }
+
+
+def _build_vizdoom_observation(*, step: int, health: int, reward: float) -> ArenaObservation:
+    return ArenaObservation(
+        board_text="",
+        legal_moves=["1", "2", "3"],
+        active_player="p0",
+        metadata={
+            "game_type": "vizdoom",
+            "reward": reward,
+            "t": step,
+        },
+        view={
+            "text": f"Tick {step}. Legal actions: 1, 2, 3",
+            "vector": {"HEALTH": health, "FRAGCOUNT": 1},
+            "image": _build_image_payload(),
+        },
+        legal_actions={"items": ["1", "2", "3"]},
+        context={"step": step, "mode": "tick"},
+    )

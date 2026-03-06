@@ -8,16 +8,19 @@
 
 ViZDoom 目前有两类主要启动方式：
 
-- 基于 `pygame` 本地窗口的人类输入，一般通过 `scripts/oneclick/` 下的脚本启动
-- 可选的 ws_rgb 浏览器输入，一般通过手动执行 websocket 配置启动
+- 基于 ws_rgb 的 human vs LLM 浏览器交互
+- 其他路径仍可使用本地 `pygame` 输入或 backend-only 运行
 
-对大多数读者来说，标准入口仍然是 `scripts/oneclick/` 下的 ViZDoom 一键脚本。
+现在文档里推荐的标准入口，是浏览器里的 `human vs LLM` 示例。
 
 ## 2. 标准入口文件
 
 | 类型 | 路径 | 用途 |
 | --- | --- | --- |
-| Human vs Dummy 脚本 | `scripts/oneclick/run_vizdoom_human_vs_dummy.sh` | 推荐的首个环境验证脚本 |
+| ws_rgb helper | `scripts/oneclick/run_vizdoom_ws_rgb_viewer.sh` | 通用 ws_rgb helper，会等待 viewer 可访问后再继续 |
+| Human vs LLM ws_rgb 配置 | `config/custom/vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml` | 推荐的浏览器版 human vs LLM 示例 |
+| Dummy ws_rgb 配置 | `config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | 可选的 dummy-only websocket 环境检查配置 |
+| Human vs Dummy 脚本 | `scripts/oneclick/run_vizdoom_human_vs_dummy.sh` | 本地 pygame 环境验证脚本 |
 | Human Solo 脚本 | `scripts/oneclick/run_vizdoom_human_solo.sh` | 单人练习模式 |
 | Human vs LLM 脚本 | `scripts/oneclick/run_vizdoom_human_vs_llm.sh` | 本地人类输入对战 LLM |
 | Human vs LLM Record 脚本 | `scripts/oneclick/run_vizdoom_human_vs_llm_record.sh` | record 调度版本 |
@@ -54,20 +57,58 @@ PY
 
 ## 4. 启动路径
 
-### 4.1 推荐冒烟路径：human vs dummy
+### 4.1 推荐启动示例：human vs LLM + ws_rgb 实时查看
+
+```bash
+OPENAI_API_KEY="<YOUR_KEY>" \
+P1_SCHEME_ID=S3_text_image_current \
+RUN_ID="vizdoom_human_vs_llm_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
+CFG=config/custom/vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml \
+bash scripts/oneclick/run_vizdoom_ws_rgb_viewer.sh
+```
+
+如果你的目标是“人在网页里操作，LLM 作为对手在玩，同时浏览器里能看到实时画面”，文档里推荐的就是这条命令。
+
+这个 ws_rgb helper 的执行顺序：
+
+1. 选择 Python 解释器。
+2. 校验配置文件路径。
+3. 选择一个可用的 `WS_RGB_PORT`。
+4. 在后台启动 `python run.py --config ...`。
+5. 等待 `http://127.0.0.1:<port>/ws_rgb/viewer` 可访问。
+6. 打印可用的 viewer 地址，并按配置决定是否自动打开浏览器。
+
+这个示例里最常用的变量：
+
+- `PYTHON_BIN`：Python 解释器
+- `CFG`：文档里的 human-vs-LLM 路径使用 `config/custom/vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml`
+- `P1_SCHEME_ID`：用于选择 LLM 策略，例如 `S3_text_image_current`
+- `RUN_ID`：写入 `runs/` 的运行编号
+- `OUTPUT_DIR`：默认 `runs`
+- `WS_RGB_HOST`：默认 `127.0.0.1`
+- `WS_RGB_PORT`：默认 `5800`
+
+如果你想额外跑一个 dummy-only 的 websocket 环境检查，可以执行：
+
+```bash
+RUN_ID="vizdoom_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
+bash scripts/oneclick/run_vizdoom_ws_rgb_viewer.sh
+```
+
+如果你想跑旧的本地窗口验证路径，可以执行：
 
 ```bash
 bash scripts/oneclick/run_vizdoom_human_vs_dummy.sh
 ```
 
-脚本默认变量：
+本地脚本默认变量：
 
 - `PYTHON_BIN`：Python 解释器
 - `CFG`：默认 `config/custom/vizdoom_human_vs_dummy.yaml`
 - `RUN_ID`：默认 `vizdoom_human_vs_dummy_<timestamp>`
 - `OUTPUT_DIR`：默认 `runs/`
 
-脚本打印出来的本地键位：
+pygame 脚本打印出来的本地键位：
 
 - `A` 或 `Left`：动作 `2`
 - `D` 或 `Right`：动作 `3`
@@ -119,10 +160,10 @@ http://127.0.0.1:5800/ws_rgb/viewer
 当前仓库里的 ViZDoom 推荐顺序是：
 
 1. 安装 `vizdoom`、`pygame` 等可选运行时依赖。
-2. 选择一个一键脚本或 YAML 配置。
+2. 如果要跑文档里的 human-vs-LLM 示例，就用 ws_rgb helper 配合 `vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml`；其他路径再选择其他一键脚本或 YAML 配置。
 3. 如果模式包含 LLM 后端，先设置 API Key。
 4. 启动运行。
-5. 对 pygame 模式，确保本地输入窗口保持焦点。
+5. 对 ws_rgb helper，等待脚本打印 viewer 地址；对 pygame 模式，确保本地输入窗口保持焦点。
 6. 对局结束后，再用 `run_vizdoom_replay.sh` 启动回放。
 
 ## 6. 关键参数与修改位置

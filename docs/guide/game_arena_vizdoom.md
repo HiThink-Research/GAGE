@@ -8,16 +8,19 @@ This is the canonical Game Arena guide for ViZDoom in this repository. It consol
 
 ViZDoom currently provides two startup styles:
 
-- Pygame-based local human input through one-click scripts
-- Optional ws_rgb browser input through a manual websocket config
+- ws_rgb-based human vs LLM interaction
+- Pygame-based local input or backend-only runs for the other paths
 
-The standard entry for most users is still the one-click script set under `scripts/oneclick/`.
+The recommended documented example is now the browser-based `human vs LLM` path.
 
 ## 2. Canonical Files
 
 | Type | Path | Purpose |
 | --- | --- | --- |
-| Human vs Dummy script | `scripts/oneclick/run_vizdoom_human_vs_dummy.sh` | Recommended first validation run |
+| ws_rgb helper | `scripts/oneclick/run_vizdoom_ws_rgb_viewer.sh` | Generic helper that waits for the ws_rgb viewer to become reachable |
+| Human vs LLM ws_rgb config | `config/custom/vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml` | Recommended browser-based human vs LLM example |
+| Dummy ws_rgb config | `config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | Optional dummy-only websocket config for environment checks |
+| Human vs Dummy script | `scripts/oneclick/run_vizdoom_human_vs_dummy.sh` | Local pygame validation run |
 | Human Solo script | `scripts/oneclick/run_vizdoom_human_solo.sh` | Human-only playground |
 | Human vs LLM script | `scripts/oneclick/run_vizdoom_human_vs_llm.sh` | Local human input against an LLM |
 | Human vs LLM record script | `scripts/oneclick/run_vizdoom_human_vs_llm_record.sh` | Record scheduler variant |
@@ -54,20 +57,58 @@ Notes:
 
 ## 4. Startup Paths
 
-### 4.1 Recommended smoke test: human vs dummy
+### 4.1 Recommended startup example: human vs LLM with ws_rgb live view
+
+```bash
+OPENAI_API_KEY="<YOUR_KEY>" \
+P1_SCHEME_ID=S3_text_image_current \
+RUN_ID="vizdoom_human_vs_llm_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
+CFG=config/custom/vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml \
+bash scripts/oneclick/run_vizdoom_ws_rgb_viewer.sh
+```
+
+This is the recommended documented example when you want a real browser-based `human vs LLM` session.
+
+What the ws_rgb helper does:
+
+1. Picks a Python executable.
+2. Validates the config path.
+3. Chooses a free `WS_RGB_PORT`.
+4. Starts `python run.py --config ...` in the background.
+5. Waits until `http://127.0.0.1:<port>/ws_rgb/viewer` is reachable.
+6. Prints the ready viewer URL and optionally auto-opens the browser.
+
+Useful variables for this example:
+
+- `PYTHON_BIN`: Python executable
+- `CFG`: Use `config/custom/vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml` for the documented human-vs-LLM path
+- `P1_SCHEME_ID`: Selects the LLM strategy scheme, such as `S3_text_image_current`
+- `RUN_ID`: Output run id under `runs/`
+- `OUTPUT_DIR`: Defaults to `runs`
+- `WS_RGB_HOST`: Defaults to `127.0.0.1`
+- `WS_RGB_PORT`: Defaults to `5800`
+
+If you want an optional dummy-only websocket environment check, use:
+
+```bash
+RUN_ID="vizdoom_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
+bash scripts/oneclick/run_vizdoom_ws_rgb_viewer.sh
+```
+
+If you want the old local-window validation path, use:
 
 ```bash
 bash scripts/oneclick/run_vizdoom_human_vs_dummy.sh
 ```
 
-Default script variables:
+Default local-script variables:
 
 - `PYTHON_BIN`: Python executable
 - `CFG`: Defaults to `config/custom/vizdoom_human_vs_dummy.yaml`
 - `RUN_ID`: Defaults to `vizdoom_human_vs_dummy_<timestamp>`
 - `OUTPUT_DIR`: Defaults to `runs/`
 
-Local key map printed by the script:
+Local key map printed by the pygame script:
 
 - `A` or `Left`: action `2`
 - `D` or `Right`: action `3`
@@ -119,10 +160,10 @@ http://127.0.0.1:5800/ws_rgb/viewer
 The current ViZDoom startup sequence is:
 
 1. Install optional runtime dependencies such as `vizdoom` and `pygame`.
-2. Choose a one-click script or a YAML config.
+2. Use the ws_rgb helper with `vizdoom_human_vs_llm_record_ws_rgb_strategy.yaml` for the documented human-vs-LLM example, or choose another one-click script / YAML config for the other paths.
 3. Set API keys when the selected mode includes an LLM backend.
 4. Start the run.
-5. For pygame modes, keep the local input window focused while playing.
+5. For ws_rgb helper runs, wait for the printed viewer URL; for pygame modes, keep the local input window focused while playing.
 6. After the run, use `run_vizdoom_replay.sh` for replay.
 
 ## 6. Key Parameters and Where to Change Them

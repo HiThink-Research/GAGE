@@ -2,9 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONFIG="${CONFIG:-${ROOT}/config/custom/pettingzoo/space_invaders_dummy_ws_rgb.yaml}"
+CFG="${CFG:-${ROOT}/config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT}/runs}"
-RUN_ID="${RUN_ID:-pettingzoo_space_invaders_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)}"
+RUN_ID="${RUN_ID:-vizdoom_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)}"
+WS_RGB_HOST="${WS_RGB_HOST:-127.0.0.1}"
 WS_RGB_PORT="${WS_RGB_PORT:-5800}"
 AUTO_OPEN="${AUTO_OPEN:-1}"
 WAIT_TIMEOUT_S="${WAIT_TIMEOUT_S:-45}"
@@ -21,8 +22,8 @@ if [ -z "${OPENAI_API_KEY:-}" ] && [ -n "${LITELLM_API_KEY:-}" ]; then
   export OPENAI_API_KEY="${LITELLM_API_KEY}"
 fi
 
-if [ ! -f "${CONFIG}" ]; then
-  echo "[ws_rgb][error] Config not found: ${CONFIG}" >&2
+if [ ! -f "${CFG}" ]; then
+  echo "[ws_rgb][error] Config not found: ${CFG}" >&2
   exit 1
 fi
 
@@ -94,20 +95,23 @@ if [ "${SELECTED_PORT}" != "${WS_RGB_PORT}" ]; then
 fi
 WS_RGB_PORT="${SELECTED_PORT}"
 
-VIEWER_URL="http://127.0.0.1:${WS_RGB_PORT}/ws_rgb/viewer"
+VIEWER_URL="http://${WS_RGB_HOST}:${WS_RGB_PORT}/ws_rgb/viewer"
 LOG_FILE="${OUTPUT_DIR}/${RUN_ID}.ws_rgb.log"
 
 echo "[ws_rgb] python: ${PYTHON_EXEC}"
-echo "[ws_rgb] config: ${CONFIG}"
+echo "[ws_rgb] config: ${CFG}"
 echo "[ws_rgb] run_id: ${RUN_ID}"
+echo "[ws_rgb] ws_rgb_host: ${WS_RGB_HOST}"
 echo "[ws_rgb] ws_rgb_port: ${WS_RGB_PORT}"
 echo "[ws_rgb] log: ${LOG_FILE}"
 echo "[ws_rgb] viewer: ${VIEWER_URL}"
 
 (
   PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-  WS_RGB_PORT="${WS_RGB_PORT}" "${PYTHON_EXEC}" "${ROOT}/run.py" \
-    --config "${CONFIG}" \
+  WS_RGB_HOST="${WS_RGB_HOST}" \
+  WS_RGB_PORT="${WS_RGB_PORT}" \
+  "${PYTHON_EXEC}" "${ROOT}/run.py" \
+    --config "${CFG}" \
     --output-dir "${OUTPUT_DIR}" \
     --run-id "${RUN_ID}" 2>&1 | tee "${LOG_FILE}"
 ) &

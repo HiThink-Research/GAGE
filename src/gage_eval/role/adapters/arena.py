@@ -674,6 +674,8 @@ class ArenaRoleAdapter(RoleAdapter):
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
                         prompt_renderer=self._prompt_renderer,
                         scheduler_mode=self._scheduler_cfg.get("type"),
+                        scheme_id=spec.get("scheme_id"),
+                        scheme_params=spec.get("scheme_params"),
                     )
                 )
             elif player_type == "agent":
@@ -1308,6 +1310,22 @@ class ArenaRoleAdapter(RoleAdapter):
                     default=True,
                 )
             return PettingZooDiscreteInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
+        if "vizdoom" in normalized_env_impl:
+            from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return ViZDoomInputMapper(
                 key_map=key_map if isinstance(key_map, Mapping) else None,
                 enforce_legal_moves=enforce_legal_moves,
             )
