@@ -111,7 +111,7 @@ class LLMPlayer:
         self._async_timeout_logged = False
         if self._debug_image_dump_dir and self._debug_image_dump_max > 0:
             logger.info(
-                "LLMPlayer {} image dump enabled: dir={} max={} stride={}",
+                "LLMPlayer {} image dump enabled: dir={} request_max={} stride={}",
                 self.name,
                 self._debug_image_dump_dir,
                 self._debug_image_dump_max,
@@ -122,14 +122,19 @@ class LLMPlayer:
         """Produce an action using the LLM adapter."""
 
         prompt_text = self._format_observation(observation)
-        image_fragment = self._build_image_fragment(observation)
+        image_fragments = self._build_image_fragments(observation)
         logger.debug("LLMPlayer {} observation prompt seed (text-only):\n{}", self.name, prompt_text)
         messages = self._build_turn_messages(
             observation=observation,
             prompt_text=prompt_text,
-            image_fragment=image_fragment,
+            image_fragments=image_fragments,
         )
         self._log_request_media_summary(
+            observation=observation,
+            messages=messages,
+            phase="primary",
+        )
+        self._maybe_dump_request_images(
             observation=observation,
             messages=messages,
             phase="primary",
@@ -151,11 +156,16 @@ class LLMPlayer:
             retry_messages = self._build_turn_messages(
                 observation=observation,
                 prompt_text=rethink_prompt,
-                image_fragment=image_fragment,
+                image_fragments=image_fragments,
                 retry_reason=parse_result.error,
                 last_output=raw_text,
             )
             self._log_request_media_summary(
+                observation=observation,
+                messages=retry_messages,
+                phase=f"retry_{retries + 1}",
+            )
+            self._maybe_dump_request_images(
                 observation=observation,
                 messages=retry_messages,
                 phase=f"retry_{retries + 1}",
@@ -414,7 +424,8 @@ class LLMPlayer:
         *,
         observation: ArenaObservation,
         prompt_text: str,
-        image_fragment: Optional[Dict[str, Any]],
+        image_fragments: Optional[Sequence[Dict[str, Any]]] = None,
+        image_fragment: Optional[Dict[str, Any]] = None,
         retry_reason: Optional[str] = None,
         last_output: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
@@ -424,6 +435,7 @@ class LLMPlayer:
             base_messages=self._base_messages,
             observation=observation,
             prompt_text=prompt_text,
+            image_fragments=image_fragments,
             image_fragment=image_fragment,
             retry_reason=retry_reason,
             last_output=last_output,
@@ -499,6 +511,19 @@ class LLMPlayer:
         )
 
     @staticmethod
+    def _append_image_fragments(
+        messages: Sequence[Dict[str, Any]],
+        *,
+        image_fragments: Optional[Sequence[Dict[str, Any]]],
+        fallback_text: str,
+    ) -> list[Dict[str, Any]]:
+        return ArenaPromptComposer.append_image_fragments(
+            messages,
+            image_fragments=image_fragments,
+            fallback_text=fallback_text,
+        )
+
+    @staticmethod
     def _has_user_message(messages: Sequence[Dict[str, Any]]) -> bool:
         return ArenaPromptComposer.has_user_message(messages)
 
@@ -510,14 +535,13 @@ class LLMPlayer:
     def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return ArenaPromptComposer.build_user_message(text, image_fragment)
 
+    def _build_image_fragments(self, observation: ArenaObservation) -> list[Dict[str, Any]]:
+        return self._prompt_composer.build_image_fragments(observation)
+
     def _build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
         image_fragment = self._prompt_composer.build_image_fragment(observation)
         if not image_fragment:
             return None
-        image_url = image_fragment.get("image_url")
-        data_url = image_url.get("url") if isinstance(image_url, dict) else None
-        if isinstance(data_url, str):
-            self._maybe_dump_request_image(observation=observation, data_url=data_url)
         return image_fragment
 
     def _resolve_image_data_url(self, image: Any) -> Optional[str]:
@@ -637,8 +661,14 @@ class LLMPlayer:
                     pass
         return None
 
-    def _maybe_dump_request_image(self, *, observation: ArenaObservation, data_url: str) -> None:
-        """Save a bounded number of request images for debugging."""
+    def _maybe_dump_request_images(
+        self,
+        *,
+        observation: ArenaObservation,
+        messages: Sequence[Dict[str, Any]],
+        phase: str,
+    ) -> None:
+        """Save all image frames attached to one outbound request."""
 
         if not self._debug_image_dump_dir:
             return
@@ -656,39 +686,52 @@ class LLMPlayer:
         ):
             return
 
-        # STEP 2: Decode and persist one snapshot image.
-        image_bytes, extension, error = _decode_data_url_image(data_url)
-        if image_bytes is None:
-            logger.debug(
-                "LLMPlayer {} skipped image dump due to decode error: {}",
-                self.name,
-                error or "unknown",
-            )
+        # STEP 2: Extract and decode all image payloads from the outbound request.
+        decoded_images: list[tuple[bytes, str]] = []
+        for image_index, data_url in enumerate(_extract_message_image_data_urls(messages)):
+            image_bytes, extension, error = _decode_data_url_image(data_url)
+            if image_bytes is None:
+                logger.debug(
+                    "LLMPlayer {} skipped request image {} due to decode error: {}",
+                    self.name,
+                    image_index,
+                    error or "unknown",
+                )
+                continue
+            decoded_images.append((image_bytes, extension))
+        if not decoded_images:
             return
+
+        # STEP 3: Persist one folder per outbound request.
         try:
             dump_dir = Path(self._debug_image_dump_dir).expanduser()
             dump_dir.mkdir(parents=True, exist_ok=True)
             step_token = "na" if step is None else str(int(step))
             safe_player = str(self.name or "player").replace("/", "_")
             safe_scheme = str(self._scheme_id or "scheme").replace("/", "_")
-            file_name = (
-                f"{safe_player}_{safe_scheme}_step_{step_token}_"
-                f"{self._debug_image_dump_count:03d}.{extension}"
+            safe_phase = _sanitize_path_token(phase, default="primary")
+            request_dir = dump_dir / (
+                f"{safe_player}_{safe_scheme}_step_{step_token}_{safe_phase}_"
+                f"{self._debug_image_dump_count:03d}"
             )
-            path = dump_dir / file_name
-            path.write_bytes(image_bytes)
+            request_dir.mkdir(parents=True, exist_ok=True)
+            for image_index, (image_bytes, extension) in enumerate(decoded_images):
+                path = request_dir / f"frame_{image_index:03d}.{extension}"
+                path.write_bytes(image_bytes)
             self._debug_image_dump_count += 1
             logger.info(
-                "LLMPlayer {} saved prompt image snapshot {}/{} path={} step={}",
+                "LLMPlayer {} saved prompt image request {}/{} dir={} step={} phase={} image_count={}",
                 self.name,
                 self._debug_image_dump_count,
                 self._debug_image_dump_max,
-                str(path),
+                str(request_dir),
                 step_token,
+                safe_phase,
+                len(decoded_images),
             )
         except Exception as exc:
             logger.warning(
-                "LLMPlayer {} failed to dump prompt image: {}",
+                "LLMPlayer {} failed to dump prompt image request: {}",
                 self.name,
                 str(exc),
             )
@@ -780,6 +823,27 @@ def _summarize_message_images(
     return details
 
 
+def _extract_message_image_data_urls(messages: Sequence[Dict[str, Any]]) -> list[str]:
+    """Extract ordered image data URLs from outbound request messages."""
+
+    urls: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip().lower() != "image_url":
+                continue
+            url = _resolve_image_url(item.get("image_url"))
+            if isinstance(url, str) and url:
+                urls.append(url)
+    return urls
+
+
 def _resolve_image_url(value: Any) -> Optional[str]:
     """Resolve image URL payload from one message image fragment."""
 
@@ -858,3 +922,17 @@ def _decode_data_url_image(data_url: str) -> tuple[Optional[bytes], str, Optiona
     if not image_bytes:
         return None, extension, "empty_image_payload"
     return image_bytes, extension, None
+
+
+def _sanitize_path_token(value: Any, *, default: str) -> str:
+    """Build a filesystem-safe token for debug image dump paths."""
+
+    text = str(value or "").strip()
+    if not text:
+        return default
+    sanitized = [
+        char if char.isalnum() or char in {"-", "_"} else "_"
+        for char in text
+    ]
+    token = "".join(sanitized).strip("_")
+    return token or default

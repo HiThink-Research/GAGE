@@ -18,9 +18,12 @@ else
   PYTHON_EXEC="python3"
 fi
 
-if [ -z "${OPENAI_API_KEY:-}" ] && [ -n "${LITELLM_API_KEY:-}" ]; then
-  export OPENAI_API_KEY="${LITELLM_API_KEY}"
-fi
+export VIZDOOM_LITELLM_PROVIDER="${VIZDOOM_LITELLM_PROVIDER:-openai}"
+export VIZDOOM_LITELLM_API_BASE="${VIZDOOM_LITELLM_API_BASE:-http://10.217.219.2:2722/v1}"
+export VIZDOOM_LITELLM_MODEL="${VIZDOOM_LITELLM_MODEL:-/mnt/model/qwen3_omni_30b/}"
+export VIZDOOM_LITELLM_API_KEY="${VIZDOOM_LITELLM_API_KEY:-${LITELLM_API_KEY:-${OPENAI_API_KEY:-empty}}}"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-${VIZDOOM_LITELLM_API_KEY}}"
+export LITELLM_API_KEY="${LITELLM_API_KEY:-${VIZDOOM_LITELLM_API_KEY}}"
 
 if [ ! -f "${CFG}" ]; then
   echo "[ws_rgb][error] Config not found: ${CFG}" >&2
@@ -105,6 +108,8 @@ echo "[ws_rgb] ws_rgb_host: ${WS_RGB_HOST}"
 echo "[ws_rgb] ws_rgb_port: ${WS_RGB_PORT}"
 echo "[ws_rgb] log: ${LOG_FILE}"
 echo "[ws_rgb] viewer: ${VIEWER_URL}"
+echo "[ws_rgb] model_base: ${VIZDOOM_LITELLM_API_BASE}"
+echo "[ws_rgb] model_name: ${VIZDOOM_LITELLM_MODEL}"
 
 (
   PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \

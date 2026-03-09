@@ -15,7 +15,7 @@ from gage_eval.role.adapters.human import HumanAdapter
 from gage_eval.role.arena.games.vizdoom import env as vizdoom_env_module
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
-from gage_eval.role.arena.types import ArenaObservation
+from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 
 
 @dataclass
@@ -93,21 +93,42 @@ class _FrameStub:
 
 class _VizDoomBackendStub:
     def __init__(self) -> None:
-        self._pov_frames = {0: _FrameStub(11), 1: _FrameStub(22)}
+        self._step_index = 0
+        self._pov_frames = {}
+        self._refresh_frames()
         self.view_history: list[str] = []
 
     def reset(self, seed: Optional[int] = None) -> dict[int, dict[str, Any]]:
         _ = seed
+        self._step_index = 0
+        self._refresh_frames()
         return {0: {"HEALTH": 100.0}, 1: {"HEALTH": 100.0}}
 
     def close(self) -> None:
         return None
+
+    def step(self, actions: dict[int, int]) -> tuple[dict[int, dict[str, Any]], dict[int, float], bool, dict[str, Any]]:
+        _ = actions
+        self._step_index += 1
+        self._refresh_frames()
+        return (
+            {0: {"HEALTH": 100.0}, 1: {"HEALTH": 100.0}},
+            {0: 0.0, 1: 0.0},
+            False,
+            {},
+        )
 
     def get_pov_frames(self) -> dict[int, _FrameStub]:
         return dict(self._pov_frames)
 
     def set_view(self, view: str) -> None:
         self.view_history.append(view)
+
+    def _refresh_frames(self) -> None:
+        self._pov_frames = {
+            0: _FrameStub(11 + self._step_index),
+            1: _FrameStub(22 + self._step_index),
+        }
 
 
 def _decode_raw_frame_marker(image_payload: dict[str, Any]) -> int:
@@ -279,6 +300,7 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
             "render_mode": "both",
             "show_automap": False,
             "show_pov": True,
+            "obs_image_history_len": 4,
             "max_steps": 123,
             "action_repeat": 2,
             "allow_partial_actions": True,
@@ -296,6 +318,7 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
     assert captured_env_kwargs["render_mode"] == "both"
     assert captured_env_kwargs["show_automap"] is False
     assert captured_env_kwargs["show_pov"] is True
+    assert captured_env_kwargs["obs_image_history_len"] == 4
     assert captured_env_kwargs["max_steps"] == 123
     assert captured_env_kwargs["action_repeat"] == 2
     assert captured_env_kwargs["allow_partial_actions"] is True
@@ -409,3 +432,37 @@ def test_vizdoom_last_frame_respects_configured_pov_view(monkeypatch) -> None:
     assert backend.view_history[-1] == "p0"
     assert frame_payload["player_index"] == 0
     assert frame_payload["actor"] == "p0"
+
+
+def test_vizdoom_observe_exposes_ordered_image_history(monkeypatch) -> None:
+    backend = _VizDoomBackendStub()
+    monkeypatch.setattr(
+        vizdoom_env_module.ViZDoomArenaEnvironment,
+        "_build_env",
+        lambda self, cfg: backend,
+    )
+    env = vizdoom_env_module.ViZDoomArenaEnvironment(
+        player_ids=["p0", "p1"],
+        show_pov=False,
+        capture_pov=True,
+        obs_image=True,
+        obs_image_history_len=4,
+        replay_in_env=False,
+    )
+    env.reset()
+
+    for _ in range(3):
+        result = env.apply(
+            ArenaAction(
+                player="system",
+                move={"p0": "1", "p1": "2"},
+                raw="batch",
+            )
+        )
+        assert result is None
+
+    p1_obs = env.observe("p1")
+
+    markers = [_decode_raw_frame_marker(frame) for frame in p1_obs.view["image_history"]]
+    assert markers == [22, 23, 24, 25]
+    assert _decode_raw_frame_marker(p1_obs.view["image"]) == 25

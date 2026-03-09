@@ -393,6 +393,7 @@ class ArenaRoleAdapter(RoleAdapter):
                 "frame_stride",
                 "time_source",
                 "obs_image",
+                "obs_image_history_len",
                 "replay_in_env",
                 "action_labels",
                 "allow_partial_actions",

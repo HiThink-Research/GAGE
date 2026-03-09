@@ -167,6 +167,11 @@ class _CaptureRenderer(PromptRenderer):
         return PromptRenderResult(messages=[{"role": "system", "content": "arena-system"}])
 
 
+def _build_test_data_url(token: str) -> str:
+    payload = base64.b64encode(token.encode("utf-8")).decode("ascii")
+    return f"data:image/png;base64,{payload}"
+
+
 def test_llm_player_turn_messages_use_prompt_renderer_payload() -> None:
     sample = {"messages": [{"role": "system", "content": "legacy"}], "metadata": {"game_type": "gomoku"}}
     parser = MagicMock()
@@ -204,6 +209,114 @@ def test_llm_player_turn_messages_use_prompt_renderer_payload() -> None:
     assert renderer.last_payload["arena_observation"]["legal_moves"] == ["A1", "A2"]
     assert renderer.last_payload["messages"] == [{"role": "system", "content": "legacy"}]
     assert len(renderer.last_payload["legacy_messages"]) == 2
+
+
+def test_llm_player_s4_turn_messages_attach_ordered_image_history() -> None:
+    sample = {"messages": [], "metadata": {"game_type": "vizdoom"}}
+    parser = MagicMock()
+    role_manager = MagicMock()
+    renderer = _CaptureRenderer()
+    player = LLMPlayer(
+        name="p1",
+        adapter_id="dummy",
+        role_manager=role_manager,
+        sample=sample,
+        parser=parser,
+        prompt_renderer=renderer,
+        scheme_id="S4_text_image_4f_action_hist",
+        scheme_params={"action_history_len": 4, "image_history_len": 4},
+    )
+    image_history = [
+        {"data_url": _build_test_data_url("frame_0")},
+        {"data_url": _build_test_data_url("frame_1")},
+        {"data_url": _build_test_data_url("frame_2")},
+        {"data_url": _build_test_data_url("frame_3")},
+    ]
+    observation = ArenaObservation(
+        board_text="",
+        legal_moves=["1", "2", "3"],
+        active_player="p1",
+        metadata={"game_type": "vizdoom", "player_id": "p1", "player_ids": ["p0", "p1"]},
+        view={
+            "text": "Tick 10",
+            "image": image_history[-1],
+            "image_history": image_history,
+        },
+        legal_actions={"items": ["1", "2", "3"]},
+    )
+
+    prompt_text = player._format_observation(observation)
+    image_fragments = player._build_image_fragments(observation)
+    messages = player._build_turn_messages(
+        observation=observation,
+        prompt_text=prompt_text,
+        image_fragments=image_fragments,
+    )
+
+    assert "Attached images:" in prompt_text
+    user_content = messages[1]["content"]
+    assert len([part for part in user_content if part["type"] == "image_url"]) == 4
+    assert renderer.last_payload["image_count"] == 4
+    assert renderer.last_payload["vizdoom_strategy"]["has_image_history_block"] is True
+    assert renderer.last_payload["vizdoom_strategy"]["image_history_count"] == 4
+
+
+def test_llm_player_dumps_one_directory_per_request(tmp_path) -> None:
+    sample = {"messages": [], "metadata": {"game_type": "vizdoom"}}
+    parser = MagicMock()
+    role_manager = MagicMock()
+    renderer = _CaptureRenderer()
+    player = LLMPlayer(
+        name="p1",
+        adapter_id="dummy",
+        role_manager=role_manager,
+        sample=sample,
+        parser=parser,
+        prompt_renderer=renderer,
+        scheme_id="S4_text_image_4f_action_hist",
+        scheme_params={
+            "action_history_len": 4,
+            "image_history_len": 4,
+            "debug_image_dump_dir": str(tmp_path),
+            "debug_image_dump_max": 10,
+        },
+    )
+    image_history = [
+        {"data_url": _build_test_data_url("frame_0")},
+        {"data_url": _build_test_data_url("frame_1")},
+        {"data_url": _build_test_data_url("frame_2")},
+        {"data_url": _build_test_data_url("frame_3")},
+    ]
+    observation = ArenaObservation(
+        board_text="",
+        legal_moves=["1", "2", "3"],
+        active_player="p1",
+        metadata={"game_type": "vizdoom", "player_id": "p1", "player_ids": ["p0", "p1"]},
+        view={
+            "text": "Tick 10",
+            "image": image_history[-1],
+            "image_history": image_history,
+        },
+        legal_actions={"items": ["1", "2", "3"]},
+    )
+
+    prompt_text = player._format_observation(observation)
+    image_fragments = player._build_image_fragments(observation)
+    messages = player._build_turn_messages(
+        observation=observation,
+        prompt_text=prompt_text,
+        image_fragments=image_fragments,
+    )
+    player._maybe_dump_request_images(
+        observation=observation,
+        messages=messages,
+        phase="primary",
+    )
+
+    request_dirs = [path for path in tmp_path.iterdir() if path.is_dir()]
+    assert len(request_dirs) == 1
+    frame_files = sorted(request_dirs[0].glob("frame_*"))
+    assert len(frame_files) == 4
 
 
 def test_llm_player_turn_messages_avoid_duplicate_image_fragment() -> None:

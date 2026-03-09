@@ -10,13 +10,13 @@ RUN_ID="${RUN_ID:-vizdoom_human_p0_vs_${P1_SCHEME_ID}_$(date +%Y%m%d_%H%M%S)}"
 WS_RGB_HOST="${WS_RGB_HOST:-127.0.0.1}"
 WS_RGB_PORT="${WS_RGB_PORT:-5800}"
 
-if [ -z "${OPENAI_API_KEY:-}" ] && [ -n "${LITELLM_API_KEY:-}" ]; then
-  export OPENAI_API_KEY="${LITELLM_API_KEY}"
-fi
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  echo "[oneclick][error] OPENAI_API_KEY or LITELLM_API_KEY is required." >&2
-  exit 1
-fi
+export VIZDOOM_LITELLM_PROVIDER="${VIZDOOM_LITELLM_PROVIDER:-openai}"
+export VIZDOOM_LITELLM_API_BASE="${VIZDOOM_LITELLM_API_BASE:-http://10.217.219.2:2722/v1}"
+export VIZDOOM_LITELLM_MODEL="${VIZDOOM_LITELLM_MODEL:-/mnt/model/qwen3_omni_30b/}"
+export VIZDOOM_P1_MODEL="${VIZDOOM_P1_MODEL:-${VIZDOOM_LITELLM_MODEL}}"
+export VIZDOOM_LITELLM_API_KEY="${VIZDOOM_LITELLM_API_KEY:-${LITELLM_API_KEY:-${OPENAI_API_KEY:-empty}}}"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-${VIZDOOM_LITELLM_API_KEY}}"
+export LITELLM_API_KEY="${LITELLM_API_KEY:-${VIZDOOM_LITELLM_API_KEY}}"
 
 if [ ! -f "${CFG}" ]; then
   echo "[oneclick][error] config not found: ${CFG}" >&2
@@ -34,6 +34,8 @@ cat <<MSG
 [vizdoom][human_vs_strategies] Config: ${CFG}
 [vizdoom][human_vs_strategies] p1 scheme: ${P1_SCHEME_ID}
 [vizdoom][human_vs_strategies] run_id: ${RUN_ID}
+[vizdoom][human_vs_strategies] Model base: ${VIZDOOM_LITELLM_API_BASE}
+[vizdoom][human_vs_strategies] Model name: ${VIZDOOM_LITELLM_MODEL}
 MSG
 
 print_one_summary() {

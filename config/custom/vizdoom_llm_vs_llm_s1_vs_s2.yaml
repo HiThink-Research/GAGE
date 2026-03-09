@@ -23,9 +23,10 @@ backends:
   - backend_id: vizdoom_litellm
     type: litellm
     config:
-      provider: openai
-      api_base: https://api.openai.com/v1
-      model: gpt-5.2
+      provider: ${VIZDOOM_LITELLM_PROVIDER:-openai}
+      api_base: ${VIZDOOM_LITELLM_API_BASE:-http://10.217.219.2:2722/v1}
+      api_key: ${VIZDOOM_LITELLM_API_KEY:-empty}
+      model: ${VIZDOOM_LITELLM_MODEL:-/mnt/model/qwen3_omni_30b/}
       generation_parameters:
         max_new_tokens: 256
         temperature: 0.2
@@ -49,8 +50,8 @@ prompts:
       Tactical rules:
       - Move first until you are facing the enemy before firing.
       - A shot can hit only when the enemy and your weapon barrel are vertically aligned.
-      - If the enemy appears on the left side, move or turn left to center them before firing.
-      - If the enemy appears on the right side, move or turn right to center them before firing.
+      - If the enemy appears on the left side, move left to center them before firing.
+      - If the enemy appears on the right side, move right to center them before firing.
       - Avoid firing when the enemy is far from the center of your view.
       - Action mapping: {{ payload.vizdoom_strategy.action_mapping_hint }}.
 
@@ -61,6 +62,8 @@ prompts:
       - Prioritize the current frame image for aiming and alignment decisions.
       {% elif payload.scheme_id == "S3_text_image_current" %}
       - Combine image cues with current telemetry to decide actions.
+      {% elif payload.scheme_id == "S4_text_image_4f_action_hist" %}
+      - Use the ordered four-frame image sequence together with recent action history to infer motion and aim corrections.
       {% elif payload.scheme_id == "S5_image_compact_state" %}
       - Use compact state summaries with image cues and ignore low-value noise.
       {% elif payload.scheme_id == "S6_text_image_action_hist" %}
@@ -77,6 +80,9 @@ prompts:
       Observation includes recent action-outcome history.
       {% elif payload.vizdoom_strategy.has_action_history_block %}
       Observation includes recent action history.
+      {% endif %}
+      {% if payload.vizdoom_strategy.has_image_history_block %}
+      Observation includes {{ payload.vizdoom_strategy.image_history_count }} ordered POV frames from oldest to newest.
       {% endif %}
       {% if payload.vizdoom_strategy.has_delta_summary_block %}
       Observation includes delta summary from the previous observation.
@@ -131,6 +137,7 @@ role_adapters:
         action_repeat: 4
         sleep_s: 0.00
         obs_image: true
+        obs_image_history_len: 4
         no_attack_seconds: 0
         allow_partial_actions: true
       scheduler:
@@ -149,6 +156,7 @@ role_adapters:
           scheme_id: S1_rich_text_only
           scheme_params:
             action_history_len: 4
+            image_history_len: 4
             delta_key_limit: 6
             telemetry_limit: 12
         - name: p1
@@ -161,6 +169,7 @@ role_adapters:
           scheme_id: S2_image_only_current
           scheme_params:
             action_history_len: 4
+            image_history_len: 4
             delta_key_limit: 6
             telemetry_limit: 12
 

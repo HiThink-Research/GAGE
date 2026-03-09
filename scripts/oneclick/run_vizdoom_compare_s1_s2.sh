@@ -9,13 +9,12 @@ ROUNDS="${ROUNDS:-1}"
 CFG_A="${CFG_A:-${ROOT}/config/custom/vizdoom_llm_vs_llm_s1_vs_s2.yaml}"
 CFG_B="${CFG_B:-${ROOT}/config/custom/vizdoom_llm_vs_llm_s2_vs_s1.yaml}"
 
-if [ -z "${OPENAI_API_KEY:-}" ] && [ -n "${LITELLM_API_KEY:-}" ]; then
-  export OPENAI_API_KEY="${LITELLM_API_KEY}"
-fi
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  echo "[compare][error] OPENAI_API_KEY or LITELLM_API_KEY is required." >&2
-  exit 1
-fi
+export VIZDOOM_LITELLM_PROVIDER="${VIZDOOM_LITELLM_PROVIDER:-openai}"
+export VIZDOOM_LITELLM_API_BASE="${VIZDOOM_LITELLM_API_BASE:-http://10.217.219.2:2722/v1}"
+export VIZDOOM_LITELLM_MODEL="${VIZDOOM_LITELLM_MODEL:-/mnt/model/qwen3_omni_30b/}"
+export VIZDOOM_LITELLM_API_KEY="${VIZDOOM_LITELLM_API_KEY:-${LITELLM_API_KEY:-${OPENAI_API_KEY:-empty}}}"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-${VIZDOOM_LITELLM_API_KEY}}"
+export LITELLM_API_KEY="${LITELLM_API_KEY:-${VIZDOOM_LITELLM_API_KEY}}"
 
 mkdir -p "${OUTPUT_DIR}"
 
