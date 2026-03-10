@@ -347,10 +347,3 @@ bash scripts/run/arenas/pettingzoo/replay.sh <run_id>
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
-### 7.8 其他相关文档
-
-下面这些文档仍保留在仓库里：
-
-- `docs/guide/pettingzoo_user_guide.md`
-- `docs/guide/pettingzoo_user_guide_zh.md`
-- `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md`

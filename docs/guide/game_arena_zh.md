@@ -1,538 +1,226 @@
-# Game Arena 对战模块
+# Game Arena 总览
 
 中文 | [English](game_arena.md)
 
-Game Arena 是基于 `arena` 角色的一条**回合制对战评测通道**，用于组织游戏环境、玩家角色、解析器与可视化交互，支持 **LLM vs LLM** 与 **Human vs LLM** 的对战场景。
+Game Arena 是 GAGE 中基于 `arena` 角色构建的统一游戏对战运行框架，覆盖五子棋、井字棋、ViZDoom、PettingZoo、Retro Mario、斗地主、麻将等多类对战场景，支持环境驱动、动作解析、回放记录和人机交互。
 
-## 1. 适用范围与目标
+当前主实现位于：
 
-- 面向带坐标落子的回合制棋类（如五子棋、井字棋）。
-- 完全复用 Pipeline 编排（`support -> arena -> auto_eval`）。
-- 通过 registry 扩展组件，无需修改核心编排代码。
+- `src/gage_eval/role/adapters/arena.py`
+- `src/gage_eval/evaluation/task_planner.py`
+- `src/gage_eval/evaluation/sample_envelope.py`
 
-## 2. 运行架构
+## 1. 当前定位
+
+当前 Arena 更适合被理解为一层统一的“游戏运行时”：
+
+- 对上，它仍然是标准 Pipeline 中的一个步骤，由 `TaskPlanner.execute_arena()` 调用。
+- 对内，它负责拼装环境、调度器、玩家、解析器、人类输入、可视化与回放写出。
+- 对下，它会把对局结果规范化写回样本，供 `judge`、`auto_eval`、回放工具和后处理继续消费。
+
+当前实现覆盖的游戏类型包括以下几类：
+
+| 类型 | `environment.impl` 示例 | 特点 |
+| --- | --- | --- |
+| 棋盘类 | `gomoku_local_v1`、`tictactoe_v1` | 坐标落子、Gradio 棋盘渲染 |
+| FPS / 帧驱动类 | `vizdoom_env_v1` | tick/record 调度、图像帧、websocketRGB |
+| AEC 离散动作类 | `pettingzoo_aec_v1` | 离散动作解析、轮转 agent、回放 |
+| Retro 游戏类 | `retro_env_v1` | 持久运行时、动作映射、录像与回放 |
+| 牌类 / 麻将类 | `doudizhu_rlcard_v1`、`doudizhu_arena_v1`、`mahjong_rlcard_v1` | formatter/parser/renderer 组合、结构化结果输出 |
+
+### 1.1 按游戏看当前接入形态
+
+- 五子棋：当前仍然是最典型的棋盘式 Arena，用 `gomoku_local_v1 + gomoku_v1 + gomoku_board_v1` 组成完整的人机或模型对战闭环，适合说明坐标解析、Gradio 棋盘交互和基础 `turn` 调度。
+- 井字棋：结构和五子棋一致，但配置更轻，常作为最小可运行示例，用于验证 `arena` 角色、`visualizer` 和 `human` 玩家链路是否工作正常。
+- ViZDoom：当前属于帧驱动 / 动作离散化环境，核心围绕 `vizdoom_env_v1 + vizdoom_parser_v1`、tick 或 record 调度、图像帧采集、websocketRGB 显示与回放展开。
+- PettingZoo：当前使用 `pettingzoo_aec_v1 + discrete_action_parser_v1` 这一类组合接入 AEC 环境，重点在离散动作、轮转 agent、图像流展示和回放。当前文档与截图示例使用的是 PettingZoo Atari 的 `space_invaders`。
+- Retro Mario：当前通过 `retro_env_v1` 接入 stable-retro 运行时，重点在持续运行环境、动作映射、录像与 websocketRGB/回放链路。
+- 斗地主 / 麻将：这两类更适合围绕 RLCard 环境、formatter/parser/renderer、结构化结果和前端回放来理解。
+
+## 2. Pipeline 中的位置
+
+Arena 不是独立于 Pipeline 的旁路模块，而是 `TaskPlanner` 中一个标准执行阶段：
 
 ```mermaid
 flowchart LR
-  Sample[Sample] --> Ctx[Context Provider]
-  Ctx --> Arena[Role Arena Adapter]
-  Arena --> Env[Game Environment]
-  Env --> Obs[Observation]
-  Obs --> Player[Player]
-  Player --> Action[Action]
-  Action --> Env
-  Env --> Viz[Gradio Visualizer]
-  Env --> Result[Game Result]
+  A["Sample"] --> B["TaskPlanner.execute_arena()"]
+  B --> C["ensure_arena_header()"]
+  C --> D["ArenaRoleAdapter.execute()"]
+  D --> E["GameResult / arena_trace / replay"]
+  E --> F["append_arena_contract()"]
+  F --> G["sample.predict_result[0]"]
+  G --> H["judge / auto_eval / replay tools"]
 ```
 
-关键数据契约：
+这里最关键的不是“输出一段自由文本”，而是产出一份可继续流转的结构化对局结果。
 
-- **Observation**：`board_text`, `legal_moves`, `active_player`, `last_move`, `metadata`。
-- **Action**：落子坐标字符串（如 `H8` 或 `2,2`）。
-- **GameResult**：胜负结果、终局棋盘、落子记录。
+## 3. 运行时结构
 
-## 3. 核心设计思路
-
-### 3.1 核心抽象与角色映射
-
-ArenaRole 是一种 RoleAdapter，会由 RoleManager 实例化并负责完整对局闭环与状态整合。
-
-| 抽象 | 责任 |
-| --- | --- |
-| ArenaRole | 对局主循环编排与状态整合 |
-| Environment | 状态管理与观察生成 |
-| RuleEngine | 合法性判定与胜负判断 |
-| Scheduler | 轮到谁与回合上限控制 |
-| Player Interface | 观察到行动 |
-| MoveParser | 文本到动作解析 |
-| Visualizer | 渲染与人机交互 |
-
-Player Interface 与 RoleAdapter 映射：
-
-- LLM Player 使用 `dut_model` 适配器（`LLMPlayer`）。
-- Human Player 使用 `human` 适配器（`HumanPlayer`）。
-
-### 3.2 通用实现与游戏实现分层
-
-| 类型 | 说明 | 归属 |
-| --- | --- | --- |
-| Player Interface | 通用可复用 | Arena 通用实现 |
-| MoveParser | 通用可复用 | Arena 通用实现 |
-| Visualizer | 通用可复用 | Arena 通用实现 |
-| Environment | 游戏专属 | 各游戏实现 |
-| RuleEngine | 游戏专属 | 各游戏实现 |
-| Scheduler | 通用可复用 | Arena 通用实现 |
-
-### 3.3 Scheduler 形态与玩家接口
-
-| 调度器 | 特征 | Player 接口 |
-| --- | --- | --- |
-| TurnScheduler | Stop and Wait | `think(observation) -> action` |
-| TickScheduler | Tick Driven | 支持异步钩子 |
-
-TickScheduler 使用的可选异步钩子：
-
-```python
-def start_thinking(self, observation, deadline_ms: int) -> None:
-    ...
-
-def has_action(self) -> bool:
-    ...
-
-def pop_action(self) -> ArenaAction:
-    ...
-```
-
-## 4. 核心组件
-
-| 组件 | Registry Key | 示例实现 | 职责 |
-| --- | --- | --- | --- |
-| Environment | `arena_impls` | `gomoku_local_v1`, `tictactoe_v1` | 维护棋盘状态、落子与终局判定 |
-| Context | `context_impls` | `gomoku_context`, `tictactoe_context` | 生成规则说明与棋盘提示 |
-| Parser | `parser_impls` | `grid_parser_v1` | 解析模型输出为坐标 |
-| Renderer | `renderer_impls` | `gomoku_board_v1`, `tictactoe_board_v1` | 渲染棋盘 HTML 与交互 |
-
-相关支撑模块：
-
-- **Scheduler**：`turn` 或 `tick` 调度器（`src/gage_eval/role/arena/schedulers`）。
-- **Players**：`LLMPlayer` 与 `HumanPlayer`（`src/gage_eval/role/arena/players`）。
-- **Visualizer**：Gradio UI（`src/gage_eval/role/arena/visualizers/gradio_visualizer.py`）。
-
-## 5. Registry 组织关系
+当前 `ArenaRoleAdapter` 在一次对局里会动态组装下面这些部件：
 
 ```mermaid
 flowchart TD
-  EnvReg[arena_impls] --> EnvImpl[Game Environment]
-  CtxReg[context_impls] --> CtxImpl[Context Provider]
-  ParserReg[parser_impls] --> ParserImpl[Move Parser]
-  RendererReg[renderer_impls] --> RendererImpl[Board Renderer]
+  CFG["role_adapters[].params"] --> ADP["ArenaRoleAdapter"]
+  ADP --> ENV["Environment<br/>arena_impls"]
+  ADP --> SCH["Scheduler<br/>turn / tick / record / simultaneous / multi_timeline"]
+  ADP --> PAR["Parser<br/>parser_impls"]
+  ADP --> PLY["Players<br/>backend / agent / human"]
+  ADP --> VIZ["Gradio Visualizer<br/>可选"]
+  ADP --> HUM["Action Server / Queue<br/>可选"]
+  ADP --> WSRGB["websocketRGB Hub<br/>可选"]
+  ADP --> REC["ReplaySchemaWriter / FrameCaptureRecorder<br/>可选"]
+
+  ENV --> OBS["ArenaObservation"]
+  OBS --> PLY
+  PLY --> SCH
+  SCH --> ENV
+  ENV --> RES["GameResult + arena_trace"]
+  RES --> REC
+  RES --> OUT["predict_result[0] / run artifacts"]
+  HUM --> PLY
+  WSRGB --> HUM
 ```
 
-最小注册示例：
+理解当前结构时，有两个点最关键：
 
-```python
-from gage_eval.registry import registry
+- `Context Provider` 仍然存在，但它已经不是 Arena 主文档里最核心的运行时部件；当前主轴是 `environment + scheduler + players + parser + replay`。
+- `RuleEngine` 在很多游戏里已经内嵌到具体环境实现内部，未必总是以独立层的形式出现。
 
-@registry.asset("arena_impls", "tictactoe_v1")
-class TicTacToeArenaEnvironment:
-    ...
-```
+## 4. 当前更关键的配置面
 
-## 6. 配置示例
+如果从实际配置文件看，Arena 现在更应该按下面这几个块来理解：
 
-井字棋（Human vs LLM）：
+| 配置块 | 作用 | 常见字段 |
+| --- | --- | --- |
+| `environment` | 选择游戏环境与运行模式 | `impl`、`env_id`、`display_mode`、`replay` |
+| `scheduler` | 决定对局推进方式 | `type`、`tick_ms`、`max_turns`、`max_ticks` |
+| `parser` | 把模型输出解析成动作 | `impl`、`action_labels`、`coord_scheme` |
+| `players` | 定义参与者类型 | `type=backend/agent/human`、`ref`、`timeout_ms` |
+| `visualizer` | 启用 Gradio 观察或交互界面 | `enabled`、`renderer.impl`、`wait_for_finish` |
+| `human_input` | 打开输入队列、Action Server 和 ws_rgb hub | `enabled`、`port`、`ws_port` |
 
-```yaml
-role_adapters:
-  - adapter_id: tictactoe_arena
-    role_type: arena
-    params:
-      environment:
-        impl: tictactoe_v1
-        board_size: 3
-        coord_scheme: ROW_COL
-      scheduler:
-        type: turn
-        max_turns: 9
-      parser:
-        impl: grid_parser_v1
-        board_size: 3
-        coord_scheme: ROW_COL
-      visualizer:
-        enabled: true
-        title: GAGE Tic-Tac-Toe Arena
-        wait_for_finish: true
-        coord_scheme: ROW_COL
-        renderer:
-          impl: tictactoe_board_v1
-      players:
-        - name: X
-          type: backend
-          ref: tictactoe_player_x_litellm
-        - name: O
-          type: human
-          ref: tictactoe_human
-```
+当前支持的调度器也已经不止旧文档中的 `turn` / `tick` 两种：
 
-命名兜底：
-- 若未显式提供 `player_names`，或值等于原始 `player_id`，或为通用 `Player N` 形式，Arena 会使用玩家的适配器 id（`ref`）作为显示名称，避免 UI 中出现 `player_0` / `Player 0` 之类的占位名。
+- `turn`：典型轮到谁谁行动，适合五子棋、井字棋。
+- `tick`：按固定节拍轮询，适合实时或准实时场景。
+- `record`：按录制节拍推进并写出可回放轨迹。
+- `simultaneous`：多玩家同帧动作。
+- `multi_timeline`：多时间线 / 多 lane 推进。
 
-Demo 测试集放在 `tests/data/`：
+## 5. 结构化输出契约
 
-- `tests/data/Test_Gomoku_LiteLLM.jsonl`
-- `tests/data/Test_TicTacToe.jsonl`
+Arena 结束后，结果会被写回样本，而不是只停留在控制台日志里。
 
-## 7. 交互与 UI
+### 5.1 样本头信息
 
-- 当存在 **human** 玩家时，Arena 自动切换为 `interactive` 模式。
-- 棋盘点击通过 `build_board_interaction_js` 转成坐标并提交。
-- 启用 `wait_for_finish` 时，UI 会显示 **Finish** 按钮；15 秒后自动确认完成。
+`ensure_arena_header()` 会在 `sample.metadata.game_arena` 下写入一份头信息，核心字段包括：
 
-### 7.1 UI 预览
+- `engine_id`
+- `seed`
+- `mode`
+- `players`
+- `start_time_ms`
+
+### 5.2 样本结果
+
+`append_arena_contract()` 会把 Arena 结果规范化到：
+
+- `sample.predict_result[0].arena_trace`
+- `sample.predict_result[0].game_arena`
+
+其中：
+
+- `arena_trace` 记录逐步动作轨迹、时间戳、合法性、超时信息等。
+- `game_arena` 记录终局摘要，例如 `winner_player_id`、`termination_reason`、`total_steps`、`final_scores`、`episode_returns`。
+
+### 5.3 运行产物
+
+除了样本内字段，Arena 还可能写出：
+
+- `replay_path` / `replay_v1_path`
+- `game_log` 或 `game_log_path`
+- `replay.json`、`events.jsonl`
+- 帧截图目录（开启 frame capture 时）
+
+因此现在的 Arena 文档，必须同时覆盖“调度逻辑”和“产物契约”，只讲棋盘 UI 已经不够了。
+
+## 6. 交互方式与可视化
+
+当前 Arena 至少有两类主要交互路径：
+
+### 6.1 Gradio 棋盘式交互
+
+适合五子棋、井字棋这类有明确棋盘 renderer 的游戏：
+
+- 通过 `visualizer.enabled: true` 启用。
+- 通过 `renderer_impls` 渲染 HTML/CSS 棋盘。
+- 当存在 `human` 玩家时，会进入交互模式。
+
+### 6.2 websocketRGB 图像流交互
+
+适合 ViZDoom、PettingZoo、Retro Mario 这类更偏帧驱动或图像观察的环境。
+
+代码层面仍然主要使用 `ws_rgb` 命名，但文档中也常把它称为 `websocketRGB`。这两者在当前仓库里指向的是同一套运行时能力：
+
+- 环境提供图像帧，例如 `get_last_frame()`。
+- `ArenaRoleAdapter` 在 `display_mode=websocket/ws` 时注册显示端。
+- 人类输入通过 Action Queue / ws_rgb viewer 回流到 `HumanPlayer`。
+- 回放工具可以基于样本产物重建 ws_rgb 显示。
+
+## 7. 视觉示例
+
+### 7.1 五子棋
+
+五子棋体现了典型的棋盘式交互形态，适合作为理解 `renderer_impls`、落子坐标解析和 Human vs LLM 流程的基础示例。
 
 ![五子棋棋盘](../assets/gomoku.png)
 
+### 7.2 井字棋
+
+井字棋是更轻量的棋盘示例，通常用于快速验证 Arena 主链路和交互式 UI 是否正常。
+
 ![井字棋棋盘](../assets/tictactoe.png)
 
-## 8. Demo 与测试
-
-Demo 配置：
-
-- `config/custom/gomoku_litellm_local.yaml`
-- `config/custom/gomoku_human_vs_llm.yaml`
-- `config/custom/tictactoe_litellm_local.yaml`
-- `config/custom/tictactoe_human_vs_llm.yaml`
-
-运行指令：
-python run.py -c config/custom/gomoku_human_vs_llm.yaml
-
-相关测试：
-
-- `tests/unit/core/arena/test_gomoku_environment.py`
-- `tests/unit/core/arena/test_tictactoe_environment.py`
-- `tests/unit/core/role/test_gomoku_context.py`
-- `tests/unit/core/role/test_tictactoe_context.py`
-- `tests/unit/core/role/test_gomoku_board_renderer.py`
-- `tests/unit/core/role/test_tictactoe_board_renderer.py`
-
-## 9. 进阶示例：斗地主 Showdown
-
-文档：[English](game_arena_topics/doudizhu_showdown.md) | [中文](game_arena_topics/doudizhu_showdown_zh.md)
-
-### 9.1 快速启动
-
-前置条件：
-- Node.js + npm
-- 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
-- 设置密钥：`OPENAI_API_KEY`（或 `LITELLM_API_KEY`）
-- 确保 `scripts/run/arenas/doudizhu/run.sh` 使用的 `PYTHON_BIN` 指向对应环境
-
-统一入口：
-```bash
-bash scripts/run/arenas/doudizhu/run.sh --mode showdown
-bash scripts/run/arenas/doudizhu/run.sh --mode human-vs-ai
-```
-
-启动后脚本会输出：
-```
-[oneclick] replay url: http://127.0.0.1:<port>/replay/doudizhu?...
-```
-如果没有自动打开浏览器，请手动打开这条 URL。
-
-常用环境变量：
-- `RUN_ID`：运行标识（默认带时间戳）
-- `OUTPUT_DIR`：输出目录（默认 `./runs`）
-- `FRONTEND_PORT` / `REPLAY_PORT`：前端与回放服务端口（端口被占用会自动顺延）
-- `AUTO_OPEN=0`：禁用自动打开浏览器
-- `FRONTEND_DIR`：前端目录（默认 `frontend/rlcard-showdown`）
-
-### 9.2 脚本流程说明
-(对应 `scripts/run/arenas/doudizhu/run.sh --mode showdown`)
-
-脚本主要流程如下：
-1. 解析项目根目录与 Python 路径，读取默认配置 `config/custom/doudizhu_litellm_local.yaml`。
-2. 检查 `OPENAI_API_KEY` / `LITELLM_API_KEY`、Node.js/npm、前端依赖是否就绪。
-3. 自动选择空闲端口并启动 replay server。
-4. 启动前端 `npm run start` 并尝试自动打开回放页面。
-5. 运行 `run.py` 执行对局，输出回放链接。
-
-脚本内置默认值（必要时可直接修改脚本）：
-- `PYTHON_BIN`：Python 解释器路径（默认指向项目内 venv）。
-- `CFG`：运行配置文件路径（默认 `config/custom/doudizhu_litellm_local.yaml`）。
-- `SAMPLE_ID`：回放样本 ID（默认 `doudizhu_litellm_0001`）。
-
-### 9.3 回放与输出说明
-
-回放文件路径（默认）：
-```
-runs/<run_id>/replays/doudizhu_replay_<sample_id>.json
-```
-
-回放由 replay server 提供，前端通过 `replay_url` 参数读取。
-如果需要定位回放文件，可从上面的路径直接读取 JSON。
-
-### 9.4 GameResult 与结果流转
-
-GAGE 的 arena 步骤会在一局结束后产出 `GameResult`，并写入样本的 `predict_result`，供下游（judge/auto_eval）读取：
-- 写入位置：`src/gage_eval/evaluation/task_planner.py` → `append_predict_result()`
-- 结果格式来源：`src/gage_eval/role/adapters/arena.py::_format_result()`
-
-标准字段（与五子棋一致）：
-- `winner`: 赢家 player_id（或 `null`）
-- `result`: `"win" | "draw" | "loss"`
-- `reason`: 终局原因（如 `terminal`/`illegal_move`/`max_turns`）
-- `move_count` / `illegal_move_count`
-- `final_board`: 最终棋盘快照（文本）
-- `game_log`: 每步动作明细
-- `rule_profile` / `win_direction` / `line_length`
-
-五子棋 `game_log` 结构（示例）：
-```json
-{"index": 1, "player": "player_0", "coord": "H8", "row": 7, "col": 7}
-```
-
-斗地主 `game_log` 结构（`doudizhu_arena_v1`）：
-```json
-{
-  "index": 1,
-  "player": "player_0",
-  "action_id": 123,
-  "action_text": "333444",
-  "action_cards": ["S3","H3","D3","C4","S4","H4"],
-  "chat": "先压一手",
-  "timestamp_ms": 1730000000000
-}
-```
+### 7.3 ViZDoom
 
-说明：
-- 斗地主的 `final_board` 是 `_snapshot_board()` 的文本快照，包含 Public/Private State、Legal Moves 预览、Chat Log 等。
-- 下游如果只关心赢家/结果，直接读 `winner`/`result` 即可；若需回放细节，用 `game_log`。
+ViZDoom 在这里体现的是一个带图像观察、动作映射、调度和回放的完整环境接入。
 
-### 9.5 运行逻辑（关键流程）
+![ViZDoom 运行界面](../assets/vizdoom.png)
 
-#### 1) 数据集输入 (system prompt)
+相关专题文档：
 
-位置：`tests/data/Test_Doudizhu_LiteLLM.jsonl`
+- [ViZDoom 指南](game_arena_topics/game_arena_vizdoom_zh.md)
+- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
-核心字段：
-- `messages`: 系统提示词，决定 AI 性格/语气/输出格式。
-- `metadata.player_ids`: 玩家 ID（如 `player_0/1/2`）。
-- `metadata.start_player_id`: 起始出牌玩家。
-
-#### 2) 运行时观测（每回合上下文）
-
-后端在每回合构造观测并交给 LLM：
-- 文件：`src/gage_eval/role/arena/games/doudizhu/env.py`
-- 入口：`observe()` 与 `_format_board_text()`
-
-观测包含：
-- `Public State` / `Private State`（公共/私有状态 JSON）
-- `Legal Moves (preview)`（合法招法预览，默认截断）
-- `Chat Log`（若开启聊天）
-- `UI_STATE_JSON`（前端渲染需要的结构化状态）
-
-同时 `metadata` 会携带：
-- `player_ids` / `player_names`
-- `public_state` / `private_state`
-- `chat_log` / `chat_mode`
-
-#### 3) LLM 提示组装
-
-位置：`src/gage_eval/role/arena/players/llm_player.py`
-
-拼接顺序：
-1. 数据集 `messages`（system prompt）
-2. 运行时观测（含 board_text + legal moves + instructions）
-
-当 `chat_mode` 为 `ai-only`/`all` 时，会要求输出：
-```json
-{"action": "<action>", "chat": "<short line>"}
-```
-
-示例（模型实际看到的上下文）：
-```text
-[system]
-Start Doudizhu. Output exactly one legal action string such as 'pass' or card ranks like '33'. You may also output JSON: {"action": "pass", "chat": "..."}.
-
-[user]
-Active player: Player 0 (player_0)
-Opponent last move: pass
-
-Current State:
-Public State:
-{"round":2,"landlord_id":"player_0","last_move":"pass",...}
- 
-Private State:
-{"hand":["S3","H3","D3","C4","S4","BJ","RJ",...],...}
-
-Legal Moves (preview): pass, 33, 44, 34567, ...
-
-Chat Log:
-[{"player_id":"player_1","text":"先让一手。"}]...
-
-UI_STATE_JSON:
-{"player_ids":["player_0","player_1","player_2"],"hands":[...],"latest_actions":[...],...}
-
-Status:
-- Legal moves (preview): pass, 33, 44, 34567, ...
-
-Instructions:
-- Choose exactly one legal action string from the legal moves.
-- Include a short table-talk line every turn.
-- Output JSON: {"action": "<action>", "chat": "<short line>"}
-```
-
-#### 4) 回放写入与前端读取
-
-回放由 `doudizhu_arena_v1` 写入：
-- 文件：`src/gage_eval/role/arena/games/doudizhu/env.py`
-- 生成路径：`runs/<run_id>/replays/doudizhu_replay_<sample_id>.json`
-
-回放服务：
-- 文件：`src/gage_eval/tools/replay_server.py`
-- URL：`/tournament/replay?run_id=...&sample_id=...`
-
-前端读取：
-- 文件：`frontend/rlcard-showdown/src/view/ReplayView/DoudizhuReplayView.js`
-- URL：`/replay/doudizhu?run_id=...&sample_id=...&live=1`
-
-### 9.6 AI 性格/对话配置
-
-#### 1) 系统提示词（性格/风格的主要入口）
-
-当前版本的 `doudizhu_arena_v1` 不会读取 `ai_persona` 字段，
-AI 的“性格/风格”主要通过数据集里的 system prompt 控制。
-
-编辑文件：
-`tests/data/Test_Doudizhu_LiteLLM.jsonl`
-
-示例（只展示关键结构）：
-```json
-{
-  "messages": [
-    {
-      "role": "system",
-      "content": [
-        {
-          "type": "text",
-          "text": "You are a calm, analytical Doudizhu player. Keep chat short and witty."
-        }
-      ]
-    }
-  ]
-}
-```
-
-注意：
-- 所有玩家共享同一份 `messages`。
-- 如果要区分玩家性格，需要扩展数据集或改造玩家提示注入逻辑。
-
-#### 2) 对话开关与频率
-
-配置位置：
-`config/custom/doudizhu_litellm_local.yaml`
-
-示例：
-```yaml
-role_adapters:
-  - adapter_id: doudizhu_arena
-    role_type: arena
-    params:
-      environment:
-        impl: doudizhu_arena_v1
-        chat_mode: ai-only   # off | ai-only | all
-        chat_every_n: 2      # 每 N 步记录一次对话
-```
-
-#### 3) 采样参数（语气/随机性）
-
-可以为每个玩家设置采样参数（如 `temperature`）：
-```yaml
-players:
-  - player_id: player_0
-    type: backend
-    ref: doudizhu_player_0
-    sampling_params:
-      temperature: 0.7
-```
+### 7.4 PettingZoo：Space Invaders
 
-### 9.7 斗地主启动指令（手动模式）
+这里展示的是 PettingZoo Atari 系列中的 `space_invaders`。当前这类接入主打离散动作环境、图像流展示和回放链路，特别适合 Atari 一类多 agent 或轮转 agent 场景。
 
-如需手动启动，可拆成三步：
+![PettingZoo Atari Space Invaders 运行界面](../assets/pettingzoo-space-invaders.png)
 
-1) 启动回放服务：
-```bash
-PYTHONPATH=src python -m gage_eval.tools.replay_server --port 8000 --replay-dir ./runs
-```
+相关专题文档：
 
-2) 启动前端：
-```bash
-cd frontend/rlcard-showdown
-REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-provider" npm run start
-```
+- [PettingZoo 指南](game_arena_topics/game_arena_pettingzoo_zh.md)
+- [PettingZoo Atari 启动命令](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
+- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
-3) 运行后端推理：
-```bash
-python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
-```
+### 7.5 Retro Mario
 
-### 9.8 常见问题
+这里展示的是当前 stable-retro Mario 接入形态。它和 ViZDoom、PettingZoo 一样，更偏向运行时驱动、动作映射、图像观察和回放，而不是传统棋盘式渲染。
 
-- 浏览器打不开页面 (ERR_CONNECTION_REFUSED)
-  通常是前端没启动成功或端口被占用。请确认脚本输出的端口号并打开对应 URL。
+![Retro Mario 运行界面](../assets/mario.png)
 
-- Node 报 `ERR_OSSL_EVP_UNSUPPORTED`
-  使用 `NODE_OPTIONS=--openssl-legacy-provider`（脚本已自动加上）。
+相关专题文档：
 
-## 10. 扩展清单
+- [Retro Mario 指南](game_arena_topics/game_arena_retro_mario_zh.md)
+- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
-1. 在 `src/gage_eval/role/arena/games/<game>/` 增加环境实现。
-2. 注册环境、Context、Parser、Renderer 四类组件。
-3. 增加 demo 配置与测试用例。
-4. 使用 `run.py` 小样本验证联通。
+## 8. 专题入口
 
-## 10. 麻将快速上手（showdown）
+现有专题文档更适合由主文档统一跳转：
 
-前置条件：
-- Python 依赖已安装（`pip install -r requirements.txt`）
-- Node.js + npm 已就绪（前端回放）
-- 模型密钥已配置（如 `OPENAI_API_KEY`）
-
-统一入口脚本：
-```bash
-bash scripts/run/arenas/mahjong/run.sh --mode real-ai
-```
-
-```bash
-bash scripts/run/arenas/mahjong/run.sh --mode human-vs-ai
-```
-
-```bash
-bash scripts/run/arenas/mahjong/run.sh --mode human-vs-dummy
-```
-
-Showdown 模式：
-```bash
-bash scripts/run/arenas/mahjong/run.sh --mode showdown
-```
-
-访问地址：
-- Replay Server：`http://127.0.0.1:<replay_port>`
-- 前端回放（AI 模式）：`http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=ai`
-- 前端回放（Human 模式）：`http://127.0.0.1:<frontend_port>/replay/mahjong?replay_path=mahjong_replay.json&mode=human&play=1&action_url=http%3A%2F%2F127.0.0.1%3A8004`
-
-URL 参数（Human / AI）：
-- `replay_path`：回放文件名（默认 `mahjong_replay.json`）
-- `mode`：`ai`/`human`
-- `play`：`1` 启用人类交互模式
-- `action_url`：Human 模式动作与聊天提交的后端地址（URL 编码）
-
-常用环境变量：
-- `REPLAY_PORT` / `FRONTEND_PORT`
-- `GAGE_EVAL_SAVE_DIR`
-- `OPENAI_API_KEY`
-
-## 11. ViZDoom 指南
-
-文档：[English](game_arena_topics/game_arena_vizdoom.md) | [中文](game_arena_topics/game_arena_vizdoom_zh.md)
-
-本章节是 ViZDoom 的标准入口，统一整理了安装、启动脚本、回放流程和关键参数位置。
-
-## 12. Retro Mario 指南
-
-文档：[English](game_arena_topics/game_arena_retro_mario.md) | [中文](game_arena_topics/game_arena_retro_mario_zh.md)
-
-本章节是 Retro Mario 的标准入口，统一整理了 ROM 准备、配置驱动启动、回放流程和关键参数位置。
-
-## 13. ws_rgb 回放使用指南
-
-文档：[English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
-运行时接入与在线渲染文档：[English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
-
-本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
-
-## 14. PettingZoo Atari 指南
-
-文档：[English](game_arena_topics/pettingzoo_atari_run_commands.md) | [中文](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
-
-本章节是 PettingZoo 的标准入口，现已统一整理按游戏命令矩阵、ROM 安装、Demo 启动流程、回放使用方式和关键参数位置。
+- [ViZDoom](game_arena_topics/game_arena_vizdoom_zh.md)
+- [Retro Mario](game_arena_topics/game_arena_retro_mario_zh.md)
+- [PettingZoo](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
+- [斗地主 Showdown](game_arena_topics/doudizhu_showdown_zh.md)
+- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
