@@ -12,7 +12,7 @@
 
 - 回放查看页面：`/ws_rgb/viewer`
 - 回放服务入口：`python -m gage_eval.tools.ws_rgb_replay`
-- 一键脚本：`scripts/oneclick/run_game_replay_oneclick.sh`
+- 统一回放脚本：`scripts/run/arenas/replay/run_and_open.sh`
 - 支持游戏：`gomoku`、`tictactoe`、`doudizhu`、`mahjong`、`pettingzoo`
 
 ## 2. 前置条件
@@ -77,33 +77,33 @@ export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
 通用形式：
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh --game <game> --mode <dummy|ai>
+bash scripts/run/arenas/replay/run_and_open.sh --game <game> --mode <dummy|ai>
 ```
 
 Dummy：
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh --game gomoku --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game tictactoe --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game doudizhu --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game mahjong --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game pettingzoo --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game gomoku --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game tictactoe --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game doudizhu --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game mahjong --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game pettingzoo --mode dummy
 ```
 
 AI：
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh --game gomoku --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game tictactoe --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game doudizhu --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game mahjong --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game pettingzoo --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game gomoku --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game tictactoe --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game doudizhu --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game mahjong --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game pettingzoo --mode ai
 ```
 
 常用参数：
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh \
+bash scripts/run/arenas/replay/run_and_open.sh \
   --game gomoku \
   --mode dummy \
   --port 5860 \
@@ -111,7 +111,7 @@ bash scripts/oneclick/run_game_replay_oneclick.sh \
 ```
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh \
+bash scripts/run/arenas/replay/run_and_open.sh \
   --game mahjong \
   --mode ai \
   --python-bin "$(command -v python)" \

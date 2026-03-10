@@ -12,7 +12,7 @@ For live rendering, input routing, and integration contracts (beyond replay), se
 
 - Replay viewer endpoint: `/ws_rgb/viewer`
 - Replay service entrypoint: `python -m gage_eval.tools.ws_rgb_replay`
-- One-click helper: `scripts/oneclick/run_game_replay_oneclick.sh`
+- Unified replay helper: `scripts/run/arenas/replay/run_and_open.sh`
 - Supported games: `gomoku`, `tictactoe`, `doudizhu`, `mahjong`, `pettingzoo`
 
 ## 2. Prerequisites
@@ -78,33 +78,33 @@ This workflow is `run -> replay` in one command.
 Generic form:
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh --game <game> --mode <dummy|ai>
+bash scripts/run/arenas/replay/run_and_open.sh --game <game> --mode <dummy|ai>
 ```
 
 Dummy:
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh --game gomoku --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game tictactoe --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game doudizhu --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game mahjong --mode dummy
-bash scripts/oneclick/run_game_replay_oneclick.sh --game pettingzoo --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game gomoku --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game tictactoe --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game doudizhu --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game mahjong --mode dummy
+bash scripts/run/arenas/replay/run_and_open.sh --game pettingzoo --mode dummy
 ```
 
 AI:
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh --game gomoku --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game tictactoe --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game doudizhu --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game mahjong --mode ai
-bash scripts/oneclick/run_game_replay_oneclick.sh --game pettingzoo --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game gomoku --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game tictactoe --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game doudizhu --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game mahjong --mode ai
+bash scripts/run/arenas/replay/run_and_open.sh --game pettingzoo --mode ai
 ```
 
 Common options:
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh \
+bash scripts/run/arenas/replay/run_and_open.sh \
   --game gomoku \
   --mode dummy \
   --port 5860 \
@@ -112,7 +112,7 @@ bash scripts/oneclick/run_game_replay_oneclick.sh \
 ```
 
 ```bash
-bash scripts/oneclick/run_game_replay_oneclick.sh \
+bash scripts/run/arenas/replay/run_and_open.sh \
   --game mahjong \
   --mode ai \
   --python-bin "$(command -v python)" \

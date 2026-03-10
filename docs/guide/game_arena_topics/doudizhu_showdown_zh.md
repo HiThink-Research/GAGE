@@ -10,12 +10,12 @@
 - Node.js + npm
 - 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - 设置密钥：`OPENAI_API_KEY`（或 `LITELLM_API_KEY`）
-- `run_doudizhu_showdown` 中 `PYTHON_BIN` 指向对应环境
+- 确保 `scripts/run/arenas/doudizhu/run.sh` 使用的 `PYTHON_BIN` 指向对应环境
 
-一键启动：
+统一入口：
 ```bash
-scripts/oneclick/run_doudizhu_showdown.sh （3ai对战）
-scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
+bash scripts/run/arenas/doudizhu/run.sh --mode showdown
+bash scripts/run/arenas/doudizhu/run.sh --mode human-vs-ai
 ```
 
 启动后脚本会输出：
@@ -33,7 +33,7 @@ scripts/oneclick/run_doudizhu_showdown_human.sh （human模式）
 
 ## 脚本流程说明
 
-（对应 `scripts/oneclick/run_doudizhu_showdown.sh`）
+（对应 `scripts/run/arenas/doudizhu/run.sh --mode showdown`）
 
 脚本主要流程如下：
 1. 解析项目根目录与 Python 路径，读取默认配置 `config/custom/doudizhu_litellm_local.yaml`。

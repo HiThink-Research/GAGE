@@ -10,12 +10,12 @@ Prerequisites:
 - Node.js + npm
 - First time setup: `cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - Set API key: `OPENAI_API_KEY` (or `LITELLM_API_KEY`)
-- Ensure `PYTHON_BIN` in `run_doudizhu_showdown` points to the correct environment
+- Ensure `PYTHON_BIN` used by `scripts/run/arenas/doudizhu/run.sh` points to the correct environment
 
-One-click Start:
+Unified Start:
 ```bash
-scripts/oneclick/run_doudizhu_showdown.sh       # 3 AI players
-scripts/oneclick/run_doudizhu_showdown_human.sh # Human vs AI
+bash scripts/run/arenas/doudizhu/run.sh --mode showdown
+bash scripts/run/arenas/doudizhu/run.sh --mode human-vs-ai
 ```
 
 After startup, the script prints:
@@ -33,7 +33,7 @@ Common Environment Variables:
 
 ## Script Flow Explanation
 
-(Corresponding to `scripts/oneclick/run_doudizhu_showdown.sh`)
+(Corresponding to `scripts/run/arenas/doudizhu/run.sh --mode showdown`)
 
 The main flow of the script:
 1. Parses project root and Python path, then reads the default config `config/custom/doudizhu_litellm_local.yaml`.

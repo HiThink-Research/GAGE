@@ -13,14 +13,14 @@ Retro Mario now has a shared script entry for the common demo paths:
 - Human + ws_rgb control
 - Dummy or OpenAI headless runs
 
-The actual runtime behavior still comes from the YAML config, but startup and replay are now standardized through scripts under `scripts/oneclick/`.
+The actual runtime behavior still comes from the YAML config, but startup and replay are now standardized through scripts under `scripts/run/arenas/retro_mario/`.
 
 ## 2. Canonical Files
 
 | Type | Path | Purpose |
 | --- | --- | --- |
-| Standard startup script | `scripts/oneclick/run_retro_mario_game.sh` | Main entry for common Mario startup modes |
-| Replay script | `scripts/oneclick/run_retro_mario_replay.sh` | Replay one finished run by `run_id` |
+| Standard startup script | `scripts/run/arenas/retro_mario/run.sh` | Main entry for common Mario startup modes |
+| Replay script | `scripts/run/arenas/retro_mario/replay.sh` | Replay one finished run by `run_id` |
 | Dummy ws_rgb config | `config/custom/retro_mario_phase1_dummy_ws.yaml` | Fastest live-view smoke test |
 | Human ws_rgb config | `config/custom/retro_mario_phase1_human_ws.yaml` | Human-controlled Mario session |
 | OpenAI ws_rgb config | `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml` | API-backed live-view demo |
@@ -62,7 +62,7 @@ export RETRO_OPENAI_MODEL="gpt-4o-mini"
 ### 4.1 Recommended smoke test: dummy + ws_rgb
 
 ```bash
-bash scripts/oneclick/run_retro_mario_game.sh \
+bash scripts/run/arenas/retro_mario/run.sh \
   --mode dummy_ws \
   --run-id "retro_mario_dummy_ws_$(date +%Y%m%d_%H%M%S)"
 ```
@@ -82,7 +82,7 @@ What the startup script does:
 5. Runs `python run.py --config ...`.
 6. Prints the viewer URL or input endpoint hints for websocket modes.
 
-Supported startup modes in `run_retro_mario_game.sh`:
+Supported startup modes in `scripts/run/arenas/retro_mario/run.sh`:
 
 - `dummy_ws`
 - `openai_ws`
@@ -110,15 +110,22 @@ Useful environment variables:
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
 
-bash scripts/oneclick/run_retro_mario_game.sh \
+bash scripts/run/arenas/retro_mario/run.sh \
   --mode openai_ws \
   --run-id "retro_mario_openai_ws_$(date +%Y%m%d_%H%M%S)"
 ```
 
+Where to change the model/API for this command:
+
+- API key: export `OPENAI_API_KEY` before launch. `scripts/run/arenas/retro_mario/run.sh` also accepts `LITELLM_API_KEY` and copies it into `OPENAI_API_KEY`.
+- `openai_ws` reads `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml`. `openai_headless` reads `config/custom/retro_mario_openai_headless_auto_eval.yaml`.
+- Hosted OpenAI-compatible API: edit `backends[0].config.base_url` to switch the endpoint. Edit `backends[0].config.model`, or set `RETRO_OPENAI_MODEL`, to switch the deployed model name.
+- Local OpenAI-compatible service: point `backends[0].config.base_url` to the local server and set `backends[0].config.model` to the served model id. These configs currently set `require_api_key: true`, so keep `OPENAI_API_KEY` non-empty or change that flag if your local service does not require auth.
+
 ### 4.3 Human + ws_rgb
 
 ```bash
-bash scripts/oneclick/run_retro_mario_game.sh \
+bash scripts/run/arenas/retro_mario/run.sh \
   --mode human_ws \
   --run-id "retro_mario_human_ws_$(date +%Y%m%d_%H%M%S)"
 ```
@@ -140,7 +147,7 @@ Default browser key aliases come from the retro input mapper:
 ### 4.4 Headless runs
 
 ```bash
-bash scripts/oneclick/run_retro_mario_game.sh \
+bash scripts/run/arenas/retro_mario/run.sh \
   --mode dummy_headless \
   --run-id "retro_mario_dummy_headless_$(date +%Y%m%d_%H%M%S)"
 ```
@@ -152,7 +159,7 @@ For OpenAI headless:
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
 
-bash scripts/oneclick/run_retro_mario_game.sh \
+bash scripts/run/arenas/retro_mario/run.sh \
   --mode openai_headless \
   --run-id "retro_mario_openai_headless_$(date +%Y%m%d_%H%M%S)"
 ```
@@ -162,7 +169,7 @@ bash scripts/oneclick/run_retro_mario_game.sh \
 Use `--config` if you want the script wrapper but need a custom YAML path:
 
 ```bash
-bash scripts/oneclick/run_retro_mario_game.sh \
+bash scripts/run/arenas/retro_mario/run.sh \
   --config config/custom/retro_mario_phase1_dummy_ws.yaml \
   --run-id "retro_mario_custom_$(date +%Y%m%d_%H%M%S)"
 ```
@@ -175,17 +182,19 @@ Retro Mario startup in the current repository is:
 2. Import the ROM with `python -m retro.import`.
 3. Choose a standard `--mode` or a custom `--config`.
 4. Set API keys only for the OpenAI modes.
-5. Run `scripts/oneclick/run_retro_mario_game.sh`.
-6. Open `ws_rgb/viewer` during the run for websocket modes, or start `scripts/oneclick/run_retro_mario_replay.sh <run_id>` after the run.
+5. Run `scripts/run/arenas/retro_mario/run.sh`.
+6. Open `ws_rgb/viewer` during the run for websocket modes, or start `scripts/run/arenas/retro_mario/replay.sh <run_id>` after the run.
 
 ## 6. Key Parameters and Where to Change Them
 
 | Item | Where to change | Meaning |
 | --- | --- | --- |
 | API key | Shell env: `OPENAI_API_KEY` or `LITELLM_API_KEY` | Required by OpenAI startup modes; the script accepts either |
-| Startup mode | `run_retro_mario_game.sh --mode` | Select `dummy_ws`, `openai_ws`, `human_ws`, `dummy_headless`, or `openai_headless` |
-| Custom config | `run_retro_mario_game.sh --config` | Bypass the built-in mode mapping |
+| Startup mode | `scripts/run/arenas/retro_mario/run.sh --mode` | Select `dummy_ws`, `openai_ws`, `human_ws`, `dummy_headless`, or `openai_headless` |
+| Custom config | `scripts/run/arenas/retro_mario/run.sh --config` | Bypass the built-in mode mapping |
+| Model endpoint | `backends[].config.base_url` in the selected `retro_mario_openai_*.yaml` | Switch between hosted and local OpenAI-compatible endpoints |
 | Model name | `RETRO_OPENAI_MODEL` or `backends[].config.model` | Select the OpenAI model |
+| API-key enforcement | `backends[].config.require_api_key` | Keep it `true` for hosted APIs; disable only for trusted local gateways |
 | Live-view port | `human_input.ws_port` or env `RETRO_WS_RGB_PORT` | ws_rgb bind port for websocket configs; the script passes the env through |
 | Display mode | `environment.display_mode` | `websocket` for live view, `headless` for offline runs |
 | Legal moves | `environment.legal_moves` | Action space exposed to the player |
@@ -194,9 +203,9 @@ Retro Mario startup in the current repository is:
 | Human input FPS | `human_input.fps` | Browser input sampling cadence in human mode |
 | Replay mode | `environment.replay.mode` | `action`, `frame`, or `both` replay content |
 | Replay frame capture | `environment.replay.frame_capture.*` | Frame stride, image format, and frame cap |
-| Replay playback FPS | Env `FPS` for `run_retro_mario_replay.sh` | Replay speed in the post-run viewer |
-| Replay host/port | Env `HOST` and `PORT` for `run_retro_mario_replay.sh` | Replay server bind address |
-| Replay frame cap | Env `MAX_FRAMES` for `run_retro_mario_replay.sh` | Stop replay after a fixed number of frames |
+| Replay playback FPS | Env `FPS` for `scripts/run/arenas/retro_mario/replay.sh` | Replay speed in the post-run viewer |
+| Replay host/port | Env `HOST` and `PORT` for `scripts/run/arenas/retro_mario/replay.sh` | Replay server bind address |
+| Replay frame cap | Env `MAX_FRAMES` for `scripts/run/arenas/retro_mario/replay.sh` | Stop replay after a fixed number of frames |
 
 Notes:
 
@@ -215,7 +224,7 @@ runs/<run_id>/
 Replay can be started from one sample artifact:
 
 ```bash
-bash scripts/oneclick/run_retro_mario_replay.sh <run_id>
+bash scripts/run/arenas/retro_mario/replay.sh <run_id>
 ```
 
 Useful replay environment variables:
