@@ -81,3 +81,26 @@ def test_sandbox_provider_rebuilds_dead_cached_handle() -> None:
     assert second is not first
     assert FakeSandbox.start_calls == 2
     assert FakeSandbox.teardown_calls == 1
+
+
+@pytest.mark.fast
+def test_sandbox_provider_builds_per_arena_pool_key() -> None:
+    manager = SandboxManager()
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "docker", "sandbox_id": "arena_box", "lifecycle": "per_arena"},
+        SandboxScope(
+            run_id="run-1",
+            task_id="task-1",
+            sample_id="sample-1",
+            arena_id="arena_adapter_sample-1",
+        ),
+    )
+
+    config = provider.sandbox_config
+    assert config["lifecycle"] == "per_arena"
+
+    handle = provider.get_handle()
+    assert handle is not None
+    assert handle.pool_key == "arena_box:arena_adapter_sample-1"
+    provider.release()

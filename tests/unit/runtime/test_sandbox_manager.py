@@ -23,6 +23,10 @@ class FakeSandbox:
         self.stop_calls += 1
 
 
+class FakeTau2Sandbox(FakeSandbox):
+    pass
+
+
 @pytest.mark.fast
 def test_sandbox_manager_merge_profiles():
     manager = SandboxManager(
@@ -36,7 +40,9 @@ def test_sandbox_manager_merge_profiles():
         }
     )
     manager.register_runtime("fake", FakeSandbox)
-    merged = manager.resolve_config({"sandbox_id": "demo"}, {"runtime_configs": {"network_mode": "host"}})
+    merged = manager.resolve_config(
+        {"sandbox_id": "demo"}, {"runtime_configs": {"network_mode": "host"}}
+    )
     assert merged["runtime"] == "fake"
     assert merged["resources"]["cpu"] == 1
     assert merged["runtime_configs"]["network_mode"] == "host"
@@ -71,3 +77,26 @@ def test_sandbox_manager_release_clears_active():
     manager.release(handle)
     manager.shutdown()
     assert handle.sandbox.stop_calls == 1
+
+
+@pytest.mark.fast
+def test_sandbox_manager_resolves_docker_aliases() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("docker", FakeSandbox)
+
+    for runtime in ("aio", "appworld", "llm", "opensandbox"):
+        handle = manager.acquire({"runtime": runtime})
+        assert isinstance(handle.sandbox, FakeSandbox)
+        manager.release(handle)
+
+
+@pytest.mark.fast
+def test_sandbox_manager_uses_tau2_runtime_enhancer() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("local", FakeSandbox)
+    manager._runtime_enhancers["tau2"] = FakeTau2Sandbox
+
+    handle = manager.acquire({"runtime": "tau2"})
+
+    assert isinstance(handle.sandbox, FakeTau2Sandbox)
+    manager.release(handle)

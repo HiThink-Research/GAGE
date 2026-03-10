@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
@@ -17,7 +18,11 @@ class FakeSandbox:
     start_calls = 0
     teardown_calls = 0
 
-    def __init__(self, runtime_configs: Dict[str, Any] | None = None, resources: Dict[str, Any] | None = None):
+    def __init__(
+        self,
+        runtime_configs: Dict[str, Any] | None = None,
+        resources: Dict[str, Any] | None = None,
+    ):
         self.runtime_configs = runtime_configs or {}
         self.resources = resources or {}
 
@@ -39,7 +44,9 @@ class ProviderProbeAdapter(RoleAdapter):
         )
         self._calls = calls
 
-    async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
+    async def ainvoke(
+        self, payload: Dict[str, Any], state: RoleAdapterState
+    ) -> Dict[str, Any]:
         provider = payload.get("sandbox_provider")
         self._calls.append(provider)
         if provider:
@@ -56,7 +63,9 @@ def test_sample_loop_injects_sandbox_provider() -> None:
     manager.register_runtime("fake", FakeSandbox)
     calls: List[object] = []
     adapter = ProviderProbeAdapter("probe", calls)
-    resource_profile = ResourceProfile(nodes=[NodeResource(node_id="local", gpus=0, cpus=1)])
+    resource_profile = ResourceProfile(
+        nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+    )
     role_manager = RoleManager(resource_profile, concurrency_hint=1)
     role_manager.register_role_adapter("probe", adapter)
     planner = TaskPlanner()
@@ -72,3 +81,49 @@ def test_sample_loop_injects_sandbox_provider() -> None:
     assert calls and calls[0] is not None
     assert FakeSandbox.start_calls == 1
     assert FakeSandbox.teardown_calls == 1
+
+
+@pytest.mark.fast
+def test_sample_loop_sets_per_arena_scope_key() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    resource_profile = ResourceProfile(
+        nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+    )
+    role_manager = RoleManager(resource_profile, concurrency_hint=1)
+    arena_adapter = RoleAdapter(
+        adapter_id="arena_adapter",
+        role_type="arena",
+        capabilities=(),
+        sandbox_config={
+            "runtime": "fake",
+            "sandbox_id": "arena_box",
+            "lifecycle": "per_arena",
+        },
+    )
+    role_manager.register_role_adapter("arena_adapter", arena_adapter)
+    sample_loop = SampleLoop(
+        [{"id": "sample-1"}], concurrency=1, sandbox_manager=manager
+    )
+    plan = SimpleNamespace(
+        inference_role=None,
+        arena_role="arena_adapter",
+        judge_role=None,
+        support_steps=[],
+        metadata={},
+    )
+    trace = ObservabilityTrace()
+
+    provider = sample_loop._build_sandbox_provider(
+        plan,
+        {"id": "sample-1"},
+        role_manager,
+        trace,
+        "sample-1",
+    )
+
+    assert provider is not None
+    handle = provider.get_handle()
+    assert handle is not None
+    assert handle.pool_key == "arena_box:arena_adapter_sample-1"
+    provider.release()
