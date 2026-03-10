@@ -533,6 +533,6 @@ This chapter explains how to replay post-run artifacts through ws_rgb viewer, in
 
 ## 14. PettingZoo Atari guide
 
-Guide: [English](game_arena_topics/game_arena_pettingzoo.md) | [中文](game_arena_topics/game_arena_pettingzoo_zh.md)
+Guide: [English](game_arena_topics/pettingzoo_atari_run_commands.md) | [中文](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
 
-This chapter is the canonical PettingZoo entry. It consolidates ROM installation, demo startup flow, replay usage, and key parameter locations.
+This chapter is the canonical PettingZoo entry. It now consolidates the per-game command matrix, ROM installation, demo startup flow, replay usage, and key parameter locations.
