@@ -244,9 +244,4 @@ http://127.0.0.1:5800/ws_rgb/viewer
 
 启动回放前，建议先确认 sample JSON 里存在 `replay_path` 等 replay 相关字段。
 
-## 8. 旧文档
 
-下面这些旧文档仍保留在仓库里，但不再作为标准入口：
-
-- `docs/guide/stable_retro_mario_demo_guide.md`
-- `docs/guide/stable_retro_mario_demo_guide_zh.md`

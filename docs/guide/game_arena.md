@@ -221,6 +221,6 @@ The current topic guides are better linked from the main guide as a single hub:
 
 - [ViZDoom](game_arena_topics/game_arena_vizdoom.md)
 - [Retro Mario](game_arena_topics/game_arena_retro_mario.md)
-- [PettingZoo](game_arena_topics/game_arena_pettingzoo.md)
+- [PettingZoo](game_arena_topics/pettingzoo_atari_run_commands.md)
 - [Doudizhu Showdown](game_arena_topics/doudizhu_showdown.md)
 - [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)

@@ -221,6 +221,6 @@ ViZDoom 在这里体现的是一个带图像观察、动作映射、调度和回
 
 - [ViZDoom](game_arena_topics/game_arena_vizdoom_zh.md)
 - [Retro Mario](game_arena_topics/game_arena_retro_mario_zh.md)
-- [PettingZoo](game_arena_topics/game_arena_pettingzoo_zh.md)
+- [PettingZoo](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
 - [斗地主 Showdown](game_arena_topics/doudizhu_showdown_zh.md)
 - [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)

@@ -340,11 +340,3 @@ Default replay URL:
 ```text
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
-
-### 7.8 Other Related Docs
-
-The following files are still kept in the repository:
-
-- `docs/guide/pettingzoo_user_guide.md`
-- `docs/guide/pettingzoo_user_guide_zh.md`
-- `docs/guide/game_arena_topics/pettingzoo_atari_run_commands_zh.md`

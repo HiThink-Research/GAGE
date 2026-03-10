@@ -244,9 +244,4 @@ http://127.0.0.1:5800/ws_rgb/viewer
 
 Before launching replay, confirm the sample JSON has a replay payload such as `replay_path`.
 
-## 8. Legacy Docs
 
-Older Mario docs are still in the repository but are no longer the standard entry:
-
-- `docs/guide/stable_retro_mario_demo_guide.md`
-- `docs/guide/stable_retro_mario_demo_guide_zh.md`
