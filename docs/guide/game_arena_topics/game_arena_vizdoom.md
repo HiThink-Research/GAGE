@@ -245,11 +245,3 @@ Default replay URL:
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
-## 8. Legacy Docs
-
-Older ViZDoom docs are still in the repository but are no longer the standard entry:
-
-- `docs/guide/vizdoom_setup_guide.md`
-- `docs/guide/vizdoom_setup_guide_zh.md`
-- `docs/guide/vizdoom_arena_summary.md`
-- `docs/guide/vizdoom_arena_summary_zh.md`

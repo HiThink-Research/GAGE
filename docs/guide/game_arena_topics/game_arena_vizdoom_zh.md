@@ -244,11 +244,3 @@ bash scripts/run/arenas/vizdoom/replay.sh <run_id>
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
-## 8. 旧文档
-
-下面这些旧文档仍保留在仓库里，但不再作为标准入口：
-
-- `docs/guide/vizdoom_setup_guide.md`
-- `docs/guide/vizdoom_setup_guide_zh.md`
-- `docs/guide/vizdoom_arena_summary.md`
-- `docs/guide/vizdoom_arena_summary_zh.md`

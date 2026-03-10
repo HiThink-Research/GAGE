@@ -7,7 +7,7 @@ GAGE_RUN_COMMON_ENV_SH=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GAGE_REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-GAGE_WORKSPACE_ROOT="$(cd "${GAGE_REPO_ROOT}/.." && pwd)"
+GAGE_WORKSPACE_ROOT="$(cd "${GAGE_REPO_ROOT}" && pwd)"
 
 gage_default_local_env_file() {
   if [[ -n "${GAGE_LOCAL_ENV_FILE:-}" ]]; then
