@@ -197,18 +197,20 @@ Related tests:
 
 ## 9. Advanced Example: Doudizhu Showdown
 
+Guide: [English](game_arena_topics/doudizhu_showdown.md) | [中文](game_arena_topics/doudizhu_showdown_zh.md)
+
 ### 9.1 Quick Start
 
 Prerequisites:
 - Node.js + npm
 - First time setup: `cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - Set API Key: `OPENAI_API_KEY` (or `LITELLM_API_KEY`)
-- Ensure `PYTHON_BIN` in `run_doudizhu_showdown` points to the correct environment
+- Ensure `PYTHON_BIN` used by `scripts/run/arenas/doudizhu/run.sh` points to the correct environment
 
-One-click Start:
+Unified Start:
 ```bash
-scripts/oneclick/run_doudizhu_showdown.sh       # 3 AI players
-scripts/oneclick/run_doudizhu_showdown_human.sh # Human vs AI
+bash scripts/run/arenas/doudizhu/run.sh --mode showdown
+bash scripts/run/arenas/doudizhu/run.sh --mode human-vs-ai
 ```
 
 After startup, the script will output:
@@ -225,7 +227,7 @@ Common Environment Variables:
 - `FRONTEND_DIR`: Frontend directory (defaults to `frontend/rlcard-showdown`)
 
 ### 9.2 Script Flow Explanation
-(Corresponding to `scripts/oneclick/run_doudizhu_showdown.sh`)
+(Corresponding to `scripts/run/arenas/doudizhu/run.sh --mode showdown`)
 
 The main flow of the script:
 1. Parses project root and Python path, reads default config `config/custom/doudizhu_litellm_local.yaml`.
@@ -476,22 +478,22 @@ Prereqs:
 - Node.js + npm ready for frontend replay
 - Model keys configured (e.g. `OPENAI_API_KEY`)
 
-One-click scripts:
+Canonical arena scripts:
 ```bash
-bash scripts/oneclick/run_mahjong_real_ai.sh
+bash scripts/run/arenas/mahjong/run.sh --mode real-ai
 ```
 
 ```bash
-bash scripts/oneclick/run_mahjong_showdown_human.sh
+bash scripts/run/arenas/mahjong/run.sh --mode human-vs-ai
 ```
 
 ```bash
-bash scripts/oneclick/run_mahjong_showdown_human_dummy.sh
+bash scripts/run/arenas/mahjong/run.sh --mode human-vs-dummy
 ```
 
-Replay server + game only (no frontend):
+Showdown mode:
 ```bash
-bash scripts/oneclick/run_mahjong_replay_and_game.sh
+bash scripts/run/arenas/mahjong/run.sh --mode showdown
 ```
 
 Endpoints:
@@ -512,25 +514,25 @@ Common env vars:
 
 ## 11. ViZDoom guide
 
-Guide: [English](game_arena_vizdoom.md) | [中文](game_arena_vizdoom_zh.md)
+Guide: [English](game_arena_topics/game_arena_vizdoom.md) | [中文](game_arena_topics/game_arena_vizdoom_zh.md)
 
 This chapter is the canonical ViZDoom entry. It consolidates installation, startup scripts, replay flow, and key parameter locations.
 
 ## 12. Stable Retro Mario guide
 
-Guide: [English](game_arena_retro_mario.md) | [中文](game_arena_retro_mario_zh.md)
+Guide: [English](game_arena_topics/game_arena_retro_mario.md) | [中文](game_arena_topics/game_arena_retro_mario_zh.md)
 
 This chapter is the canonical Retro Mario entry. It consolidates ROM setup, config-driven startup, replay flow, and key parameter locations.
 
 ## 13. ws_rgb replay usage guide
 
-Guide: [English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
-Runtime integration and live rendering guide: [English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
+Guide: [English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
+Runtime integration and live rendering guide: [English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
 
 This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.
 
 ## 14. PettingZoo Atari guide
 
-Guide: [English](game_arena_pettingzoo.md) | [中文](game_arena_pettingzoo_zh.md)
+Guide: [English](game_arena_topics/game_arena_pettingzoo.md) | [中文](game_arena_topics/game_arena_pettingzoo_zh.md)
 
 This chapter is the canonical PettingZoo entry. It consolidates ROM installation, demo startup flow, replay usage, and key parameter locations.

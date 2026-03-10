@@ -197,18 +197,20 @@ python run.py -c config/custom/gomoku_human_vs_llm.yaml
 
 ## 9. 进阶示例：斗地主 Showdown
 
+文档：[English](game_arena_topics/doudizhu_showdown.md) | [中文](game_arena_topics/doudizhu_showdown_zh.md)
+
 ### 9.1 快速启动
 
 前置条件：
 - Node.js + npm
 - 首次需要安装前端依赖：`cd frontend/rlcard-showdown && npm install --legacy-peer-deps`
 - 设置密钥：`OPENAI_API_KEY`（或 `LITELLM_API_KEY`）
-- `run_doudizhu_showdown` 中 `PYTHON_BIN` 指向对应环境
+- 确保 `scripts/run/arenas/doudizhu/run.sh` 使用的 `PYTHON_BIN` 指向对应环境
 
-一键启动：
+统一入口：
 ```bash
-scripts/oneclick/run_doudizhu_showdown.sh       # 3ai对战
-scripts/oneclick/run_doudizhu_showdown_human.sh # human模式
+bash scripts/run/arenas/doudizhu/run.sh --mode showdown
+bash scripts/run/arenas/doudizhu/run.sh --mode human-vs-ai
 ```
 
 启动后脚本会输出：
@@ -225,7 +227,7 @@ scripts/oneclick/run_doudizhu_showdown_human.sh # human模式
 - `FRONTEND_DIR`：前端目录（默认 `frontend/rlcard-showdown`）
 
 ### 9.2 脚本流程说明
-(对应 `scripts/oneclick/run_doudizhu_showdown.sh`)
+(对应 `scripts/run/arenas/doudizhu/run.sh --mode showdown`)
 
 脚本主要流程如下：
 1. 解析项目根目录与 Python 路径，读取默认配置 `config/custom/doudizhu_litellm_local.yaml`。
@@ -476,22 +478,22 @@ python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir ru
 - Node.js + npm 已就绪（前端回放）
 - 模型密钥已配置（如 `OPENAI_API_KEY`）
 
-一键脚本：
+统一入口脚本：
 ```bash
-bash scripts/oneclick/run_mahjong_real_ai.sh
+bash scripts/run/arenas/mahjong/run.sh --mode real-ai
 ```
 
 ```bash
-bash scripts/oneclick/run_mahjong_showdown_human.sh
+bash scripts/run/arenas/mahjong/run.sh --mode human-vs-ai
 ```
 
 ```bash
-bash scripts/oneclick/run_mahjong_showdown_human_dummy.sh
+bash scripts/run/arenas/mahjong/run.sh --mode human-vs-dummy
 ```
 
-仅启动 replay server + 运行对局（无前端）：
+Showdown 模式：
 ```bash
-bash scripts/oneclick/run_mahjong_replay_and_game.sh
+bash scripts/run/arenas/mahjong/run.sh --mode showdown
 ```
 
 访问地址：
@@ -512,25 +514,25 @@ URL 参数（Human / AI）：
 
 ## 11. ViZDoom 指南
 
-文档：[English](game_arena_vizdoom.md) | [中文](game_arena_vizdoom_zh.md)
+文档：[English](game_arena_topics/game_arena_vizdoom.md) | [中文](game_arena_topics/game_arena_vizdoom_zh.md)
 
 本章节是 ViZDoom 的标准入口，统一整理了安装、启动脚本、回放流程和关键参数位置。
 
 ## 12. Retro Mario 指南
 
-文档：[English](game_arena_retro_mario.md) | [中文](game_arena_retro_mario_zh.md)
+文档：[English](game_arena_topics/game_arena_retro_mario.md) | [中文](game_arena_topics/game_arena_retro_mario_zh.md)
 
 本章节是 Retro Mario 的标准入口，统一整理了 ROM 准备、配置驱动启动、回放流程和关键参数位置。
 
 ## 13. ws_rgb 回放使用指南
 
-文档：[English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
-运行时接入与在线渲染文档：[English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
+文档：[English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
+运行时接入与在线渲染文档：[English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
 
 本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
 
 ## 14. PettingZoo Atari 指南
 
-文档：[English](game_arena_pettingzoo.md) | [中文](game_arena_pettingzoo_zh.md)
+文档：[English](game_arena_topics/game_arena_pettingzoo.md) | [中文](game_arena_topics/game_arena_pettingzoo_zh.md)
 
 本章节是 PettingZoo 的标准入口，统一整理了 ROM 安装、Demo 启动流程、回放使用方式和关键参数位置。
