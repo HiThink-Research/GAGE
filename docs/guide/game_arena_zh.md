@@ -533,6 +533,6 @@ URL 参数（Human / AI）：
 
 ## 14. PettingZoo Atari 指南
 
-文档：[English](game_arena_topics/game_arena_pettingzoo.md) | [中文](game_arena_topics/game_arena_pettingzoo_zh.md)
+文档：[English](game_arena_topics/pettingzoo_atari_run_commands.md) | [中文](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
 
-本章节是 PettingZoo 的标准入口，统一整理了 ROM 安装、Demo 启动流程、回放使用方式和关键参数位置。
+本章节是 PettingZoo 的标准入口，现已统一整理按游戏命令矩阵、ROM 安装、Demo 启动流程、回放使用方式和关键参数位置。
