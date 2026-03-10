@@ -25,9 +25,19 @@ class SandboxPool:
         self._uses: Dict[int, int] = {}
 
     def acquire(self) -> BaseSandbox:
-        if self._available:
-            sandbox = self._available.pop()
-        else:
+        sandbox: Optional[BaseSandbox] = None
+        while self._available:
+            candidate = self._available.pop()
+            if _sandbox_is_healthy(candidate):
+                sandbox = candidate
+                break
+            candidate_id = id(candidate)
+            self._uses.pop(candidate_id, None)
+            try:
+                candidate.teardown()
+            except Exception:
+                pass
+        if sandbox is None:
             if self._max_size is not None and self._total_size() >= self._max_size:
                 raise RuntimeError("sandbox pool exhausted")
             sandbox = self._builder()
@@ -61,3 +71,13 @@ class SandboxPool:
 
     def _total_size(self) -> int:
         return len(self._available) + len(self._in_use)
+
+
+def _sandbox_is_healthy(sandbox: BaseSandbox) -> bool:
+    checker = getattr(sandbox, "is_alive", None)
+    if not callable(checker):
+        return True
+    try:
+        return bool(checker())
+    except Exception:
+        return False

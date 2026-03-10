@@ -53,6 +53,8 @@ class SandboxProvider:
 
         if not self._sandbox_config:
             return None
+        if self._handle is not None and not _handle_is_alive(self._handle):
+            self._handle = _refresh_dead_handle(self._manager, self._handle)
         if self._handle is None:
             config = _prepare_sandbox_config(self._sandbox_config, self._scope)
             pool_key = config.get("pool_key")
@@ -198,3 +200,24 @@ def _now_ms() -> float:
     import time
 
     return time.perf_counter() * 1000.0
+
+
+def _handle_is_alive(handle: SandboxHandle) -> bool:
+    sandbox = getattr(handle, "sandbox", None)
+    if sandbox is None:
+        return False
+    checker = getattr(sandbox, "is_alive", None)
+    if not callable(checker):
+        return True
+    try:
+        return bool(checker())
+    except Exception:
+        return False
+
+
+def _refresh_dead_handle(manager: SandboxManager, handle: SandboxHandle) -> Optional[SandboxHandle]:
+    try:
+        manager.release(handle)
+    except Exception:
+        pass
+    return None
