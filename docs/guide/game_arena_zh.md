@@ -197,6 +197,8 @@ python run.py -c config/custom/gomoku_human_vs_llm.yaml
 
 ## 9. 进阶示例：斗地主 Showdown
 
+文档：[English](game_arena_topics/doudizhu_showdown.md) | [中文](game_arena_topics/doudizhu_showdown_zh.md)
+
 ### 9.1 快速启动
 
 前置条件：
@@ -512,25 +514,25 @@ URL 参数（Human / AI）：
 
 ## 11. ViZDoom 指南
 
-文档：[English](game_arena_vizdoom.md) | [中文](game_arena_vizdoom_zh.md)
+文档：[English](game_arena_topics/game_arena_vizdoom.md) | [中文](game_arena_topics/game_arena_vizdoom_zh.md)
 
 本章节是 ViZDoom 的标准入口，统一整理了安装、启动脚本、回放流程和关键参数位置。
 
 ## 12. Retro Mario 指南
 
-文档：[English](game_arena_retro_mario.md) | [中文](game_arena_retro_mario_zh.md)
+文档：[English](game_arena_topics/game_arena_retro_mario.md) | [中文](game_arena_topics/game_arena_retro_mario_zh.md)
 
 本章节是 Retro Mario 的标准入口，统一整理了 ROM 准备、配置驱动启动、回放流程和关键参数位置。
 
 ## 13. ws_rgb 回放使用指南
 
-文档：[English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
-运行时接入与在线渲染文档：[English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
+文档：[English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
+运行时接入与在线渲染文档：[English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
 
 本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
 
 ## 14. PettingZoo Atari 指南
 
-文档：[English](game_arena_pettingzoo.md) | [中文](game_arena_pettingzoo_zh.md)
+文档：[English](game_arena_topics/game_arena_pettingzoo.md) | [中文](game_arena_topics/game_arena_pettingzoo_zh.md)
 
 本章节是 PettingZoo 的标准入口，统一整理了 ROM 安装、Demo 启动流程、回放使用方式和关键参数位置。

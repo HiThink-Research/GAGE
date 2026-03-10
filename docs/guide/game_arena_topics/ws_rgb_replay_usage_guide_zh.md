@@ -6,7 +6,7 @@
 命令内容与 `docs/local/指令精简.md` 保持一致。
 
 如果需要查看 `ws_rgb` 的在线渲染、输入路由与接入契约（不止回放），请参考：
-`docs/guide/ws_rgb_runtime_dev_guide_zh.md`
+`docs/guide/game_arena_topics/ws_rgb_runtime_dev_guide_zh.md`
 
 ## 1. 范围
 

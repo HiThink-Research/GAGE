@@ -25,7 +25,7 @@ PettingZoo Atari 目前主要覆盖三类启动路径：
 | 推荐 AI ws_rgb 配置 | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | 推荐的 LLM vs LLM + 浏览器实时查看示例 |
 | 标准 AI 配置 | `config/custom/pettingzoo/space_invaders_ai.yaml` | 不带 ws_rgb 实时查看的标准 LLM Demo |
 | Human record 配置 | `config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml` | 浏览器输入的人类对战 |
-| 补充命令索引 | `docs/guide/pettingzoo_atari_run_commands.md` | 按游戏列出的完整 AI / Dummy 脚本启动命令 |
+| 补充命令索引 | `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md` | 按游戏列出的完整 AI / Dummy 脚本启动命令 |
 | 回放工具 | `src/gage_eval/tools/ws_rgb_replay.py` | 回放脚本底层使用的 replay server |
 
 ## 3. 前置准备
@@ -231,5 +231,5 @@ http://127.0.0.1:5800/ws_rgb/viewer
 
 - `docs/guide/pettingzoo_user_guide.md`
 - `docs/guide/pettingzoo_user_guide_zh.md`
-- `docs/guide/pettingzoo_atari_run_commands.md`
-- `docs/guide/pettingzoo_atari_run_commands_zh.md`
+- `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md`
+- `docs/guide/game_arena_topics/pettingzoo_atari_run_commands_zh.md`

@@ -25,7 +25,7 @@ These paths now share a common script entry. Use this guide as the standard entr
 | Recommended AI ws_rgb config | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | Recommended live-view LLM vs LLM example |
 | Standard AI config | `config/custom/pettingzoo/space_invaders_ai.yaml` | Standard LLM demo without ws_rgb live view |
 | Human record config | `config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml` | Browser-based human input |
-| Supplemental command index | `docs/guide/pettingzoo_atari_run_commands.md` | Full per-game AI and Dummy script list |
+| Supplemental command index | `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md` | Full per-game AI and Dummy script list |
 | Replay tool | `src/gage_eval/tools/ws_rgb_replay.py` | Underlying replay server used by the replay script |
 
 ## 3. Prerequisites
@@ -231,5 +231,5 @@ The following files are still kept in the repository:
 
 - `docs/guide/pettingzoo_user_guide.md`
 - `docs/guide/pettingzoo_user_guide_zh.md`
-- `docs/guide/pettingzoo_atari_run_commands.md`
-- `docs/guide/pettingzoo_atari_run_commands_zh.md`
+- `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md`
+- `docs/guide/game_arena_topics/pettingzoo_atari_run_commands_zh.md`

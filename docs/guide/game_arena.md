@@ -197,6 +197,8 @@ Related tests:
 
 ## 9. Advanced Example: Doudizhu Showdown
 
+Guide: [English](game_arena_topics/doudizhu_showdown.md) | [中文](game_arena_topics/doudizhu_showdown_zh.md)
+
 ### 9.1 Quick Start
 
 Prerequisites:
@@ -512,25 +514,25 @@ Common env vars:
 
 ## 11. ViZDoom guide
 
-Guide: [English](game_arena_vizdoom.md) | [中文](game_arena_vizdoom_zh.md)
+Guide: [English](game_arena_topics/game_arena_vizdoom.md) | [中文](game_arena_topics/game_arena_vizdoom_zh.md)
 
 This chapter is the canonical ViZDoom entry. It consolidates installation, startup scripts, replay flow, and key parameter locations.
 
 ## 12. Stable Retro Mario guide
 
-Guide: [English](game_arena_retro_mario.md) | [中文](game_arena_retro_mario_zh.md)
+Guide: [English](game_arena_topics/game_arena_retro_mario.md) | [中文](game_arena_topics/game_arena_retro_mario_zh.md)
 
 This chapter is the canonical Retro Mario entry. It consolidates ROM setup, config-driven startup, replay flow, and key parameter locations.
 
 ## 13. ws_rgb replay usage guide
 
-Guide: [English](ws_rgb_replay_usage_guide.md) | [中文](ws_rgb_replay_usage_guide_zh.md)
-Runtime integration and live rendering guide: [English](ws_rgb_runtime_dev_guide.md) | [中文](ws_rgb_runtime_dev_guide_zh.md)
+Guide: [English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
+Runtime integration and live rendering guide: [English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
 
 This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.
 
 ## 14. PettingZoo Atari guide
 
-Guide: [English](game_arena_pettingzoo.md) | [中文](game_arena_pettingzoo_zh.md)
+Guide: [English](game_arena_topics/game_arena_pettingzoo.md) | [中文](game_arena_topics/game_arena_pettingzoo_zh.md)
 
 This chapter is the canonical PettingZoo entry. It consolidates ROM installation, demo startup flow, replay usage, and key parameter locations.

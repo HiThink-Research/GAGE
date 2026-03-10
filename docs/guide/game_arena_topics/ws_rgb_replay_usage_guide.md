@@ -6,7 +6,7 @@ This guide explains how to run and replay game matches with the unified `ws_rgb`
 All commands are aligned with `docs/local/指令精简.md`.
 
 For live rendering, input routing, and integration contracts (beyond replay), see:
-`docs/guide/ws_rgb_runtime_dev_guide.md`
+`docs/guide/game_arena_topics/ws_rgb_runtime_dev_guide.md`
 
 ## 1. Scope
 
