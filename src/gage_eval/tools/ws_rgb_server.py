@@ -673,7 +673,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
     <div class="split">
       <div class="panel">
-        <div class="title">Frame text</div>
+        <div class="title">Frame Text</div>
         <pre id="boardText">(waiting frame)</pre>
       </div>
       <div class="panel">
@@ -701,7 +701,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       liveFrameImageUrl: "",
       captureEnabled: true,
       historyFrames: [],
-      historyLimit: 400,
+      historyLimit: 2000,
       replayMode: false,
       replayIndex: -1,
       replayTimer: null,
