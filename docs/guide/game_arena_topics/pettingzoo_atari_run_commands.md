@@ -11,7 +11,7 @@ Run these commands from the project root.
 | --- | --- | --- |
 | Start game | `scripts/run/arenas/pettingzoo/run.sh` | Standard startup entry for AI, Dummy, ws dummy, and human record modes |
 | Replay | `scripts/run/arenas/pettingzoo/replay.sh` | Replay one finished run by `run_id` |
-| Live-view helper | `scripts/run/arenas/pettingzoo/viewer.sh` | Specialized ws_rgb helper for the `space_invaders_dummy_ws_rgb` smoke test |
+| Live-view helper | `scripts/run/arenas/pettingzoo/viewer.sh` | Specialized websocketRGB helper for the `space_invaders_dummy_ws_rgb` smoke test |
 | Run + replay helper | `scripts/run/arenas/replay/run_and_open.sh` | Convenience helper that runs one representative PettingZoo config and then opens replay |
 
 ## 2. Replay Script
@@ -92,9 +92,9 @@ All integrated Dummy games:
 | `volleyball_pong` | `bash scripts/run/arenas/pettingzoo/run.sh --game volleyball_pong --mode dummy` |
 | `wizard_of_wor` | `bash scripts/run/arenas/pettingzoo/run.sh --game wizard_of_wor --mode dummy` |
 
-## 5. ws_rgb and Human Record Shortcuts
+## 5. websocketRGB and Human Record Shortcuts
 
-Recommended ws_rgb smoke test:
+Recommended websocketRGB smoke test:
 
 ```bash
 bash scripts/run/arenas/pettingzoo/run.sh --game space_invaders --mode ws_dummy

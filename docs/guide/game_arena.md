@@ -524,12 +524,11 @@ Guide: [English](game_arena_topics/game_arena_retro_mario.md) | [中文](game_ar
 
 This chapter is the canonical Retro Mario entry. It consolidates ROM setup, config-driven startup, replay flow, and key parameter locations.
 
-## 13. ws_rgb replay usage guide
+## 13. websocketRGB runtime and replay guide
 
-Guide: [English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
-Runtime integration and live rendering guide: [English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
+Guide: [English](game_arena_topics/websocketRGB_runtime_replay_guide.md) | [中文](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
-This chapter explains how to replay post-run artifacts through ws_rgb viewer, including required inputs (`sample.json` / `replay.json`) and recommended command patterns.
+This chapter is the canonical websocketRGB entry. It consolidates live runtime integration, input routing, replay usage, and troubleshooting in one place.
 
 ## 14. PettingZoo Atari guide
 

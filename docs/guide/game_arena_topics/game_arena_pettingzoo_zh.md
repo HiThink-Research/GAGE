@@ -8,7 +8,7 @@
 
 PettingZoo Atari 目前主要覆盖三类启动路径：
 
-- LLM 对战 + ws_rgb 路径，用于浏览器实时查看
+- LLM 对战 + websocketRGB 路径，用于浏览器实时查看
 - 标准 LLM 路径，用于 API 驱动评测
 - Human vs Human record 路径，用于浏览器交互
 
@@ -18,13 +18,13 @@ PettingZoo Atari 目前主要覆盖三类启动路径：
 
 | 类型 | 路径 | 用途 |
 | --- | --- | --- |
-| 标准启动脚本 | `scripts/run/arenas/pettingzoo/run.sh` | PettingZoo 的主启动入口，支持按游戏启动 Dummy、AI、ws_rgb Dummy 和 human record |
+| 标准启动脚本 | `scripts/run/arenas/pettingzoo/run.sh` | PettingZoo 的主启动入口，支持按游戏启动 Dummy、AI、websocketRGB Dummy 和 human record |
 | 回放脚本 | `scripts/run/arenas/pettingzoo/replay.sh` | 通过 `run_id` 回放一局已完成对局 |
-| ws_rgb 辅助脚本 | `scripts/run/arenas/pettingzoo/viewer.sh` | 通用 ws_rgb helper，会等待 viewer 可访问后再继续 |
+| websocketRGB 辅助脚本 | `scripts/run/arenas/pettingzoo/viewer.sh` | 通用 websocketRGB helper，会等待 viewer 可访问后再继续 |
 | 配置目录 | `config/custom/pettingzoo/` | 所有 PettingZoo 游戏配置都在这里 |
-| 推荐 AI ws_rgb 配置 | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | 推荐的 LLM vs LLM + 浏览器实时查看示例 |
+| 推荐 AI websocketRGB 配置 | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | 推荐的 LLM vs LLM + 浏览器实时查看示例 |
 | LiteLLM 本地模型示例 | `config/custom/pettingzoo/space_invaders_litellm_ai.yaml` | 用于本地或自建 OpenAI 兼容服务的示例配置 |
-| 标准 AI 配置 | `config/custom/pettingzoo/space_invaders_ai.yaml` | 不带 ws_rgb 实时查看的标准 LLM Demo |
+| 标准 AI 配置 | `config/custom/pettingzoo/space_invaders_ai.yaml` | 不带 websocketRGB 实时查看的标准 LLM Demo |
 | Human record 配置 | `config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml` | 浏览器输入的人类对战 |
 | 补充命令索引 | `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md` | 按游戏列出的完整 AI / Dummy 脚本启动命令 |
 | 回放工具 | `src/gage_eval/tools/ws_rgb_replay.py` | 回放脚本底层使用的 replay server |
@@ -58,7 +58,7 @@ PY
 
 ## 4. 启动路径
 
-### 4.1 推荐冒烟路径：dummy + ws_rgb 实时查看
+### 4.1 推荐冒烟路径：dummy + websocketRGB 实时查看
 
 ```bash
 bash scripts/run/arenas/pettingzoo/run.sh \
@@ -67,7 +67,7 @@ bash scripts/run/arenas/pettingzoo/run.sh \
   --run-id "pettingzoo_space_invaders_ws_dummy_$(date +%Y%m%d_%H%M%S)"
 ```
 
-建议先用这条命令验证 PettingZoo Atari、ROM 安装和 ws_rgb 实时查看链路，再切到模型模式。
+建议先用这条命令验证 PettingZoo Atari、ROM 安装和 websocketRGB 实时查看链路，再切到模型模式。
 
 这个模式下启动脚本的执行顺序：
 
@@ -78,7 +78,7 @@ bash scripts/run/arenas/pettingzoo/run.sh \
 5. 执行 `python run.py --config ...`。
 6. 对 websocket 模式打印 viewer 地址。
 
-### 4.2 推荐模型示例：LLM vs LLM + ws_rgb 实时查看
+### 4.2 推荐模型示例：LLM vs LLM + websocketRGB 实时查看
 
 ```bash
 OPENAI_API_KEY="<YOUR_KEY>" \
@@ -89,7 +89,7 @@ bash scripts/run/arenas/pettingzoo/viewer.sh
 
 如果你的目标是“AI 在玩游戏，同时浏览器里能看到实时画面”，文档里推荐的就是这条命令。
 
-这个 ws_rgb helper 的执行顺序：
+这个 websocketRGB helper 的执行顺序：
 
 1. 选择 Python 解释器。
 2. 校验配置文件路径。
@@ -178,7 +178,7 @@ bash scripts/run/arenas/pettingzoo/run.sh \
 2. 决定要跑的游戏和模式，或者准备一个自定义配置路径。
 3. 只有在使用 `--mode ai` 时才设置 API Key。
 4. 先用 dummy websocket 路径验证环境，再切到 `scripts/run/arenas/pettingzoo/viewer.sh` 或 `scripts/run/arenas/pettingzoo/run.sh` 执行模型模式。
-5. 对 `human_record`，在运行中打开 viewer；AI ws_rgb helper 会自动等待 viewer 就绪。
+5. 对 `human_record`，在运行中打开 viewer；AI websocketRGB helper 会自动等待 viewer 就绪。
 6. 如果要跑后回放，再执行 `scripts/run/arenas/pettingzoo/replay.sh <run_id>`。
 
 ## 6. 关键参数与修改位置
@@ -194,7 +194,7 @@ bash scripts/run/arenas/pettingzoo/run.sh \
 | API Key 强制校验 | `*_ai.yaml` 里的 `backends[].config.require_api_key` | 托管 API 建议保持 `true`；只有可信本地服务才建议关闭 |
 | 运行时长 | `environment.env_kwargs.max_cycles` | 环境层的帧数上限 |
 | Arena 回合上限 | `scheduler.max_turns` | Arena 层最大回合数 |
-| Viewer 模式 | `environment.display_mode` | 设为 `websocket` 时启用 ws_rgb 实时查看 |
+| Viewer 模式 | `environment.display_mode` | 设为 `websocket` 时启用 websocketRGB 实时查看 |
 | Viewer 地址 | `human_input.ws_host` / `human_input.ws_port` 和环境变量 `WS_RGB_PORT` | 实时 viewer 绑定地址；脚本会透传 `WS_RGB_PORT` |
 | 回放 FPS | `scripts/run/arenas/pettingzoo/replay.sh` 的环境变量 `FPS` | 跑后回放的播放速度 |
 | 回放地址 | `scripts/run/arenas/pettingzoo/replay.sh` 的环境变量 `HOST` / `PORT` | 回放服务监听地址 |

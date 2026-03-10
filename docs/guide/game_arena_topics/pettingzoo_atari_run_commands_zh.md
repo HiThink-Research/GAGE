@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | 启动游戏 | `scripts/run/arenas/pettingzoo/run.sh` | PettingZoo 的标准启动入口，支持 AI、Dummy、ws dummy 和 human record |
 | 回放 | `scripts/run/arenas/pettingzoo/replay.sh` | 通过 `run_id` 回放一局已完成对局 |
-| 实时查看辅助脚本 | `scripts/run/arenas/pettingzoo/viewer.sh` | 适用于 `space_invaders_dummy_ws_rgb` 冒烟验证的专用 ws_rgb 辅助脚本 |
+| 实时查看辅助脚本 | `scripts/run/arenas/pettingzoo/viewer.sh` | 适用于 `space_invaders_dummy_ws_rgb` 冒烟验证的专用 websocketRGB 辅助脚本 |
 | 运行后立即回放 | `scripts/run/arenas/replay/run_and_open.sh` | 先跑一个代表性 PettingZoo 配置，再自动打开 replay |
 
 ## 2. 回放脚本
@@ -92,9 +92,9 @@ export OPENAI_API_KEY="<YOUR_KEY>"
 | `volleyball_pong` | `bash scripts/run/arenas/pettingzoo/run.sh --game volleyball_pong --mode dummy` |
 | `wizard_of_wor` | `bash scripts/run/arenas/pettingzoo/run.sh --game wizard_of_wor --mode dummy` |
 
-## 5. ws_rgb 与 Human Record 快捷模式
+## 5. websocketRGB 与 Human Record 快捷模式
 
-推荐的 ws_rgb 冒烟验证：
+推荐的 websocketRGB 冒烟验证：
 
 ```bash
 bash scripts/run/arenas/pettingzoo/run.sh --game space_invaders --mode ws_dummy

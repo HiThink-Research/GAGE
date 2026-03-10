@@ -8,7 +8,7 @@ This is the canonical Game Arena guide for PettingZoo Atari in this repository. 
 
 PettingZoo Atari currently covers three common paths:
 
-- LLM vs LLM run with ws_rgb live view
+- LLM vs LLM run with websocketRGB live view
 - Standard LLM run for API-backed evaluation
 - Human vs Human record run for browser-based interaction
 
@@ -18,13 +18,13 @@ These paths now share a common script entry. Use this guide as the standard entr
 
 | Type | Path | Purpose |
 | --- | --- | --- |
-| Standard startup script | `scripts/run/arenas/pettingzoo/run.sh` | Main entry for per-game Dummy, AI, ws_rgb Dummy, and human record runs |
+| Standard startup script | `scripts/run/arenas/pettingzoo/run.sh` | Main entry for per-game Dummy, AI, websocketRGB Dummy, and human record runs |
 | Replay script | `scripts/run/arenas/pettingzoo/replay.sh` | Replay one finished run by `run_id` |
-| ws_rgb helper | `scripts/run/arenas/pettingzoo/viewer.sh` | Generic helper that waits for the ws_rgb viewer to become reachable |
+| websocketRGB helper | `scripts/run/arenas/pettingzoo/viewer.sh` | Generic helper that waits for the websocketRGB viewer to become reachable |
 | Config directory | `config/custom/pettingzoo/` | All PettingZoo game configs live here |
-| Recommended AI ws_rgb config | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | Recommended live-view LLM vs LLM example |
+| Recommended AI websocketRGB config | `config/custom/pettingzoo/space_invaders_ai_ws_rgb.yaml` | Recommended live-view LLM vs LLM example |
 | LiteLLM local-model example | `config/custom/pettingzoo/space_invaders_litellm_ai.yaml` | Example config for a local or self-hosted OpenAI-compatible model |
-| Standard AI config | `config/custom/pettingzoo/space_invaders_ai.yaml` | Standard LLM demo without ws_rgb live view |
+| Standard AI config | `config/custom/pettingzoo/space_invaders_ai.yaml` | Standard LLM demo without websocketRGB live view |
 | Human record config | `config/custom/pettingzoo/space_invaders_human_vs_human_record.yaml` | Browser-based human input |
 | Supplemental command index | `docs/guide/game_arena_topics/pettingzoo_atari_run_commands.md` | Full per-game AI and Dummy script list |
 | Replay tool | `src/gage_eval/tools/ws_rgb_replay.py` | Underlying replay server used by the replay script |
@@ -58,7 +58,7 @@ PY
 
 ## 4. Startup Paths
 
-### 4.1 Recommended smoke test: dummy + ws_rgb live view
+### 4.1 Recommended smoke test: dummy + websocketRGB live view
 
 ```bash
 bash scripts/run/arenas/pettingzoo/run.sh \
@@ -67,7 +67,7 @@ bash scripts/run/arenas/pettingzoo/run.sh \
   --run-id "pettingzoo_space_invaders_ws_dummy_$(date +%Y%m%d_%H%M%S)"
 ```
 
-Use this first to validate PettingZoo Atari, ROM setup, and ws_rgb rendering before switching to model-backed runs.
+Use this first to validate PettingZoo Atari, ROM setup, and websocketRGB rendering before switching to model-backed runs.
 
 What the startup script does in this mode:
 
@@ -78,7 +78,7 @@ What the startup script does in this mode:
 5. Starts `python run.py --config ...`.
 6. Prints the viewer URL for websocket modes.
 
-### 4.2 Recommended model example: LLM vs LLM with ws_rgb live view
+### 4.2 Recommended model example: LLM vs LLM with websocketRGB live view
 
 ```bash
 OPENAI_API_KEY="<YOUR_KEY>" \
@@ -89,7 +89,7 @@ bash scripts/run/arenas/pettingzoo/viewer.sh
 
 This is the recommended documented example when you want the game to be played by AI and still be observable through the browser viewer.
 
-What the ws_rgb helper does:
+What the websocketRGB helper does:
 
 1. Picks a Python executable.
 2. Validates the config path.
@@ -178,7 +178,7 @@ The repository now follows this order for PettingZoo demos:
 2. Decide the game and startup mode, or prepare a custom config path.
 3. Set API keys only when using `--mode ai`.
 4. Validate the environment with the dummy websocket path first, then switch to `scripts/run/arenas/pettingzoo/viewer.sh` or `scripts/run/arenas/pettingzoo/run.sh` for model-backed modes.
-5. Open the viewer during the run for `human_record`; the AI ws_rgb helper waits for the viewer automatically.
+5. Open the viewer during the run for `human_record`; the AI websocketRGB helper waits for the viewer automatically.
 6. Start `scripts/run/arenas/pettingzoo/replay.sh <run_id>` after the run if you want post-run playback.
 
 ## 6. Key Parameters and Where to Change Them
@@ -194,7 +194,7 @@ The repository now follows this order for PettingZoo demos:
 | API-key enforcement | `backends[].config.require_api_key` in `*_ai.yaml` | Keep it `true` for hosted APIs; disable only for trusted local gateways |
 | Runtime length | `environment.env_kwargs.max_cycles` | Environment frame limit |
 | Arena turn cap | `scheduler.max_turns` | Arena-side maximum turn count |
-| Viewer mode | `environment.display_mode` | Use `websocket` for ws_rgb live view |
+| Viewer mode | `environment.display_mode` | Use `websocket` for websocketRGB live view |
 | Viewer host/port | `human_input.ws_host` / `human_input.ws_port` and env `WS_RGB_PORT` | Bind address for the live viewer; the script passes `WS_RGB_PORT` through |
 | Replay playback FPS | Env `FPS` for `scripts/run/arenas/pettingzoo/replay.sh` | Replay speed in the post-run viewer |
 | Replay host/port | Env `HOST` and `PORT` for `scripts/run/arenas/pettingzoo/replay.sh` | Replay server bind address |

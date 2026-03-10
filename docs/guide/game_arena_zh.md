@@ -524,12 +524,11 @@ URL 参数（Human / AI）：
 
 本章节是 Retro Mario 的标准入口，统一整理了 ROM 准备、配置驱动启动、回放流程和关键参数位置。
 
-## 13. ws_rgb 回放使用指南
+## 13. websocketRGB 运行时与回放指南
 
-文档：[English](game_arena_topics/ws_rgb_replay_usage_guide.md) | [中文](game_arena_topics/ws_rgb_replay_usage_guide_zh.md)
-运行时接入与在线渲染文档：[English](game_arena_topics/ws_rgb_runtime_dev_guide.md) | [中文](game_arena_topics/ws_rgb_runtime_dev_guide_zh.md)
+文档：[English](game_arena_topics/websocketRGB_runtime_replay_guide.md) | [中文](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
-本章节说明如何基于运行产物（`sample.json` / `replay.json`）启动 ws_rgb 回放服务，并提供推荐命令与使用方式。
+本章节作为 websocketRGB 的统一入口，集中说明在线运行时接入、输入路由、回放使用方式与排障方法。
 
 ## 14. PettingZoo Atari 指南
 

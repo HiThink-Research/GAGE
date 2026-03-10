@@ -8,7 +8,7 @@ This is the canonical Game Arena guide for ViZDoom in this repository. It consol
 
 ViZDoom currently provides two startup styles:
 
-- ws_rgb-based human vs LLM interaction
+- websocketRGB-based human vs LLM interaction
 - Pygame-based local input or backend-only runs for the other paths
 
 The recommended validation flow is: dummy smoke test first, then the browser-based `human vs LLM` path.
@@ -17,9 +17,9 @@ The recommended validation flow is: dummy smoke test first, then the browser-bas
 
 | Type | Path | Purpose |
 | --- | --- | --- |
-| ws_rgb helper | `scripts/run/arenas/vizdoom/viewer.sh` | Generic helper that waits for the ws_rgb viewer to become reachable |
-| Human vs LLM ws_rgb config | `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` | Recommended browser-based human vs LLM example with tick scheduler |
-| Dummy ws_rgb config | `config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | Optional dummy-only websocket config for environment checks |
+| websocketRGB helper | `scripts/run/arenas/vizdoom/viewer.sh` | Generic helper that waits for the websocketRGB viewer to become reachable |
+| Human vs LLM websocketRGB config | `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` | Recommended browser-based human vs LLM example with tick scheduler |
+| Dummy websocketRGB config | `config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | Optional dummy-only websocket config for environment checks |
 | Human vs Dummy script | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-dummy` | Local pygame validation run |
 | Human Solo script | `scripts/run/arenas/vizdoom/run.sh --mode human-solo` | Human-only playground |
 | Human vs LLM script | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm` | Local human input against an LLM |
@@ -28,7 +28,7 @@ The recommended validation flow is: dummy smoke test first, then the browser-bas
 | AI vs AI script | `scripts/run/arenas/vizdoom/run.sh --mode ai-vs-ai` | Alias path for the AI-vs-AI flow |
 | Agent vs LLM script | `scripts/run/arenas/vizdoom/run.sh --mode agent-vs-llm` | Human/agent incremental variant |
 | Replay script | `scripts/run/arenas/vizdoom/replay.sh` | Replay a finished run by `run_id` |
-| Websocket human config | `config/custom/vizdoom_human_vs_llm_record_ws_rgb.yaml` | Browser-based human input through ws_rgb |
+| Websocket human config | `config/custom/vizdoom_human_vs_llm_record_ws_rgb.yaml` | Browser-based human input through websocketRGB |
 | Main config directory | `config/custom/vizdoom_*.yaml` | All ViZDoom run configs |
 
 ## 3. Prerequisites
@@ -57,7 +57,7 @@ Notes:
 
 ## 4. Startup Paths
 
-### 4.1 Recommended smoke test: dummy + ws_rgb
+### 4.1 Recommended smoke test: dummy + websocketRGB
 
 ```bash
 RUN_ID="vizdoom_human_vs_llm_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
@@ -65,9 +65,9 @@ RUN_ID="vizdoom_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
 bash scripts/run/arenas/vizdoom/viewer.sh
 ```
 
-Use this first to validate ViZDoom, ws_rgb, and browser viewing before adding model-backed runs.
+Use this first to validate ViZDoom, websocketRGB, and browser viewing before adding model-backed runs.
 
-What the ws_rgb helper does:
+What the websocketRGB helper does:
 
 1. Picks a Python executable.
 2. Validates the config path.
@@ -104,7 +104,7 @@ Local key map printed by the pygame script:
 - `D` or `Right`: action `3`
 - `Space` or `J`: action `1`
 
-### 4.2 Recommended model example: human vs LLM with ws_rgb live view
+### 4.2 Recommended model example: human vs LLM with websocketRGB live view
 
 ```bash
 OPENAI_API_KEY="<YOUR_KEY>" \
@@ -129,7 +129,7 @@ Useful variables for this example:
 Where to change the model/API for this command:
 
 - API key: export `OPENAI_API_KEY` before launch. The wrapper also accepts `LITELLM_API_KEY` and copies it into `OPENAI_API_KEY`. Keep one of them non-empty even for a local OpenAI-compatible gateway, because the startup scripts check it before starting.
-- Recommended ws_rgb example: edit `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` under `backends[0].config`. Change `api_base` to switch the endpoint, keep `provider: openai` for OpenAI-compatible services, and change `model` or env `VIZDOOM_P1_MODEL` to switch the served model.
+- Recommended websocketRGB example: edit `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` under `backends[0].config`. Change `api_base` to switch the endpoint, keep `provider: openai` for OpenAI-compatible services, and change `model` or env `VIZDOOM_P1_MODEL` to switch the served model.
 - Other model commands use the same fields in their own YAMLs: `human-vs-llm` uses `config/custom/vizdoom_human_vs_llm.yaml`, `human-vs-llm-record` uses `config/custom/vizdoom_human_vs_llm_record.yaml`, and `llm-vs-llm` uses `config/custom/vizdoom_llm_vs_llm.yaml`.
 
 ### 4.3 Human vs LLM
@@ -178,10 +178,10 @@ http://127.0.0.1:5800/ws_rgb/viewer
 The current ViZDoom startup sequence is:
 
 1. Install optional runtime dependencies such as `vizdoom` and `pygame`.
-2. Validate the environment with the dummy ws_rgb path first, then switch to `vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` or another `scripts/run/arenas/vizdoom/run.sh --mode ...` path for model-backed runs.
+2. Validate the environment with the dummy websocketRGB path first, then switch to `vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` or another `scripts/run/arenas/vizdoom/run.sh --mode ...` path for model-backed runs.
 3. Set API keys when the selected mode includes an LLM backend.
 4. Start the run.
-5. For ws_rgb helper runs, wait for the printed viewer URL; for pygame modes, keep the local input window focused while playing.
+5. For websocketRGB helper runs, wait for the printed viewer URL; for pygame modes, keep the local input window focused while playing.
 6. After the run, use `scripts/run/arenas/vizdoom/replay.sh` for replay.
 
 ## 6. Key Parameters and Where to Change Them
@@ -191,7 +191,7 @@ The current ViZDoom startup sequence is:
 | API key | Shell env: `OPENAI_API_KEY` or `LITELLM_API_KEY` | Required by LLM-backed scripts |
 | Script config path | Script variable `CFG` | Swap the YAML used by the canonical runner |
 | Backend endpoint | `backends[].config.api_base` in the selected `config/custom/vizdoom_*.yaml` | Switch between hosted and local OpenAI-compatible endpoints |
-| Model name | `backends[].config.model` and env `VIZDOOM_P1_MODEL` in the strategy ws_rgb config | Select the LLM model |
+| Model name | `backends[].config.model` and env `VIZDOOM_P1_MODEL` in the strategy websocketRGB config | Select the LLM model |
 | Output location | Script variable `OUTPUT_DIR` | Base directory for run artifacts |
 | Scheduler pace | `scheduler.tick_ms` | Tick interval in milliseconds |
 | Record timeout | `scheduler.action_timeout_ms` | Human/LLM wait timeout in record mode |

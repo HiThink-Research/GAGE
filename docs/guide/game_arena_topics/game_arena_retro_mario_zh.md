@@ -8,9 +8,9 @@
 
 Retro Mario 现在已经统一到脚本入口，覆盖以下常见路径：
 
-- Dummy + ws_rgb 冒烟验证
-- OpenAI + ws_rgb 实时查看
-- Human + ws_rgb 人类控制
+- Dummy + websocketRGB 冒烟验证
+- OpenAI + websocketRGB 实时查看
+- Human + websocketRGB 人类控制
 - Dummy 或 OpenAI 的 headless 运行
 
 实际运行行为仍由 YAML 配置决定，但启动和回放入口已经统一收口到 `scripts/run/arenas/retro_mario/`。
@@ -21,9 +21,9 @@ Retro Mario 现在已经统一到脚本入口，覆盖以下常见路径：
 | --- | --- | --- |
 | 标准启动脚本 | `scripts/run/arenas/retro_mario/run.sh` | Mario 常见模式的统一启动入口 |
 | 回放脚本 | `scripts/run/arenas/retro_mario/replay.sh` | 通过 `run_id` 回放一局已完成运行 |
-| Dummy ws_rgb 配置 | `config/custom/retro_mario_phase1_dummy_ws.yaml` | 最快的实时查看冒烟验证 |
-| Human ws_rgb 配置 | `config/custom/retro_mario_phase1_human_ws.yaml` | 人类手动控制 Mario |
-| OpenAI ws_rgb 配置 | `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml` | API 驱动的实时查看 Demo |
+| Dummy websocketRGB 配置 | `config/custom/retro_mario_phase1_dummy_ws.yaml` | 最快的实时查看冒烟验证 |
+| Human websocketRGB 配置 | `config/custom/retro_mario_phase1_human_ws.yaml` | 人类手动控制 Mario |
+| OpenAI websocketRGB 配置 | `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml` | API 驱动的实时查看 Demo |
 | OpenAI headless 配置 | `config/custom/retro_mario_openai_headless_auto_eval.yaml` | API 驱动的无界面 Demo |
 | Dummy headless 配置 | `config/custom/retro_mario_phase1_dummy_headless_auto_eval.yaml` | 不依赖 viewer 的离线冒烟测试 |
 | 数据集 | `config/custom/retro_mario_phase1.jsonl` | 默认样本输入 |
@@ -59,7 +59,7 @@ export RETRO_OPENAI_MODEL="gpt-4o-mini"
 
 ## 4. 启动路径
 
-### 4.1 推荐冒烟路径：dummy + ws_rgb
+### 4.1 推荐冒烟路径：dummy + websocketRGB
 
 ```bash
 bash scripts/run/arenas/retro_mario/run.sh \
@@ -100,12 +100,12 @@ http://127.0.0.1:5800/ws_rgb/viewer
 
 常用环境变量：
 
-- `RETRO_WS_RGB_PORT`：websocket 模式的 ws_rgb 端口
+- `RETRO_WS_RGB_PORT`：websocket 模式的 websocketRGB 端口
 - `OPENAI_API_KEY`：`openai_ws` 和 `openai_headless` 必需
 - `LITELLM_API_KEY`：可作为 OpenAI 模式的回退 key 来源
 - `RETRO_OPENAI_MODEL`：如果配置支持，可作为模型名覆盖
 
-### 4.2 OpenAI + ws_rgb
+### 4.2 OpenAI + websocketRGB
 
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
@@ -122,7 +122,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 - 托管 OpenAI 兼容 API：切换接口地址时改 `backends[0].config.base_url`；切换模型时改 `backends[0].config.model`，或者直接设置 `RETRO_OPENAI_MODEL`。
 - 本地 OpenAI 兼容服务：把 `backends[0].config.base_url` 改成本地服务地址，再把 `backends[0].config.model` 改成服务暴露的模型名。当前这两份配置里 `require_api_key: true`，所以要么保持 `OPENAI_API_KEY` 非空，要么在你确认本地服务不需要鉴权时把这个开关改成 `false`。
 
-### 4.3 Human + ws_rgb
+### 4.3 Human + websocketRGB
 
 ```bash
 bash scripts/run/arenas/retro_mario/run.sh \
@@ -152,7 +152,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
   --run-id "retro_mario_dummy_headless_$(date +%Y%m%d_%H%M%S)"
 ```
 
-如果你只想做离线验证、不需要 ws_rgb，就使用 headless 配置。
+如果你只想做离线验证、不需要 websocketRGB，就使用 headless 配置。
 
 OpenAI headless 示例：
 
@@ -195,7 +195,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 | 模型接口地址 | 当前所选 `retro_mario_openai_*.yaml` 里的 `backends[].config.base_url` | 在托管 API 和本地 OpenAI 兼容服务之间切换 |
 | 模型名 | `RETRO_OPENAI_MODEL` 或 `backends[].config.model` | 选择 OpenAI 模型 |
 | API Key 强制校验 | `backends[].config.require_api_key` | 托管 API 建议保持 `true`；只有可信本地服务才建议关闭 |
-| 实时查看端口 | `human_input.ws_port` 或环境变量 `RETRO_WS_RGB_PORT` | websocket 配置的 ws_rgb 端口；脚本会透传这个环境变量 |
+| 实时查看端口 | `human_input.ws_port` 或环境变量 `RETRO_WS_RGB_PORT` | websocket 配置的 websocketRGB 端口；脚本会透传这个环境变量 |
 | 显示模式 | `environment.display_mode` | `websocket` 用于实时查看，`headless` 用于离线运行 |
 | 合法动作 | `environment.legal_moves` | 暴露给玩家的动作集合 |
 | 持续帧数 | `environment.action_schema.hold_ticks_*` 和 `parser.hold_ticks_*` | 宏动作持续多久，以及默认值/上下界 |
@@ -211,7 +211,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 
 - Mario 动作是 JSON，例如 `{"move":"right_run_jump","hold_ticks":6}`。
 - 如果模型没有输出 `hold_ticks`，解析器会补默认值，并限制在配置范围内。
-- `display_mode: websocket` 在运行时会被当成 headless 环境加 ws_rgb 推流，而不是本地窗口渲染。
+- `display_mode: websocket` 在运行时会被当成 headless 环境加 websocketRGB 推流，而不是本地窗口渲染。
 
 ## 7. 产物与回放
 
