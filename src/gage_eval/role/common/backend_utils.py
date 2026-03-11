@@ -39,6 +39,7 @@ __all__ = [
     "_merge_multimodal_sources",
     "collect_multimodal_sources",
     "normalize_messages_safe",
+    "normalize_prompt_token_ids",
     "check_tokenizer_conflict",
     "maybe_tokenize_messages",
     "graceful_loop_shutdown",
@@ -415,6 +416,50 @@ def check_tokenizer_conflict(prepared: Dict[str, Any], backend_tokenizer_path: A
         raise ValueError(f"Conflicting tokenizer_path: dataset={dataset_tok} backend={backend_tokenizer_path}")
 
 
+def normalize_prompt_token_ids(tokenized: Any) -> Optional[Any]:
+    """Collapse tokenizer/chat-template outputs into a plain prompt_token_ids payload."""
+
+    if tokenized is None:
+        return None
+
+    candidate = tokenized
+    while isinstance(candidate, dict):
+        if "prompt_token_ids" in candidate:
+            candidate = candidate["prompt_token_ids"]
+        elif "input_ids" in candidate:
+            candidate = candidate["input_ids"]
+        else:
+            return None
+
+    if hasattr(candidate, "input_ids") and not isinstance(candidate, (list, tuple)):
+        input_ids = getattr(candidate, "input_ids", None)
+        if input_ids is not None:
+            candidate = input_ids
+
+    if hasattr(candidate, "tolist") and not isinstance(candidate, (str, bytes, list, tuple, dict)):
+        try:
+            candidate = candidate.tolist()
+        except Exception:
+            pass
+
+    if isinstance(candidate, tuple):
+        candidate = list(candidate)
+
+    if isinstance(candidate, list) and len(candidate) == 1:
+        nested = candidate[0]
+        if hasattr(nested, "tolist") and not isinstance(nested, (str, bytes, list, tuple, dict)):
+            try:
+                nested = nested.tolist()
+            except Exception:
+                pass
+        if isinstance(nested, tuple):
+            nested = list(nested)
+        if isinstance(nested, list):
+            candidate = nested
+
+    return candidate
+
+
 def maybe_tokenize_messages(
     prepared: Dict[str, Any],
     prompt: str,
@@ -432,7 +477,12 @@ def maybe_tokenize_messages(
     """
 
     inputs = prepared.get("inputs")
-    if isinstance(inputs, dict) and inputs.get("prompt_token_ids"):
+    if isinstance(inputs, dict) and inputs.get("prompt_token_ids") is not None:
+        normalized_ids = normalize_prompt_token_ids(inputs.get("prompt_token_ids"))
+        if normalized_ids is not None:
+            normalized_inputs = dict(inputs)
+            normalized_inputs["prompt_token_ids"] = normalized_ids
+            return prompt, normalized_inputs, {}
         return prompt, inputs, {}
     if not tokenizer and not (processor and hasattr(processor, "apply_chat_template")):
         return prompt, inputs, {}
@@ -487,11 +537,7 @@ def maybe_tokenize_messages(
             rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
             tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
 
-        if isinstance(tokenized, list):
-            first = tokenized[0] if tokenized else []
-            token_ids = first if isinstance(first, (list, tuple)) else tokenized
-        else:
-            token_ids = tokenized
+        token_ids = normalize_prompt_token_ids(tokenized)
 
         new_prompt = str(rendered) if rendered else prompt
         if not isinstance(inputs, dict):

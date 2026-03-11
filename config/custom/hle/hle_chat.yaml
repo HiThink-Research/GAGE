@@ -34,6 +34,7 @@ datasets:
       split: test
     loader: hf_hub
     params:
+      local_path: ${HLE_LOCAL_PATH:-}
       preprocess: hle_preprocessor
 backends:
   - backend_id: hle_vllm_backend
