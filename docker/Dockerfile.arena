@@ -12,4 +12,4 @@ ENV PYTHONPATH=/workspace/src
 
 EXPOSE 9999
 
-CMD ["python", "-m", "gage_eval.role.arena.game_daemon", "--port", "9999"]
+CMD ["python", "-m", "gage_eval.role.arena.game_daemon", "--host", "0.0.0.0", "--port", "9999"]

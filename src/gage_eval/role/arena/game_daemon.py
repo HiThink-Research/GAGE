@@ -1,4 +1,15 @@
-"""TCP daemon for sandboxed arena environments."""
+"""TCP daemon for sandboxed arena environments.
+
+This daemon is designed to run **inside** a sandbox container, accepting
+one connection at a time on a serial accept loop.  It is NOT safe for
+concurrent access — callers must serialize requests externally.
+
+Security: when running inside a container, pass ``--host 0.0.0.0`` so
+the sandbox exec bridge can reach the daemon.  The port must NOT be
+published to the host network; container isolation is the security
+boundary.  The default bind address is 127.0.0.1 (loopback only) so
+that local-dev usage is safe by default.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +23,27 @@ from typing import Any, Dict, Optional
 from gage_eval.registry import registry
 from gage_eval.role.arena.types import ArenaAction
 
-_ENV: Optional[Any] = None
+
+class _DaemonState:
+    """Per-daemon mutable state.  Avoids module-level globals."""
+
+    __slots__ = ("env",)
+
+    def __init__(self) -> None:
+        self.env: Optional[Any] = None
 
 
-def handle_request(request: Dict[str, Any]) -> Dict[str, Any]:
+_STATE = _DaemonState()
+
+
+def handle_request(
+    request: Dict[str, Any],
+    state: Optional[_DaemonState] = None,
+) -> Dict[str, Any]:
     """Handle a single line-delimited JSON-RPC style request."""
 
-    global _ENV
+    if state is None:
+        state = _STATE
 
     method = str(request.get("method") or "")
     params = request.get("params") if isinstance(request.get("params"), dict) else {}
@@ -29,29 +54,31 @@ def handle_request(request: Dict[str, Any]) -> Dict[str, Any]:
         env_cls = registry.get("arena_impls", impl)
         init_kwargs = dict(params)
         init_kwargs.pop("impl", None)
-        _ENV = env_cls(**init_kwargs)
+        state.env = env_cls(**init_kwargs)
         return {"status": "ok"}
-    if _ENV is None:
+    if state.env is None:
         raise RuntimeError("environment_not_initialized")
     if method == "reset":
-        _ENV.reset()
+        state.env.reset()
         return {"status": "ok"}
     if method == "get_active_player":
-        return {"player_id": _ENV.get_active_player()}
+        return {"player_id": state.env.get_active_player()}
     if method == "observe":
         return {
-            "observation": _serialize(_ENV.observe(str(params.get("player") or "")))
+            "observation": _serialize(
+                state.env.observe(str(params.get("player") or ""))
+            )
         }
     if method == "apply":
         action_payload = (
             params.get("action") if isinstance(params.get("action"), dict) else {}
         )
-        result = _ENV.apply(_deserialize_action(action_payload))
+        result = state.env.apply(_deserialize_action(action_payload))
         return {"game_result": _serialize(result) if result is not None else None}
     if method == "is_terminal":
-        return {"terminal": bool(_ENV.is_terminal())}
+        return {"terminal": bool(state.env.is_terminal())}
     if method == "build_result":
-        result = _ENV.build_result(
+        result = state.env.build_result(
             result=str(params.get("result") or ""),
             reason=params.get("reason"),
         )
@@ -59,13 +86,14 @@ def handle_request(request: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError(f"unknown method: {method}")
 
 
-def serve(*, host: str = "0.0.0.0", port: int = 9999) -> None:
-    """Start the arena daemon loop."""
+def serve(*, host: str = "127.0.0.1", port: int = 9999) -> None:
+    """Start the arena daemon loop (single-connection, serial)."""
 
+    state = _DaemonState()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((host, int(port)))
-    server.listen(16)
+    server.listen(1)
     print(f"game_daemon listening on {host}:{port}", flush=True)
     while True:
         conn, _ = server.accept()
@@ -80,7 +108,7 @@ def serve(*, host: str = "0.0.0.0", port: int = 9999) -> None:
                     break
             try:
                 request = json.loads(data.strip() or b"{}")
-                response = handle_request(request)
+                response = handle_request(request, state)
             except Exception as exc:  # pragma: no cover - defensive daemon path
                 response = {
                     "error": str(exc),
@@ -114,7 +142,7 @@ def _serialize(value: Any) -> Any:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the arena TCP daemon.")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9999)
     return parser.parse_args()
 

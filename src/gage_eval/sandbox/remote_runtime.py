@@ -68,87 +68,9 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
             Runtime handle metadata for downstream consumers.
         """
 
-        # STEP 1: Merge runtime config overrides.
-        self._runtime_configs.update(config.get("runtime_configs", {}) or {})
-        self._control_endpoint = _first_non_empty(
-            config.get("control_endpoint"),
-            self._runtime_configs.get("control_endpoint"),
-            self._control_endpoint,
-        )
-        self._data_endpoint = _first_non_empty(
-            config.get("data_endpoint"),
-            self._runtime_configs.get("data_endpoint"),
-            self._data_endpoint,
-        )
-        self._exec_url = _first_non_empty(
-            config.get("exec_url"),
-            self._runtime_configs.get("exec_url"),
-            self._exec_url,
-        )
-        self._exec_path = str(self._runtime_configs.get("exec_path", self._exec_path))
-        self._file_read_url = _first_non_empty(
-            config.get("file_read_url"),
-            self._runtime_configs.get("file_read_url"),
-            self._file_read_url,
-        )
-        self._file_write_url = _first_non_empty(
-            config.get("file_write_url"),
-            self._runtime_configs.get("file_write_url"),
-            self._file_write_url,
-        )
-        self._file_read_path = str(
-            self._runtime_configs.get("file_read_path", self._file_read_path)
-        )
-        self._file_write_path = str(
-            self._runtime_configs.get("file_write_path", self._file_write_path)
-        )
-        self._env_endpoint = _first_non_empty(
-            config.get("env_endpoint"),
-            config.get("environment_endpoint"),
-            self._runtime_configs.get("env_endpoint"),
-            self._runtime_configs.get("environment_endpoint"),
-            self._env_endpoint,
-        )
-        self._apis_endpoint = _first_non_empty(
-            config.get("apis_endpoint"),
-            self._runtime_configs.get("apis_endpoint"),
-            self._apis_endpoint,
-        )
-        self._mcp_endpoint = _first_non_empty(
-            config.get("mcp_endpoint"),
-            self._runtime_configs.get("mcp_endpoint"),
-            self._mcp_endpoint,
-        )
-        self._timeout_s = int(self._runtime_configs.get("timeout_s", self._timeout_s))
-        self._file_timeout_s = int(
-            self._runtime_configs.get("file_timeout_s", self._file_timeout_s)
-        )
-        self._startup_timeout_s = int(
-            self._runtime_configs.get("startup_timeout_s", self._startup_timeout_s)
-        )
-        self._max_retries = int(
-            self._runtime_configs.get("max_retries", self._max_retries)
-        )
-        self._retry_backoff = float(
-            self._runtime_configs.get("retry_backoff_factor", self._retry_backoff)
-        )
-        self._headers = dict(self._runtime_configs.get("headers") or self._headers)
-        self._requester = self._runtime_configs.get("requester") or self._requester
-        self._auth_type = _first_non_empty(
-            config.get("auth_type"),
-            self._runtime_configs.get("auth_type"),
-            self._auth_type,
-        )
-        self._auth_token = _first_non_empty(
-            config.get("auth_token"),
-            self._runtime_configs.get("auth_token"),
-            self._auth_token,
-        )
-        self._api_key_header = str(
-            self._runtime_configs.get("api_key_header", self._api_key_header)
-        )
+        self._merge_start_config(config)
 
-        # STEP 2: Create a managed sandbox instance when a control plane exists.
+        # Create managed sandbox when a control plane exists.
         platform_response: Dict[str, Any] = {}
         if self._control_endpoint:
             create_payload = {
@@ -173,9 +95,69 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
                 if isinstance(ready_response, dict):
                     self._apply_platform_response(ready_response)
 
-        # STEP 3: Mark running and expose the runtime handle.
+        # Mark running and expose the runtime handle.
         self._running = True
         return self._build_runtime_handle()
+
+    def _merge_start_config(self, config: Dict[str, Any]) -> None:
+        """Merge start-time config overrides into instance attributes."""
+
+        self._runtime_configs.update(config.get("runtime_configs", {}) or {})
+        rc = self._runtime_configs
+
+        self._control_endpoint = _first_non_empty(
+            config.get("control_endpoint"), rc.get("control_endpoint"),
+            self._control_endpoint,
+        )
+        self._data_endpoint = _first_non_empty(
+            config.get("data_endpoint"), rc.get("data_endpoint"),
+            self._data_endpoint,
+        )
+        self._exec_url = _first_non_empty(
+            config.get("exec_url"), rc.get("exec_url"), self._exec_url,
+        )
+        self._exec_path = str(rc.get("exec_path", self._exec_path))
+        self._file_read_url = _first_non_empty(
+            config.get("file_read_url"), rc.get("file_read_url"),
+            self._file_read_url,
+        )
+        self._file_write_url = _first_non_empty(
+            config.get("file_write_url"), rc.get("file_write_url"),
+            self._file_write_url,
+        )
+        self._file_read_path = str(rc.get("file_read_path", self._file_read_path))
+        self._file_write_path = str(rc.get("file_write_path", self._file_write_path))
+        self._env_endpoint = _first_non_empty(
+            config.get("env_endpoint"), config.get("environment_endpoint"),
+            rc.get("env_endpoint"), rc.get("environment_endpoint"),
+            self._env_endpoint,
+        )
+        self._apis_endpoint = _first_non_empty(
+            config.get("apis_endpoint"), rc.get("apis_endpoint"),
+            self._apis_endpoint,
+        )
+        self._mcp_endpoint = _first_non_empty(
+            config.get("mcp_endpoint"), rc.get("mcp_endpoint"),
+            self._mcp_endpoint,
+        )
+        self._timeout_s = int(rc.get("timeout_s", self._timeout_s))
+        self._file_timeout_s = int(rc.get("file_timeout_s", self._file_timeout_s))
+        self._startup_timeout_s = int(
+            rc.get("startup_timeout_s", self._startup_timeout_s)
+        )
+        self._max_retries = int(rc.get("max_retries", self._max_retries))
+        self._retry_backoff = float(
+            rc.get("retry_backoff_factor", self._retry_backoff)
+        )
+        self._headers = dict(rc.get("headers") or self._headers)
+        self._requester = rc.get("requester") or self._requester
+        self._auth_type = _first_non_empty(
+            config.get("auth_type"), rc.get("auth_type"), self._auth_type,
+        )
+        self._auth_token = _first_non_empty(
+            config.get("auth_token"), rc.get("auth_token"), self._auth_token,
+        )
+        self._api_key_header = str(rc.get("api_key_header", self._api_key_header))
 
     def exec(self, command: str, timeout: int | None = None) -> ExecResult:
         """Execute a command via the remote execution endpoint.
@@ -386,7 +368,7 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
                 last_error = exc
             if attempt >= self._max_retries:
                 break
-            time.sleep(max(0.0, self._retry_backoff**attempt))
+            time.sleep(max(0.0, self._retry_backoff ** max(0, attempt - 1)))
         if last_error is not None:
             raise last_error
         raise RuntimeError("platform_request_exhausted")

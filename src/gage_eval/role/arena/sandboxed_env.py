@@ -16,6 +16,10 @@ class SandboxedArenaEnvironment:
 
     The sandbox is expected to host a long-lived TCP daemon that listens on a
     local port and preserves game state across multiple exec calls.
+
+    TODO: Each RPC currently spawns a fresh Python process via sandbox.exec().
+    If the sandbox supports persistent connections or direct HTTP, switching
+    to that would significantly reduce per-call overhead.
     """
 
     DAEMON_HOST = "localhost"

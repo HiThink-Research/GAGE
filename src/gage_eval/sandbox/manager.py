@@ -113,8 +113,8 @@ class SandboxManager:
                 pool = self._pools.setdefault(
                     pool_key,
                     SandboxPool(
-                        builder=lambda: self._build_sandbox(
-                            runtime_cls, effective, trace, sample_id
+                        builder=lambda _cls=runtime_cls, _cfg=effective, **kw: self._build_sandbox(
+                            _cls, _cfg, kw.get("trace"), kw.get("sample_id")
                         ),
                         max_size=effective.get("pool_max")
                         or effective.get("pool_size"),
@@ -124,7 +124,7 @@ class SandboxManager:
                     ),
                 )
             sandbox = (
-                pool.acquire()
+                pool.acquire(trace=trace, sample_id=sample_id)
                 if pool
                 else self._build_sandbox(runtime_cls, effective, trace, sample_id)
             )
