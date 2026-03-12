@@ -34,17 +34,16 @@ datasets:
       split: test
     loader: hf_hub
     params:
-      local_path: ${HLE_LOCAL_PATH:-}
       preprocess: hle_preprocessor
 backends:
   - backend_id: hle_vllm_backend
     type: vllm
     config:
-      model_path: ${HLE_MODEL_PATH:-/mnt/model/qwen2_5_vl_3b}
-      tokenizer_path: ${HLE_TOKENIZER_PATH:-/mnt/model/qwen2_5_vl_3b}
+      model_path: ${HLE_MODEL_PATH:-/mnt/data/qwen3_5}
+      tokenizer_path: ${HLE_TOKENIZER_PATH:-/mnt/data/qwen3_5}
       force_tokenize_prompt: true
       tokenizer_trust_remote_code: true      
-      tensor_parallel_size: 1
+      tensor_parallel_size: 8
       max_tokens: 8192
       sampling_params:
         temperature: 0.0
@@ -56,9 +55,9 @@ backends:
   - backend_id: hle_answer_cleaner_litellm
     type: litellm
     config:
-      provider: openai
-      api_base: ${HLE_CLEANER_API_BASE:-https://api.openai.com/v1}
-      model: ${HLE_CLEANER_MODEL:-gpt-4.1}
+      provider: deepseek
+      api_base: ${HLE_CLEANER_API_BASE:-https://api.deepseek.com}
+      model: ${HLE_CLEANER_MODEL:-deepseek-chat}
       generation_parameters:
         max_new_tokens: 128
         temperature: 0.0

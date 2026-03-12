@@ -27,9 +27,25 @@ datasets:
       preprocess: mmlu_pro_chat_preprocessor
       preprocess_kwargs:
         n_few_shot: 5
-        tokenizer_path: ${MMLU_PRO_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+        tokenizer_path: ${MMLU_PRO_TOKENIZER_PATH:-/mnt/data/qwen3_5}
         max_length: 4096
         max_new_tokens: 2048
+backends:
+  - backend_id: mmlu_pro_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/data/qwen3_5
+      tokenizer_path: /mnt/data/qwen3_5
+      force_tokenize_prompt: true
+      tensor_parallel_size: 8
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 8192
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
   - backend_id: litellm_backend
     type: litellm
     config:
@@ -41,23 +57,6 @@ datasets:
         temperature: 0.0
       streaming: false
       max_retries: 6
-backends:
-  - backend_id: mmlu_pro_vllm_backend
-    type: vllm
-    config:
-      model_path: /mnt/model/qwen2_5_05B
-      tokenizer_path: /mnt/model/qwen2_5_05B
-      force_tokenize_prompt: true
-      tensor_parallel_size: 1
-      max_tokens: 512
-      sampling_params:
-        temperature: 0.0
-      max_batch_size: 1
-      max_model_len: 8192
-      gpu_memory_utilization: 0.9
-      async_max_concurrency: 8
-      output_type: text
-
 role_adapters:
   - adapter_id: dut_mmlu_pro_vllm_qwen
     role_type: dut_model
