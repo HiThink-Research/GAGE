@@ -63,4 +63,9 @@ case "${MODE}" in
     ;;
 esac
 
-exec bash "${TARGET}" "${ARGS[@]}"
+# NOTE: Bash 3.2 with nounset treats "${ARGS[@]}" as unbound when the array is empty.
+if (( ${#ARGS[@]} > 0 )); then
+  exec bash "${TARGET}" "${ARGS[@]}"
+fi
+
+exec bash "${TARGET}"
