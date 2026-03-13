@@ -503,6 +503,9 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       --error: #ff7d7d;
       --ok: #85d988;
       --border: #2b3a58;
+      --viewer-left-width: 300px;
+      --viewer-right-width: 340px;
+      --viewer-splitter-width: 14px;
     }
     * {
       box-sizing: border-box;
@@ -513,10 +516,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       background: linear-gradient(165deg, var(--bg) 0%, #0e1a2a 45%, #09111b 100%);
       color: var(--text);
       min-height: 100vh;
-      padding: 16px;
+      padding: 12px;
+    }
+    body.split-resizing {
+      cursor: col-resize;
+      user-select: none;
     }
     .shell {
-      max-width: 1200px;
+      width: min(1400px, calc(100vw - 24px));
+      max-width: 1400px;
       margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr;
@@ -526,42 +534,43 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       background: linear-gradient(180deg, var(--panel) 0%, var(--panel-alt) 100%);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 12px;
+      padding: 10px;
       box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+      min-width: 0;
     }
     .title {
       font-size: 15px;
       font-weight: 700;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       color: var(--accent);
     }
     .row {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
     }
     .row + .row {
-      margin-top: 10px;
+      margin-top: 8px;
     }
     select, input, button {
       background: #0f1727;
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 7px 9px;
+      padding: 6px 8px;
     }
     select {
-      min-width: 300px;
+      min-width: 280px;
     }
     select.compact {
       min-width: 120px;
     }
     input {
-      min-width: 140px;
+      min-width: 120px;
     }
     input[type="range"] {
-      min-width: 240px;
+      min-width: 220px;
     }
     button {
       cursor: pointer;
@@ -599,6 +608,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     .frame-image-shell {
       width: 100%;
       aspect-ratio: 4 / 3;
+      min-height: clamp(260px, 28vw, 520px);
       border: 1px solid var(--border);
       border-radius: 8px;
       background: #0b1322;
@@ -618,12 +628,55 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
     .split {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns:
+        minmax(220px, var(--viewer-left-width))
+        var(--viewer-splitter-width)
+        minmax(480px, 1fr)
+        var(--viewer-splitter-width)
+        minmax(240px, var(--viewer-right-width));
       gap: 12px;
+      align-items: stretch;
     }
-    @media (max-width: 900px) {
+    .splitter {
+      position: relative;
+      width: 100%;
+      border-radius: 999px;
+      cursor: col-resize;
+      touch-action: none;
+      background: linear-gradient(180deg, rgba(91, 192, 190, 0.16) 0%, rgba(43, 58, 88, 0.75) 100%);
+      box-shadow: inset 0 0 0 1px rgba(91, 192, 190, 0.18);
+      transition: background 120ms ease, box-shadow 120ms ease;
+    }
+    .splitter::before {
+      content: "";
+      position: absolute;
+      inset: 14px 4px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(91, 192, 190, 0.85) 0%, rgba(214, 222, 237, 0.3) 100%);
+      opacity: 0.92;
+    }
+    .splitter:hover,
+    .splitter:focus-visible {
+      background: linear-gradient(180deg, rgba(91, 192, 190, 0.28) 0%, rgba(43, 58, 88, 0.9) 100%);
+      box-shadow: inset 0 0 0 1px rgba(91, 192, 190, 0.4), 0 0 0 1px rgba(91, 192, 190, 0.18);
+      outline: none;
+    }
+    .panel-image {
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-image .frame-image-shell {
+      flex: 1 1 auto;
+    }
+    @media (max-width: 1100px) {
       .split {
         grid-template-columns: 1fr;
+      }
+      .splitter {
+        display: none;
+      }
+      .frame-image-shell {
+        min-height: clamp(280px, 56vw, 520px);
       }
     }
   </style>
@@ -671,18 +724,32 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       <div id="status" class="status">Initializing...</div>
     </div>
 
-    <div class="split">
+    <div class="split" id="viewerSplit">
       <div class="panel">
         <div class="title">Frame Text</div>
         <pre id="boardText">(waiting frame)</pre>
       </div>
-      <div class="panel">
+      <div
+        class="splitter"
+        id="splitterLeft"
+        role="separator"
+        aria-label="Resize frame text and frame image panels"
+        tabindex="0"
+      ></div>
+      <div class="panel panel-image">
         <div class="title">Frame Image (RGB)</div>
         <div class="frame-image-shell">
           <img id="frameImage" alt="ws_rgb_frame_image" />
         </div>
         <div id="frameImageHint" class="status frame-image-hint">No RGB frame available yet.</div>
       </div>
+      <div
+        class="splitter"
+        id="splitterRight"
+        role="separator"
+        aria-label="Resize frame image and frame JSON panels"
+        tabindex="0"
+      ></div>
       <div class="panel">
         <div class="title">Frame JSON</div>
         <pre id="frameJson">{}</pre>
@@ -712,9 +779,22 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       replaySeekDragging: false,
       replayBufferLoading: false,
       replayBufferLoadedForDisplay: "",
+      panelLayout: { leftWidth: 300, rightWidth: 340 },
+      panelResizeDrag: null,
+    };
+
+    const PANEL_LAYOUT_STORAGE_KEY = "gage_ws_rgb_panel_layout_v2";
+    const PANEL_LAYOUT_DEFAULTS = {
+      leftWidth: 300,
+      rightWidth: 340,
+      minLeftWidth: 220,
+      minRightWidth: 240,
+      minCenterWidth: 480,
+      keyboardStep: 24,
     };
 
     const el = {
+      viewerSplit: document.getElementById("viewerSplit"),
       displaySelect: document.getElementById("displaySelect"),
       refreshDisplaysBtn: document.getElementById("refreshDisplaysBtn"),
       pollMsInput: document.getElementById("pollMsInput"),
@@ -736,6 +816,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       frameJson: document.getElementById("frameJson"),
       frameImage: document.getElementById("frameImage"),
       frameImageHint: document.getElementById("frameImageHint"),
+      splitterLeft: document.getElementById("splitterLeft"),
+      splitterRight: document.getElementById("splitterRight"),
     };
 
     function setStatus(message, tone = "status") {
@@ -754,6 +836,217 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       } catch (_) {
         return frame || {};
       }
+    }
+
+    function clamp(value, minValue, maxValue) {
+      return Math.min(maxValue, Math.max(minValue, value));
+    }
+
+    function readStoredPanelLayout() {
+      try {
+        const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+        if (!raw) {
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return null;
+        }
+        return {
+          leftWidth: Number(parsed.leftWidth),
+          rightWidth: Number(parsed.rightWidth),
+        };
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function savePanelLayout() {
+      try {
+        window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify(state.panelLayout));
+      } catch (_) {
+        return;
+      }
+    }
+
+    function isCompactViewerLayout() {
+      return window.matchMedia("(max-width: 1100px)").matches;
+    }
+
+    function normalizePanelLayout(layout) {
+      const next = layout && typeof layout === "object" ? layout : {};
+      const containerWidth = el.viewerSplit ? el.viewerSplit.clientWidth : 0;
+      const leftBase = Number.isFinite(Number(next.leftWidth))
+        ? Number(next.leftWidth)
+        : Number(state.panelLayout.leftWidth || PANEL_LAYOUT_DEFAULTS.leftWidth);
+      const rightBase = Number.isFinite(Number(next.rightWidth))
+        ? Number(next.rightWidth)
+        : Number(state.panelLayout.rightWidth || PANEL_LAYOUT_DEFAULTS.rightWidth);
+      if (!containerWidth || isCompactViewerLayout()) {
+        return {
+          leftWidth: clamp(leftBase, PANEL_LAYOUT_DEFAULTS.minLeftWidth, 480),
+          rightWidth: clamp(rightBase, PANEL_LAYOUT_DEFAULTS.minRightWidth, 560),
+        };
+      }
+      const splitStyles = getComputedStyle(el.viewerSplit);
+      const splitterWidth = Number(getComputedStyle(document.documentElement).getPropertyValue("--viewer-splitter-width").replace("px", "")) || 14;
+      const columnGap = Number(splitStyles.columnGap.replace("px", "")) || 0;
+      const reservedWidth = PANEL_LAYOUT_DEFAULTS.minCenterWidth + splitterWidth * 2 + columnGap * 4;
+      const sideBudget = Math.max(
+        PANEL_LAYOUT_DEFAULTS.minLeftWidth + PANEL_LAYOUT_DEFAULTS.minRightWidth,
+        containerWidth - reservedWidth,
+      );
+      let leftWidth = clamp(
+        leftBase,
+        PANEL_LAYOUT_DEFAULTS.minLeftWidth,
+        Math.max(PANEL_LAYOUT_DEFAULTS.minLeftWidth, sideBudget - PANEL_LAYOUT_DEFAULTS.minRightWidth),
+      );
+      let rightWidth = clamp(
+        rightBase,
+        PANEL_LAYOUT_DEFAULTS.minRightWidth,
+        Math.max(PANEL_LAYOUT_DEFAULTS.minRightWidth, sideBudget - leftWidth),
+      );
+      leftWidth = clamp(
+        leftWidth,
+        PANEL_LAYOUT_DEFAULTS.minLeftWidth,
+        Math.max(PANEL_LAYOUT_DEFAULTS.minLeftWidth, sideBudget - rightWidth),
+      );
+      return {
+        leftWidth,
+        rightWidth,
+      };
+    }
+
+    function applyPanelLayout(layout, { persist = false } = {}) {
+      const normalized = normalizePanelLayout(layout);
+      state.panelLayout = normalized;
+      if (!el.viewerSplit) {
+        return normalized;
+      }
+      el.viewerSplit.style.setProperty("--viewer-left-width", `${normalized.leftWidth}px`);
+      el.viewerSplit.style.setProperty("--viewer-right-width", `${normalized.rightWidth}px`);
+      if (persist) {
+        savePanelLayout();
+      }
+      return normalized;
+    }
+
+    function resetPanelLayout() {
+      applyPanelLayout(
+        {
+          leftWidth: PANEL_LAYOUT_DEFAULTS.leftWidth,
+          rightWidth: PANEL_LAYOUT_DEFAULTS.rightWidth,
+        },
+        { persist: true },
+      );
+    }
+
+    function startPanelResize(side, event) {
+      if (isCompactViewerLayout()) {
+        return;
+      }
+      event.preventDefault();
+      const current = applyPanelLayout(state.panelLayout);
+      state.panelResizeDrag = {
+        side,
+        startX: Number(event.clientX),
+        leftWidth: current.leftWidth,
+        rightWidth: current.rightWidth,
+      };
+      document.body.classList.add("split-resizing");
+    }
+
+    function handlePanelResize(event) {
+      if (!state.panelResizeDrag) {
+        return;
+      }
+      const deltaX = Number(event.clientX) - Number(state.panelResizeDrag.startX);
+      if (state.panelResizeDrag.side === "left") {
+        applyPanelLayout({
+          leftWidth: Number(state.panelResizeDrag.leftWidth) + deltaX,
+          rightWidth: state.panelResizeDrag.rightWidth,
+        });
+        return;
+      }
+      applyPanelLayout({
+        leftWidth: state.panelResizeDrag.leftWidth,
+        rightWidth: Number(state.panelResizeDrag.rightWidth) - deltaX,
+      });
+    }
+
+    function stopPanelResize() {
+      if (!state.panelResizeDrag) {
+        return;
+      }
+      state.panelResizeDrag = null;
+      document.body.classList.remove("split-resizing");
+      savePanelLayout();
+    }
+
+    function resizePanelByKeyboard(side, direction) {
+      if (direction === 0) {
+        return;
+      }
+      const delta = Number(PANEL_LAYOUT_DEFAULTS.keyboardStep) * direction;
+      if (side === "left") {
+        applyPanelLayout(
+          {
+            leftWidth: Number(state.panelLayout.leftWidth) + delta,
+            rightWidth: state.panelLayout.rightWidth,
+          },
+          { persist: true },
+        );
+        return;
+      }
+      applyPanelLayout(
+        {
+          leftWidth: state.panelLayout.leftWidth,
+          rightWidth: Number(state.panelLayout.rightWidth) - delta,
+        },
+        { persist: true },
+      );
+    }
+
+    function bindPanelResizeEvents() {
+      if (!el.splitterLeft || !el.splitterRight) {
+        return;
+      }
+      el.splitterLeft.addEventListener("pointerdown", (event) => {
+        startPanelResize("left", event);
+      });
+      el.splitterRight.addEventListener("pointerdown", (event) => {
+        startPanelResize("right", event);
+      });
+      el.splitterLeft.addEventListener("dblclick", () => {
+        resetPanelLayout();
+      });
+      el.splitterRight.addEventListener("dblclick", () => {
+        resetPanelLayout();
+      });
+      el.splitterLeft.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          resizePanelByKeyboard("left", -1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          resizePanelByKeyboard("left", 1);
+        }
+      });
+      el.splitterRight.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          resizePanelByKeyboard("right", -1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          resizePanelByKeyboard("right", 1);
+        }
+      });
+      window.addEventListener("pointermove", handlePanelResize);
+      window.addEventListener("pointerup", stopPanelResize);
+      window.addEventListener("pointercancel", stopPanelResize);
+      window.addEventListener("resize", () => {
+        applyPanelLayout(state.panelLayout);
+      });
     }
 
     function getSelectedDisplay() {
@@ -1442,8 +1735,11 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
 
     async function start() {
+      const storedLayout = readStoredPanelLayout();
+      applyPanelLayout(storedLayout || PANEL_LAYOUT_DEFAULTS);
       updateReplayUi();
       bindEvents();
+      bindPanelResizeEvents();
       await refreshDisplays();
       if (state.selectedDisplayReplaySeekable) {
         await preloadReplayBuffer();
