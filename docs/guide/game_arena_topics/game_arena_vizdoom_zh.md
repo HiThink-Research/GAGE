@@ -172,6 +172,13 @@ PYTHONPATH=src python run.py \
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
+viewer 交互要点：
+
+- 进入 `in_progress`：表示当前对局还在进行，可以继续输入。
+- 进入 `game_ended`：表示当前对局已经结束，可以开始 replay；正常结束和点击 `Terminate Game` 都会进入这个状态。
+- 进入 `process_ended`：表示已经确认结束进程，viewer 很快会断开。
+- 只有在 `game_ended` 时，`Start Replay`、`Step`、`Replay Seek` 才能使用；看完回放后再点 `End Process`。
+
 ## 5. 启动顺序
 
 当前仓库里的 ViZDoom 推荐顺序是：
@@ -181,7 +188,7 @@ http://127.0.0.1:5800/ws_rgb/viewer
 3. 如果模式包含 LLM 后端，先设置 API Key。
 4. 启动运行。
 5. 对 websocketRGB helper，等待脚本打印 viewer 地址；对 pygame 模式，确保本地输入窗口保持焦点。
-6. 对局结束后，再用 `scripts/run/arenas/vizdoom/replay.sh` 启动回放。
+6. 对 websocketRGB viewer，可在对局结束后直接在页面里 replay；确认完成后再点 `End Process`。如果是已有产物，再用 `scripts/run/arenas/vizdoom/replay.sh` 启动回放。
 
 ## 6. 关键参数与修改位置
 
@@ -243,4 +250,3 @@ bash scripts/run/arenas/vizdoom/replay.sh <run_id>
 ```text
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
-

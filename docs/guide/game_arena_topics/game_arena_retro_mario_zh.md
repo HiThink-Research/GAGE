@@ -144,6 +144,13 @@ bash scripts/run/arenas/retro_mario/run.sh \
 - Select：`L` 或 `Shift`
 - Start：`Enter`
 
+viewer 交互要点：
+
+- 进入 `in_progress`：表示当前对局还在进行，可以继续输入。
+- 进入 `game_ended`：表示当前对局已经结束，可以开始 replay；正常结束和点击 `Terminate Game` 都会进入这个状态。
+- 进入 `process_ended`：表示已经确认结束进程，viewer 很快会断开。
+- 只有在 `game_ended` 时，`Start Replay`、`Step`、`Replay Seek` 才能使用；看完回放后再点 `End Process`。
+
 ### 4.4 Headless 路径
 
 ```bash
@@ -183,7 +190,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 3. 选择一个标准 `--mode`，或者指定 `--config`。
 4. 只有 OpenAI 模式才需要设置 API Key。
 5. 执行 `scripts/run/arenas/retro_mario/run.sh`。
-6. 对 websocket 模式，在运行中打开 `ws_rgb/viewer`；对已有产物，再执行 `scripts/run/arenas/retro_mario/replay.sh <run_id>`。
+6. 对 websocket 模式，在运行中打开 `ws_rgb/viewer`；对局结束后可先在 viewer 中 replay，确认完成后再点 `End Process`；对已有产物，再执行 `scripts/run/arenas/retro_mario/replay.sh <run_id>`。
 
 ## 6. 关键参数与修改位置
 
@@ -243,5 +250,3 @@ http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
 启动回放前，建议先确认 sample JSON 里存在 `replay_path` 等 replay 相关字段。
-
-

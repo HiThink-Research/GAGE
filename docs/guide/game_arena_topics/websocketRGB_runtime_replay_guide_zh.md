@@ -142,6 +142,7 @@ viewer 页面：
 显示查询：
 
 - `GET /ws_rgb/displays`
+- 返回值里会带当前 display 的 session 状态快照
 
 拉取帧：
 
@@ -151,10 +152,26 @@ viewer 页面：
 输入：
 
 - `POST /ws_rgb/input`
+- `POST /ws_rgb/session`
 
 回放缓冲接口（仅 replay-seekable display）：
 
 - `GET /ws_rgb/replay_buffer?display_id=...`
+
+### 5.1 Viewer 状态与按钮
+
+viewer 当前有 3 个运行状态：
+
+- 进入 `in_progress`：表示对局仍在推进；允许输入；不允许进入 replay。
+- 进入 `game_ended`：表示当前对局已经收束；允许 replay / step / seek；进程继续存活，等待用户确认是否结束。
+- 进入 `process_ended`：表示用户已经确认关闭；运行时开始退出，viewer 很快会断开连接。
+
+当前按钮行为：
+
+- `Terminate Game`：仅在 `in_progress` 可点击；点击后把对局切到 `game_ended`，但不立即关闭进程。
+- `Start Replay` / `Step -` / `Step +` / `Replay Seek`：仅在 `game_ended` 可用。
+- `End Process`：仅在 `game_ended` 可点击；需要确认后才真正结束运行。
+- `Back To Live`：当前 UI 中默认隐藏。
 
 ---
 

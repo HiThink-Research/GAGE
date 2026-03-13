@@ -144,6 +144,13 @@ Default browser key aliases come from the retro input mapper:
 - Select: `L` or `Shift`
 - Start: `Enter`
 
+Viewer interaction notes:
+
+- Entering `in_progress` means the current match is still active and input is still accepted.
+- Entering `game_ended` means the current match has finished and replay is now available. A normal match end or `Terminate Game` both lead here.
+- Entering `process_ended` means shutdown has been confirmed and the viewer will disconnect soon.
+- `Start Replay`, `Step`, and `Replay Seek` are only available in `game_ended`. After review, click `End Process`.
+
 ### 4.4 Headless runs
 
 ```bash
@@ -183,7 +190,7 @@ Retro Mario startup in the current repository is:
 3. Choose a standard `--mode` or a custom `--config`.
 4. Set API keys only for the OpenAI modes.
 5. Run `scripts/run/arenas/retro_mario/run.sh`.
-6. Open `ws_rgb/viewer` during the run for websocket modes, or start `scripts/run/arenas/retro_mario/replay.sh <run_id>` after the run.
+6. For websocket modes, open `ws_rgb/viewer` during the run; after the match ends, replay in the viewer first and then confirm `End Process`. For stored artifacts, start `scripts/run/arenas/retro_mario/replay.sh <run_id>`.
 
 ## 6. Key Parameters and Where to Change Them
 
@@ -243,5 +250,3 @@ http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
 Before launching replay, confirm the sample JSON has a replay payload such as `replay_path`.
-
-

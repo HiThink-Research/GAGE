@@ -173,6 +173,13 @@ Default viewer URL for this websocket config:
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
 
+Viewer interaction notes:
+
+- Entering `in_progress` means the current match is still active and input is still accepted.
+- Entering `game_ended` means the current match has finished and replay is now available. A normal match end or `Terminate Game` both lead here.
+- Entering `process_ended` means shutdown has been confirmed and the viewer will disconnect soon.
+- `Start Replay`, `Step`, and `Replay Seek` are only available in `game_ended`. After review, click `End Process`.
+
 ## 5. Execution Order
 
 The current ViZDoom startup sequence is:
@@ -182,7 +189,7 @@ The current ViZDoom startup sequence is:
 3. Set API keys when the selected mode includes an LLM backend.
 4. Start the run.
 5. For websocketRGB helper runs, wait for the printed viewer URL; for pygame modes, keep the local input window focused while playing.
-6. After the run, use `scripts/run/arenas/vizdoom/replay.sh` for replay.
+6. For websocketRGB viewer runs, replay directly in the page after the match ends, then confirm `End Process`. For stored artifacts, use `scripts/run/arenas/vizdoom/replay.sh`.
 
 ## 6. Key Parameters and Where to Change Them
 
@@ -244,4 +251,3 @@ Default replay URL:
 ```text
 http://127.0.0.1:5800/ws_rgb/viewer
 ```
-

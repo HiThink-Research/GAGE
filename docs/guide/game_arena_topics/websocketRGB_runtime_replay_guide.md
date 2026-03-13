@@ -142,6 +142,7 @@ Viewer page:
 Display discovery:
 
 - `GET /ws_rgb/displays`
+- The response now includes the current session-state snapshot for each display
 
 Frame endpoints:
 
@@ -151,10 +152,26 @@ Frame endpoints:
 Input endpoint:
 
 - `POST /ws_rgb/input`
+- `POST /ws_rgb/session`
 
 Replay buffer endpoint (for replay-seekable displays):
 
 - `GET /ws_rgb/replay_buffer?display_id=...`
+
+### 5.1 Viewer States and Buttons
+
+The viewer now exposes three runtime states:
+
+- Entering `in_progress` means the match is still running. Input is allowed and replay stays locked.
+- Entering `game_ended` means the current match has finished. Replay, step, and seek are available while the process waits for user confirmation.
+- Entering `process_ended` means shutdown has been confirmed. The runtime is exiting and the viewer will disconnect soon.
+
+Current button behavior:
+
+- `Terminate Game`: Only enabled in `in_progress`. It ends the current match and moves the viewer into `game_ended` without closing the process immediately.
+- `Start Replay` / `Step -` / `Step +` / `Replay Seek`: Only available in `game_ended`.
+- `End Process`: Only enabled in `game_ended`. It requires confirmation before the runtime is actually closed.
+- `Back To Live`: Currently hidden in the UI.
 
 ---
 

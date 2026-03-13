@@ -166,6 +166,7 @@ At the code level, the implementation still mostly uses the `ws_rgb` name, while
 - `ArenaRoleAdapter` registers a display when `display_mode=websocket/ws`.
 - Human input flows back into `HumanPlayer` through the action queue and the `ws_rgb` viewer.
 - Replay tools can reconstruct a `ws_rgb` display from stored artifacts.
+- The viewer now exposes `in_progress / game_ended / process_ended`: entering `in_progress` means the match is still running, entering `game_ended` means the match is over but replay is still available, and entering `process_ended` means shutdown has been confirmed and the page will disconnect soon.
 
 ## 7. Visual Examples
 
