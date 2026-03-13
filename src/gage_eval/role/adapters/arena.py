@@ -7,6 +7,7 @@ import functools
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
@@ -29,6 +30,148 @@ from gage_eval.role.arena.replay_schema_writer import ReplaySchemaWriter
 from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import GameResult
+
+
+class _WsRgbSessionController:
+    """Coordinate ws_rgb viewer lifecycle state and shutdown confirmation."""
+
+    def __init__(
+        self,
+        *,
+        display_id: str,
+        sample_id: str,
+        adapter_id: str,
+        game_id: str,
+    ) -> None:
+        self._display_id = str(display_id)
+        self._sample_id = str(sample_id)
+        self._adapter_id = str(adapter_id)
+        self._game_id = str(game_id)
+        self._lock = threading.Lock()
+        self._process_end_event = threading.Event()
+        self._phase = "in_progress"
+        self._manual_stop_requested = False
+        self._result: Optional[str] = None
+        self._reason: Optional[str] = None
+        self._winner: Optional[str] = None
+        self._move_count = 0
+        self._ended_by: Optional[str] = None
+        self._ended_at_ms: Optional[int] = None
+        self._process_ended_at_ms: Optional[int] = None
+
+    @property
+    def display_id(self) -> str:
+        """Return the bound ws_rgb display id."""
+
+        return self._display_id
+
+    def is_game_end_requested(self) -> bool:
+        """Return whether the viewer requested an early stop."""
+
+        with self._lock:
+            return bool(self._manual_stop_requested)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Build a JSON-safe lifecycle snapshot for the viewer."""
+
+        with self._lock:
+            return self._snapshot_locked()
+
+    def request_game_end(self) -> dict[str, Any]:
+        """Move the session into ``game_ended`` without ending the process."""
+
+        with self._lock:
+            if self._phase == "in_progress":
+                self._phase = "game_ended"
+                self._manual_stop_requested = True
+                self._result = self._result or "draw"
+                self._reason = self._reason or "manual_stop"
+                self._ended_by = self._ended_by or "user"
+                self._ended_at_ms = self._ended_at_ms or self._now_ms()
+            return {
+                "ok": True,
+                "display_id": self._display_id,
+                "session": self._snapshot_locked(),
+            }
+
+    def mark_game_ended(self, result: GameResult) -> dict[str, Any]:
+        """Record the final result and expose replay-ready state."""
+
+        with self._lock:
+            self._result = str(result.result or self._result or "draw")
+            self._reason = str(result.reason) if result.reason is not None else self._reason
+            self._winner = str(result.winner) if result.winner is not None else None
+            self._move_count = max(0, int(result.move_count))
+            self._ended_at_ms = self._ended_at_ms or self._now_ms()
+            if self._ended_by is None:
+                self._ended_by = "user" if self._manual_stop_requested else "environment"
+            if self._phase != "process_ended":
+                self._phase = "game_ended"
+            return {
+                "ok": True,
+                "display_id": self._display_id,
+                "session": self._snapshot_locked(),
+            }
+
+    def request_process_end(self, *, confirm: bool) -> dict[str, Any]:
+        """Move the session into ``process_ended`` and unblock adapter shutdown."""
+
+        with self._lock:
+            if self._phase == "in_progress":
+                return {
+                    "ok": False,
+                    "error": "process_end_not_allowed",
+                    "display_id": self._display_id,
+                    "session": self._snapshot_locked(),
+                }
+            if not confirm:
+                return {
+                    "ok": False,
+                    "error": "process_end_confirmation_required",
+                    "display_id": self._display_id,
+                    "session": self._snapshot_locked(),
+                }
+            if self._phase != "process_ended":
+                self._phase = "process_ended"
+                self._process_ended_at_ms = self._now_ms()
+                self._process_end_event.set()
+            return {
+                "ok": True,
+                "display_id": self._display_id,
+                "session": self._snapshot_locked(),
+            }
+
+    def wait_for_process_end(self, *, timeout_s: Optional[float] = None) -> bool:
+        """Block until the viewer confirms process shutdown."""
+
+        timeout = None if timeout_s is None else max(0.0, float(timeout_s))
+        return bool(self._process_end_event.wait(timeout=timeout))
+
+    def _snapshot_locked(self) -> dict[str, Any]:
+        phase = str(self._phase or "in_progress")
+        return {
+            "session_controlled": True,
+            "display_id": self._display_id,
+            "sample_id": self._sample_id,
+            "adapter_id": self._adapter_id,
+            "game_id": self._game_id,
+            "phase": phase,
+            "replay_allowed": phase == "game_ended",
+            "can_terminate_game": phase == "in_progress",
+            "can_terminate_process": phase == "game_ended",
+            "manual_stop_requested": bool(self._manual_stop_requested),
+            "result": self._result,
+            "reason": self._reason,
+            "winner": self._winner,
+            "move_count": self._move_count,
+            "ended_by": self._ended_by,
+            "ended_at_ms": self._ended_at_ms,
+            "process_ended_at_ms": self._process_ended_at_ms,
+        }
+
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.time() * 1000)
 
 
 @registry.asset(
@@ -123,16 +266,22 @@ class ArenaRoleAdapter(RoleAdapter):
             chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
         )
+        ws_session = self._maybe_build_ws_session_controller(sample=sample, env_impl=env_impl_lower)
+        if ws_session is not None:
+            environment = _SessionControlledEnvironment(environment, ws_session)
         frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
         if frame_recorder is not None:
             environment = _FrameCaptureEnvironment(environment, frame_recorder)
-        self._maybe_register_ws_display(
+        ws_display_registered = self._maybe_register_ws_display(
             sample=sample,
             environment=environment,
             action_queue=action_queue,
             player_specs=player_specs,
             env_impl=env_impl_lower,
+            session_controller=ws_session,
         )
+        if not ws_display_registered:
+            ws_session = None
         if visualizer is not None:
             visualizer.reset_state()
             visualizer.set_players(
@@ -162,15 +311,8 @@ class ArenaRoleAdapter(RoleAdapter):
             self._wait_for_pending_players(players)
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
             pass
-        output = self._format_result(
-            result,
-            sample,
-            trace,
-            frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
-        )
-
-        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
-            visualizer.wait_for_finish()
+        if ws_session is not None:
+            ws_session.mark_game_ended(result)
 
         if trace:
             trace.emit(
@@ -182,6 +324,25 @@ class ArenaRoleAdapter(RoleAdapter):
                     "move_count": result.move_count,
                 },
             )
+
+        if ws_session is not None:
+            logger.info(
+                "ArenaRoleAdapter {} reached game_ended state for display {}; waiting for process exit confirmation.",
+                self.adapter_id,
+                ws_session.display_id,
+            )
+            ws_session.wait_for_process_end()
+
+        output = self._format_result(
+            result,
+            sample,
+            trace,
+            frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
+        )
+
+        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
+            visualizer.wait_for_finish()
+
         logger.info("ArenaRoleAdapter {} finished result={}", self.adapter_id, result.result)
         return output
 
@@ -1179,6 +1340,25 @@ class ArenaRoleAdapter(RoleAdapter):
         self._action_server = server
         return server, server.action_queue
 
+    def _maybe_build_ws_session_controller(
+        self,
+        *,
+        sample: Dict[str, Any],
+        env_impl: str,
+    ) -> Optional[_WsRgbSessionController]:
+        """Create a ws_rgb session controller when websocket display mode is enabled."""
+
+        display_mode = str(self._environment_cfg.get("display_mode") or "").lower()
+        if display_mode not in {"websocket", "ws"}:
+            return None
+        display_id = self._build_display_id(sample=sample, env_impl=env_impl)
+        return _WsRgbSessionController(
+            display_id=display_id,
+            sample_id=self._resolve_sample_id(sample),
+            adapter_id=self.adapter_id,
+            game_id=env_impl,
+        )
+
     def _maybe_register_ws_display(
         self,
         *,
@@ -1187,25 +1367,30 @@ class ArenaRoleAdapter(RoleAdapter):
         action_queue: Any,
         player_specs: Sequence[Dict[str, Any]],
         env_impl: str,
-    ) -> None:
+        session_controller: Optional[_WsRgbSessionController] = None,
+    ) -> bool:
         """Register display metadata when websocket display mode is enabled."""
 
         display_mode = str(self._environment_cfg.get("display_mode") or "").lower()
         if display_mode not in {"websocket", "ws"}:
-            return
+            return False
         frame_source = getattr(environment, "get_last_frame", None)
         if not callable(frame_source):
-            return
+            return False
         input_mapper = self._bind_input_mapper(env_impl=env_impl)
         if input_mapper is None:
-            return
+            return False
         hub = self._ensure_ws_rgb_hub()
         if hub is None:
-            return
+            return False
 
         from gage_eval.tools.ws_rgb_server import DisplayRegistration
 
-        display_id = self._build_display_id(sample=sample, env_impl=env_impl)
+        display_id = (
+            session_controller.display_id
+            if session_controller is not None
+            else self._build_display_id(sample=sample, env_impl=env_impl)
+        )
         legal_moves = self._environment_cfg.get("legal_moves")
         normalized_legal_moves = list(legal_moves) if isinstance(legal_moves, (list, tuple)) else None
         registration = DisplayRegistration(
@@ -1216,6 +1401,11 @@ class ArenaRoleAdapter(RoleAdapter):
             input_mapper=input_mapper,
             legal_moves=normalized_legal_moves,
             action_queue=action_queue,
+            session_state_source=session_controller.snapshot if session_controller is not None else None,
+            terminate_game=session_controller.request_game_end if session_controller is not None else None,
+            terminate_process=(
+                session_controller.request_process_end if session_controller is not None else None
+            ),
             default_context={
                 "display_id": display_id,
                 "sample_id": self._resolve_sample_id(sample),
@@ -1226,6 +1416,7 @@ class ArenaRoleAdapter(RoleAdapter):
         )
         hub.register_display(registration)
         self._registered_displays.add(display_id)
+        return True
 
     def _ensure_ws_rgb_hub(self):
         """Start and cache a local WsRgbHubServer instance."""
@@ -1613,7 +1804,13 @@ class _FrameCaptureEnvironment:
         return self._base.is_terminal()
 
     def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
-        return self._base.build_result(result=result, reason=reason)
+        outcome = self._base.build_result(result=result, reason=reason)
+        self._capture_current(
+            step=self._step_index,
+            actor=None,
+            force=True,
+        )
+        return outcome
 
     def __getattr__(self, item: str):
         return getattr(self._base, item)
@@ -1707,3 +1904,61 @@ class _FrameCaptureEnvironment:
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
             return len(value) > 0
         return bool(value)
+
+
+class _SessionControlledEnvironment:
+    """Environment wrapper that honors viewer-driven early-stop requests."""
+
+    def __init__(self, base_env: Any, session_controller: _WsRgbSessionController) -> None:
+        self._base = base_env
+        self._session_controller = session_controller
+        self._manual_result: Optional[GameResult] = None
+
+    def reset(self) -> None:
+        self._base.reset()
+
+    def get_active_player(self) -> str:
+        return self._base.get_active_player()
+
+    def get_last_frame(self):
+        frame_getter = getattr(self._base, "get_last_frame", None)
+        if callable(frame_getter):
+            return frame_getter()
+        return {}
+
+    def observe(self, player: str):
+        return self._base.observe(player)
+
+    def apply(self, action) -> Optional[GameResult]:
+        if self._should_emit_manual_result():
+            return self._build_manual_result()
+        return self._base.apply(action)
+
+    def is_terminal(self) -> bool:
+        return bool(self._base.is_terminal() or self._session_controller.is_game_end_requested())
+
+    def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
+        if self._should_emit_manual_result():
+            return self._build_manual_result()
+        return self._base.build_result(result=result, reason=reason)
+
+    def __getattr__(self, item: str):
+        return getattr(self._base, item)
+
+    def _should_emit_manual_result(self) -> bool:
+        return bool(
+            self._session_controller.is_game_end_requested()
+            and not bool(self._base.is_terminal())
+        )
+
+    def _build_manual_result(self) -> GameResult:
+        if self._manual_result is None:
+            result = self._base.build_result(result="draw", reason="manual_stop")
+            finalize_replay = getattr(self._base, "finalize_replay", None)
+            if callable(finalize_replay):
+                try:
+                    result = finalize_replay(result)
+                except Exception:
+                    pass
+            self._manual_result = result
+        return self._manual_result
