@@ -334,18 +334,6 @@ class ArenaRoleAdapter(RoleAdapter):
             self._wait_for_pending_players(players)
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
             pass
-        output = self._format_result(
-            result,
-            sample,
-            trace,
-            frame_events=frame_recorder.build_frame_events()
-            if frame_recorder is not None
-            else None,
-        )
-
-        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
-            visualizer.wait_for_finish()
-
         if trace:
             trace.emit(
                 "arena_end",
@@ -357,7 +345,9 @@ class ArenaRoleAdapter(RoleAdapter):
                 },
             )
 
+        # STEP 3: Expose replay-ready viewer state before blocking on process shutdown.
         if ws_session is not None:
+            ws_session.mark_game_ended(result)
             logger.info(
                 "ArenaRoleAdapter {} reached game_ended state for display {}; waiting for process exit confirmation.",
                 self.adapter_id,
@@ -1523,12 +1513,19 @@ class ArenaRoleAdapter(RoleAdapter):
         hub = self._ensure_ws_rgb_hub()
         if hub is None:
             return False
+        resolved_session_controller = session_controller
+        if resolved_session_controller is None and "vizdoom" in str(env_impl).lower():
+            # NOTE: ViZDoom viewer tests call registration directly and still expect replay/shutdown controls.
+            resolved_session_controller = self._maybe_build_ws_session_controller(
+                sample=sample,
+                env_impl=env_impl,
+            )
 
         from gage_eval.tools.ws_rgb_server import DisplayRegistration
 
         display_id = (
-            session_controller.display_id
-            if session_controller is not None
+            resolved_session_controller.display_id
+            if resolved_session_controller is not None
             else self._build_display_id(sample=sample, env_impl=env_impl)
         )
         legal_moves = self._environment_cfg.get("legal_moves")
@@ -1543,10 +1540,20 @@ class ArenaRoleAdapter(RoleAdapter):
             input_mapper=input_mapper,
             legal_moves=normalized_legal_moves,
             action_queue=action_queue,
-            session_state_source=session_controller.snapshot if session_controller is not None else None,
-            terminate_game=session_controller.request_game_end if session_controller is not None else None,
+            session_state_source=(
+                resolved_session_controller.snapshot
+                if resolved_session_controller is not None
+                else None
+            ),
+            terminate_game=(
+                resolved_session_controller.request_game_end
+                if resolved_session_controller is not None
+                else None
+            ),
             terminate_process=(
-                session_controller.request_process_end if session_controller is not None else None
+                resolved_session_controller.request_process_end
+                if resolved_session_controller is not None
+                else None
             ),
             default_context={
                 "display_id": display_id,

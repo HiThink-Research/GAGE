@@ -1,4 +1,5 @@
 import base64
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
@@ -313,10 +314,12 @@ def test_llm_player_scheme_prompt_overrides_game_owned_instruction_for_vizdoom()
         parser=MagicMock(),
         scheme_id="S3_text_image_current",
     )
-    observation = _build_vizdoom_observation(step=3, health=100, reward=0.0)
-    observation.prompt = ArenaPromptSpec(
-        instruction="Game-owned instruction should not dominate scheme prompt.",
-        payload={},
+    observation = replace(
+        _build_vizdoom_observation(step=3, health=100, reward=0.0),
+        prompt=ArenaPromptSpec(
+            instruction="Game-owned instruction should not dominate scheme prompt.",
+            payload={},
+        ),
     )
 
     prompt = player._format_observation(observation)
