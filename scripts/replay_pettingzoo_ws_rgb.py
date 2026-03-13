@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Compatibility wrapper for PettingZoo ws_rgb replay.
+from pathlib import Path
+import runpy
 
-This script is kept only for backward compatibility with existing commands.
-Core replay logic lives in ``gage_eval.tools.ws_rgb_replay``.
-"""
-
-from __future__ import annotations
-
-from gage_eval.tools.ws_rgb_replay import main
-
-
-if __name__ == "__main__":
-    main()
+runpy.run_path(
+    str(Path(__file__).resolve().parent / "dev" / "pettingzoo" / "replay_ws_rgb_compat.py"),
+    run_name="__main__",
+)

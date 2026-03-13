@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from typing import Any
 
 from gage_eval.observability.trace import ObservabilityTrace
@@ -11,6 +13,8 @@ from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordI
 from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
 from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
+from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
+from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import ArenaObservation, GameResult
 
@@ -232,6 +236,36 @@ def test_build_environment_for_pettingzoo_forwards_optional_kwargs(monkeypatch) 
     assert captured_env_kwargs["agent_map"] == {"first_0": "p0"}
 
 
+def test_build_players_forwards_scheme_configuration() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        players=[
+            {
+                "player_id": "p0",
+                "type": "backend",
+                "ref": "backend.alpha",
+                "scheme_id": "S6_text_image_action_hist",
+                "scheme_params": {"action_history_len": 3, "delta_key_limit": 5},
+            }
+        ],
+    )
+
+    players = adapter._build_players(
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        role_manager=object(),
+        parser=object(),
+        trace=None,
+        action_queue=None,
+        player_specs=adapter._player_specs,
+    )
+
+    assert len(players) == 1
+    assert isinstance(players[0], LLMPlayer)
+    assert players[0]._scheme_id == "S6_text_image_action_hist"
+    assert players[0]._action_history_len == 3
+    assert players[0]._delta_key_limit == 5
+
+
 def test_build_environment_for_mahjong_forwards_run_context_and_models(monkeypatch) -> None:
     captured_env_kwargs: dict[str, Any] = {}
     chat_queue = object()
@@ -373,6 +407,17 @@ def test_bind_input_mapper_returns_pettingzoo_mapper() -> None:
     assert isinstance(mapper, PettingZooDiscreteInputMapper)
 
 
+def test_bind_input_mapper_returns_vizdoom_mapper() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "vizdoom_env_v1"},
+    )
+
+    mapper = adapter._bind_input_mapper(env_impl="vizdoom_env_v1")
+
+    assert isinstance(mapper, ViZDoomInputMapper)
+
+
 def test_maybe_register_ws_display_for_mahjong() -> None:
     class _Hub:
         def __init__(self) -> None:
@@ -507,6 +552,237 @@ def test_maybe_register_ws_display_for_pettingzoo() -> None:
     registration = hub.registrations[0]
     assert registration.display_id == "task-4:sample-4:arena:pettingzoo_aec_v1"
     assert isinstance(registration.input_mapper, PettingZooDiscreteInputMapper)
+
+
+def test_maybe_register_ws_display_for_vizdoom() -> None:
+    class _Hub:
+        def __init__(self) -> None:
+            self.registrations: list[Any] = []
+
+        def register_display(self, registration: Any) -> None:
+            self.registrations.append(registration)
+
+    class _Environment:
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"frame_id": 5}
+
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "vizdoom_env_v1", "display_mode": "websocket"},
+    )
+    hub = _Hub()
+    adapter._ensure_ws_rgb_hub = lambda: hub  # type: ignore[method-assign]
+
+    adapter._maybe_register_ws_display(
+        sample={"id": "sample-5", "task_id": "task-5", "metadata": {}},
+        environment=_Environment(),
+        action_queue=None,
+        player_specs=[{"type": "human", "player_id": "p0"}],
+        env_impl="vizdoom_env_v1",
+    )
+
+    assert len(hub.registrations) == 1
+    registration = hub.registrations[0]
+    assert registration.display_id == "task-5:sample-5:arena:vizdoom_env_v1"
+    assert isinstance(registration.input_mapper, ViZDoomInputMapper)
+    assert callable(registration.session_state_source)
+    assert callable(registration.terminate_game)
+    assert callable(registration.terminate_process)
+
+
+def test_session_controlled_environment_manual_stop_finalizes_result() -> None:
+    class _BaseEnv:
+        def __init__(self) -> None:
+            self.finalize_calls = 0
+
+        @staticmethod
+        def reset() -> None:
+            return None
+
+        @staticmethod
+        def get_active_player() -> str:
+            return "player_0"
+
+        @staticmethod
+        def observe(player: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text="board",
+                legal_moves=["0"],
+                active_player=player,
+            )
+
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"board_text": "frame-1"}
+
+        @staticmethod
+        def apply(action: Any) -> None:
+            _ = action
+            return None
+
+        @staticmethod
+        def is_terminal() -> bool:
+            return False
+
+        @staticmethod
+        def build_result(*, result: str, reason: str | None) -> GameResult:
+            return GameResult(
+                winner=None,
+                result=result,
+                reason=reason,
+                move_count=3,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+        def finalize_replay(self, result: GameResult) -> GameResult:
+            self.finalize_calls += 1
+            return GameResult(
+                winner=result.winner,
+                result=result.result,
+                reason=result.reason,
+                replay_path="manual_replay.json",
+                move_count=result.move_count,
+                illegal_move_count=result.illegal_move_count,
+                final_board=result.final_board,
+                move_log=result.move_log,
+                rule_profile=result.rule_profile,
+                win_direction=result.win_direction,
+                line_length=result.line_length,
+                arena_trace=result.arena_trace,
+            )
+
+    controller = arena_module._WsRgbSessionController(  # noqa: SLF001
+        display_id="display-1",
+        sample_id="sample-1",
+        adapter_id="arena",
+        game_id="retro_env_v1",
+    )
+    base_env = _BaseEnv()
+    wrapped = arena_module._SessionControlledEnvironment(base_env, controller)  # noqa: SLF001
+
+    controller.request_game_end()
+    result = wrapped.build_result(result="draw", reason="terminated")
+
+    assert wrapped.is_terminal() is True
+    assert result.reason == "manual_stop"
+    assert result.replay_path == "manual_replay.json"
+    assert base_env.finalize_calls == 1
+
+
+def test_invoke_sync_waits_for_ws_rgb_process_confirmation(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "vizdoom_env_v1", "display_mode": "websocket"},
+        players=[{"player_id": "player_0", "type": "human", "ref": "human"}],
+    )
+
+    class _Hub:
+        def __init__(self) -> None:
+            self.registrations: list[Any] = []
+
+        def register_display(self, registration: Any) -> None:
+            self.registrations.append(registration)
+
+    class _StubEnvironment:
+        @staticmethod
+        def reset() -> None:
+            return None
+
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"frame_id": 1}
+
+        @staticmethod
+        def get_active_player() -> str:
+            return "player_0"
+
+        @staticmethod
+        def observe(player: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text="board",
+                legal_moves=["0"],
+                active_player=player,
+            )
+
+        @staticmethod
+        def apply(action: Any) -> None:
+            _ = action
+            return None
+
+        @staticmethod
+        def is_terminal() -> bool:
+            return True
+
+        @staticmethod
+        def build_result(*, result: str, reason: str | None) -> GameResult:
+            return GameResult(
+                winner=None,
+                result=result,
+                reason=reason,
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+    class _StubScheduler:
+        @staticmethod
+        def run_loop(environment: Any, players: Any) -> GameResult:
+            _ = environment, players
+            return _make_result(move_log=[{"player": "player_0", "move": "0"}])
+
+    hub = _Hub()
+    monkeypatch.setattr(
+        adapter,
+        "_normalize_player_specs",
+        lambda sample: (
+            [{"player_id": "player_0", "type": "human", "ref": "human"}],
+            ["player_0"],
+            {"player_0": "P0"},
+            "player_0",
+        ),
+    )
+    monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
+    monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
+    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_build_environment", lambda sample, **kwargs: _StubEnvironment())
+    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
+    adapter._ensure_ws_rgb_hub = lambda: hub  # type: ignore[method-assign]
+
+    holder: dict[str, Any] = {}
+
+    def _run() -> None:
+        holder["output"] = adapter._invoke_sync(
+            {"sample": {"id": "sample-wait", "task_id": "task-wait", "metadata": {}}, "role_manager": object()},
+            RoleAdapterState(),
+        )
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    deadline = time.time() + 2.0
+    while not hub.registrations and time.time() < deadline:
+        time.sleep(0.01)
+    assert hub.registrations
+
+    registration = hub.registrations[0]
+    assert callable(registration.session_state_source)
+    while registration.session_state_source()["phase"] != "game_ended":
+        assert time.time() < deadline
+        time.sleep(0.01)
+
+    assert thread.is_alive() is True
+    response = registration.terminate_process(confirm=True)
+    thread.join(timeout=1.0)
+
+    assert response["ok"] is True
+    assert response["session"]["phase"] == "process_ended"
+    assert thread.is_alive() is False
+    assert holder["output"]["result"] == "draw"
 
 
 def test_format_result_keeps_small_game_log_and_trace_fields() -> None:

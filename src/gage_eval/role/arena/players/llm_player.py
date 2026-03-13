@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
-import io
+import hashlib
+import os
+from pathlib import Path
 import time
 from queue import Queue
 from threading import Lock, Thread
@@ -11,10 +13,18 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
+from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.arena.interfaces import MoveParser
+from gage_eval.role.arena.prompt_composer import ArenaPromptComposer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.utils.messages import stringify_message_content
+
+_DEFAULT_DEBUG_IMAGE_DUMP_MAX = 0
+_DEFAULT_DEBUG_IMAGE_DUMP_STRIDE = 1
+_ENV_DEBUG_IMAGE_DUMP_DIR = "GAGE_ARENA_DEBUG_IMAGE_DUMP_DIR"
+_ENV_DEBUG_IMAGE_DUMP_MAX = "GAGE_ARENA_DEBUG_IMAGE_DUMP_MAX"
+_ENV_DEBUG_IMAGE_DUMP_STRIDE = "GAGE_ARENA_DEBUG_IMAGE_DUMP_STRIDE"
 
 
 class LLMPlayer:
@@ -35,6 +45,10 @@ class LLMPlayer:
         fallback_policy: str = "none",
         timeout_ms: Optional[int] = None,
         timeout_fallback_move: Optional[str] = None,
+        prompt_renderer: Optional[PromptRenderer] = None,
+        scheduler_mode: Optional[str] = None,
+        scheme_id: Optional[str] = None,
+        scheme_params: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.name = name
         self._adapter_id = adapter_id
@@ -50,7 +64,44 @@ class LLMPlayer:
         self._timeout_fallback_move = (
             None if timeout_fallback_move is None else str(timeout_fallback_move)
         )
+        self._prompt_renderer = prompt_renderer
+        self._scheduler_mode = str(scheduler_mode or "").strip() or None
         self._base_messages = list(sample.get("messages") or [])
+        self._prompt_composer = ArenaPromptComposer(
+            sample=self._sample,
+            prompt_renderer=self._prompt_renderer,
+            scheduler_mode=self._scheduler_mode,
+            legal_moves_limit=self._legal_moves_limit,
+            scheme_id=scheme_id,
+            scheme_params=scheme_params,
+        )
+        self._scheme_id = self._prompt_composer.scheme_id
+        self._scheme_explicitly_configured = self._prompt_composer.scheme_explicitly_configured
+        self._action_history_len = self._prompt_composer.action_history_len
+        self._delta_key_limit = self._prompt_composer.delta_key_limit
+        self._telemetry_limit = self._prompt_composer.telemetry_limit
+        self._debug_image_dump_dir = self._resolve_debug_image_dump_dir(
+            (scheme_params or {}).get("debug_image_dump_dir")
+            if isinstance(scheme_params, dict)
+            else None
+        )
+        self._debug_image_dump_max = self._coerce_non_negative_int(
+            (scheme_params or {}).get("debug_image_dump_max", os.getenv(_ENV_DEBUG_IMAGE_DUMP_MAX))
+            if isinstance(scheme_params, dict)
+            else os.getenv(_ENV_DEBUG_IMAGE_DUMP_MAX),
+            default=_DEFAULT_DEBUG_IMAGE_DUMP_MAX,
+        )
+        self._debug_image_dump_stride = self._coerce_positive_int(
+            (scheme_params or {}).get(
+                "debug_image_dump_stride",
+                os.getenv(_ENV_DEBUG_IMAGE_DUMP_STRIDE),
+            )
+            if isinstance(scheme_params, dict)
+            else os.getenv(_ENV_DEBUG_IMAGE_DUMP_STRIDE),
+            default=_DEFAULT_DEBUG_IMAGE_DUMP_STRIDE,
+        )
+        self._debug_image_dump_count = 0
+        self._backward_prompt_logged_reasons: set[str] = set()
         self._async_lock = Lock()
         self._async_queue: Queue[ArenaAction] = Queue()
         self._async_inflight = False
@@ -58,18 +109,36 @@ class LLMPlayer:
         self._async_start_ts: Optional[float] = None
         self._async_timeout_ms: Optional[float] = None
         self._async_timeout_logged = False
+        if self._debug_image_dump_dir and self._debug_image_dump_max > 0:
+            logger.info(
+                "LLMPlayer {} image dump enabled: dir={} max={} stride={}",
+                self.name,
+                self._debug_image_dump_dir,
+                self._debug_image_dump_max,
+                self._debug_image_dump_stride,
+            )
 
     def think(self, observation: ArenaObservation) -> ArenaAction:
         """Produce an action using the LLM adapter."""
 
         prompt_text = self._format_observation(observation)
         image_fragment = self._build_image_fragment(observation)
-        logger.debug("LLMPlayer {} prompt (text-only):\n{}", self.name, prompt_text)
-        messages = self._base_messages + [self._build_user_message(prompt_text, image_fragment)]
+        logger.debug("LLMPlayer {} observation prompt seed (text-only):\n{}", self.name, prompt_text)
+        messages = self._build_turn_messages(
+            observation=observation,
+            prompt_text=prompt_text,
+            image_fragment=image_fragment,
+        )
+        self._log_request_media_summary(
+            observation=observation,
+            messages=messages,
+            phase="primary",
+        )
 
         # STEP 1: Run the primary request.
         raw_text = self._invoke_model(messages)
         parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
+        self._log_parse_result(parse_result, phase="primary")
 
         # STEP 2: Retry with rethink prompts when parsing fails or is illegal.
         retries = 0
@@ -79,10 +148,21 @@ class LLMPlayer:
                 reason=parse_result.error,
                 legal_moves=self._truncate_legal_moves(observation.legal_actions_items),
             )
-            raw_text = self._invoke_model(
-                self._base_messages + [self._build_user_message(rethink_prompt, image_fragment)]
+            retry_messages = self._build_turn_messages(
+                observation=observation,
+                prompt_text=rethink_prompt,
+                image_fragment=image_fragment,
+                retry_reason=parse_result.error,
+                last_output=raw_text,
             )
+            self._log_request_media_summary(
+                observation=observation,
+                messages=retry_messages,
+                phase=f"retry_{retries + 1}",
+            )
+            raw_text = self._invoke_model(retry_messages)
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
+            self._log_parse_result(parse_result, phase=f"retry_{retries + 1}")
             retries += 1
 
         if parse_result.error and observation.legal_actions_items:
@@ -103,22 +183,26 @@ class LLMPlayer:
                 metadata = self._build_action_metadata(parse_result, retry_count=retries)
                 metadata["error"] = parse_result.error
                 metadata["fallback"] = self._fallback_policy
-                return ArenaAction(
+                action = ArenaAction(
                     player=self.name,
                     move=fallback_move,
                     raw=raw_text,
                     metadata=metadata,
                 )
+                self._remember_interaction(observation, action)
+                return action
 
         metadata = self._build_action_metadata(parse_result, retry_count=retries)
         if parse_result.error:
             metadata["error"] = parse_result.error
-        return ArenaAction(
+        action = ArenaAction(
             player=self.name,
             move=parse_result.coord or "",
             raw=raw_text,
             metadata=metadata,
         )
+        self._remember_interaction(observation, action)
+        return action
 
     def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
         """Start thinking asynchronously if no request is in-flight."""
@@ -199,6 +283,11 @@ class LLMPlayer:
         thread.join(timeout=max(0.0, float(timeout_s)))
 
     def _invoke_model(self, messages: Sequence[Dict[str, Any]]) -> str:
+        logger.debug(
+            "LLMPlayer {} outbound messages:\n{}",
+            self.name,
+            self._summarize_messages_for_log(messages),
+        )
         payload = {
             "sample": self._sample,
             "messages": messages,
@@ -214,6 +303,18 @@ class LLMPlayer:
         return raw_text
 
     @staticmethod
+    def _summarize_messages_for_log(messages: Sequence[Dict[str, Any]]) -> str:
+        lines: list[str] = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                lines.append(f"[{index}:unknown] {message}")
+                continue
+            role = str(message.get("role") or "unknown")
+            content = LLMPlayer._format_message_content_for_log(message.get("content"))
+            lines.append(f"[{index}:{role}] {content}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _is_shutdown_error(exc: Exception) -> bool:
         """Return True if the error indicates runtime shutdown in progress."""
 
@@ -226,250 +327,207 @@ class LLMPlayer:
             or "is shut down" in message
         )
 
-    def _format_observation(self, observation: ArenaObservation) -> str:
-        if self._is_vizdoom_observation(observation):
-            return self._format_vizdoom_observation(observation)
-        if self._should_use_pettingzoo_prompt(observation):
-            return self._format_pettingzoo_observation(observation)
-        if self._should_use_card_prompt(observation):
-            return self._format_card_observation(observation)
-        return self._format_grid_observation(observation)
-
-    def _format_vizdoom_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        tick = metadata.get("t")
-        reward = metadata.get("reward")
-        status_lines = [
-            f"- Legal actions: {legal_hint}",
-        ]
-        if tick is not None:
-            status_lines.append(f"- Tick: {tick}")
-        if reward is not None:
-            status_lines.append(f"- Last reward: {reward}")
-        lines = [
-            "You are playing ViZDoom.",
-            observation.view_text,
-            "",
-            "Status:",
-            *status_lines,
-            "",
-            "Instructions:",
-            "- Choose exactly one action id from the legal actions list.",
-            "- Output ONLY the action id as an integer (no extra text).",
-        ]
-        return "\n".join(lines)
-
-    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
-        last_action = observation.last_action or "None"
-
-        instructions = [
-            "- Choose exactly one action from the legal moves list.",
-            "- Output ONLY the action label or id on the last line.",
-            "- Do not output explanations or extra text.",
-        ]
-        if any(self._normalize_move(move) == "fire" for move in legal_moves):
-            instructions.append("- Prefer FIRE when available.")
-        elif any(self._normalize_move(move) == "noop" for move in legal_moves):
-            instructions.append("- Avoid NOOP unless it is the only legal move.")
-
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {last_action}",
-            "\nEnvironment:",
-            observation.view_text,
-            "\nLegal moves:",
-            legal_hint,
-            "\nInstructions:",
-            *instructions,
-        ]
-        return "\n".join(lines)
-
-    def _format_grid_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
-
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_action or 'First move'}",
-            "\nCurrent Board:",
-            observation.view_text,
-            "\nStatus:",
-            f"- Legal moves (truncated): {legal_hint}",
-            "\nInstructions:",
-            "- Analyze the board.",
-            "- Select the best coordinate for your move.",
-            "- Output your move as a single coordinate (e.g., 'H8').",
-        ]
-        return "\n".join(lines)
-
-    def _format_card_observation(self, observation: ArenaObservation) -> str:
-        legal_moves = self._truncate_legal_moves(observation.legal_actions_items)
-        legal_hint = ", ".join(legal_moves) if legal_moves else "none"
-        active_player = _format_player_label(observation, observation.active_player)
-        chat_mode = str(observation.metadata.get("chat_mode", "off")).lower()
-        include_chat = chat_mode in {"ai-only", "all"}
-        instructions = [
-            "- Choose exactly one legal action string from the legal moves.",
-        ]
-        if include_chat:
-            instructions.extend(
-                [
-                    "- Include a short table-talk line every turn.",
-                    '- Output JSON: {"action": "<action>", "chat": "<short line>"}',
-                ]
-            )
-        else:
-            instructions.append("- Output the action string only.")
-        lines = [
-            f"Active player: {active_player}",
-            f"Opponent last move: {observation.last_action or 'First move'}",
-        ]
-        team_hint = self._build_team_hint(observation)
-        if team_hint:
-            lines.append(team_hint)
-        lines.extend(
-            [
-                "\nCurrent State:",
-                observation.view_text,
-                "\nStatus:",
-                f"- Legal moves (preview): {legal_hint}",
-                "\nInstructions:",
-                *instructions,
-            ]
-        )
-        return "\n".join(lines)
-
-    def _should_use_card_prompt(self, observation: ArenaObservation) -> bool:
-        metadata = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
-        game_type = str(metadata.get("game_type", "")).lower()
-        if game_type == "doudizhu":
-            return True
-        if game_type == "vizdoom":
-            return False
-        if isinstance(observation.metadata.get("public_state"), dict):
-            return True
-        return "Public State:" in observation.view_text
-
-    def _is_vizdoom_observation(self, observation: ArenaObservation) -> bool:
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        obs_game_type = str(metadata.get("game_type", "")).lower()
-        if obs_game_type == "vizdoom":
-            return True
-        sample_meta = self._sample.get("metadata") if isinstance(self._sample, dict) else {}
-        sample_game_type = str(sample_meta.get("game_type", "")).lower()
-        return sample_game_type == "vizdoom"
-
-    def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        env_id = str(metadata.get("env_id", "")).lower()
-        return "pettingzoo" in env_id
+    @staticmethod
+    def _format_message_content_for_log(content: Any) -> str:
+        if isinstance(content, list):
+            parts: list[str] = []
+            for fragment in content:
+                if isinstance(fragment, dict):
+                    fragment_type = str(fragment.get("type") or "")
+                    if fragment_type == "text":
+                        text = fragment.get("text")
+                        if text is not None:
+                            parts.append(str(text))
+                        continue
+                    if fragment_type in {"image", "image_url"}:
+                        parts.append(LLMPlayer._format_image_reference_for_log(fragment))
+                        continue
+                if fragment is not None:
+                    parts.append(str(fragment))
+            return " ".join(part for part in parts if part).strip()
+        return "" if content is None else str(content)
 
     @staticmethod
-    def _normalize_move(move: str) -> str:
-        return str(move).strip().lower()
+    def _format_image_reference_for_log(fragment: Dict[str, Any]) -> str:
+        image_url = fragment.get("image_url")
+        url: Optional[str] = None
+        if isinstance(image_url, dict):
+            raw_url = image_url.get("url")
+            if raw_url is not None:
+                url = str(raw_url)
+        elif isinstance(image_url, str):
+            url = image_url
+        elif isinstance(fragment.get("url"), str):
+            url = str(fragment["url"])
+        elif isinstance(fragment.get("image"), str):
+            url = str(fragment["image"])
+
+        if not url:
+            return "<image_ref:missing>"
+        if url.startswith("data:"):
+            header = url.split(",", 1)[0]
+            digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+            return f"<image_ref:{header};sha1={digest};chars={len(url)}>"
+        if len(url) > 180:
+            return f"<image_ref:{url[:180]}...>"
+        return f"<image_ref:{url}>"
+
+    def _format_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_observation(
+            observation,
+            prefer_renderer_instruction=self._prompt_renderer is not None,
+        )
+
+    def _format_grid_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_grid_observation(observation)
+
+    def _format_card_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_card_observation(observation)
+
+    def _format_vizdoom_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_vizdoom_observation(observation)
+
+    def _format_pettingzoo_observation(self, observation: ArenaObservation) -> str:
+        return self._prompt_composer.format_pettingzoo_observation(observation)
+
+    def _should_use_card_prompt(self, observation: ArenaObservation) -> bool:
+        return self._prompt_composer.should_use_card_prompt(observation)
+
+    def _should_use_pettingzoo_prompt(self, observation: ArenaObservation) -> bool:
+        return self._prompt_composer.should_use_pettingzoo_prompt(observation)
+
+    def _is_vizdoom_observation(self, observation: ArenaObservation) -> bool:
+        return self._prompt_composer.is_vizdoom_observation(observation)
+
+    @staticmethod
+    def _extract_prompt_spec(observation: ArenaObservation) -> Dict[str, Any]:
+        return ArenaPromptComposer.extract_prompt_spec(observation)
 
     def _build_team_hint(self, observation: ArenaObservation) -> str:
-        metadata = observation.metadata if isinstance(observation.metadata, dict) else {}
-        public_state = metadata.get("public_state")
-        if not isinstance(public_state, dict):
-            return ""
-        landlord_id = public_state.get("landlord_id")
-        if not landlord_id:
-            return ""
-        player_id = metadata.get("player_id") or observation.active_player
-        if not player_id:
-            return ""
-        player_ids = metadata.get("player_ids")
-        if not isinstance(player_ids, list):
-            player_ids = []
-        if player_id == landlord_id:
-            opponents = [str(pid) for pid in player_ids if pid and pid != landlord_id]
-            opponent_label = ", ".join(opponents) if opponents else "the two peasants"
-            return f"Role: Landlord. Opponents: {opponent_label}."
-        teammates = [
-            str(pid)
-            for pid in player_ids
-            if pid and pid not in {player_id, landlord_id}
-        ]
-        teammate_label = ", ".join(teammates) if teammates else "the other peasant"
-        return f"Role: Peasant. Teammate: {teammate_label}. Coordinate to beat landlord {landlord_id}."
+        return self._prompt_composer.build_team_hint(observation)
 
     def _truncate_legal_moves(self, legal_moves: Sequence[str]) -> Sequence[str]:
-        if self._legal_moves_limit <= 0:
-            return []
-        if len(legal_moves) <= self._legal_moves_limit:
-            return list(legal_moves)
-        return list(legal_moves[: self._legal_moves_limit])
+        return self._prompt_composer.truncate_legal_moves(legal_moves)
+
+    def _build_turn_messages(
+        self,
+        *,
+        observation: ArenaObservation,
+        prompt_text: str,
+        image_fragment: Optional[Dict[str, Any]],
+        retry_reason: Optional[str] = None,
+        last_output: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        result = self._prompt_composer.build_turn_messages(
+            player_id=self.name,
+            adapter_id=self._adapter_id,
+            base_messages=self._base_messages,
+            observation=observation,
+            prompt_text=prompt_text,
+            image_fragment=image_fragment,
+            retry_reason=retry_reason,
+            last_output=last_output,
+        )
+        if result.fallback_reason == "render_error":
+            logger.warning(
+                "LLMPlayer {} prompt renderer failed, fallback to backward-compatible prompt: {}",
+                self.name,
+                result.render_error_message or "unknown error",
+            )
+        if result.fallback_reason:
+            self._log_backward_prompt_usage(result.fallback_reason)
+        return result.messages
+
+    def _build_prompt_payload(
+        self,
+        *,
+        observation: ArenaObservation,
+        prompt_text: str,
+        retry_reason: Optional[str],
+        last_output: Optional[str],
+        legacy_messages: Sequence[Dict[str, Any]],
+        has_image: bool,
+    ) -> Dict[str, Any]:
+        return self._prompt_composer.build_prompt_payload(
+            player_id=self.name,
+            base_messages=self._base_messages,
+            observation=observation,
+            prompt_text=prompt_text,
+            retry_reason=retry_reason,
+            last_output=last_output,
+            legacy_messages=legacy_messages,
+            has_image=has_image,
+        )
+
+    @staticmethod
+    def _merge_payload_dicts(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+        return ArenaPromptComposer.merge_payload_dicts(base, overrides)
+
+    def _resolve_mode(self, observation_context: Dict[str, Any]) -> str:
+        return self._prompt_composer.resolve_mode(observation_context)
+
+    def _resolve_game_type(self, observation_metadata: Dict[str, Any]) -> str:
+        return self._prompt_composer.resolve_game_type(observation_metadata)
+
+    def _log_backward_prompt_usage(self, reason: str) -> None:
+        if reason in self._backward_prompt_logged_reasons:
+            return
+        self._backward_prompt_logged_reasons.add(reason)
+        if reason == "missing_prompt_renderer":
+            logger.info(
+                "LLMPlayer {} using backward-compatible prompt assembly (no prompt renderer configured)",
+                self.name,
+            )
+            return
+        logger.warning(
+            "LLMPlayer {} using backward-compatible prompt assembly (reason={})",
+            self.name,
+            reason,
+        )
+
+    @staticmethod
+    def _append_image_fragment(
+        messages: Sequence[Dict[str, Any]],
+        *,
+        image_fragment: Optional[Dict[str, Any]],
+        fallback_text: str,
+    ) -> list[Dict[str, Any]]:
+        return ArenaPromptComposer.append_image_fragment(
+            messages,
+            image_fragment=image_fragment,
+            fallback_text=fallback_text,
+        )
+
+    @staticmethod
+    def _has_user_message(messages: Sequence[Dict[str, Any]]) -> bool:
+        return ArenaPromptComposer.has_user_message(messages)
+
+    @staticmethod
+    def _has_image_content(content: Sequence[Any]) -> bool:
+        return ArenaPromptComposer.has_image_content(content)
 
     @staticmethod
     def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        content = [{"type": "text", "text": text}]
-        if image_fragment:
-            content.append(image_fragment)
-        return {"role": "user", "content": content}
+        return ArenaPromptComposer.build_user_message(text, image_fragment)
 
     def _build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
-        view = observation.view or {}
-        image = view.get("image")
-        if image is None:
+        image_fragment = self._prompt_composer.build_image_fragment(observation)
+        if not image_fragment:
             return None
-        data_url = self._resolve_image_data_url(image)
-        if not data_url:
-            return None
-        return {"type": "image_url", "image_url": {"url": data_url}}
+        image_url = image_fragment.get("image_url")
+        data_url = image_url.get("url") if isinstance(image_url, dict) else None
+        if isinstance(data_url, str):
+            self._maybe_dump_request_image(observation=observation, data_url=data_url)
+        return image_fragment
 
     def _resolve_image_data_url(self, image: Any) -> Optional[str]:
-        if isinstance(image, str):
-            if image.startswith("data:"):
-                return image
-            return None
-        if not isinstance(image, dict):
-            return None
-        if image.get("data_url"):
-            return str(image["data_url"])
-        if image.get("url"):
-            return str(image["url"])
-        if image.get("encoding") != "raw_base64":
-            return None
-        raw_b64 = image.get("data")
-        shape = image.get("shape") or []
-        dtype = str(image.get("dtype", ""))
-        if not raw_b64 or not isinstance(shape, list) or len(shape) < 2:
-            return None
-        if "uint8" not in dtype:
-            return None
-        try:
-            from PIL import Image
-        except ImportError:
-            logger.warning("Pillow not installed; skipping image conversion for arena prompt")
-            return None
-        try:
-            raw = base64.b64decode(str(raw_b64))
-            height = int(shape[0])
-            width = int(shape[1])
-            channels = int(shape[2]) if len(shape) > 2 else 1
-            if channels == 4:
-                mode = "RGBA"
-            elif channels == 3:
-                mode = "RGB"
-            else:
-                mode = "L"
-            img = Image.frombytes(mode, (width, height), raw)
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG")
-            data = base64.b64encode(buffer.getvalue()).decode("ascii")
-            return f"data:image/jpeg;base64,{data}"
-        except Exception:
-            return None
+        return self._prompt_composer.resolve_image_data_url(image)
 
     def _build_action_metadata(self, parse_result, *, retry_count: int = 0) -> Dict[str, Any]:
-        metadata = {"player_type": "backend"}
+        metadata = {"player_type": "backend", "scheme_id": self._scheme_id}
+        decision_reason = getattr(parse_result, "reason", None)
+        if decision_reason:
+            metadata["decision_reason"] = str(decision_reason)
         chat_text = getattr(parse_result, "chat_text", None)
         if chat_text:
             metadata["chat"] = str(chat_text)
@@ -481,6 +539,188 @@ class LLMPlayer:
                 pass
         metadata["retry_count"] = max(0, int(retry_count))
         return metadata
+
+    def _remember_interaction(self, observation: ArenaObservation, action: ArenaAction) -> None:
+        """Stores the latest observation/action pair for temporal prompts."""
+
+        self._prompt_composer.remember_interaction(observation, action)
+
+    def _resolve_observation_step(self, observation: ArenaObservation) -> Optional[int]:
+        """Extracts one step index token from the observation."""
+
+        return self._prompt_composer.resolve_observation_step(observation)
+
+    def _log_parse_result(self, parse_result: Any, *, phase: str) -> None:
+        """Logs parser output details for debugging prompt adherence."""
+
+        logger.debug(
+            "LLMPlayer {} parse_result: phase={} action={} error={} decision_reason={}",
+            self.name,
+            str(phase),
+            getattr(parse_result, "coord", None),
+            getattr(parse_result, "error", None),
+            getattr(parse_result, "reason", None),
+        )
+
+    def _log_request_media_summary(
+        self,
+        *,
+        observation: ArenaObservation,
+        messages: Sequence[Dict[str, Any]],
+        phase: str,
+    ) -> None:
+        """Log request image statistics for one model invocation."""
+
+        fallback_shape = self._extract_observation_image_shape(observation)
+        image_details = _summarize_message_images(messages, fallback_shape=fallback_shape)
+        image_status = self._resolve_image_status(
+            observation=observation,
+            image_count=len(image_details),
+        )
+        logger.debug(
+            "LLMPlayer {} request media: phase={} scheme_id={} step={} image_status={} "
+            "image_count={} image_details={}",
+            self.name,
+            str(phase),
+            self._scheme_id,
+            self._resolve_observation_step(observation),
+            image_status,
+            len(image_details),
+            image_details,
+        )
+
+    def _resolve_image_status(
+        self,
+        *,
+        observation: ArenaObservation,
+        image_count: int,
+    ) -> str:
+        """Classify whether images are expected or attached for this request."""
+
+        if image_count > 0:
+            return "attached"
+        if not self._prompt_composer.scheme_supports_image():
+            return "scheme_without_image"
+        view = observation.view if isinstance(observation.view, dict) else {}
+        image = view.get("image") if isinstance(view, dict) else None
+        if image is None:
+            return "observation_image_missing"
+        return "image_fragment_unavailable"
+
+    @staticmethod
+    def _extract_observation_image_shape(
+        observation: ArenaObservation,
+    ) -> Optional[tuple[int, int]]:
+        """Extract `(width, height)` from observation image metadata when available."""
+
+        view = observation.view if isinstance(observation.view, dict) else {}
+        image = view.get("image") if isinstance(view, dict) else None
+        if isinstance(image, dict):
+            shape = image.get("shape")
+            if isinstance(shape, list) and len(shape) >= 2:
+                try:
+                    height = int(shape[0])
+                    width = int(shape[1])
+                    if width > 0 and height > 0:
+                        return (width, height)
+                except (TypeError, ValueError):
+                    pass
+            width = image.get("width")
+            height = image.get("height")
+            if width is not None and height is not None:
+                try:
+                    parsed_width = int(width)
+                    parsed_height = int(height)
+                    if parsed_width > 0 and parsed_height > 0:
+                        return (parsed_width, parsed_height)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def _maybe_dump_request_image(self, *, observation: ArenaObservation, data_url: str) -> None:
+        """Save a bounded number of request images for debugging."""
+
+        if not self._debug_image_dump_dir:
+            return
+        if self._debug_image_dump_max <= 0:
+            return
+        if self._debug_image_dump_count >= self._debug_image_dump_max:
+            return
+
+        # STEP 1: Check step-based sampling before decoding payload.
+        step = self._resolve_observation_step(observation)
+        if (
+            self._debug_image_dump_stride > 1
+            and step is not None
+            and int(step) % int(self._debug_image_dump_stride) != 0
+        ):
+            return
+
+        # STEP 2: Decode and persist one snapshot image.
+        image_bytes, extension, error = _decode_data_url_image(data_url)
+        if image_bytes is None:
+            logger.debug(
+                "LLMPlayer {} skipped image dump due to decode error: {}",
+                self.name,
+                error or "unknown",
+            )
+            return
+        try:
+            dump_dir = Path(self._debug_image_dump_dir).expanduser()
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            step_token = "na" if step is None else str(int(step))
+            safe_player = str(self.name or "player").replace("/", "_")
+            safe_scheme = str(self._scheme_id or "scheme").replace("/", "_")
+            file_name = (
+                f"{safe_player}_{safe_scheme}_step_{step_token}_"
+                f"{self._debug_image_dump_count:03d}.{extension}"
+            )
+            path = dump_dir / file_name
+            path.write_bytes(image_bytes)
+            self._debug_image_dump_count += 1
+            logger.info(
+                "LLMPlayer {} saved prompt image snapshot {}/{} path={} step={}",
+                self.name,
+                self._debug_image_dump_count,
+                self._debug_image_dump_max,
+                str(path),
+                step_token,
+            )
+        except Exception as exc:
+            logger.warning(
+                "LLMPlayer {} failed to dump prompt image: {}",
+                self.name,
+                str(exc),
+            )
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, *, default: int) -> int:
+        """Coerces a value into a positive integer fallback."""
+
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return int(default)
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+        """Coerces a value into a non-negative integer fallback."""
+
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return int(default)
+
+    @staticmethod
+    def _resolve_debug_image_dump_dir(configured_dir: Any) -> Optional[str]:
+        """Resolve one debug dump directory from scheme params or environment."""
+
+        candidates = [configured_dir, os.getenv(_ENV_DEBUG_IMAGE_DUMP_DIR)]
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return None
 
 
 def _format_player_label(observation: ArenaObservation, player_id: str) -> str:
@@ -507,3 +747,114 @@ def _extract_text(output: Any) -> str:
             if isinstance(last, dict):
                 return stringify_message_content(last.get("content"))
     return "" if output is None else str(output)
+
+
+def _summarize_message_images(
+    messages: Sequence[Dict[str, Any]],
+    *,
+    fallback_shape: Optional[tuple[int, int]] = None,
+) -> list[dict[str, Any]]:
+    """Collect image count and size metadata from chat messages."""
+
+    details: list[dict[str, Any]] = []
+    for message_index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for content_index, item in enumerate(content):
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type") or "").strip().lower() != "image_url":
+                continue
+            url = _resolve_image_url(item.get("image_url"))
+            summary = _summarize_image_url(url)
+            summary["index"] = len(details)
+            summary["message_index"] = message_index
+            summary["content_index"] = content_index
+            if fallback_shape and "width" not in summary and "height" not in summary:
+                summary["width"] = fallback_shape[0]
+                summary["height"] = fallback_shape[1]
+            details.append(summary)
+    return details
+
+
+def _resolve_image_url(value: Any) -> Optional[str]:
+    """Resolve image URL payload from one message image fragment."""
+
+    if isinstance(value, dict):
+        url = value.get("url")
+        return str(url) if isinstance(url, str) else None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _summarize_image_url(url: Optional[str]) -> dict[str, Any]:
+    """Build one compact summary for an image URL payload."""
+
+    if not url:
+        return {"source": "missing", "error": "url_missing"}
+    if not isinstance(url, str):
+        return {"source": "invalid", "error": "url_not_string"}
+    if not url.startswith("data:"):
+        return {"source": "remote_url", "url_length": len(url)}
+
+    header, separator, payload = url.partition(",")
+    if not separator:
+        return {"source": "data_url", "error": "invalid_data_url_header"}
+
+    mime_segment = header[len("data:") :]
+    media_type = mime_segment.split(";", 1)[0] or "application/octet-stream"
+    is_base64 = ";base64" in mime_segment.lower()
+    summary: dict[str, Any] = {
+        "source": "data_url",
+        "media_type": media_type,
+        "payload_chars": len(payload),
+        "is_base64": is_base64,
+    }
+    if is_base64:
+        summary["decoded_bytes"] = _estimate_base64_decoded_bytes(payload)
+    return summary
+
+
+def _estimate_base64_decoded_bytes(payload: str) -> int:
+    """Estimate decoded bytes for one base64 payload without full decoding."""
+
+    compact = "".join(str(payload).split())
+    if not compact:
+        return 0
+    padding = len(compact) - len(compact.rstrip("="))
+    estimated = (len(compact) * 3) // 4 - padding
+    return max(0, int(estimated))
+
+
+def _decode_data_url_image(data_url: str) -> tuple[Optional[bytes], str, Optional[str]]:
+    """Decode one data URL image payload into raw file bytes."""
+
+    if not isinstance(data_url, str):
+        return None, "jpg", "data_url_not_string"
+    if not data_url.startswith("data:"):
+        return None, "jpg", "unsupported_image_url"
+    header, separator, payload = data_url.partition(",")
+    if not separator:
+        return None, "jpg", "invalid_data_url"
+    if ";base64" not in header.lower():
+        return None, "jpg", "data_url_not_base64"
+
+    media_type = header[len("data:") :].split(";", 1)[0].strip().lower()
+    extension = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/bmp": "bmp",
+    }.get(media_type, "jpg")
+    try:
+        image_bytes = base64.b64decode(payload, validate=False)
+    except Exception:
+        return None, extension, "base64_decode_failed"
+    if not image_bytes:
+        return None, extension, "empty_image_payload"
+    return image_bytes, extension, None

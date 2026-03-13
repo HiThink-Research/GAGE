@@ -29,6 +29,28 @@ backends:
         temperature: 0.2
         max_tokens: 96
 
+prompts:
+  - prompt_id: retro_mario_turn_prompt_v1
+    renderer: jinja_chat
+    params:
+      role: system
+      include_existing: false
+    template: |
+      You are a precise retro game action planner for {{ payload.game_type }}.
+      Scheduler mode: {{ payload.mode }}.
+      Output policy:
+      - Return exactly ONE JSON object on the last line.
+      - JSON schema: {"move":"<legal_move_or_key_combo>","hold_ticks":<int>}.
+      - "move" must be selected from the legal moves list.
+      - "hold_ticks" must be in {{ payload.hold_ticks.min }}-{{ payload.hold_ticks.max }} (default {{ payload.hold_ticks.default }}).
+      - Do not output extra text before or after the JSON object.
+      {% if payload.retry_reason %}
+      Retry reason from previous output: {{ payload.retry_reason }}.
+      {% endif %}
+      {% if payload.last_model_output %}
+      Previous model output: {{ payload.last_model_output }}.
+      {% endif %}
+
 role_adapters:
   - adapter_id: retro_openai_player_0
     role_type: dut_model
@@ -38,6 +60,7 @@ role_adapters:
 
   - adapter_id: retro_mario_arena
     role_type: arena
+    prompt_id: retro_mario_turn_prompt_v1
     params:
       human_input:
         enabled: true
@@ -50,6 +73,7 @@ role_adapters:
         state: Start
         # display_mode=websocket is rendered via ws_rgb, with headless env runtime.
         display_mode: websocket
+        # Keep obs_image enabled so the latest frame can be attached in-memory to LLM messages.
         obs_image: true
         record_bk2: false
         legal_moves:
@@ -63,20 +87,21 @@ role_adapters:
           hold_ticks_max: 12
           hold_ticks_default: 6
         info_feeder:
-          impl: info_last_v1
+          impl: info_none_v1
         replay:
           enabled: true
-          mode: action
-          frame_capture:
+          primary_mode: true
+          mode: both
+          frame:
             enabled: true
-            frame_stride: 3
-            max_frames: 900
-            format: jpeg
+            stride: 3
+            max_frames: 5000
+            encoding: jpeg
             quality: 75
       scheduler:
         type: tick
-        tick_ms: 1200
-        max_ticks: 120
+        tick_ms: 1500
+        max_ticks: 60
       parser:
         impl: retro_action_v1
         hold_ticks_min: 1
