@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import importlib
 import json
 import os
@@ -12,6 +13,11 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
+
 from gage_eval.registry import registry
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 from gage_eval.role.arena.games.retro.action_codec import RetroActionCodec
@@ -20,6 +26,7 @@ from gage_eval.role.arena.games.retro.observation import (
     InfoDeltaFeeder,
     InfoFeeder,
     InfoLastFeeder,
+    InfoNoneFeeder,
     ObservationBuilder,
 )
 from gage_eval.role.arena.games.retro.replay import ReplaySchemaWriter
@@ -183,12 +190,38 @@ class StableRetroArenaEnvironment:
             reward_total=self._reward_total,
             controls=controls,
             image=image_payload,
+            game_type=self._game,
+            env_id=self._game,
         )
 
-    def get_last_frame(self) -> Optional[Any]:
-        """Return the most recent RGB frame, if available."""
+    def get_last_frame(self) -> dict[str, Any]:
+        """Return the most recent structured frame payload for websocket display."""
 
-        return self._last_obs
+        if self._last_obs is None:
+            return {}
+        # NOTE: ws_rgb live replay deduplicates snapshots by serialized frame fields,
+        # so retro frames must expose tick-level metadata alongside the raw RGB array.
+        metadata: dict[str, Any] = {
+            "env_id": self._game,
+            "tick": int(self._tick),
+            "decision_count": int(self._decision_count),
+            "last_reward": float(self._last_reward),
+            "reward_total": float(self._reward_total),
+        }
+        frame_shape = self._normalize_frame_shape(getattr(self._last_obs, "shape", None))
+        if frame_shape:
+            metadata["frame_shape"] = frame_shape
+        if self._last_info:
+            metadata["info"] = dict(self._last_info)
+        return {
+            "env_id": self._game,
+            "board_text": self._format_live_frame_text(),
+            "move_count": int(self._decision_count),
+            "last_move": self._last_move,
+            "reward": float(self._last_reward),
+            "metadata": metadata,
+            "_rgb": self._last_obs,
+        }
 
     def _build_controls_payload(self, legal_moves: Sequence[str]) -> dict[str, Any]:
         key_aliases = {
@@ -247,12 +280,61 @@ class StableRetroArenaEnvironment:
             raw = frame.tobytes()
         except Exception:
             return None
+        data_b64 = base64.b64encode(raw).decode("ascii")
+        data_url = self._build_image_data_url(frame)
         return {
             "encoding": "raw_base64",
-            "data": base64.b64encode(raw).decode("ascii"),
+            "data": data_b64,
+            "data_url": data_url,
             "shape": normalized_shape,
             "dtype": str(getattr(frame, "dtype", "unknown")),
         }
+
+    def _format_live_frame_text(self) -> str:
+        """Build a concise live frame summary for websocket display panels."""
+
+        parts = [
+            f"game={self._game}",
+            f"tick={self._tick}",
+            f"decisions={self._decision_count}",
+            f"last_move={self._last_move or 'none'}",
+            f"reward={self._last_reward:.3f}",
+            f"reward_total={self._reward_total:.3f}",
+        ]
+        if self._last_info:
+            info_text = json.dumps(self._last_info, ensure_ascii=False, sort_keys=True, default=str)
+            parts.append(f"info={info_text}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _normalize_frame_shape(shape: Any) -> list[int]:
+        """Normalize a frame shape candidate into plain integers."""
+
+        if shape is None:
+            return []
+        try:
+            return [int(dim) for dim in shape]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _build_image_data_url(frame: Any) -> Optional[str]:
+        """Encode a frame into an in-memory JPEG data URL when Pillow is available."""
+
+        if Image is None:
+            return None
+        try:
+            image = Image.fromarray(frame)
+            if image.mode not in {"RGB", "RGBA", "L"}:
+                image = image.convert("RGB")
+            if image.mode == "RGBA":
+                image = image.convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=85, optimize=True)
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{encoded}"
+        except Exception:
+            return None
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
         if self._terminal:
@@ -656,6 +738,8 @@ class StableRetroArenaEnvironment:
             return InfoLastFeeder()
         impl = str(info_feeder.get("impl") or info_feeder.get("name") or "info_last_v1").lower()
         params = dict(info_feeder.get("params") or {})
+        if impl in {"info_none_v1", "none", "off", "disabled"}:
+            return InfoNoneFeeder()
         if impl in {"info_delta_v1", "delta", "info_delta"}:
             return InfoDeltaFeeder(window_size=int(params.get("window_size", 8) or 8))
         return InfoLastFeeder()

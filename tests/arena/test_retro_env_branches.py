@@ -292,3 +292,9 @@ def test_build_info_feeder_unknown_impl_falls_back_to_info_last():
     env = retro_env_mod.StableRetroArenaEnvironment(game="SuperMarioBros3-Nes-v0", display_mode="headless")
     feeder = env._build_info_feeder({"impl": "custom_unknown", "params": {}})  # noqa: SLF001
     assert isinstance(feeder, retro_env_mod.InfoLastFeeder)
+
+
+def test_build_info_feeder_none_impl_disables_info_projection():
+    env = retro_env_mod.StableRetroArenaEnvironment(game="SuperMarioBros3-Nes-v0", display_mode="headless")
+    feeder = env._build_info_feeder({"impl": "info_none_v1", "params": {}})  # noqa: SLF001
+    assert isinstance(feeder, retro_env_mod.InfoNoneFeeder)

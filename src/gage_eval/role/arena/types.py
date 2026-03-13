@@ -7,6 +7,15 @@ from typing import Any, Optional, Sequence
 
 
 @dataclass(frozen=True)
+class ArenaPromptSpec:
+    """Game-owned prompt package consumed by arena players."""
+
+    instruction: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    renderer_instruction: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class ArenaObservation:
     """Observation payload delivered to a player (active_player uses player_id)."""
 
@@ -18,6 +27,7 @@ class ArenaObservation:
     view: Optional[dict[str, Any]] = None
     legal_actions: Optional[dict[str, Any]] = None
     context: Optional[dict[str, Any]] = None
+    prompt: Optional[ArenaPromptSpec] = None
 
     @property
     def view_text(self) -> str:

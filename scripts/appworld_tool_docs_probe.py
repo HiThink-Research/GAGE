@@ -1,9 +1,8 @@
-"""CLI wrapper for tool documentation probing."""
+#!/usr/bin/env python3
+from pathlib import Path
+import runpy
 
-from __future__ import annotations
-
-from gage_eval.tools.appworld_tool_docs_probe import main
-
-
-if __name__ == "__main__":
-    main()
+runpy.run_path(
+    str(Path(__file__).resolve().parent / "tools" / "appworld" / "tool_docs_probe.py"),
+    run_name="__main__",
+)

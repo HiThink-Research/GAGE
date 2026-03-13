@@ -216,3 +216,6 @@ scripts/oneclick/.env.example
 __pycache__/
 *.pyc
 *.pyo
+
+# vizdoom artifact
+_vizdoom.ini

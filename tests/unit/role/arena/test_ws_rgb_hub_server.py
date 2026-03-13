@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from queue import Queue
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -158,6 +159,144 @@ def test_ws_rgb_hub_http_endpoints() -> None:
         hub.stop()
 
 
+def test_ws_rgb_hub_http_session_control_endpoints() -> None:
+    session = {
+        "session_controlled": True,
+        "phase": "in_progress",
+        "replay_allowed": False,
+        "can_terminate_game": True,
+        "can_terminate_process": False,
+    }
+
+    def _session_state() -> dict[str, Any]:
+        return dict(session)
+
+    def _terminate_game() -> dict[str, Any]:
+        session.update(
+            {
+                "phase": "game_ended",
+                "replay_allowed": True,
+                "can_terminate_game": False,
+                "can_terminate_process": True,
+                "reason": "manual_stop",
+            }
+        )
+        return {"ok": True, "session": dict(session)}
+
+    def _terminate_process(*, confirm: bool) -> dict[str, Any]:
+        if not confirm:
+            return {"ok": False, "error": "process_end_confirmation_required", "session": dict(session)}
+        session.update(
+            {
+                "phase": "process_ended",
+                "replay_allowed": False,
+                "can_terminate_process": False,
+            }
+        )
+        return {"ok": True, "session": dict(session)}
+
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-session",
+                label="retro",
+                human_player_id="player_0",
+                frame_source=lambda: {"frame_id": 3},
+                session_state_source=_session_state,
+                terminate_game=_terminate_game,
+                terminate_process=_terminate_process,
+            )
+        )
+
+        with urlopen(f"{hub.base_url}/ws_rgb/displays") as response:  # noqa: S310 - local test endpoint
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["ok"] is True
+        assert payload["displays"][0]["session"]["phase"] == "in_progress"
+
+        terminate_game_request = Request(
+            f"{hub.base_url}/ws_rgb/session",
+            data=json.dumps({"display_id": "display-session", "action": "terminate_game"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(terminate_game_request) as response:  # noqa: S310 - local test endpoint
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["ok"] is True
+        assert payload["session"]["phase"] == "game_ended"
+
+        terminate_process_request = Request(
+            f"{hub.base_url}/ws_rgb/session",
+            data=json.dumps({"display_id": "display-session", "action": "terminate_process"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(terminate_process_request) as _:
+            raise AssertionError("Expected HTTPError for missing process-end confirmation")
+    except HTTPError as exc:
+        assert exc.code == 409
+        payload = json.loads(exc.read().decode("utf-8"))
+        assert payload["error"] == "process_end_confirmation_required"
+    finally:
+        hub.stop()
+
+
+def test_ws_rgb_hub_http_session_control_confirmed_process_end() -> None:
+    session = {
+        "session_controlled": True,
+        "phase": "game_ended",
+        "replay_allowed": True,
+        "can_terminate_game": False,
+        "can_terminate_process": True,
+    }
+
+    def _terminate_process(*, confirm: bool) -> dict[str, Any]:
+        if not confirm:
+            return {"ok": False, "error": "process_end_confirmation_required", "session": dict(session)}
+        session.update(
+            {
+                "phase": "process_ended",
+                "replay_allowed": False,
+                "can_terminate_process": False,
+            }
+        )
+        return {"ok": True, "session": dict(session)}
+
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-process-end",
+                label="retro",
+                human_player_id="player_0",
+                frame_source=lambda: {"frame_id": 4},
+                session_state_source=lambda: dict(session),
+                terminate_process=_terminate_process,
+            )
+        )
+
+        request = Request(
+            f"{hub.base_url}/ws_rgb/session",
+            data=json.dumps(
+                {
+                    "display_id": "display-process-end",
+                    "action": "terminate_process",
+                    "confirm": True,
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request) as response:  # noqa: S310 - local test endpoint
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["ok"] is True
+        assert payload["session"]["phase"] == "process_ended"
+    finally:
+        hub.stop()
+
+
 def test_ws_rgb_hub_http_frame_missing_display_returns_not_found() -> None:
     hub = WsRgbHubServer(host="127.0.0.1", port=0)
     hub.start()
@@ -178,11 +317,14 @@ def test_ws_rgb_hub_http_viewer_page_available() -> None:
     try:
         with urlopen(f"{hub.base_url}/ws_rgb/viewer") as response:  # noqa: S310 - local test endpoint
             html = response.read().decode("utf-8")
-        assert "GAGE ws_rgb Viewer" in html
+        assert "GAGE Game Play Viewer" in html
         assert "/ws_rgb/displays" in html
         assert "/ws_rgb/frame" in html
         assert "/ws_rgb/frame_image" in html
         assert "/ws_rgb/replay_buffer" in html
+        assert "/ws_rgb/session" in html
+        assert "Terminate Game" in html
+        assert "End Process" in html
     finally:
         hub.stop()
 

@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, Optional, Sequence
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.games.vizdoom.observation import ViZDoomPromptBuilder
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 DEFAULT_ACTION_LABELS = ("turn_left", "turn_right", "move_forward", "move_backward", "attack")
@@ -188,6 +189,8 @@ class ViZDoomArenaEnvironment:
         self._start_ts = time.time()
         self._active_idx = 0
         self._last_frame_payload: Dict[str, Any] = {}
+        self._display_pov_view = self._normalize_pov_view(self._cfg.pov_view)
+        self._prompt_builder = ViZDoomPromptBuilder()
 
     def reset(self) -> None:
         """Reset the environment to its initial state."""
@@ -203,6 +206,7 @@ class ViZDoomArenaEnvironment:
         self._start_ts = time.time()
         self._active_idx = 0
         self._last_frame_payload = {}
+        self._display_pov_view = self._normalize_pov_view(self._cfg.pov_view)
 
         # STEP 2: Initialize replay if enabled.
         if self._cfg.replay_in_env:
@@ -240,7 +244,7 @@ class ViZDoomArenaEnvironment:
             "vector": raw_obs,
         }
         if self._cfg.obs_image:
-            frame = self._get_frame_from_env()
+            frame = self._get_frame_from_env(observer_player_id=player_id)
             if frame is not None:
                 view["image"] = frame
         legal_actions: Dict[str, Any] = {"items": legal_items}
@@ -257,21 +261,34 @@ class ViZDoomArenaEnvironment:
             "done": bool(self._done),
             "t": int(self._tick),
         }
+        metadata = {
+            "game_type": "vizdoom",
+            "player_id": player_id,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            **extra,
+        }
+        prompt = self._prompt_builder.build(
+            game_id=self._cfg.game_id,
+            active_player=player_id,
+            legal_actions=legal_items,
+            action_mapping={str(key): str(value) for key, value in ACTION_ID_MAPPING.items()},
+            tick=self._tick,
+            step=self._tick,
+            last_reward=float(self._last_rewards.get(idx, 0.0)),
+            view_text=str(view.get("text") or ""),
+            metadata=metadata,
+        )
         return ArenaObservation(
             board_text="",
             legal_moves=[str(item) for item in legal_items],
             active_player=player_id,
-            metadata={
-                "game_type": "vizdoom",
-                "player_id": player_id,
-                "player_ids": list(self._player_ids),
-                "player_names": dict(self._player_names),
-                **extra,
-            },
+            metadata=metadata,
             view=view,
             legal_actions=legal_actions,
             context=context,
             last_move=None,
+            prompt=prompt,
         )
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:
@@ -332,6 +349,9 @@ class ViZDoomArenaEnvironment:
     def set_view(self, view: str) -> None:
         """Switch the active camera view if supported by the backend."""
 
+        normalized_view = self._normalize_pov_view(view)
+        if normalized_view is not None:
+            self._display_pov_view = normalized_view
         setter = getattr(self._env, "set_view", None)
         if callable(setter):
             setter(view)
@@ -469,35 +489,37 @@ class ViZDoomArenaEnvironment:
         stride = int(self._cfg.frame_stride or 0)
         if stride <= 0 or self._tick % stride != 0:
             return
-        frame = self._get_frame_from_env()
+        frame = self._get_frame_from_env(use_display_view=True)
         if frame is None:
             return
         self._replay.append_frame(
             {
                 "tick_index": self._tick,
                 "timestamp_ms": ts_ms,
-                "actor": 0,
+                "actor": self._resolve_frame_actor_id(use_display_view=True),
                 "frame": frame,
             }
         )
 
-    def _get_frame_from_env(self) -> Optional[Dict[str, Any]]:
-        raw_frames = self._get_raw_pov_frames()
-        if raw_frames:
-            raw = raw_frames.get(0)
-            if raw is None:
-                raw = next((frame for frame in raw_frames.values() if frame is not None), None)
-            if raw is not None:
-                return _encode_frame(raw)
+    def _get_frame_from_env(
+        self,
+        *,
+        observer_player_id: Optional[str] = None,
+        use_display_view: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Return an encoded POV frame for the observer or configured display view."""
+
+        _, raw = self._select_raw_pov_frame(
+            observer_player_id=observer_player_id,
+            use_display_view=use_display_view,
+        )
+        if raw is not None:
+            return _encode_frame(raw)
         return None
 
     def _refresh_last_frame_payload(self) -> None:
-        raw_frames = self._get_raw_pov_frames()
-        if not raw_frames:
-            return
-        player_index = 0 if raw_frames.get(0) is not None else next(iter(raw_frames.keys()))
-        raw_frame = raw_frames.get(player_index)
-        if raw_frame is None:
+        player_index, raw_frame = self._select_raw_pov_frame(use_display_view=True)
+        if raw_frame is None or player_index is None:
             return
         player_id = self._player_id_by_index.get(int(player_index), f"p{player_index}")
         self._last_frame_payload = {
@@ -534,6 +556,65 @@ class ViZDoomArenaEnvironment:
                 continue
             normalized[player_index] = value
         return normalized
+
+    def _select_raw_pov_frame(
+        self,
+        *,
+        observer_player_id: Optional[str] = None,
+        use_display_view: bool = False,
+    ) -> tuple[Optional[int], Any]:
+        """Select a POV frame for a specific observer or the active display view."""
+
+        raw_frames = self._get_raw_pov_frames()
+        if not raw_frames:
+            return None, None
+
+        candidate_indices: list[int] = []
+        if observer_player_id:
+            try:
+                candidate_indices.append(self._resolve_player_index(observer_player_id))
+            except KeyError:
+                pass
+        if use_display_view or observer_player_id is None:
+            candidate_indices.extend(self._preferred_display_frame_indices())
+        candidate_indices.extend(sorted(raw_frames.keys()))
+
+        seen: set[int] = set()
+        for player_index in candidate_indices:
+            if player_index in seen:
+                continue
+            seen.add(player_index)
+            raw_frame = raw_frames.get(player_index)
+            if raw_frame is not None:
+                return player_index, raw_frame
+        return None, None
+
+    def _preferred_display_frame_indices(self) -> list[int]:
+        """Return preferred player indices for the current display POV selection."""
+
+        view = self._display_pov_view
+        if view == "p0":
+            return [0]
+        if view == "p1":
+            return [1]
+        return []
+
+    def _resolve_frame_actor_id(self, *, use_display_view: bool = False) -> str:
+        """Resolve the actor id associated with the selected frame source."""
+
+        player_index, _ = self._select_raw_pov_frame(use_display_view=use_display_view)
+        if player_index is None:
+            return "p0"
+        return self._player_id_by_index.get(int(player_index), f"p{player_index}")
+
+    @staticmethod
+    def _normalize_pov_view(view: Optional[str]) -> Optional[str]:
+        """Normalize POV view strings accepted by the ViZDoom backend."""
+
+        normalized = str(view or "").strip().lower()
+        if normalized in {"p0", "p1", "both", "none"}:
+            return normalized
+        return None
 
     def _winner_from_info(self, info: Dict[str, Any]) -> Optional[str]:
         outcome = info.get("outcome")

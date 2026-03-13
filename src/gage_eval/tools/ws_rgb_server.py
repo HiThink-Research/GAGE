@@ -178,6 +178,9 @@ class DisplayRegistration:
     input_mapper: Optional[GameInputMapper] = None
     legal_moves: Optional[list[str]] = None
     action_queue: Any = None
+    session_state_source: Optional[Callable[[], Mapping[str, Any]]] = None
+    terminate_game: Optional[Callable[[], Mapping[str, Any]]] = None
+    terminate_process: Optional[Callable[..., Mapping[str, Any]]] = None
     default_context: dict[str, Any] = field(default_factory=dict)
 
 
@@ -291,6 +294,7 @@ class WsRgbHubServer:
                     "accepts_input": reg.input_mapper is not None,
                     "replay_seekable": replay_seekable,
                     "replay_total": replay_total,
+                    "session": self._resolve_session_state(reg),
                     "running": self._running,
                 }
             )
@@ -457,6 +461,82 @@ class WsRgbHubServer:
             "actions": [item.to_dict() for item in actions],
         }
 
+    def control_session(
+        self,
+        *,
+        display_id: str,
+        action: str,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Apply one lifecycle control action for a registered display."""
+
+        registration = self._displays.get(str(display_id))
+        if registration is None:
+            return {"ok": False, "error": "display_not_found", "display_id": str(display_id)}
+
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "terminate_game":
+            handler = registration.terminate_game
+            if not callable(handler):
+                return {
+                    "ok": False,
+                    "error": "session_control_unavailable",
+                    "display_id": registration.display_id,
+                }
+            response = handler()
+            return self._normalize_session_response(
+                registration=registration,
+                response=response,
+            )
+        if normalized_action == "terminate_process":
+            handler = registration.terminate_process
+            if not callable(handler):
+                return {
+                    "ok": False,
+                    "error": "session_control_unavailable",
+                    "display_id": registration.display_id,
+                }
+            response = handler(confirm=bool(confirm))
+            return self._normalize_session_response(
+                registration=registration,
+                response=response,
+            )
+        return {
+            "ok": False,
+            "error": "invalid_session_action",
+            "display_id": registration.display_id,
+        }
+
+    @staticmethod
+    def _resolve_session_state(registration: DisplayRegistration) -> Optional[dict[str, Any]]:
+        source = registration.session_state_source
+        if not callable(source):
+            return None
+        try:
+            session = source()
+        except Exception:
+            return None
+        if not isinstance(session, Mapping):
+            return None
+        return dict(session)
+
+    def _normalize_session_response(
+        self,
+        *,
+        registration: DisplayRegistration,
+        response: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        payload = dict(response) if isinstance(response, Mapping) else {}
+        payload.setdefault("display_id", registration.display_id)
+        session = payload.get("session")
+        if not isinstance(session, Mapping):
+            resolved_session = self._resolve_session_state(registration)
+            if resolved_session is not None:
+                payload["session"] = resolved_session
+        else:
+            payload["session"] = dict(session)
+        return payload
+
     @staticmethod
     def _enqueue_actions(action_queue: Any, actions: list[HumanActionEvent]) -> int:
         if action_queue is None:
@@ -489,7 +569,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GAGE ws_rgb Viewer</title>
+  <title>GAGE Game Play Viewer</title>
   <style>
     :root {
       color-scheme: dark;
@@ -503,6 +583,9 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       --error: #ff7d7d;
       --ok: #85d988;
       --border: #2b3a58;
+      --viewer-left-width: 300px;
+      --viewer-right-width: 340px;
+      --viewer-splitter-width: 14px;
     }
     * {
       box-sizing: border-box;
@@ -513,10 +596,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       background: linear-gradient(165deg, var(--bg) 0%, #0e1a2a 45%, #09111b 100%);
       color: var(--text);
       min-height: 100vh;
-      padding: 16px;
+      padding: 12px;
+    }
+    body.split-resizing {
+      cursor: col-resize;
+      user-select: none;
     }
     .shell {
-      max-width: 1200px;
+      width: min(1400px, calc(100vw - 24px));
+      max-width: 1400px;
       margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr;
@@ -526,48 +614,76 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       background: linear-gradient(180deg, var(--panel) 0%, var(--panel-alt) 100%);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 12px;
+      padding: 10px;
       box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+      min-width: 0;
     }
     .title {
       font-size: 15px;
       font-weight: 700;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       color: var(--accent);
     }
     .row {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
     }
     .row + .row {
-      margin-top: 10px;
+      margin-top: 8px;
     }
     select, input, button {
       background: #0f1727;
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 7px 9px;
+      padding: 6px 8px;
     }
     select {
-      min-width: 300px;
+      min-width: 280px;
     }
     select.compact {
       min-width: 120px;
     }
     input {
-      min-width: 140px;
+      min-width: 120px;
     }
     input[type="range"] {
-      min-width: 240px;
+      min-width: 220px;
     }
     button {
       cursor: pointer;
     }
     button:hover {
       border-color: var(--accent);
+    }
+    button:disabled,
+    input:disabled,
+    select:disabled {
+      cursor: not-allowed;
+      opacity: 0.46;
+      color: rgba(214, 222, 237, 0.58);
+      border-color: rgba(43, 58, 88, 0.58);
+      background: linear-gradient(180deg, rgba(15, 23, 39, 0.84) 0%, rgba(9, 17, 27, 0.94) 100%);
+      box-shadow: none;
+      filter: saturate(0.55);
+    }
+    button:disabled:hover {
+      border-color: rgba(43, 58, 88, 0.58);
+    }
+    button.danger {
+      border-color: rgba(255, 125, 125, 0.5);
+      background: linear-gradient(180deg, rgba(122, 32, 32, 0.92) 0%, rgba(80, 18, 18, 0.98) 100%);
+      color: #ffd8d8;
+    }
+    button.danger:hover {
+      border-color: var(--error);
+    }
+    button.danger:disabled {
+      color: rgba(255, 216, 216, 0.5);
+      border-color: rgba(122, 32, 32, 0.35);
+      background: linear-gradient(180deg, rgba(122, 32, 32, 0.42) 0%, rgba(80, 18, 18, 0.62) 100%);
     }
     .status {
       color: var(--muted);
@@ -582,6 +698,30 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
     .status.error {
       color: var(--error);
+    }
+    .session-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15, 23, 39, 0.92);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .session-badge.state-in-progress {
+      color: var(--warn);
+      border-color: rgba(255, 204, 102, 0.45);
+    }
+    .session-badge.state-game-ended {
+      color: var(--ok);
+      border-color: rgba(133, 217, 136, 0.45);
+    }
+    .session-badge.state-process-ended {
+      color: var(--error);
+      border-color: rgba(255, 125, 125, 0.45);
     }
     pre {
       margin: 0;
@@ -599,6 +739,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     .frame-image-shell {
       width: 100%;
       aspect-ratio: 4 / 3;
+      min-height: clamp(260px, 28vw, 520px);
       border: 1px solid var(--border);
       border-radius: 8px;
       background: #0b1322;
@@ -618,12 +759,55 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
     .split {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns:
+        minmax(220px, var(--viewer-left-width))
+        var(--viewer-splitter-width)
+        minmax(480px, 1fr)
+        var(--viewer-splitter-width)
+        minmax(240px, var(--viewer-right-width));
       gap: 12px;
+      align-items: stretch;
     }
-    @media (max-width: 900px) {
+    .splitter {
+      position: relative;
+      width: 100%;
+      border-radius: 999px;
+      cursor: col-resize;
+      touch-action: none;
+      background: linear-gradient(180deg, rgba(91, 192, 190, 0.16) 0%, rgba(43, 58, 88, 0.75) 100%);
+      box-shadow: inset 0 0 0 1px rgba(91, 192, 190, 0.18);
+      transition: background 120ms ease, box-shadow 120ms ease;
+    }
+    .splitter::before {
+      content: "";
+      position: absolute;
+      inset: 14px 4px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(91, 192, 190, 0.85) 0%, rgba(214, 222, 237, 0.3) 100%);
+      opacity: 0.92;
+    }
+    .splitter:hover,
+    .splitter:focus-visible {
+      background: linear-gradient(180deg, rgba(91, 192, 190, 0.28) 0%, rgba(43, 58, 88, 0.9) 100%);
+      box-shadow: inset 0 0 0 1px rgba(91, 192, 190, 0.4), 0 0 0 1px rgba(91, 192, 190, 0.18);
+      outline: none;
+    }
+    .panel-image {
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-image .frame-image-shell {
+      flex: 1 1 auto;
+    }
+    @media (max-width: 1100px) {
       .split {
         grid-template-columns: 1fr;
+      }
+      .splitter {
+        display: none;
+      }
+      .frame-image-shell {
+        min-height: clamp(280px, 56vw, 520px);
       }
     }
   </style>
@@ -631,7 +815,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 <body>
   <div class="shell">
     <div class="panel">
-      <div class="title">GAGE ws_rgb Viewer</div>
+      <div class="title">GAGE Game Play Viewer</div>
       <div class="row">
         <label for="displaySelect">Display:</label>
         <select id="displaySelect"></select>
@@ -639,7 +823,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       </div>
       <div class="row">
         <label for="pollMsInput">Poll ms:</label>
-        <input id="pollMsInput" type="number" min="50" max="2000" step="10" value="200" />
+        <input id="pollMsInput" type="number" min="20" max="2000" step="10" value="20" />
         <button id="applyPollBtn" type="button">Apply</button>
         <button id="fetchFrameBtn" type="button">Fetch Once</button>
       </div>
@@ -648,13 +832,16 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         <input id="actionInput" type="text" value="0" />
         <button id="sendActionBtn" type="button">Send Action</button>
         <label><input id="keyCaptureToggle" type="checkbox" /> Key Capture</label>
+        <span id="sessionStateBadge" class="session-badge state-in-progress">State: in_progress</span>
       </div>
       <div class="row">
         <button id="captureToggleBtn" type="button">Capture: ON</button>
+        <button id="terminateGameBtn" class="danger" type="button">Terminate Game</button>
+        <button id="endProcessBtn" type="button">End Process</button>
         <button id="replayToggleBtn" type="button">Start Replay</button>
         <button id="replayStepPrevBtn" type="button">Step -</button>
         <button id="replayStepNextBtn" type="button">Step +</button>
-        <button id="replayLiveBtn" type="button">Back To Live</button>
+        <button id="replayLiveBtn" type="button" hidden aria-hidden="true">Back To Live</button>
       </div>
       <div class="row">
         <label for="replaySpeedSelect">Replay Speed:</label>
@@ -671,18 +858,32 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       <div id="status" class="status">Initializing...</div>
     </div>
 
-    <div class="split">
+    <div class="split" id="viewerSplit">
       <div class="panel">
-        <div class="title">Frame board_text</div>
+        <div class="title">Frame Text</div>
         <pre id="boardText">(waiting frame)</pre>
       </div>
-      <div class="panel">
+      <div
+        class="splitter"
+        id="splitterLeft"
+        role="separator"
+        aria-label="Resize frame text and frame image panels"
+        tabindex="0"
+      ></div>
+      <div class="panel panel-image">
         <div class="title">Frame Image (RGB)</div>
         <div class="frame-image-shell">
           <img id="frameImage" alt="ws_rgb_frame_image" />
         </div>
         <div id="frameImageHint" class="status frame-image-hint">No RGB frame available yet.</div>
       </div>
+      <div
+        class="splitter"
+        id="splitterRight"
+        role="separator"
+        aria-label="Resize frame image and frame JSON panels"
+        tabindex="0"
+      ></div>
       <div class="panel">
         <div class="title">Frame JSON</div>
         <pre id="frameJson">{}</pre>
@@ -697,11 +898,12 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       selectedDisplayAcceptsInput: false,
       selectedDisplayReplaySeekable: false,
       pollTimer: null,
-      pollMs: 200,
+      pollMs: 20,
+      sessionInfo: null,
       liveFrameImageUrl: "",
       captureEnabled: true,
       historyFrames: [],
-      historyLimit: 400,
+      historyLimit: 2000,
       replayMode: false,
       replayIndex: -1,
       replayTimer: null,
@@ -712,9 +914,22 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       replaySeekDragging: false,
       replayBufferLoading: false,
       replayBufferLoadedForDisplay: "",
+      panelLayout: { leftWidth: 300, rightWidth: 340 },
+      panelResizeDrag: null,
+    };
+
+    const PANEL_LAYOUT_STORAGE_KEY = "gage_ws_rgb_panel_layout_v2";
+    const PANEL_LAYOUT_DEFAULTS = {
+      leftWidth: 300,
+      rightWidth: 340,
+      minLeftWidth: 220,
+      minRightWidth: 240,
+      minCenterWidth: 480,
+      keyboardStep: 24,
     };
 
     const el = {
+      viewerSplit: document.getElementById("viewerSplit"),
       displaySelect: document.getElementById("displaySelect"),
       refreshDisplaysBtn: document.getElementById("refreshDisplaysBtn"),
       pollMsInput: document.getElementById("pollMsInput"),
@@ -723,7 +938,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       actionInput: document.getElementById("actionInput"),
       sendActionBtn: document.getElementById("sendActionBtn"),
       keyCaptureToggle: document.getElementById("keyCaptureToggle"),
+      sessionStateBadge: document.getElementById("sessionStateBadge"),
       captureToggleBtn: document.getElementById("captureToggleBtn"),
+      terminateGameBtn: document.getElementById("terminateGameBtn"),
+      endProcessBtn: document.getElementById("endProcessBtn"),
       replayToggleBtn: document.getElementById("replayToggleBtn"),
       replayStepPrevBtn: document.getElementById("replayStepPrevBtn"),
       replayStepNextBtn: document.getElementById("replayStepNextBtn"),
@@ -736,6 +954,8 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       frameJson: document.getElementById("frameJson"),
       frameImage: document.getElementById("frameImage"),
       frameImageHint: document.getElementById("frameImageHint"),
+      splitterLeft: document.getElementById("splitterLeft"),
+      splitterRight: document.getElementById("splitterRight"),
     };
 
     function setStatus(message, tone = "status") {
@@ -756,11 +976,310 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       }
     }
 
+    function clamp(value, minValue, maxValue) {
+      return Math.min(maxValue, Math.max(minValue, value));
+    }
+
+    function readStoredPanelLayout() {
+      try {
+        const raw = window.localStorage.getItem(PANEL_LAYOUT_STORAGE_KEY);
+        if (!raw) {
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return null;
+        }
+        return {
+          leftWidth: Number(parsed.leftWidth),
+          rightWidth: Number(parsed.rightWidth),
+        };
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function savePanelLayout() {
+      try {
+        window.localStorage.setItem(PANEL_LAYOUT_STORAGE_KEY, JSON.stringify(state.panelLayout));
+      } catch (_) {
+        return;
+      }
+    }
+
+    function isCompactViewerLayout() {
+      return window.matchMedia("(max-width: 1100px)").matches;
+    }
+
+    function normalizePanelLayout(layout) {
+      const next = layout && typeof layout === "object" ? layout : {};
+      const containerWidth = el.viewerSplit ? el.viewerSplit.clientWidth : 0;
+      const leftBase = Number.isFinite(Number(next.leftWidth))
+        ? Number(next.leftWidth)
+        : Number(state.panelLayout.leftWidth || PANEL_LAYOUT_DEFAULTS.leftWidth);
+      const rightBase = Number.isFinite(Number(next.rightWidth))
+        ? Number(next.rightWidth)
+        : Number(state.panelLayout.rightWidth || PANEL_LAYOUT_DEFAULTS.rightWidth);
+      if (!containerWidth || isCompactViewerLayout()) {
+        return {
+          leftWidth: clamp(leftBase, PANEL_LAYOUT_DEFAULTS.minLeftWidth, 480),
+          rightWidth: clamp(rightBase, PANEL_LAYOUT_DEFAULTS.minRightWidth, 560),
+        };
+      }
+      const splitStyles = getComputedStyle(el.viewerSplit);
+      const splitterWidth = Number(getComputedStyle(document.documentElement).getPropertyValue("--viewer-splitter-width").replace("px", "")) || 14;
+      const columnGap = Number(splitStyles.columnGap.replace("px", "")) || 0;
+      const reservedWidth = PANEL_LAYOUT_DEFAULTS.minCenterWidth + splitterWidth * 2 + columnGap * 4;
+      const sideBudget = Math.max(
+        PANEL_LAYOUT_DEFAULTS.minLeftWidth + PANEL_LAYOUT_DEFAULTS.minRightWidth,
+        containerWidth - reservedWidth,
+      );
+      let leftWidth = clamp(
+        leftBase,
+        PANEL_LAYOUT_DEFAULTS.minLeftWidth,
+        Math.max(PANEL_LAYOUT_DEFAULTS.minLeftWidth, sideBudget - PANEL_LAYOUT_DEFAULTS.minRightWidth),
+      );
+      let rightWidth = clamp(
+        rightBase,
+        PANEL_LAYOUT_DEFAULTS.minRightWidth,
+        Math.max(PANEL_LAYOUT_DEFAULTS.minRightWidth, sideBudget - leftWidth),
+      );
+      leftWidth = clamp(
+        leftWidth,
+        PANEL_LAYOUT_DEFAULTS.minLeftWidth,
+        Math.max(PANEL_LAYOUT_DEFAULTS.minLeftWidth, sideBudget - rightWidth),
+      );
+      return {
+        leftWidth,
+        rightWidth,
+      };
+    }
+
+    function applyPanelLayout(layout, { persist = false } = {}) {
+      const normalized = normalizePanelLayout(layout);
+      state.panelLayout = normalized;
+      if (!el.viewerSplit) {
+        return normalized;
+      }
+      el.viewerSplit.style.setProperty("--viewer-left-width", `${normalized.leftWidth}px`);
+      el.viewerSplit.style.setProperty("--viewer-right-width", `${normalized.rightWidth}px`);
+      if (persist) {
+        savePanelLayout();
+      }
+      return normalized;
+    }
+
+    function resetPanelLayout() {
+      applyPanelLayout(
+        {
+          leftWidth: PANEL_LAYOUT_DEFAULTS.leftWidth,
+          rightWidth: PANEL_LAYOUT_DEFAULTS.rightWidth,
+        },
+        { persist: true },
+      );
+    }
+
+    function startPanelResize(side, event) {
+      if (isCompactViewerLayout()) {
+        return;
+      }
+      event.preventDefault();
+      const current = applyPanelLayout(state.panelLayout);
+      state.panelResizeDrag = {
+        side,
+        startX: Number(event.clientX),
+        leftWidth: current.leftWidth,
+        rightWidth: current.rightWidth,
+      };
+      document.body.classList.add("split-resizing");
+    }
+
+    function handlePanelResize(event) {
+      if (!state.panelResizeDrag) {
+        return;
+      }
+      const deltaX = Number(event.clientX) - Number(state.panelResizeDrag.startX);
+      if (state.panelResizeDrag.side === "left") {
+        applyPanelLayout({
+          leftWidth: Number(state.panelResizeDrag.leftWidth) + deltaX,
+          rightWidth: state.panelResizeDrag.rightWidth,
+        });
+        return;
+      }
+      applyPanelLayout({
+        leftWidth: state.panelResizeDrag.leftWidth,
+        rightWidth: Number(state.panelResizeDrag.rightWidth) - deltaX,
+      });
+    }
+
+    function stopPanelResize() {
+      if (!state.panelResizeDrag) {
+        return;
+      }
+      state.panelResizeDrag = null;
+      document.body.classList.remove("split-resizing");
+      savePanelLayout();
+    }
+
+    function resizePanelByKeyboard(side, direction) {
+      if (direction === 0) {
+        return;
+      }
+      const delta = Number(PANEL_LAYOUT_DEFAULTS.keyboardStep) * direction;
+      if (side === "left") {
+        applyPanelLayout(
+          {
+            leftWidth: Number(state.panelLayout.leftWidth) + delta,
+            rightWidth: state.panelLayout.rightWidth,
+          },
+          { persist: true },
+        );
+        return;
+      }
+      applyPanelLayout(
+        {
+          leftWidth: state.panelLayout.leftWidth,
+          rightWidth: Number(state.panelLayout.rightWidth) - delta,
+        },
+        { persist: true },
+      );
+    }
+
+    function bindPanelResizeEvents() {
+      if (!el.splitterLeft || !el.splitterRight) {
+        return;
+      }
+      el.splitterLeft.addEventListener("pointerdown", (event) => {
+        startPanelResize("left", event);
+      });
+      el.splitterRight.addEventListener("pointerdown", (event) => {
+        startPanelResize("right", event);
+      });
+      el.splitterLeft.addEventListener("dblclick", () => {
+        resetPanelLayout();
+      });
+      el.splitterRight.addEventListener("dblclick", () => {
+        resetPanelLayout();
+      });
+      el.splitterLeft.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          resizePanelByKeyboard("left", -1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          resizePanelByKeyboard("left", 1);
+        }
+      });
+      el.splitterRight.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          resizePanelByKeyboard("right", -1);
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          resizePanelByKeyboard("right", 1);
+        }
+      });
+      window.addEventListener("pointermove", handlePanelResize);
+      window.addEventListener("pointerup", stopPanelResize);
+      window.addEventListener("pointercancel", stopPanelResize);
+      window.addEventListener("resize", () => {
+        applyPanelLayout(state.panelLayout);
+      });
+    }
+
     function getSelectedDisplay() {
       if (!state.selectedDisplayId) {
         return null;
       }
       return state.displays.find((item) => String(item.display_id || "") === state.selectedDisplayId) || null;
+    }
+
+    function normalizeSessionSnapshot(session) {
+      if (!session || typeof session !== "object") {
+        return null;
+      }
+      const phaseText = String(session.phase || "in_progress");
+      const phase = ["in_progress", "game_ended", "process_ended"].includes(phaseText)
+        ? phaseText
+        : "in_progress";
+      return {
+        ...session,
+        session_controlled: Boolean(session.session_controlled),
+        phase,
+        replay_allowed: Boolean(session.replay_allowed),
+        can_terminate_game: Boolean(session.can_terminate_game),
+        can_terminate_process: Boolean(session.can_terminate_process),
+        result: session.result != null ? String(session.result) : "",
+        reason: session.reason != null ? String(session.reason) : "",
+        winner: session.winner != null ? String(session.winner) : "",
+        move_count: Number.isFinite(Number(session.move_count)) ? Number(session.move_count) : 0,
+      };
+    }
+
+    function updateSelectedDisplaySession(session) {
+      const selected = getSelectedDisplay();
+      if (!selected) {
+        return;
+      }
+      selected.session = session ? { ...session } : null;
+    }
+
+    function getSessionPhase() {
+      if (!state.sessionInfo || typeof state.sessionInfo !== "object") {
+        return "in_progress";
+      }
+      return String(state.sessionInfo.phase || "in_progress");
+    }
+
+    function isSessionControlled() {
+      return Boolean(state.sessionInfo && state.sessionInfo.session_controlled);
+    }
+
+    function isReplayAllowed() {
+      if (!isSessionControlled()) {
+        return true;
+      }
+      return getSessionPhase() === "game_ended";
+    }
+
+    function canSendInteractiveInput() {
+      if (!state.selectedDisplayAcceptsInput) {
+        return false;
+      }
+      if (!isSessionControlled()) {
+        return true;
+      }
+      return getSessionPhase() === "in_progress";
+    }
+
+    function updateSessionUi() {
+      const phase = getSessionPhase();
+      el.sessionStateBadge.className = `session-badge state-${phase.replace(/_/g, "-")}`;
+      el.sessionStateBadge.textContent = `State: ${phase}`;
+      const allowTerminateGame = Boolean(
+        state.selectedDisplayId &&
+        isSessionControlled() &&
+        state.sessionInfo &&
+        state.sessionInfo.can_terminate_game
+      );
+      const allowTerminateProcess = Boolean(
+        state.selectedDisplayId &&
+        isSessionControlled() &&
+        state.sessionInfo &&
+        state.sessionInfo.can_terminate_process
+      );
+      el.terminateGameBtn.disabled = !allowTerminateGame;
+      el.endProcessBtn.disabled = !allowTerminateProcess;
+    }
+
+    function applySessionSnapshot(session) {
+      state.sessionInfo = normalizeSessionSnapshot(session);
+      updateSelectedDisplaySession(state.sessionInfo);
+      if (!isReplayAllowed()) {
+        stopReplayPlayback();
+        state.replayMode = false;
+      }
+      updateReplayUi();
     }
 
     function updateInputUi() {
@@ -769,13 +1288,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       const replaySeekable = Boolean(selected && selected.replay_seekable);
       state.selectedDisplayAcceptsInput = acceptsInput;
       state.selectedDisplayReplaySeekable = replaySeekable;
-      const disabled = !state.selectedDisplayId || !acceptsInput;
+      state.sessionInfo = normalizeSessionSnapshot(selected && selected.session ? selected.session : null);
+      const disabled = !state.selectedDisplayId || !canSendInteractiveInput();
       el.actionInput.disabled = disabled;
       el.sendActionBtn.disabled = disabled;
       el.keyCaptureToggle.disabled = disabled;
       if (disabled) {
         el.keyCaptureToggle.checked = false;
       }
+      updateSessionUi();
     }
 
     function buildReplayImageEndpoint(index) {
@@ -888,8 +1409,14 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
     function updateReplayUi() {
       const total = state.historyFrames.length;
+      const replayAllowed = isReplayAllowed();
       const hasFrames = total > 0;
-      const canReplay = total > 1;
+      const canReplay = replayAllowed && total > 1;
+      const canInspectReplay = replayAllowed && hasFrames;
+      if (!replayAllowed) {
+        stopReplayPlayback();
+        state.replayMode = false;
+      }
       if (!hasFrames) {
         state.replayIndex = -1;
       } else if (state.replayIndex < 0) {
@@ -904,14 +1431,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       if (!state.replaySeekDragging) {
         el.replaySeek.value = String(Math.max(0, state.replayIndex));
       }
-      el.replaySeek.disabled = !canReplay;
+      el.replaySeek.disabled = !canInspectReplay;
       el.replayToggleBtn.disabled = !canReplay;
-      el.replayStepPrevBtn.disabled = !canReplay;
-      el.replayStepNextBtn.disabled = !canReplay;
+      el.replayStepPrevBtn.disabled = !canInspectReplay;
+      el.replayStepNextBtn.disabled = !canInspectReplay;
       el.replayLiveBtn.disabled = !state.replayMode;
       updateInputUi();
 
       const mode = state.replayMode ? "replay" : "live";
+      const phaseText = isSessionControlled() ? ` | state=${getSessionPhase()}` : "";
       const globalTotal = Math.max(state.captureCount, total);
       const selectedSnapshot = hasFrames ? state.historyFrames[Math.max(0, state.replayIndex)] : null;
       let currentCaptureIndex = 0;
@@ -923,9 +1451,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       const indexText = hasFrames ? `${currentCaptureIndex}/${globalTotal}` : "0/0";
       const bufferText = hasFrames ? `${state.replayIndex + 1}/${total}` : "0/0";
       const droppedText = state.captureCount > total ? ` | dropped=${state.captureCount - total}` : "";
-      const singleFrameText = hasFrames && !canReplay ? " | single_frame_only=true" : "";
+      const singleFrameText = hasFrames && replayAllowed && !canReplay ? " | single_frame_only=true" : "";
+      const replayLockedText = !replayAllowed && isSessionControlled() ? " | replay_locked=true" : "";
       setReplayStatus(
-        `Replay buffer: ${total} frame(s) | mode=${mode} | index=${indexText} | buffer=${bufferText}${droppedText}${singleFrameText} | speed=${state.replaySpeed.toFixed(2)}x`,
+        `Replay buffer: ${total} frame(s) | mode=${mode}${phaseText} | index=${indexText} | buffer=${bufferText}${droppedText}${singleFrameText}${replayLockedText} | speed=${state.replaySpeed.toFixed(2)}x`,
         state.replayMode ? "status ok" : "status",
       );
     }
@@ -960,6 +1489,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         state.selectedDisplayId = "";
         state.selectedDisplayAcceptsInput = false;
         state.selectedDisplayReplaySeekable = false;
+        state.sessionInfo = null;
         resetReplayBuffer();
         updateInputUi();
         clearFrameImage("No display registered yet.");
@@ -975,17 +1505,19 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       try {
         const payload = await apiJson("/ws_rgb/displays");
         renderDisplays(payload.displays || []);
+        updateReplayUi();
         if (!state.selectedDisplayId) {
           setStatus("No display registered yet.", "status warn");
           return;
         }
         const mode = state.replayMode ? "replay" : "live";
         const replayFlag = state.selectedDisplayReplaySeekable ? " replay_buffer=available" : "";
+        const stateFlag = isSessionControlled() ? ` state=${getSessionPhase()}` : "";
         if (state.selectedDisplayAcceptsInput) {
-          setStatus(`Connected. display_id=${state.selectedDisplayId} mode=${mode}${replayFlag}`, "status ok");
+          setStatus(`Connected. display_id=${state.selectedDisplayId} mode=${mode}${replayFlag}${stateFlag}`, "status ok");
         } else {
           setStatus(
-            `Connected. display_id=${state.selectedDisplayId} mode=${mode}${replayFlag} (input disabled: no input mapper)`,
+            `Connected. display_id=${state.selectedDisplayId} mode=${mode}${replayFlag}${stateFlag} (input disabled: no input mapper)`,
             "status warn",
           );
         }
@@ -1026,7 +1558,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
 
     async function preloadReplayBuffer() {
-      if (!state.selectedDisplayId || !state.selectedDisplayReplaySeekable) {
+      if (!state.selectedDisplayId || !state.selectedDisplayReplaySeekable || !isReplayAllowed()) {
         return;
       }
       if (state.replayBufferLoading) {
@@ -1052,13 +1584,13 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         state.captureCount = state.historyFrames.length;
         state.lastSnapshotDisplayId = "";
         state.lastSnapshotSignature = "";
-        state.replayIndex = state.historyFrames.length > 0 ? 0 : -1;
-        state.replayMode = state.historyFrames.length > 0;
+        state.replayIndex = state.historyFrames.length > 0 ? state.historyFrames.length - 1 : -1;
+        state.replayMode = false;
         state.replayBufferLoadedForDisplay = state.selectedDisplayId;
 
         // STEP 2: Render first snapshot immediately so user can inspect without waiting.
         if (state.historyFrames.length > 0) {
-          applySnapshotToPanels(state.historyFrames[0]);
+          applySnapshotToPanels(state.historyFrames[Math.max(0, state.replayIndex)]);
           updateReplayUi();
           setStatus(`Replay buffer loaded. frames=${state.historyFrames.length}`, "status ok");
         } else {
@@ -1074,7 +1606,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
 
     function applyFrameToPanels(frame) {
-      const boardText = frame.board_text != null ? String(frame.board_text) : "(no board_text)";
+      const boardText = frame.board_text != null ? String(frame.board_text) : "(no text)";
       el.boardText.textContent = boardText;
       el.frameJson.textContent = JSON.stringify(frame, null, 2);
     }
@@ -1113,6 +1645,11 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         updateReplayUi();
         return;
       }
+      if (!isReplayAllowed()) {
+        setStatus("Replay is available only after the game ends.", "status warn");
+        updateReplayUi();
+        return;
+      }
       if (state.historyFrames.length === 0) {
         state.replayMode = false;
         updateReplayUi();
@@ -1127,6 +1664,10 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
 
     function startReplayPlayback() {
+      if (!isReplayAllowed()) {
+        setStatus("Replay is available only after the game ends.", "status warn");
+        return;
+      }
       if (state.historyFrames.length === 0) {
         setStatus("Replay buffer is empty.", "status warn");
         return;
@@ -1241,7 +1782,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       if (!state.selectedDisplayId) {
         return;
       }
-      if (!state.selectedDisplayAcceptsInput) {
+      if (!canSendInteractiveInput()) {
         setStatus("Selected display does not accept input.", "status warn");
         return;
       }
@@ -1267,7 +1808,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       if (!state.selectedDisplayId) {
         return;
       }
-      if (!state.selectedDisplayAcceptsInput) {
+      if (!canSendInteractiveInput()) {
         return;
       }
       const body = {
@@ -1291,9 +1832,46 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       }
     }
 
+    async function controlSession(action, { confirm = false } = {}) {
+      if (!state.selectedDisplayId) {
+        return;
+      }
+      const body = {
+        display_id: state.selectedDisplayId,
+        action: String(action || ""),
+        confirm: Boolean(confirm),
+      };
+      try {
+        const response = await apiJson("/ws_rgb/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        applySessionSnapshot(response.session || null);
+        if (action === "terminate_game") {
+          setStatus("Game moved to game_ended. Replay is now available.", "status ok");
+          if (state.selectedDisplayReplaySeekable) {
+            await preloadReplayBuffer();
+          }
+          return;
+        }
+        setStatus("Process end confirmed. Closing viewer...", "status ok");
+        window.setTimeout(() => {
+          try {
+            window.close();
+          } catch (_) {
+            // Browser may reject window.close() for manually opened tabs.
+          }
+          window.location.replace("about:blank");
+        }, 300);
+      } catch (error) {
+        setStatus(`Session control failed: ${error.message}`, "status error");
+      }
+    }
+
     async function pollTick() {
       await refreshDisplays();
-      if (state.selectedDisplayReplaySeekable) {
+      if (state.selectedDisplayReplaySeekable && isReplayAllowed()) {
         if (
           !state.replayBufferLoading &&
           state.replayBufferLoadedForDisplay !== state.selectedDisplayId
@@ -1330,15 +1908,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
           clearFrameImage("Display switched. Waiting frame...");
         }
         updateInputUi();
-        if (state.selectedDisplayReplaySeekable) {
+        if (state.selectedDisplayReplaySeekable && isReplayAllowed()) {
           preloadReplayBuffer();
           return;
         }
         fetchFrame();
       });
       el.applyPollBtn.addEventListener("click", () => {
-        const parsed = Number(el.pollMsInput.value || "200");
-        state.pollMs = Number.isFinite(parsed) ? Math.max(50, Math.min(2000, parsed)) : 200;
+        const parsed = Number(el.pollMsInput.value || "20");
+        state.pollMs = Number.isFinite(parsed) ? Math.max(20, Math.min(2000, parsed)) : 20;
         el.pollMsInput.value = String(state.pollMs);
         restartPolling();
         if (state.replayTimer !== null) {
@@ -1348,7 +1926,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       });
       el.fetchFrameBtn.addEventListener("click", () => {
         setReplayMode(false);
-        if (state.selectedDisplayReplaySeekable) {
+        if (state.selectedDisplayReplaySeekable && isReplayAllowed()) {
           preloadReplayBuffer();
           return;
         }
@@ -1365,6 +1943,15 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       el.captureToggleBtn.addEventListener("click", () => {
         state.captureEnabled = !state.captureEnabled;
         updateReplayUi();
+      });
+      el.terminateGameBtn.addEventListener("click", () => {
+        controlSession("terminate_game");
+      });
+      el.endProcessBtn.addEventListener("click", () => {
+        if (!window.confirm("End the process and close this viewer page?")) {
+          return;
+        }
+        controlSession("terminate_process", { confirm: true });
       });
       el.replayToggleBtn.addEventListener("click", () => {
         if (state.replayTimer === null) {
@@ -1386,7 +1973,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       });
       el.replayLiveBtn.addEventListener("click", () => {
         setReplayMode(false);
-        if (state.selectedDisplayReplaySeekable) {
+        if (state.selectedDisplayReplaySeekable && isReplayAllowed()) {
           preloadReplayBuffer();
           return;
         }
@@ -1418,14 +2005,14 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
       });
       el.replaySeek.addEventListener("input", applyReplaySeek);
       window.addEventListener("keydown", (event) => {
-        if (!el.keyCaptureToggle.checked || !state.selectedDisplayAcceptsInput) {
+        if (!el.keyCaptureToggle.checked || !canSendInteractiveInput()) {
           return;
         }
         event.preventDefault();
         sendKeyEvent("keydown", event.key, event.repeat);
       });
       window.addEventListener("keyup", (event) => {
-        if (!el.keyCaptureToggle.checked || !state.selectedDisplayAcceptsInput) {
+        if (!el.keyCaptureToggle.checked || !canSendInteractiveInput()) {
           return;
         }
         event.preventDefault();
@@ -1442,10 +2029,13 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
     }
 
     async function start() {
+      const storedLayout = readStoredPanelLayout();
+      applyPanelLayout(storedLayout || PANEL_LAYOUT_DEFAULTS);
       updateReplayUi();
       bindEvents();
+      bindPanelResizeEvents();
       await refreshDisplays();
-      if (state.selectedDisplayReplaySeekable) {
+      if (state.selectedDisplayReplaySeekable && isReplayAllowed()) {
         await preloadReplayBuffer();
       } else {
         await fetchFrame();
@@ -1542,7 +2132,7 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
 
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
-        if parsed.path != "/ws_rgb/input":
+        if parsed.path not in {"/ws_rgb/input", "/ws_rgb/session"}:
             self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
             return
         body = self._read_json_body()
@@ -1554,6 +2144,25 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
         if not display_id:
             self._send_json({"ok": False, "error": "missing_display_id"}, status=HTTPStatus.BAD_REQUEST)
             return
+
+        if parsed.path == "/ws_rgb/session":
+            action = str(body.get("action") or "").strip()
+            if not action:
+                self._send_json({"ok": False, "error": "missing_action"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            response = self._hub().control_session(
+                display_id=display_id,
+                action=action,
+                confirm=bool(body.get("confirm")),
+            )
+            status = (
+                HTTPStatus.OK
+                if response.get("ok")
+                else self._map_session_error_status(str(response.get("error") or ""))
+            )
+            self._send_json(response, status=status)
+            return
+
         payload = body.get("payload")
         if not isinstance(payload, Mapping):
             self._send_json({"ok": False, "error": "missing_payload"}, status=HTTPStatus.BAD_REQUEST)
@@ -1637,6 +2246,22 @@ class _WsRgbRequestHandler(BaseHTTPRequestHandler):
             return HTTPStatus.BAD_REQUEST
         if error == "replay_frame_fetch_failed":
             return HTTPStatus.INTERNAL_SERVER_ERROR
+        return HTTPStatus.BAD_REQUEST
+
+    @staticmethod
+    def _map_session_error_status(error: str) -> HTTPStatus:
+        if error == "display_not_found":
+            return HTTPStatus.NOT_FOUND
+        if error == "missing_action":
+            return HTTPStatus.BAD_REQUEST
+        if error in {
+            "session_control_unavailable",
+            "process_end_not_allowed",
+            "process_end_confirmation_required",
+        }:
+            return HTTPStatus.CONFLICT
+        if error == "invalid_session_action":
+            return HTTPStatus.BAD_REQUEST
         return HTTPStatus.BAD_REQUEST
 
     def _read_json_body(self) -> Optional[dict[str, Any]]:
