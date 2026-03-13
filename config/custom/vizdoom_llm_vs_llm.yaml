@@ -32,6 +32,27 @@ backends:
       streaming: false
       max_retries: 6
 
+prompts:
+  - prompt_id: vizdoom_turn_prompt_v1
+    renderer: jinja_chat
+    params:
+      role: system
+      include_existing: false
+    template: |
+      You are a precise ViZDoom action planner for {{ payload.env_id or payload.game_type }}.
+      Scheduler mode: {{ payload.mode }}.
+      Output policy:
+      - Return exactly one legal action id.
+      - Legal actions: {{ payload.legal_moves | join(", ") }}.
+      - Output ONLY the action id as an integer.
+      - Do not output extra text.
+      {% if payload.retry_reason %}
+      Retry reason from previous output: {{ payload.retry_reason }}.
+      {% endif %}
+      {% if payload.last_model_output %}
+      Previous model output: {{ payload.last_model_output }}.
+      {% endif %}
+
 role_adapters:
   - adapter_id: vizdoom_llm_p0
     role_type: dut_model
@@ -47,6 +68,7 @@ role_adapters:
 
   - adapter_id: vizdoom_llm_arena
     role_type: arena
+    prompt_id: vizdoom_turn_prompt_v1
     params:
       environment:
         impl: vizdoom_env_v1

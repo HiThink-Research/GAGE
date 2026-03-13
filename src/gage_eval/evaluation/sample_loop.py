@@ -8,7 +8,19 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED, ALL_COMPLETED
 from queue import Queue, Full
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Set, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Set,
+    Union,
+)
 
 from loguru import logger
 
@@ -17,11 +29,8 @@ from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
-from gage_eval.assets.datasets.sample import (
-    Sample,
-    Message,
-    MessageContent
-)
+from gage_eval.assets.datasets.sample import Sample, Message, MessageContent
+
 
 class SampleLoop:
     """Iterate over samples and invoke TaskPlanner/RoleManager per sample."""
@@ -44,15 +53,27 @@ class SampleLoop:
         self._samples = samples
         self._hooks: List[Callable[[dict], None]] = []
         self._custom_steps: Sequence[dict] = ()
-        self._shuffle = shuffle if shuffle is not None else _env_flag("GAGE_EVAL_SHUFFLE", default=False)
-        self._shuffle_seed = shuffle_seed or int(os.environ.get("GAGE_EVAL_SHUFFLE_SEED", "123"))
+        self._shuffle = (
+            shuffle
+            if shuffle is not None
+            else _env_flag("GAGE_EVAL_SHUFFLE", default=False)
+        )
+        self._shuffle_seed = shuffle_seed or int(
+            os.environ.get("GAGE_EVAL_SHUFFLE_SEED", "123")
+        )
         env_max_samples = os.environ.get("GAGE_EVAL_MAX_SAMPLES")
-        self._max_samples = max_samples if max_samples is not None else (int(env_max_samples) if env_max_samples else None)
+        self._max_samples = (
+            max_samples
+            if max_samples is not None
+            else (int(env_max_samples) if env_max_samples else None)
+        )
         env_threads = os.environ.get("GAGE_EVAL_THREADS")
         default_threads = min(os.cpu_count() or 1, 4)
         self._concurrency = max(
             1,
-            concurrency if concurrency is not None else (int(env_threads) if env_threads else default_threads),
+            concurrency
+            if concurrency is not None
+            else (int(env_threads) if env_threads else default_threads),
         )
         env_prefetch = _env_int("GAGE_EVAL_PREFETCH_FACTOR")
         env_inflight = _env_int("GAGE_EVAL_MAX_INFLIGHT")
@@ -68,18 +89,24 @@ class SampleLoop:
         )
         self._prefetch_factor = max(1, raw_prefetch)
         self._max_inflight = max(1, raw_max_inflight)
-        self._buffer_capacity = max(self._max_inflight, self._concurrency * self._prefetch_factor)
+        self._buffer_capacity = max(
+            self._max_inflight, self._concurrency * self._prefetch_factor
+        )
         self._sequential_override = _env_flag("GAGE_EVAL_SEQUENTIAL", default=False)
         self._materialized_samples: Optional[List[dict]] = None
         self._streaming = streaming
         if self._streaming and self._shuffle:
-            logger.warning("Streaming datasets do not support shuffling; disabling shuffle")
+            logger.warning(
+                "Streaming datasets do not support shuffling; disabling shuffle"
+            )
             self._shuffle = False
         self._task_id = task_id
         self._processed_count = 0
         self._processed_lock = threading.Lock()
         self._sandbox_profiles = sandbox_profiles or {}
-        self._sandbox_manager = sandbox_manager or SandboxManager(profiles=self._sandbox_profiles)
+        self._sandbox_manager = sandbox_manager or SandboxManager(
+            profiles=self._sandbox_profiles
+        )
         logger.info(
             "SampleLoop initialized (shuffle={}, max_samples={}, concurrency={}, streaming={}, task_id={})",
             self._shuffle,
@@ -95,7 +122,9 @@ class SampleLoop:
     def configure_custom_steps(self, steps: Sequence[dict]) -> None:
         self._custom_steps = steps
 
-    def run(self, planner: TaskPlanner, role_manager: RoleManager, trace: ObservabilityTrace) -> None:
+    def run(
+        self, planner: TaskPlanner, role_manager: RoleManager, trace: ObservabilityTrace
+    ) -> None:
         work = self._iter_samples()
         if self._should_run_sequentially():
             logger.info("SampleLoop running sequentially over samples")
@@ -183,11 +212,18 @@ class SampleLoop:
         sample_identifier: str,
     ) -> None:
         # STEP 1: Build sample-scoped sandbox provider
-        sandbox_provider = self._build_sandbox_provider(plan, sample, role_manager, trace, sample_identifier)
+        sandbox_provider = self._build_sandbox_provider(
+            plan, sample, role_manager, trace, sample_identifier
+        )
         # STEP 2: Execute plan within a per-sample session
         try:
-            per_sample_ctx = plan.create_context(sample, trace, role_manager, sandbox_provider=sandbox_provider)
-            with trace.use_sample(sample_identifier), role_manager.per_sample_session(per_sample_ctx) as session:
+            per_sample_ctx = plan.create_context(
+                sample, trace, role_manager, sandbox_provider=sandbox_provider
+            )
+            with (
+                trace.use_sample(sample_identifier),
+                role_manager.per_sample_session(per_sample_ctx) as session,
+            ):
                 if plan.steps:
                     for step in plan.steps:
                         step_type = _resolve_step_type(step)
@@ -211,7 +247,9 @@ class SampleLoop:
                             if plan.auto_eval_enabled:
                                 session.execute_auto_eval(sample_identifier)
                             continue
-                        logger.debug("Unknown step type '{}' skipped during execution", step_type)
+                        logger.debug(
+                            "Unknown step type '{}' skipped during execution", step_type
+                        )
                 else:
                     if plan.support_steps:
                         session.execute_support()
@@ -249,7 +287,9 @@ class SampleLoop:
             raise RuntimeError("Cannot materialize streaming datasets")
         if self._materialized_samples is None:
             self._materialized_samples = list(self._samples)
-            logger.debug("Materialized {} samples into memory", len(self._materialized_samples))
+            logger.debug(
+                "Materialized {} samples into memory", len(self._materialized_samples)
+            )
         return self._materialized_samples
 
     def _process_sample(
@@ -266,8 +306,12 @@ class SampleLoop:
             sample,
             metadata=self._compose_metadata(sample),
         )
-        sample_id = plan.metadata.get("sample_id") or str(sample.get("id") or logical_idx)
-        logger.debug("Processing sample logical_idx={} sample_id={}", logical_idx, sample_id)
+        sample_id = plan.metadata.get("sample_id") or str(
+            sample.get("id") or logical_idx
+        )
+        logger.debug(
+            "Processing sample logical_idx={} sample_id={}", logical_idx, sample_id
+        )
         self._execute_plan(sample, plan, role_manager, trace, sample_id)
         with self._processed_lock:
             self._processed_count += 1
@@ -307,10 +351,14 @@ class SampleLoop:
                             )
                             wait_logged = True
                         continue
-            logger.debug("SamplePrefetcher thread completed (task_id={})", self._task_id)
+            logger.debug(
+                "SamplePrefetcher thread completed (task_id={})", self._task_id
+            )
         except BaseException as exc:  # pragma: no cover - defensive
             errors.append(exc)
-            logger.exception("SamplePrefetcher thread failed (task_id={})", self._task_id)
+            logger.exception(
+                "SamplePrefetcher thread failed (task_id={})", self._task_id
+            )
         finally:
             while True:
                 try:
@@ -340,7 +388,9 @@ class SampleLoop:
             except Exception as exc:
                 # NOTE: Do not swallow worker exceptions. Surface failures to the caller so
                 # the upper-level loop can trigger stop_event and fail fast.
-                logger.exception("SampleLoop worker failed (task_id={}): {}", self._task_id, exc)
+                logger.exception(
+                    "SampleLoop worker failed (task_id={}): {}", self._task_id, exc
+                )
                 raise
         self._emit_buffer_state(trace, sample_queue, len(futures))
 
@@ -384,7 +434,11 @@ class SampleLoop:
                         except BaseException as exc:
                             worker_errors.append(exc)
                             stop_event.set()
-                            logger.exception("SampleLoop worker failed in FF mode (task_id={}): {}", self._task_id, exc)
+                            logger.exception(
+                                "SampleLoop worker failed in FF mode (task_id={}): {}",
+                                self._task_id,
+                                exc,
+                            )
                         finally:
                             sem.release()
 
@@ -407,7 +461,9 @@ class SampleLoop:
             # Raise the first worker error; details are already logged.
             raise worker_errors[0]
 
-    def _emit_buffer_state(self, trace: ObservabilityTrace, sample_queue: Queue, inflight: int) -> None:
+    def _emit_buffer_state(
+        self, trace: ObservabilityTrace, sample_queue: Queue, inflight: int
+    ) -> None:
         trace.emit(
             "sample_buffer_state",
             {
@@ -444,29 +500,43 @@ class SampleLoop:
         trace: ObservabilityTrace,
         sample_identifier: str,
     ) -> Optional[SandboxProvider]:
-        config = self._resolve_sandbox_config(plan, sample, role_manager)
+        config, sandbox_adapter_id = self._resolve_sandbox_target(
+            plan, sample, role_manager
+        )
         if not config:
             return None
+        arena_id = None
+        if sandbox_adapter_id and sandbox_adapter_id == plan.arena_role:
+            arena_id = f"{sandbox_adapter_id}_{sample_identifier}"
         scope = SandboxScope(
             run_id=trace.run_id,
             task_id=plan.metadata.get("task_id") or self._task_id,
             sample_id=sample_identifier,
+            arena_id=arena_id,
         )
         return SandboxProvider(self._sandbox_manager, config, scope, trace=trace)
 
-    def _resolve_sandbox_config(
+    def _resolve_sandbox_target(
         self,
         plan: TaskPlan,
         sample: dict,
         role_manager: RoleManager,
-    ) -> Optional[Dict[str, Any]]:
-        sample_config = sample.get("sandbox") if isinstance(sample.get("sandbox"), dict) else None
-        adapter_config = self._resolve_adapter_sandbox_config(plan, role_manager)
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        sample_config = (
+            sample.get("sandbox") if isinstance(sample.get("sandbox"), dict) else None
+        )
+        adapter_config, adapter_id = self._resolve_adapter_sandbox_config(
+            plan, role_manager
+        )
         if not adapter_config and not sample_config:
-            return None
-        return self._sandbox_manager.resolve_config(adapter_config or {}, sample_config)
+            return None, None
+        return self._sandbox_manager.resolve_config(
+            adapter_config or {}, sample_config
+        ), adapter_id
 
-    def _resolve_adapter_sandbox_config(self, plan: TaskPlan, role_manager: RoleManager) -> Dict[str, Any]:
+    def _resolve_adapter_sandbox_config(
+        self, plan: TaskPlan, role_manager: RoleManager
+    ) -> tuple[Dict[str, Any], Optional[str]]:
         adapter_ids: List[str] = []
         if plan.inference_role:
             adapter_ids.append(plan.inference_role)
@@ -485,8 +555,8 @@ class SampleLoop:
                 continue
             sandbox_config = getattr(adapter, "sandbox_config", None)
             if isinstance(sandbox_config, dict) and sandbox_config:
-                return dict(sandbox_config)
-        return {}
+                return dict(sandbox_config), adapter_id
+        return {}, None
 
 
 def _env_flag(var: str, *, default: bool) -> bool:

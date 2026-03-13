@@ -8,13 +8,9 @@ import time
 from typing import Any, Dict, Optional, Type
 
 from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.sandbox.aio_runtime import AioSandbox
-from gage_eval.sandbox.appworld_runtime import AppWorldRuntime
 from gage_eval.sandbox.base import BaseSandbox
 from gage_eval.sandbox.docker_runtime import DockerSandbox
-from gage_eval.sandbox.llm_runtime import LlmSandbox
 from gage_eval.sandbox.local_runtime import LocalSubprocessSandbox
-from gage_eval.sandbox.opensandbox_runtime import OpenSandbox
 from gage_eval.sandbox.pool import SandboxPool
 from gage_eval.sandbox.remote_runtime import RemoteSandbox
 from gage_eval.sandbox.tau2_runtime import Tau2Runtime
@@ -39,10 +35,15 @@ class SandboxManager:
             "docker": DockerSandbox,
             "local": LocalSubprocessSandbox,
             "remote": RemoteSandbox,
-            "aio": AioSandbox,
-            "appworld": AppWorldRuntime,
-            "llm": LlmSandbox,
-            "opensandbox": OpenSandbox,
+        }
+        self._runtime_aliases: Dict[str, str] = {
+            "tau2": "local",
+            "aio": "docker",
+            "appworld": "docker",
+            "llm": "docker",
+            "opensandbox": "docker",
+        }
+        self._runtime_enhancers: Dict[str, Type[BaseSandbox]] = {
             "tau2": Tau2Runtime,
         }
         self._pools: Dict[str, SandboxPool] = {}
@@ -52,7 +53,17 @@ class SandboxManager:
     def register_runtime(self, runtime: str, runtime_cls: Type[BaseSandbox]) -> None:
         self._runtime_registry[runtime] = runtime_cls
 
-    def resolve_config(self, role_config: Dict[str, Any], sample_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def __del__(self) -> None:  # pragma: no cover - best-effort interpreter cleanup
+        try:
+            self.shutdown()
+        except Exception:
+            pass
+
+    def resolve_config(
+        self,
+        role_config: Dict[str, Any],
+        sample_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Merge sandbox config with optional template and sample overrides."""
 
         base = dict(role_config or {})
@@ -71,15 +82,28 @@ class SandboxManager:
         sample_id: Optional[str] = None,
     ) -> SandboxHandle:
         effective = dict(config or {})
-        runtime = effective.get("runtime") or effective.get("backend") or "docker"
-        runtime_cls = self._runtime_registry.get(runtime)
+        raw_runtime = str(
+            effective.get("runtime") or effective.get("backend") or "docker"
+        )
+        transport = self._runtime_aliases.get(raw_runtime, raw_runtime)
+        runtime_cls = self._runtime_enhancers.get(
+            raw_runtime
+        ) or self._runtime_registry.get(transport)
         if runtime_cls is None:
-            raise KeyError(f"Unknown sandbox runtime '{runtime}'")
+            raise KeyError(
+                f"Unknown sandbox runtime '{raw_runtime}' (resolved transport '{transport}')"
+            )
         lifecycle = effective.get("lifecycle", "per_sample")
         pool_key = effective.get("pool_key")
         if pool_key is None and lifecycle != "per_sample":
-            pool_key = effective.get("sandbox_id") or effective.get("template_name") or runtime
-        payload = _build_acquire_payload(effective, runtime, lifecycle, pool_key)
+            pool_key = (
+                effective.get("sandbox_id")
+                or effective.get("template_name")
+                or raw_runtime
+            )
+        payload = _build_acquire_payload(
+            effective, raw_runtime, lifecycle, pool_key, transport
+        )
         if trace:
             trace.emit("sandbox_acquire_start", payload, sample_id=sample_id)
         start = time.perf_counter()
@@ -89,12 +113,21 @@ class SandboxManager:
                 pool = self._pools.setdefault(
                     pool_key,
                     SandboxPool(
-                        builder=lambda: self._build_sandbox(runtime_cls, effective, trace, sample_id),
-                        max_size=effective.get("pool_max") or effective.get("pool_size"),
-                        max_uses=effective.get("max_container_uses"),
+                        builder=lambda _cls=runtime_cls, _cfg=effective, **kw: self._build_sandbox(
+                            _cls, _cfg, kw.get("trace"), kw.get("sample_id")
+                        ),
+                        max_size=effective.get("pool_max")
+                        or effective.get("pool_size"),
+                        max_uses=effective.get("max_uses")
+                        or effective.get("max_container_uses"),
+                        idle_timeout_s=effective.get("idle_timeout_s"),
                     ),
                 )
-            sandbox = pool.acquire() if pool else self._build_sandbox(runtime_cls, effective, trace, sample_id)
+            sandbox = (
+                pool.acquire(trace=trace, sample_id=sample_id)
+                if pool
+                else self._build_sandbox(runtime_cls, effective, trace, sample_id)
+            )
             if not pool:
                 self._register_active(sandbox)
             runtime_handle = getattr(sandbox, "_runtime_handle", {}) or {}
@@ -120,7 +153,12 @@ class SandboxManager:
             )
             _inject_runtime_handle(success, runtime_handle)
             trace.emit("sandbox_acquire_end", success, sample_id=sample_id)
-        return SandboxHandle(sandbox=sandbox, config=effective, runtime_handle=runtime_handle, pool_key=pool_key)
+        return SandboxHandle(
+            sandbox=sandbox,
+            config=effective,
+            runtime_handle=runtime_handle,
+            pool_key=pool_key,
+        )
 
     def release(self, handle: SandboxHandle) -> None:
         if handle.pool_key and handle.pool_key in self._pools:
@@ -139,6 +177,11 @@ class SandboxManager:
                 sandbox.teardown()
             except Exception:
                 pass
+
+    def close(self) -> None:
+        """Close all managed pools and active sandbox instances."""
+
+        self.shutdown()
 
     @staticmethod
     def _build_sandbox(
@@ -197,11 +240,14 @@ def _build_acquire_payload(
     runtime: str,
     lifecycle: str,
     pool_key: Optional[str],
+    transport: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "runtime": runtime,
         "lifecycle": str(lifecycle),
     }
+    if transport and transport != runtime:
+        payload["transport"] = transport
     sandbox_id = config.get("sandbox_id") or config.get("template_name")
     if sandbox_id:
         payload["sandbox_id"] = sandbox_id
@@ -221,14 +267,21 @@ def _build_runtime_payload(config: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _inject_runtime_handle(payload: Dict[str, Any], runtime_handle: Dict[str, Any]) -> None:
+def _inject_runtime_handle(
+    payload: Dict[str, Any], runtime_handle: Dict[str, Any]
+) -> None:
     if not runtime_handle:
         return
     for key in ("container_id", "container_name"):
         value = runtime_handle.get(key)
         if value:
             payload[key] = value
-    for key in ("env_endpoint", "environment_endpoint", "apis_endpoint", "mcp_endpoint"):
+    for key in (
+        "env_endpoint",
+        "environment_endpoint",
+        "apis_endpoint",
+        "mcp_endpoint",
+    ):
         value = runtime_handle.get(key)
         if value:
             payload[key] = value

@@ -1,4 +1,9 @@
-"""Tau2 runtime for local in-process evaluation."""
+"""Tau2 tool-protocol runtime for local in-process evaluation.
+
+Tau2 is a third-layer runtime that executes semantic tools instead of shell
+commands. It runs in-process today, but its primary execution contract is
+exec_tool/get_state/initialize_task rather than BaseSandbox.exec().
+"""
 
 from __future__ import annotations
 
@@ -7,17 +12,43 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from gage_eval.sandbox.base import BaseSandbox, SandboxOptionalMixin
+from gage_eval.sandbox.base import BaseSandbox, ExecResult, SandboxOptionalMixin
 from gage_eval.utils.benchmark_helpers.tau2 import (
     ensure_tau2_importable,
     resolve_tau2_data_dir,
 )
 
 
-class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
-    """In-process Tau2 runtime wrapper for tool execution."""
+def _tau2_import(module_path: str, name: str) -> Any:
+    """Import a single symbol from a tau2 submodule, raising RuntimeError on failure."""
+    try:
+        mod = __import__(module_path, fromlist=[name])
+        return getattr(mod, name)
+    except Exception as exc:
+        raise RuntimeError(f"tau2 {name} unavailable (from {module_path})") from exc
 
-    def __init__(self, runtime_configs: Optional[Dict[str, Any]] = None, resources: Optional[Dict[str, Any]] = None) -> None:
+
+class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
+    """Tau2 simulation runtime implementing the tool-based execution contract.
+
+    Layering:
+        transport layer: local / in-process
+        runtime layer: tau2 simulation state machine
+
+    Execution entrypoints:
+        initialize_task(sample): bootstrap environment + user simulator
+        exec_tool(name, arguments): advance the simulation
+        get_state(): expose evaluator-facing runtime state
+
+    Raw shell execution via exec() is intentionally unsupported.
+    All callers access these entrypoints via duck-typing (getattr + callable).
+    """
+
+    def __init__(
+        self,
+        runtime_configs: Optional[Dict[str, Any]] = None,
+        resources: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self._runtime_configs = dict(runtime_configs or {})
         self._resources = dict(resources or {})
         self._running = False
@@ -75,8 +106,18 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._running = True
         return {"profile": "tau2_local", "data_dir": self._data_dir}
 
-    def exec(self, command: str, timeout: int = 30):  # pragma: no cover - not used
-        raise NotImplementedError("Tau2Runtime does not support raw exec commands")
+    def exec(
+        self, command: str, timeout: int = 30
+    ) -> ExecResult:  # pragma: no cover - protocol mismatch
+        """Tau2 does not support shell-style execution.
+
+        This runtime is driven through exec_tool()/initialize_task()/get_state()
+        rather than raw shell commands.
+        """
+        raise NotImplementedError(
+            "Tau2Runtime uses the tool protocol (exec_tool/get_state/initialize_task), "
+            "not the shell protocol (exec). Use exec_tool(name, arguments) instead."
+        )
 
     def teardown(self) -> None:
         self._running = False
@@ -106,15 +147,29 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         user_sim = _build_tau2_user_simulator(
             tools=user_tools,
             instructions=str(task.user_scenario),
-            model=self._runtime_configs.get("user_model") or self._runtime_configs.get("user_llm"),
-            model_args=self._runtime_configs.get("user_model_args") or self._runtime_configs.get("user_llm_args"),
+            model=self._runtime_configs.get("user_model")
+            or self._runtime_configs.get("user_llm"),
+            model_args=self._runtime_configs.get("user_model_args")
+            or self._runtime_configs.get("user_llm_args"),
             seed=self._seed,
         )
         self._user = user_sim
 
-        initialization_data = getattr(task.initial_state, "initialization_data", None) if task.initial_state else None
-        initialization_actions = getattr(task.initial_state, "initialization_actions", None) if task.initial_state else None
-        message_history = list(getattr(task.initial_state, "message_history", None) or []) if task.initial_state else []
+        initialization_data = (
+            getattr(task.initial_state, "initialization_data", None)
+            if task.initial_state
+            else None
+        )
+        initialization_actions = (
+            getattr(task.initial_state, "initialization_actions", None)
+            if task.initial_state
+            else None
+        )
+        message_history = (
+            list(getattr(task.initial_state, "message_history", None) or [])
+            if task.initial_state
+            else []
+        )
         try:
             env.set_state(
                 initialization_data=initialization_data,
@@ -134,7 +189,9 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         if not message_history:
             first_assistant = _build_default_greeting()
             trajectory.append(first_assistant)
-            user_message, user_state = user_sim.generate_next_message(first_assistant, user_state)
+            user_message, user_state = user_sim.generate_next_message(
+                first_assistant, user_state
+            )
             trajectory.append(user_message)
             self._user_state = user_state
             if getattr(user_message, "tool_calls", None):
@@ -142,7 +199,9 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         else:
             last = message_history[-1]
             if _needs_user_reply(last):
-                user_message, user_state = user_sim.generate_next_message(last, user_state)
+                user_message, user_state = user_sim.generate_next_message(
+                    last, user_state
+                )
                 trajectory.append(user_message)
                 self._user_state = user_state
                 if getattr(user_message, "tool_calls", None):
@@ -150,7 +209,9 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
 
         # STEP 3: Prepare sample payload updates (messages + tools + metadata).
         tools_schema = [tool.openai_schema for tool in env.get_tools()]
-        sample_messages = [msg for msg in (_tau2_to_gage_message(m) for m in trajectory) if msg]
+        sample_messages = [
+            msg for msg in (_tau2_to_gage_message(m) for m in trajectory) if msg
+        ]
         _update_tau2_metadata(sample, env)
         sample["messages"] = sample_messages
         sample["tools"] = tools_schema
@@ -166,7 +227,10 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         if not self._running:
             raise RuntimeError("tau2_runtime_not_started")
         if self._termination_reason is not None:
-            return {"error": "tau2_simulation_terminated", "final_answer": "simulation_terminated"}
+            return {
+                "error": "tau2_simulation_terminated",
+                "final_answer": "simulation_terminated",
+            }
 
         if name == self._respond_tool_name:
             return self._handle_respond(arguments)
@@ -197,7 +261,10 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._trajectory.append(tool_msg)
         self._step_count += 1
         self._maybe_terminate()
-        return {"content": tool_msg.content, "error": bool(getattr(tool_msg, "error", False))}
+        return {
+            "content": tool_msg.content,
+            "error": bool(getattr(tool_msg, "error", False)),
+        }
 
     def _handle_respond(self, arguments: Any) -> Dict[str, Any]:
         if self._user is None or self._user_state is None:
@@ -210,7 +277,9 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             self._termination_reason = _termination_reason("agent_stop")
             return {"final_answer": message_text, "user_message": message_text}
 
-        user_msg, self._user_state = self._user.generate_next_message(assistant_msg, self._user_state)
+        user_msg, self._user_state = self._user.generate_next_message(
+            assistant_msg, self._user_state
+        )
         self._trajectory.append(user_msg)
         self._user_cost_total += _coerce_float(getattr(user_msg, "cost", None)) or 0.0
 
@@ -222,7 +291,10 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             user_msg = self._resolve_user_tool_calls(user_msg)
             if _is_user_stop(user_msg):
                 self._termination_reason = _termination_reason("user_stop")
-                return {"final_answer": user_msg.content, "user_message": user_msg.content}
+                return {
+                    "final_answer": user_msg.content,
+                    "user_message": user_msg.content,
+                }
 
         self._maybe_terminate()
         return {"user_message": user_msg.content}
@@ -243,9 +315,13 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                 tool_messages.append(tool_msg)
                 self._trajectory.append(tool_msg)
             next_input = _build_multi_tool_message(tool_messages)
-            next_user_msg, self._user_state = self._user.generate_next_message(next_input, self._user_state)
+            next_user_msg, self._user_state = self._user.generate_next_message(
+                next_input, self._user_state
+            )
             self._trajectory.append(next_user_msg)
-            self._user_cost_total += _coerce_float(getattr(next_user_msg, "cost", None)) or 0.0
+            self._user_cost_total += (
+                _coerce_float(getattr(next_user_msg, "cost", None)) or 0.0
+            )
             current = next_user_msg
             if _is_user_stop(current):
                 break
@@ -261,20 +337,25 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
 
 
 def _build_tau2_task(sample: Dict[str, Any]) -> Any:
-    raw_assets = sample.get("raw_assets") if isinstance(sample.get("raw_assets"), dict) else {}
-    tau2_payload = raw_assets.get("tau2") if isinstance(raw_assets.get("tau2"), dict) else {}
+    raw_assets = (
+        sample.get("raw_assets") if isinstance(sample.get("raw_assets"), dict) else {}
+    )
+    tau2_payload = (
+        raw_assets.get("tau2") if isinstance(raw_assets.get("tau2"), dict) else {}
+    )
     task_payload = tau2_payload.get("task") or sample.get("task") or sample
-    try:
-        from tau2.data_model.tasks import Task  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 is required to build tasks") from exc
+    Task = _tau2_import("tau2.data_model.tasks", "Task")
     return Task.model_validate(task_payload)
 
 
 def _resolve_tau2_domain(sample: Dict[str, Any], task: Any) -> str:
     meta = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
     tau2_meta = meta.get("tau2") if isinstance(meta.get("tau2"), dict) else {}
-    return str(tau2_meta.get("domain") or getattr(task.user_scenario, "instructions", None) or "airline")
+    return str(
+        tau2_meta.get("domain")
+        or getattr(task.user_scenario, "instructions", None)
+        or "airline"
+    )
 
 
 def _read_tau2_meta(sample: Dict[str, Any], key: str) -> Optional[Any]:
@@ -284,10 +365,7 @@ def _read_tau2_meta(sample: Dict[str, Any], key: str) -> Optional[Any]:
 
 
 def _build_tau2_environment(domain: str) -> Any:
-    try:
-        from tau2.registry import registry  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 registry unavailable") from exc
+    registry = _tau2_import("tau2.registry", "registry")
     env_ctor = registry.get_env_constructor(domain)
     return env_ctor()
 
@@ -307,10 +385,7 @@ def _build_tau2_user_simulator(
     model_args: Optional[dict],
     seed: Optional[int],
 ) -> Any:
-    try:
-        from tau2.user.user_simulator import UserSimulator  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 UserSimulator unavailable") from exc
+    UserSimulator = _tau2_import("tau2.user.user_simulator", "UserSimulator")
     user = UserSimulator(
         tools=tools,
         instructions=instructions,
@@ -327,17 +402,19 @@ def _build_tau2_user_simulator(
 
 def _filter_user_history(history: List[Any]) -> List[Any]:
     try:
-        from tau2.user.base import is_valid_user_history_message  # type: ignore
-    except Exception:
+        is_valid = _tau2_import("tau2.user.base", "is_valid_user_history_message")
+    except RuntimeError:
         return list(history)
-    return [msg for msg in history if is_valid_user_history_message(msg)]
+    return [msg for msg in history if is_valid(msg)]
 
 
 def _build_default_greeting() -> Any:
     try:
-        from tau2.orchestrator.orchestrator import DEFAULT_FIRST_AGENT_MESSAGE  # type: ignore
-        from tau2.utils.utils import get_now  # type: ignore
-    except Exception:
+        DEFAULT_FIRST_AGENT_MESSAGE = _tau2_import(
+            "tau2.orchestrator.orchestrator", "DEFAULT_FIRST_AGENT_MESSAGE"
+        )
+        get_now = _tau2_import("tau2.utils.utils", "get_now")
+    except RuntimeError:
         return _build_assistant_text_message("Hi! How can I help you today?")
     greeting = copy.deepcopy(DEFAULT_FIRST_AGENT_MESSAGE)
     greeting.timestamp = get_now()
@@ -346,12 +423,16 @@ def _build_default_greeting() -> Any:
 
 def _needs_user_reply(last_message: Any) -> bool:
     try:
-        from tau2.data_model.message import AssistantMessage, ToolMessage  # type: ignore
-    except Exception:
+        AssistantMessage = _tau2_import("tau2.data_model.message", "AssistantMessage")
+        ToolMessage = _tau2_import("tau2.data_model.message", "ToolMessage")
+    except RuntimeError:
         return False
     if isinstance(last_message, AssistantMessage):
         return True
-    if isinstance(last_message, ToolMessage) and getattr(last_message, "requestor", None) == "user":
+    if (
+        isinstance(last_message, ToolMessage)
+        and getattr(last_message, "requestor", None) == "user"
+    ):
         return True
     return False
 
@@ -376,10 +457,7 @@ def _tau2_to_gage_message(message: Any) -> Optional[Dict[str, Any]]:
 
 
 def _build_tool_call(name: str, arguments: Any, *, requestor: str) -> Any:
-    try:
-        from tau2.data_model.message import ToolCall  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 ToolCall unavailable") from exc
+    ToolCall = _tau2_import("tau2.data_model.message", "ToolCall")
     payload = _normalize_tool_args(arguments)
     return ToolCall(
         id=str(uuid.uuid4()),
@@ -398,35 +476,26 @@ def _normalize_tool_args(arguments: Any) -> Dict[str, Any]:
 
 
 def _build_assistant_text_message(content: str) -> Any:
-    try:
-        from tau2.data_model.message import AssistantMessage  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 AssistantMessage unavailable") from exc
+    AssistantMessage = _tau2_import("tau2.data_model.message", "AssistantMessage")
     return AssistantMessage(role="assistant", content=content)
 
 
 def _build_assistant_tool_message(tool_calls: List[Any]) -> Any:
-    try:
-        from tau2.data_model.message import AssistantMessage  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 AssistantMessage unavailable") from exc
+    AssistantMessage = _tau2_import("tau2.data_model.message", "AssistantMessage")
     return AssistantMessage(role="assistant", content=None, tool_calls=tool_calls)
 
 
 def _build_multi_tool_message(tool_messages: List[Any]) -> Any:
-    try:
-        from tau2.data_model.message import MultiToolMessage  # type: ignore
-    except Exception as exc:
-        raise RuntimeError("tau2 MultiToolMessage unavailable") from exc
+    MultiToolMessage = _tau2_import("tau2.data_model.message", "MultiToolMessage")
     return MultiToolMessage(role="tool", tool_messages=tool_messages)
 
 
 def _is_user_stop(message: Any) -> bool:
-    try:
-        from tau2.user.user_simulator import UserSimulator  # type: ignore
-    except Exception:
-        return False
     if message is None:
+        return False
+    try:
+        UserSimulator = _tau2_import("tau2.user.user_simulator", "UserSimulator")
+    except RuntimeError:
         return False
     return UserSimulator.is_stop(message)
 
@@ -439,8 +508,8 @@ def _is_agent_stop(content: Optional[str]) -> bool:
 
 def _termination_reason(reason: str) -> Any:
     try:
-        from tau2.data_model.simulation import TerminationReason  # type: ignore
-    except Exception:
+        TerminationReason = _tau2_import("tau2.data_model.simulation", "TerminationReason")
+    except RuntimeError:
         return reason
     mapping = {
         "user_stop": TerminationReason.USER_STOP,
@@ -455,8 +524,8 @@ def _termination_reason(reason: str) -> Any:
 
 def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:
     try:
-        from tau2.agent.llm_agent import AGENT_INSTRUCTION  # type: ignore
-    except Exception:
+        AGENT_INSTRUCTION = _tau2_import("tau2.agent.llm_agent", "AGENT_INSTRUCTION")
+    except RuntimeError:
         AGENT_INSTRUCTION = "Follow the provided policy to help the user."
     meta = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
     tau2_meta = meta.get("tau2") if isinstance(meta.get("tau2"), dict) else {}

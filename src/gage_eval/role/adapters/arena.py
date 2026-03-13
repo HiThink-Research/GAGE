@@ -7,12 +7,14 @@ import functools
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger
 
+from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
@@ -20,7 +22,9 @@ from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.players.agent_player import AgentPlayer
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
-from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
+from gage_eval.role.arena.schedulers.multi_timeline_scheduler import (
+    MultiTimelineScheduler,
+)
 from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
 from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
 from gage_eval.role.arena.frame_capture import FrameCaptureRecorder
@@ -28,6 +32,148 @@ from gage_eval.role.arena.replay_schema_writer import ReplaySchemaWriter
 from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import GameResult
+
+
+class _WsRgbSessionController:
+    """Coordinate ws_rgb viewer lifecycle state and shutdown confirmation."""
+
+    def __init__(
+        self,
+        *,
+        display_id: str,
+        sample_id: str,
+        adapter_id: str,
+        game_id: str,
+    ) -> None:
+        self._display_id = str(display_id)
+        self._sample_id = str(sample_id)
+        self._adapter_id = str(adapter_id)
+        self._game_id = str(game_id)
+        self._lock = threading.Lock()
+        self._process_end_event = threading.Event()
+        self._phase = "in_progress"
+        self._manual_stop_requested = False
+        self._result: Optional[str] = None
+        self._reason: Optional[str] = None
+        self._winner: Optional[str] = None
+        self._move_count = 0
+        self._ended_by: Optional[str] = None
+        self._ended_at_ms: Optional[int] = None
+        self._process_ended_at_ms: Optional[int] = None
+
+    @property
+    def display_id(self) -> str:
+        """Return the bound ws_rgb display id."""
+
+        return self._display_id
+
+    def is_game_end_requested(self) -> bool:
+        """Return whether the viewer requested an early stop."""
+
+        with self._lock:
+            return bool(self._manual_stop_requested)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Build a JSON-safe lifecycle snapshot for the viewer."""
+
+        with self._lock:
+            return self._snapshot_locked()
+
+    def request_game_end(self) -> dict[str, Any]:
+        """Move the session into ``game_ended`` without ending the process."""
+
+        with self._lock:
+            if self._phase == "in_progress":
+                self._phase = "game_ended"
+                self._manual_stop_requested = True
+                self._result = self._result or "draw"
+                self._reason = self._reason or "manual_stop"
+                self._ended_by = self._ended_by or "user"
+                self._ended_at_ms = self._ended_at_ms or self._now_ms()
+            return {
+                "ok": True,
+                "display_id": self._display_id,
+                "session": self._snapshot_locked(),
+            }
+
+    def mark_game_ended(self, result: GameResult) -> dict[str, Any]:
+        """Record the final result and expose replay-ready state."""
+
+        with self._lock:
+            self._result = str(result.result or self._result or "draw")
+            self._reason = str(result.reason) if result.reason is not None else self._reason
+            self._winner = str(result.winner) if result.winner is not None else None
+            self._move_count = max(0, int(result.move_count))
+            self._ended_at_ms = self._ended_at_ms or self._now_ms()
+            if self._ended_by is None:
+                self._ended_by = "user" if self._manual_stop_requested else "environment"
+            if self._phase != "process_ended":
+                self._phase = "game_ended"
+            return {
+                "ok": True,
+                "display_id": self._display_id,
+                "session": self._snapshot_locked(),
+            }
+
+    def request_process_end(self, *, confirm: bool) -> dict[str, Any]:
+        """Move the session into ``process_ended`` and unblock adapter shutdown."""
+
+        with self._lock:
+            if self._phase == "in_progress":
+                return {
+                    "ok": False,
+                    "error": "process_end_not_allowed",
+                    "display_id": self._display_id,
+                    "session": self._snapshot_locked(),
+                }
+            if not confirm:
+                return {
+                    "ok": False,
+                    "error": "process_end_confirmation_required",
+                    "display_id": self._display_id,
+                    "session": self._snapshot_locked(),
+                }
+            if self._phase != "process_ended":
+                self._phase = "process_ended"
+                self._process_ended_at_ms = self._now_ms()
+                self._process_end_event.set()
+            return {
+                "ok": True,
+                "display_id": self._display_id,
+                "session": self._snapshot_locked(),
+            }
+
+    def wait_for_process_end(self, *, timeout_s: Optional[float] = None) -> bool:
+        """Block until the viewer confirms process shutdown."""
+
+        timeout = None if timeout_s is None else max(0.0, float(timeout_s))
+        return bool(self._process_end_event.wait(timeout=timeout))
+
+    def _snapshot_locked(self) -> dict[str, Any]:
+        phase = str(self._phase or "in_progress")
+        return {
+            "session_controlled": True,
+            "display_id": self._display_id,
+            "sample_id": self._sample_id,
+            "adapter_id": self._adapter_id,
+            "game_id": self._game_id,
+            "phase": phase,
+            "replay_allowed": phase == "game_ended",
+            "can_terminate_game": phase == "in_progress",
+            "can_terminate_process": phase == "game_ended",
+            "manual_stop_requested": bool(self._manual_stop_requested),
+            "result": self._result,
+            "reason": self._reason,
+            "winner": self._winner,
+            "move_count": self._move_count,
+            "ended_by": self._ended_by,
+            "ended_at_ms": self._ended_at_ms,
+            "process_ended_at_ms": self._process_ended_at_ms,
+        }
+
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.time() * 1000)
 
 
 @registry.asset(
@@ -55,12 +201,15 @@ class ArenaRoleAdapter(RoleAdapter):
         visualizer: Optional[Dict[str, Any]] = None,
         human_input: Optional[Dict[str, Any]] = None,
         players: Optional[Sequence[Dict[str, Any]]] = None,
+        prompt_renderer: Optional[PromptRenderer] = None,
         capabilities=(),
         role_type: str = "arena",
         **_,
     ) -> None:
         resolved_caps = tuple(capabilities) if capabilities else ("text",)
-        super().__init__(adapter_id=adapter_id, role_type=role_type, capabilities=resolved_caps)
+        super().__init__(
+            adapter_id=adapter_id, role_type=role_type, capabilities=resolved_caps
+        )
         self._environment_cfg = dict(environment or {})
         self._rules_cfg = dict(rules or {})
         self._scheduler_cfg = dict(scheduler or {})
@@ -68,32 +217,48 @@ class ArenaRoleAdapter(RoleAdapter):
         self._visualizer_cfg = dict(visualizer or {})
         self._human_input_cfg = dict(human_input or {})
         self._player_specs = list(players or [])
+        self._prompt_renderer = prompt_renderer
         self._shared_visualizer = None
         self._action_server = None
         self._ws_rgb_hub = None
         self._registered_displays: set[str] = set()
 
-    def invoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
+    def invoke(
+        self, payload: Dict[str, Any], state: RoleAdapterState
+    ) -> Dict[str, Any]:
         """Run the arena loop in a synchronous context."""
 
         return self._invoke_sync(payload, state)
 
-    async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
+    async def ainvoke(
+        self, payload: Dict[str, Any], state: RoleAdapterState
+    ) -> Dict[str, Any]:
         """Run the arena loop without nesting sync calls inside an active loop."""
 
         loop = asyncio.get_running_loop()
         func = functools.partial(self._invoke_sync, payload, state)
         return await loop.run_in_executor(None, func)
 
-    def _invoke_sync(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
+    def _invoke_sync(
+        self, payload: Dict[str, Any], state: RoleAdapterState
+    ) -> Dict[str, Any]:
         sample = payload.get("sample") or {}
-        trace = payload.get("trace") if isinstance(payload.get("trace"), ObservabilityTrace) else None
+        trace = (
+            payload.get("trace")
+            if isinstance(payload.get("trace"), ObservabilityTrace)
+            else None
+        )
+        sandbox_provider = (
+            payload.get("sandbox_provider") if isinstance(payload, dict) else None
+        )
         role_manager = payload.get("role_manager")
         if role_manager is None:
             raise ValueError("ArenaRoleAdapter requires role_manager in payload")
 
         # STEP 1: Build core components for the game loop.
-        player_specs, player_ids, player_names, start_player_id = self._normalize_player_specs(sample)
+        player_specs, player_ids, player_names, start_player_id = (
+            self._normalize_player_specs(sample)
+        )
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
         env_impl_lower = str(env_impl).lower()
         model_labels: Dict[str, str] = {}
@@ -119,17 +284,24 @@ class ArenaRoleAdapter(RoleAdapter):
             start_player_id=start_player_id,
             chat_queue=action_server.chat_queue if action_server is not None else None,
             trace=trace,
+            sandbox_provider=sandbox_provider,
         )
+        ws_session = self._maybe_build_ws_session_controller(sample=sample, env_impl=env_impl_lower)
+        if ws_session is not None:
+            environment = _SessionControlledEnvironment(environment, ws_session)
         frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
         if frame_recorder is not None:
             environment = _FrameCaptureEnvironment(environment, frame_recorder)
-        self._maybe_register_ws_display(
+        ws_display_registered = self._maybe_register_ws_display(
             sample=sample,
             environment=environment,
             action_queue=action_queue,
             player_specs=player_specs,
             env_impl=env_impl_lower,
+            session_controller=ws_session,
         )
+        if not ws_display_registered:
+            ws_session = None
         if visualizer is not None:
             visualizer.reset_state()
             visualizer.set_players(
@@ -150,7 +322,10 @@ class ArenaRoleAdapter(RoleAdapter):
 
         logger.info("ArenaRoleAdapter {} starting game", self.adapter_id)
         if trace:
-            trace.emit("arena_start", {"adapter_id": self.adapter_id, "player_count": len(players)})
+            trace.emit(
+                "arena_start",
+                {"adapter_id": self.adapter_id, "player_count": len(players)},
+            )
 
         # STEP 2: Run the scheduler loop and capture the final result.
         try:
@@ -159,16 +334,6 @@ class ArenaRoleAdapter(RoleAdapter):
             self._wait_for_pending_players(players)
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
             pass
-        output = self._format_result(
-            result,
-            sample,
-            trace,
-            frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
-        )
-
-        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
-            visualizer.wait_for_finish()
-
         if trace:
             trace.emit(
                 "arena_end",
@@ -179,6 +344,27 @@ class ArenaRoleAdapter(RoleAdapter):
                     "move_count": result.move_count,
                 },
             )
+
+        # STEP 3: Expose replay-ready viewer state before blocking on process shutdown.
+        if ws_session is not None:
+            ws_session.mark_game_ended(result)
+            logger.info(
+                "ArenaRoleAdapter {} reached game_ended state for display {}; waiting for process exit confirmation.",
+                self.adapter_id,
+                ws_session.display_id,
+            )
+            ws_session.wait_for_process_end()
+
+        output = self._format_result(
+            result,
+            sample,
+            trace,
+            frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
+        )
+
+        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
+            visualizer.wait_for_finish()
+
         logger.info("ArenaRoleAdapter {} finished result={}", self.adapter_id, result.result)
         return output
 
@@ -224,12 +410,20 @@ class ArenaRoleAdapter(RoleAdapter):
             normalized["player_id"] = str(player_id)
             normalized_specs.append(normalized)
             existing_name = player_names.get(normalized["player_id"])
-            display_name = normalized.get("name") or existing_name or normalized["player_id"]
+            display_name = (
+                normalized.get("name") or existing_name or normalized["player_id"]
+            )
             is_generic_name = False
             if existing_name is not None:
                 normalized_existing = str(existing_name).strip()
-                is_generic_name = bool(re.match(r"^player\s*\d+$", normalized_existing, re.IGNORECASE))
-            if existing_name is None or existing_name == normalized["player_id"] or is_generic_name:
+                is_generic_name = bool(
+                    re.match(r"^player\s*\d+$", normalized_existing, re.IGNORECASE)
+                )
+            if (
+                existing_name is None
+                or existing_name == normalized["player_id"]
+                or is_generic_name
+            ):
                 adapter_ref = normalized.get("ref")
                 if adapter_ref and not normalized.get("name"):
                     display_name = str(adapter_ref)
@@ -263,7 +457,9 @@ class ArenaRoleAdapter(RoleAdapter):
 
         return normalized_specs, ordered_ids, player_names, start_player_id
 
-    def _resolve_player_labels(self, player_specs: Sequence[Dict[str, Any]], role_manager) -> Dict[str, str]:
+    def _resolve_player_labels(
+        self, player_specs: Sequence[Dict[str, Any]], role_manager
+    ) -> Dict[str, str]:
         labels: Dict[str, str] = {}
         for spec in player_specs:
             player_id = spec.get("player_id")
@@ -282,9 +478,17 @@ class ArenaRoleAdapter(RoleAdapter):
                 model_name = None
                 if adapter is not None:
                     backend = getattr(adapter, "backend", None)
-                    config = getattr(backend, "config", {}) if backend is not None else {}
+                    config = (
+                        getattr(backend, "config", {}) if backend is not None else {}
+                    )
                     if isinstance(config, dict):
-                        for key in ("model", "model_name", "model_path", "model_id", "model_repo"):
+                        for key in (
+                            "model",
+                            "model_name",
+                            "model_path",
+                            "model_id",
+                            "model_repo",
+                        ):
                             value = config.get(key)
                             if value:
                                 model_name = str(value)
@@ -302,6 +506,7 @@ class ArenaRoleAdapter(RoleAdapter):
         start_player_id: Optional[str] = None,
         chat_queue=None,
         trace: Optional[ObservabilityTrace] = None,
+        sandbox_provider: Any = None,
     ):
         metadata = sample.get("metadata") or {}
         eval_config = sample.get("eval_config") or {}
@@ -310,14 +515,14 @@ class ArenaRoleAdapter(RoleAdapter):
         rules_cfg = dict(self._rules_cfg)
 
         board_size = int(metadata.get("board_size", env_cfg.get("board_size", 15)))
-        win_len = int(metadata.get("win_len", rules_cfg.get("win_len", env_cfg.get("win_len", 5))))
-        resolved_player_ids = list(
-            player_ids
-            or metadata.get("player_ids")
-            or []
+        win_len = int(
+            metadata.get("win_len", rules_cfg.get("win_len", env_cfg.get("win_len", 5)))
         )
+        resolved_player_ids = list(player_ids or metadata.get("player_ids") or [])
         resolved_player_names = dict(player_names or metadata.get("player_names") or {})
-        resolved_player_models = dict(player_models or metadata.get("player_models") or {})
+        resolved_player_models = dict(
+            player_models or metadata.get("player_models") or {}
+        )
         resolved_start_player = start_player_id or metadata.get("start_player_id")
         token_map = metadata.get("token_map") or env_cfg.get("token_map")
         coord_scheme = metadata.get("coord_scheme", env_cfg.get("coord_scheme", "A1"))
@@ -326,7 +531,9 @@ class ArenaRoleAdapter(RoleAdapter):
         if "retry_illegal" in eval_config and "retry" not in illegal_policy:
             illegal_policy["retry"] = eval_config.get("retry_illegal")
 
-        rule_profile = rules_cfg.get("rule_profile", metadata.get("rule_profile", "freestyle"))
+        rule_profile = rules_cfg.get(
+            "rule_profile", metadata.get("rule_profile", "freestyle")
+        )
         win_directions = rules_cfg.get("win_directions", metadata.get("win_directions"))
         chat_mode = env_cfg.get("chat_mode", metadata.get("chat_mode"))
 
@@ -336,7 +543,6 @@ class ArenaRoleAdapter(RoleAdapter):
                 import gage_eval.role.arena.games.mahjong.env
             except ImportError:
                 pass
-        env_cls = registry.get("arena_impls", impl)
         env_kwargs = {
             "board_size": board_size,
             "win_len": win_len,
@@ -427,8 +633,16 @@ class ArenaRoleAdapter(RoleAdapter):
             ):
                 if env_cfg.get(key) is not None:
                     env_kwargs[key] = env_cfg.get(key)
-            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
-            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            run_id = (
+                trace.run_id
+                if trace is not None
+                else os.environ.get("GAGE_EVAL_RUN_ID")
+            )
+            sample_id = (
+                sample.get("id")
+                or sample.get("sample_id")
+                or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            )
             if run_id:
                 env_kwargs["run_id"] = str(run_id)
             if sample_id:
@@ -436,8 +650,16 @@ class ArenaRoleAdapter(RoleAdapter):
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
         if "mahjong" in str(impl).lower():
-            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
-            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            run_id = (
+                trace.run_id
+                if trace is not None
+                else os.environ.get("GAGE_EVAL_RUN_ID")
+            )
+            sample_id = (
+                sample.get("id")
+                or sample.get("sample_id")
+                or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            )
             if run_id:
                 env_kwargs["run_id"] = str(run_id)
             if sample_id:
@@ -455,8 +677,16 @@ class ArenaRoleAdapter(RoleAdapter):
             if resolved_player_models:
                 env_kwargs["player_models"] = resolved_player_models
         if "doudizhu" in str(impl).lower():
-            run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
-            sample_id = sample.get("id") or sample.get("sample_id") or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            run_id = (
+                trace.run_id
+                if trace is not None
+                else os.environ.get("GAGE_EVAL_RUN_ID")
+            )
+            sample_id = (
+                sample.get("id")
+                or sample.get("sample_id")
+                or os.environ.get("GAGE_EVAL_SAMPLE_ID")
+            )
             if run_id:
                 env_kwargs["run_id"] = str(run_id)
             if sample_id:
@@ -470,15 +700,35 @@ class ArenaRoleAdapter(RoleAdapter):
             if env_cfg.get("replay_filename") is not None:
                 env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
             if env_cfg.get("context_include_public") is not None:
-                env_kwargs["context_include_public"] = env_cfg.get("context_include_public")
+                env_kwargs["context_include_public"] = env_cfg.get(
+                    "context_include_public"
+                )
             if env_cfg.get("context_include_ui_state") is not None:
-                env_kwargs["context_include_ui_state"] = env_cfg.get("context_include_ui_state")
+                env_kwargs["context_include_ui_state"] = env_cfg.get(
+                    "context_include_ui_state"
+                )
             if env_cfg.get("fast_finish_action") is not None:
                 env_kwargs["fast_finish_action"] = env_cfg.get("fast_finish_action")
             if env_cfg.get("fast_finish_human_only") is not None:
-                env_kwargs["fast_finish_human_only"] = env_cfg.get("fast_finish_human_only")
+                env_kwargs["fast_finish_human_only"] = env_cfg.get(
+                    "fast_finish_human_only"
+                )
             if chat_queue is not None:
                 env_kwargs["chat_queue"] = chat_queue
+        if sandbox_provider is not None:
+            handle = sandbox_provider.get_handle()
+            sandbox = getattr(handle, "sandbox", None) if handle is not None else None
+            if sandbox is not None:
+                from gage_eval.role.arena.sandboxed_env import SandboxedArenaEnvironment
+
+                return SandboxedArenaEnvironment(
+                    sandbox=sandbox,
+                    env_kwargs={"impl": impl, **env_kwargs},
+                    timeout_s=self._coerce_int(
+                        env_cfg.get("arena_rpc_timeout_s"), default=30
+                    ),
+                )
+        env_cls = registry.get("arena_impls", impl)
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
@@ -535,7 +785,9 @@ class ArenaRoleAdapter(RoleAdapter):
                 trace_action_format=trace_options["action_format"],
             )
         if scheduler_type == "simultaneous":
-            max_steps = eval_cfg.get("max_turns", cfg.get("max_steps", cfg.get("max_turns")))
+            max_steps = eval_cfg.get(
+                "max_turns", cfg.get("max_steps", cfg.get("max_turns"))
+            )
             return SimultaneousScheduler(
                 frames_per_action=int(cfg.get("frames_per_action", 1)),
                 max_steps=max_steps,
@@ -643,7 +895,9 @@ class ArenaRoleAdapter(RoleAdapter):
         player_specs: Sequence[Dict[str, Any]],
     ):
         if not player_specs:
-            raise ValueError("ArenaRoleAdapter requires non-empty players configuration")
+            raise ValueError(
+                "ArenaRoleAdapter requires non-empty players configuration"
+            )
 
         players = []
         for spec in player_specs:
@@ -669,6 +923,10 @@ class ArenaRoleAdapter(RoleAdapter):
                         fallback_policy=spec.get("fallback_policy", "none"),
                         timeout_ms=spec.get("timeout_ms"),
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
+                        prompt_renderer=self._prompt_renderer,
+                        scheduler_mode=self._scheduler_cfg.get("type"),
+                        scheme_id=spec.get("scheme_id"),
+                        scheme_params=spec.get("scheme_params"),
                     )
                 )
             elif player_type == "agent":
@@ -685,6 +943,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         max_retries=int(spec.get("max_retries", 0)),
                         legal_moves_limit=int(spec.get("legal_moves_limit", 40)),
                         sampling_params=spec.get("sampling_params"),
+                        prompt_renderer=self._prompt_renderer,
                     )
                 )
             elif player_type == "human":
@@ -732,7 +991,11 @@ class ArenaRoleAdapter(RoleAdapter):
             try:
                 wait_for_pending(timeout_s=remaining)
             except Exception as exc:
-                logger.debug("Skip pending wait for player {} due to: {}", getattr(player, "name", "?"), exc)
+                logger.debug(
+                    "Skip pending wait for player {} due to: {}",
+                    getattr(player, "name", "?"),
+                    exc,
+                )
 
     def _format_result(
         self,
@@ -761,7 +1024,9 @@ class ArenaRoleAdapter(RoleAdapter):
         metrics = getattr(result, "metrics", None)
         if isinstance(metrics, dict):
             output["metrics"] = dict(metrics)
-        arena_trace = self._normalize_arena_trace_steps(getattr(result, "arena_trace", None))
+        arena_trace = self._normalize_arena_trace_steps(
+            getattr(result, "arena_trace", None)
+        )
         if arena_trace is not None:
             output["arena_trace"] = arena_trace
         output.update(self._format_game_log(result.move_log, sample, trace))
@@ -787,11 +1052,15 @@ class ArenaRoleAdapter(RoleAdapter):
         if isinstance(trace_source, Mapping):
             # NOTE: Keep compatibility with legacy {"schema": "...", "steps": [...]} payloads.
             legacy_steps = trace_source.get("steps")
-            if isinstance(legacy_steps, Sequence) and not isinstance(legacy_steps, (str, bytes)):
+            if isinstance(legacy_steps, Sequence) and not isinstance(
+                legacy_steps, (str, bytes)
+            ):
                 trace_source = legacy_steps
             else:
                 return []
-        if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
+        if not isinstance(trace_source, Sequence) or isinstance(
+            trace_source, (str, bytes)
+        ):
             return None
         return [dict(item) for item in trace_source if isinstance(item, Mapping)]
 
@@ -815,7 +1084,9 @@ class ArenaRoleAdapter(RoleAdapter):
             "sample_id": sample_id,
             "move_log": move_log_entries,
         }
-        output_path = self._write_game_log(run_dir, sample_id, payload) if run_dir else None
+        output_path = (
+            self._write_game_log(run_dir, sample_id, payload) if run_dir else None
+        )
         if output_path is None:
             logger.warning(
                 "Large game_log detected but could not persist to run dir; returning preview only."
@@ -865,10 +1136,14 @@ class ArenaRoleAdapter(RoleAdapter):
         return len(payload.encode("utf-8"))
 
     def _resolve_run_dir(self, trace: Optional[ObservabilityTrace]) -> Optional[Path]:
-        run_id = trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+        run_id = (
+            trace.run_id if trace is not None else os.environ.get("GAGE_EVAL_RUN_ID")
+        )
         if not run_id:
             return None
-        base_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")).expanduser().resolve()
+        base_dir = (
+            Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")).expanduser().resolve()
+        )
         return base_dir / str(run_id)
 
     @staticmethod
@@ -964,7 +1239,9 @@ class ArenaRoleAdapter(RoleAdapter):
         raw_enabled = action_cfg.get("enabled")
         return self._coerce_bool_or_auto(raw_enabled, default=True)
 
-    def _resolve_replay_frame_enabled(self, replay_cfg: Mapping[str, Any], *, default: bool) -> bool:
+    def _resolve_replay_frame_enabled(
+        self, replay_cfg: Mapping[str, Any], *, default: bool
+    ) -> bool:
         frame_cfg = replay_cfg.get("frame")
         if isinstance(frame_cfg, Mapping):
             if "enabled" in frame_cfg:
@@ -973,15 +1250,21 @@ class ArenaRoleAdapter(RoleAdapter):
         legacy_frame_cfg = replay_cfg.get("frame_capture")
         if isinstance(legacy_frame_cfg, Mapping):
             if "enabled" in legacy_frame_cfg:
-                return self._coerce_bool_or_auto(legacy_frame_cfg.get("enabled"), default=True)
+                return self._coerce_bool_or_auto(
+                    legacy_frame_cfg.get("enabled"), default=True
+                )
             return True
         return default
 
-    def _resolve_replay_frame_capture_cfg(self, replay_cfg: Mapping[str, Any]) -> dict[str, Any]:
+    def _resolve_replay_frame_capture_cfg(
+        self, replay_cfg: Mapping[str, Any]
+    ) -> dict[str, Any]:
         frame_cfg = replay_cfg.get("frame")
         frame_options = dict(frame_cfg) if isinstance(frame_cfg, Mapping) else {}
         legacy_frame_cfg = replay_cfg.get("frame_capture")
-        legacy_options = dict(legacy_frame_cfg) if isinstance(legacy_frame_cfg, Mapping) else {}
+        legacy_options = (
+            dict(legacy_frame_cfg) if isinstance(legacy_frame_cfg, Mapping) else {}
+        )
         return {
             "frame_dir_name": self._first_non_none(
                 frame_options.get("frame_dir_name"),
@@ -1065,7 +1348,9 @@ class ArenaRoleAdapter(RoleAdapter):
 
         run_dir = self._resolve_run_dir(trace)
         if run_dir is None:
-            logger.warning("Frame capture enabled but run_id is missing; skip frame capture.")
+            logger.warning(
+                "Frame capture enabled but run_id is missing; skip frame capture."
+            )
             return None
         sample_id = self._resolve_sample_id(sample)
         replay_output_dir = replay_cfg.get("output_dir")
@@ -1078,11 +1363,17 @@ class ArenaRoleAdapter(RoleAdapter):
             replay_dir=replay_dir,
             frame_dir_name=str(frame_cfg.get("frame_dir_name") or "frames"),
             enabled=True,
-            frame_stride=max(1, self._coerce_int(frame_cfg.get("frame_stride"), default=1)),
+            frame_stride=max(
+                1, self._coerce_int(frame_cfg.get("frame_stride"), default=1)
+            ),
             max_frames=max(0, self._coerce_int(frame_cfg.get("max_frames"), default=0)),
             image_format=str(frame_cfg.get("format") or "jpeg"),
-            jpeg_quality=max(1, min(95, self._coerce_int(frame_cfg.get("quality"), default=75))),
-            include_frame_snapshot=self._coerce_bool(frame_cfg.get("include_frame_snapshot"), default=True),
+            jpeg_quality=max(
+                1, min(95, self._coerce_int(frame_cfg.get("quality"), default=75))
+            ),
+            include_frame_snapshot=self._coerce_bool(
+                frame_cfg.get("include_frame_snapshot"), default=True
+            ),
         )
 
     @staticmethod
@@ -1092,7 +1383,9 @@ class ArenaRoleAdapter(RoleAdapter):
         except (TypeError, ValueError):
             return int(default)
 
-    def _ensure_visualizer(self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]):
+    def _ensure_visualizer(
+        self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]
+    ):
         if self._shared_visualizer is not None:
             return self._shared_visualizer, self._shared_visualizer.action_queue
 
@@ -1105,14 +1398,18 @@ class ArenaRoleAdapter(RoleAdapter):
         from gage_eval.role.arena.visualizers.gradio_visualizer import GradioVisualizer
 
         metadata = sample.get("metadata") or {}
-        board_size = int(metadata.get("board_size", self._visualizer_cfg.get("board_size", 15)))
+        board_size = int(
+            metadata.get("board_size", self._visualizer_cfg.get("board_size", 15))
+        )
         port = int(self._visualizer_cfg.get("port", 7860))
         launch_browser = bool(self._visualizer_cfg.get("launch_browser", False))
         refresh_s = float(self._visualizer_cfg.get("refresh_s", 0.3))
         wait_for_finish = bool(self._visualizer_cfg.get("wait_for_finish", False))
         has_human = any(spec.get("type") == "human" for spec in player_specs)
         mode = "interactive" if has_human else "observer"
-        coord_scheme = metadata.get("coord_scheme", self._visualizer_cfg.get("coord_scheme", "A1"))
+        coord_scheme = metadata.get(
+            "coord_scheme", self._visualizer_cfg.get("coord_scheme", "A1")
+        )
         renderer_cfg = dict(self._visualizer_cfg.get("renderer") or {})
         renderer_impl = renderer_cfg.get(
             "impl",
@@ -1166,10 +1463,31 @@ class ArenaRoleAdapter(RoleAdapter):
         host = self._human_input_cfg.get("host", "127.0.0.1")
         port = int(self._human_input_cfg.get("port", 8001))
         allow_origin = self._human_input_cfg.get("allow_origin", "*")
-        server = ActionQueueServer(host=str(host), port=port, allow_origin=str(allow_origin))
+        server = ActionQueueServer(
+            host=str(host), port=port, allow_origin=str(allow_origin)
+        )
         server.start()
         self._action_server = server
         return server, server.action_queue
+
+    def _maybe_build_ws_session_controller(
+        self,
+        *,
+        sample: Dict[str, Any],
+        env_impl: str,
+    ) -> Optional[_WsRgbSessionController]:
+        """Create a ws_rgb session controller when websocket display mode is enabled."""
+
+        display_mode = str(self._environment_cfg.get("display_mode") or "").lower()
+        if display_mode not in {"websocket", "ws"}:
+            return None
+        display_id = self._build_display_id(sample=sample, env_impl=env_impl)
+        return _WsRgbSessionController(
+            display_id=display_id,
+            sample_id=self._resolve_sample_id(sample),
+            adapter_id=self.adapter_id,
+            game_id=env_impl,
+        )
 
     def _maybe_register_ws_display(
         self,
@@ -1179,27 +1497,41 @@ class ArenaRoleAdapter(RoleAdapter):
         action_queue: Any,
         player_specs: Sequence[Dict[str, Any]],
         env_impl: str,
-    ) -> None:
+        session_controller: Optional[_WsRgbSessionController] = None,
+    ) -> bool:
         """Register display metadata when websocket display mode is enabled."""
 
         display_mode = str(self._environment_cfg.get("display_mode") or "").lower()
         if display_mode not in {"websocket", "ws"}:
-            return
+            return False
         frame_source = getattr(environment, "get_last_frame", None)
         if not callable(frame_source):
-            return
+            return False
         input_mapper = self._bind_input_mapper(env_impl=env_impl)
         if input_mapper is None:
-            return
+            return False
         hub = self._ensure_ws_rgb_hub()
         if hub is None:
-            return
+            return False
+        resolved_session_controller = session_controller
+        if resolved_session_controller is None and "vizdoom" in str(env_impl).lower():
+            # NOTE: ViZDoom viewer tests call registration directly and still expect replay/shutdown controls.
+            resolved_session_controller = self._maybe_build_ws_session_controller(
+                sample=sample,
+                env_impl=env_impl,
+            )
 
         from gage_eval.tools.ws_rgb_server import DisplayRegistration
 
-        display_id = self._build_display_id(sample=sample, env_impl=env_impl)
+        display_id = (
+            resolved_session_controller.display_id
+            if resolved_session_controller is not None
+            else self._build_display_id(sample=sample, env_impl=env_impl)
+        )
         legal_moves = self._environment_cfg.get("legal_moves")
-        normalized_legal_moves = list(legal_moves) if isinstance(legal_moves, (list, tuple)) else None
+        normalized_legal_moves = (
+            list(legal_moves) if isinstance(legal_moves, (list, tuple)) else None
+        )
         registration = DisplayRegistration(
             display_id=display_id,
             label=str(env_impl or "arena_display"),
@@ -1208,6 +1540,21 @@ class ArenaRoleAdapter(RoleAdapter):
             input_mapper=input_mapper,
             legal_moves=normalized_legal_moves,
             action_queue=action_queue,
+            session_state_source=(
+                resolved_session_controller.snapshot
+                if resolved_session_controller is not None
+                else None
+            ),
+            terminate_game=(
+                resolved_session_controller.request_game_end
+                if resolved_session_controller is not None
+                else None
+            ),
+            terminate_process=(
+                resolved_session_controller.request_process_end
+                if resolved_session_controller is not None
+                else None
+            ),
             default_context={
                 "display_id": display_id,
                 "sample_id": self._resolve_sample_id(sample),
@@ -1218,20 +1565,31 @@ class ArenaRoleAdapter(RoleAdapter):
         )
         hub.register_display(registration)
         self._registered_displays.add(display_id)
+        return True
 
     def _ensure_ws_rgb_hub(self):
         """Start and cache a local WsRgbHubServer instance."""
 
         if self._ws_rgb_hub is not None:
             return self._ws_rgb_hub
-        host = str(self._human_input_cfg.get("ws_host", self._human_input_cfg.get("host", "127.0.0.1")))
+        host = str(
+            self._human_input_cfg.get(
+                "ws_host", self._human_input_cfg.get("host", "127.0.0.1")
+            )
+        )
         port = int(self._human_input_cfg.get("ws_port", 5800))
-        allow_origin = str(self._human_input_cfg.get("ws_allow_origin", self._human_input_cfg.get("allow_origin", "*")))
+        allow_origin = str(
+            self._human_input_cfg.get(
+                "ws_allow_origin", self._human_input_cfg.get("allow_origin", "*")
+            )
+        )
         from gage_eval.tools.ws_rgb_server import WsRgbHubServer
 
         hub = WsRgbHubServer(host=host, port=port, allow_origin=allow_origin)
         hub.start()
-        logger.info("ArenaRoleAdapter {} ws_rgb hub ready at {}", self.adapter_id, hub.base_url)
+        logger.info(
+            "ArenaRoleAdapter {} ws_rgb hub ready at {}", self.adapter_id, hub.base_url
+        )
         self._ws_rgb_hub = hub
         return self._ws_rgb_hub
 
@@ -1242,7 +1600,9 @@ class ArenaRoleAdapter(RoleAdapter):
         action_schema = self._environment_cfg.get("action_schema")
 
         if "retro" in normalized_env_impl:
-            from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
+            from gage_eval.role.arena.games.retro.retro_input_mapper import (
+                RetroInputMapper,
+            )
 
             hold_ticks_default = None
             if isinstance(action_schema, dict):
@@ -1257,7 +1617,9 @@ class ArenaRoleAdapter(RoleAdapter):
                 return RetroInputMapper()
 
         if "mahjong" in normalized_env_impl:
-            from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
+            from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import (
+                MahjongInputMapper,
+            )
 
             key_map = None
             enforce_legal_moves = True
@@ -1273,7 +1635,9 @@ class ArenaRoleAdapter(RoleAdapter):
             )
 
         if "doudizhu" in normalized_env_impl:
-            from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
+            from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import (
+                DoudizhuInputMapper,
+            )
 
             key_map = None
             enforce_legal_moves = True
@@ -1306,8 +1670,26 @@ class ArenaRoleAdapter(RoleAdapter):
                 enforce_legal_moves=enforce_legal_moves,
             )
 
+        if "vizdoom" in normalized_env_impl:
+            from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
+
+            key_map = None
+            enforce_legal_moves = True
+            if isinstance(action_schema, dict):
+                key_map = action_schema.get("key_map")
+                enforce_legal_moves = self._coerce_bool(
+                    action_schema.get("enforce_legal_moves"),
+                    default=True,
+                )
+            return ViZDoomInputMapper(
+                key_map=key_map if isinstance(key_map, Mapping) else None,
+                enforce_legal_moves=enforce_legal_moves,
+            )
+
         if "gomoku" in normalized_env_impl or "tictactoe" in normalized_env_impl:
-            from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
+            from gage_eval.role.arena.games.common.grid_coord_input_mapper import (
+                GridCoordInputMapper,
+            )
 
             key_map = None
             enforce_legal_moves = True
@@ -1363,21 +1745,37 @@ class ArenaRoleAdapter(RoleAdapter):
         # STEP 1: Resolve writer paths and replay options.
         run_dir = self._resolve_run_dir(trace)
         if run_dir is None:
-            logger.debug("Replay v1 enabled but run_id is missing; skip replay v1 write.")
+            logger.debug(
+                "Replay v1 enabled but run_id is missing; skip replay v1 write."
+            )
             return None
         sample_id = self._resolve_sample_id(sample)
         replay_cfg = self._environment_cfg.get("replay")
-        output_dir = replay_cfg.get("output_dir") if isinstance(replay_cfg, dict) else None
-        scheduler_type = str(self._scheduler_cfg.get("type", "turn")).strip().lower() or "turn"
+        output_dir = (
+            replay_cfg.get("output_dir") if isinstance(replay_cfg, dict) else None
+        )
+        scheduler_type = (
+            str(self._scheduler_cfg.get("type", "turn")).strip().lower() or "turn"
+        )
         recording_mode = self._resolve_replay_recording_mode()
         explicit_mode = (
             self._normalize_recording_mode(replay_cfg.get("mode"))
             if isinstance(replay_cfg, Mapping)
             else None
         )
-        if frame_events and not self._replay_mode_includes_frame(recording_mode) and explicit_mode is None:
-            recording_mode = "both" if self._replay_mode_includes_action(recording_mode) else "frame"
-        move_log = list(result.move_log) if self._replay_mode_includes_action(recording_mode) else []
+        if (
+            frame_events
+            and not self._replay_mode_includes_frame(recording_mode)
+            and explicit_mode is None
+        ):
+            recording_mode = (
+                "both" if self._replay_mode_includes_action(recording_mode) else "frame"
+            )
+        move_log = (
+            list(result.move_log)
+            if self._replay_mode_includes_action(recording_mode)
+            else []
+        )
 
         # STEP 2: Assemble metadata payload for replay manifest.
         extra_meta: Dict[str, Any] = {
@@ -1386,7 +1784,9 @@ class ArenaRoleAdapter(RoleAdapter):
             "env_id": self._environment_cfg.get("env_id"),
         }
         if frame_events:
-            extra_meta["frame_events"] = [dict(item) for item in frame_events if isinstance(item, Mapping)]
+            extra_meta["frame_events"] = [
+                dict(item) for item in frame_events if isinstance(item, Mapping)
+            ]
         if output.get("game_log_path"):
             extra_meta["game_log_path"] = output.get("game_log_path")
         if result.replay_path:
@@ -1409,7 +1809,9 @@ class ArenaRoleAdapter(RoleAdapter):
                 recording_mode=recording_mode,
             )
         except Exception as exc:  # pragma: no cover - defensive filesystem guard
-            logger.warning("Failed to write replay v1 for sample {}: {}", sample_id, exc)
+            logger.warning(
+                "Failed to write replay v1 for sample {}: {}", sample_id, exc
+            )
             return None
 
         if trace is not None:
@@ -1447,14 +1849,22 @@ class ArenaRoleAdapter(RoleAdapter):
             try:
                 self._shared_visualizer.stop()
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("ArenaRoleAdapter {} visualizer stop failed: {}", self.adapter_id, exc)
+                logger.warning(
+                    "ArenaRoleAdapter {} visualizer stop failed: {}",
+                    self.adapter_id,
+                    exc,
+                )
             self._shared_visualizer = None
 
         if self._action_server is not None:
             try:
                 self._action_server.stop()
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("ArenaRoleAdapter {} action server stop failed: {}", self.adapter_id, exc)
+                logger.warning(
+                    "ArenaRoleAdapter {} action server stop failed: {}",
+                    self.adapter_id,
+                    exc,
+                )
             self._action_server = None
 
         if self._ws_rgb_hub is not None:
@@ -1463,7 +1873,9 @@ class ArenaRoleAdapter(RoleAdapter):
                     self._ws_rgb_hub.unregister_display(display_id)
                 self._ws_rgb_hub.stop()
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("ArenaRoleAdapter {} ws hub stop failed: {}", self.adapter_id, exc)
+                logger.warning(
+                    "ArenaRoleAdapter {} ws hub stop failed: {}", self.adapter_id, exc
+                )
             self._ws_rgb_hub = None
             self._registered_displays = set()
 
@@ -1589,7 +2001,13 @@ class _FrameCaptureEnvironment:
         return self._base.is_terminal()
 
     def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
-        return self._base.build_result(result=result, reason=reason)
+        outcome = self._base.build_result(result=result, reason=reason)
+        self._capture_current(
+            step=self._step_index,
+            actor=None,
+            force=True,
+        )
+        return outcome
 
     def __getattr__(self, item: str):
         return getattr(self._base, item)
@@ -1626,7 +2044,15 @@ class _FrameCaptureEnvironment:
         if not isinstance(frame_payload, Mapping):
             return True
 
-        for key in ("_rgb", "rgb", "rgb_array", "frame_rgb", "image_path", "frame_image_path", "_image_path_abs"):
+        for key in (
+            "_rgb",
+            "rgb",
+            "rgb_array",
+            "frame_rgb",
+            "image_path",
+            "frame_image_path",
+            "_image_path_abs",
+        ):
             if frame_payload.get(key) is not None:
                 return True
         image = frame_payload.get("image")
@@ -1680,6 +2106,66 @@ class _FrameCaptureEnvironment:
             return bool(value.strip())
         if isinstance(value, Mapping):
             return bool(value)
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             return len(value) > 0
         return bool(value)
+
+
+class _SessionControlledEnvironment:
+    """Environment wrapper that honors viewer-driven early-stop requests."""
+
+    def __init__(self, base_env: Any, session_controller: _WsRgbSessionController) -> None:
+        self._base = base_env
+        self._session_controller = session_controller
+        self._manual_result: Optional[GameResult] = None
+
+    def reset(self) -> None:
+        self._base.reset()
+
+    def get_active_player(self) -> str:
+        return self._base.get_active_player()
+
+    def get_last_frame(self):
+        frame_getter = getattr(self._base, "get_last_frame", None)
+        if callable(frame_getter):
+            return frame_getter()
+        return {}
+
+    def observe(self, player: str):
+        return self._base.observe(player)
+
+    def apply(self, action) -> Optional[GameResult]:
+        if self._should_emit_manual_result():
+            return self._build_manual_result()
+        return self._base.apply(action)
+
+    def is_terminal(self) -> bool:
+        return bool(self._base.is_terminal() or self._session_controller.is_game_end_requested())
+
+    def build_result(self, *, result: str, reason: Optional[str]) -> GameResult:
+        if self._should_emit_manual_result():
+            return self._build_manual_result()
+        return self._base.build_result(result=result, reason=reason)
+
+    def __getattr__(self, item: str):
+        return getattr(self._base, item)
+
+    def _should_emit_manual_result(self) -> bool:
+        return bool(
+            self._session_controller.is_game_end_requested()
+            and not bool(self._base.is_terminal())
+        )
+
+    def _build_manual_result(self) -> GameResult:
+        if self._manual_result is None:
+            result = self._base.build_result(result="draw", reason="manual_stop")
+            finalize_replay = getattr(self._base, "finalize_replay", None)
+            if callable(finalize_replay):
+                try:
+                    result = finalize_replay(result)
+                except Exception:
+                    pass
+            self._manual_result = result
+        return self._manual_result

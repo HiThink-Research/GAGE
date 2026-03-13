@@ -7,6 +7,7 @@ from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuIn
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
 from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
 from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
+from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
 
 
@@ -238,3 +239,48 @@ def test_pettingzoo_discrete_input_mapper_supports_dual_player_keyboard_map() ->
     assert len(p1_actions) == 1
     assert p1_actions[0].player_id == "player_1"
     assert p1_actions[0].move == "2"
+
+
+def test_vizdoom_input_mapper_maps_action_and_index() -> None:
+    mapper = ViZDoomInputMapper()
+    context = {"human_player_id": "p0", "legal_moves": ["1", "2", "3"]}
+
+    by_label = mapper.handle_browser_event(
+        {"event": "action_submit", "action": "2"},
+        context=context,
+    )
+    assert len(by_label) == 1
+    assert by_label[0].move == "2"
+    assert by_label[0].raw == "2"
+
+    by_index = mapper.handle_browser_event(
+        {"event": "action_submit", "action_index": 3},
+        context=context,
+    )
+    assert len(by_index) == 1
+    assert by_index[0].move == "3"
+
+
+def test_vizdoom_input_mapper_supports_keyboard_map_and_filters_illegal() -> None:
+    mapper = ViZDoomInputMapper(
+        key_map={
+            "a": "2",
+            "d": "3",
+            "space": "1",
+        }
+    )
+    context = {"human_player_id": "p1", "legal_moves": ["1", "2", "3"]}
+
+    left_action = mapper.handle_browser_event(
+        {"type": "keydown", "key": "a"},
+        context=context,
+    )
+    assert len(left_action) == 1
+    assert left_action[0].player_id == "p1"
+    assert left_action[0].move == "2"
+
+    illegal = mapper.handle_browser_event(
+        {"event": "action_submit", "action": "99"},
+        context=context,
+    )
+    assert illegal == []

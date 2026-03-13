@@ -1,0 +1,156 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: vizdoom_dummy_vs_dummy_ws_rgb
+  description: ViZDoom arena demo (Dummy vs Dummy, ws_rgb live view).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: vizdoom_dummy_ws_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: vizdoom_demo_dataset
+    loader: jsonl
+    params:
+      path: tests/data/Test_ViZDoom_Demo.jsonl
+      preprocess: grid_game_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: vizdoom_dummy_backend_p0
+    type: dummy
+    config:
+      responses:
+        - "1"
+        - "2"
+        - "3"
+      cycle: true
+  - backend_id: vizdoom_dummy_backend_p1
+    type: dummy
+    config:
+      responses:
+        - "3"
+        - "2"
+        - "1"
+      cycle: true
+
+prompts:
+  - prompt_id: vizdoom_turn_prompt_v1
+    renderer: jinja_chat
+    params:
+      role: system
+      include_existing: false
+    template: |
+      You are a precise ViZDoom action planner for {{ payload.env_id or payload.game_type }}.
+      Scheduler mode: {{ payload.mode }}.
+      Output policy:
+      - Return exactly one legal action id.
+      - Legal actions: {{ payload.legal_moves | join(", ") }}.
+      - Output ONLY the action id as an integer.
+      - Do not output extra text.
+      {% if payload.retry_reason %}
+      Retry reason from previous output: {{ payload.retry_reason }}.
+      {% endif %}
+      {% if payload.last_model_output %}
+      Previous model output: {{ payload.last_model_output }}.
+      {% endif %}
+
+role_adapters:
+  - adapter_id: vizdoom_dummy_p0
+    role_type: dut_model
+    backend_id: vizdoom_dummy_backend_p0
+    capabilities:
+      - chat_completion
+
+  - adapter_id: vizdoom_dummy_p1
+    role_type: dut_model
+    backend_id: vizdoom_dummy_backend_p1
+    capabilities:
+      - chat_completion
+
+  - adapter_id: vizdoom_dummy_ws_arena
+    role_type: arena
+    prompt_id: vizdoom_turn_prompt_v1
+    params:
+      human_input:
+        enabled: true
+        ws_host: ${WS_RGB_HOST:-127.0.0.1}
+        ws_port: ${WS_RGB_PORT:-5800}
+        ws_allow_origin: "*"
+      environment:
+        impl: vizdoom_env_v1
+        display_mode: websocket
+        pov_view: ${VIZDOOM_POV_VIEW:-p0}
+        replay_output_dir: runs/vizdoom_replays
+        replay:
+          enabled: true
+          primary_mode: true
+          mode: both
+          frame:
+            enabled: true
+            stride: 2
+            encoding: jpeg
+            quality: 80
+        render_mode: null
+        show_pov: false
+        capture_pov: true
+        pov_stride: 1
+        show_automap: false
+        use_single_process: false
+        max_steps: 1200
+        action_repeat: 2
+        sleep_s: 0.01
+        obs_image: false
+        no_attack_seconds: 0
+        allow_partial_actions: true
+        legal_moves:
+          - "1"
+          - "2"
+          - "3"
+        action_schema:
+          key_map:
+            left: "2"
+            a: "2"
+            arrowleft: "2"
+            right: "3"
+            d: "3"
+            arrowright: "3"
+            space: "1"
+            j: "1"
+      scheduler:
+        type: tick
+        tick_ms: 20
+      parser:
+        impl: vizdoom_parser_v1
+      players:
+        - name: p0
+          type: backend
+          ref: vizdoom_dummy_p0
+          max_retries: 1
+          fallback_policy: first_legal
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+        - name: p1
+          type: backend
+          ref: vizdoom_dummy_p1
+          max_retries: 1
+          fallback_policy: first_legal
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+
+metrics: []
+
+tasks:
+  - task_id: vizdoom_dummy_vs_dummy_ws_rgb_task
+    dataset_id: vizdoom_demo_dataset
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_dummy_vs_dummy_ws_rgb_events.jsonl

@@ -29,6 +29,26 @@ backends:
     - '1'
     - '0'
     cycle: true
+prompts:
+- prompt_id: pettingzoo_turn_prompt_v1
+  renderer: jinja_chat
+  params:
+    role: system
+    include_existing: false
+  template: |
+    You are a precise PettingZoo action planner for {{ payload.env_id or payload.game_type }}.
+    Scheduler mode: {{ payload.mode }}.
+    Output policy:
+    - Return exactly one legal action from the legal moves list.
+    - Legal moves: {{ payload.legal_moves | join(", ") }}.
+    - Output ONLY the action label or action id.
+    - Do not output extra text.
+    {% if payload.retry_reason %}
+    Retry reason from previous output: {{ payload.retry_reason }}.
+    {% endif %}
+    {% if payload.last_model_output %}
+    Previous model output: {{ payload.last_model_output }}.
+    {% endif %}
 role_adapters:
 - adapter_id: pz_dummy_0
   role_type: dut_model
@@ -42,6 +62,7 @@ role_adapters:
   - chat_completion
 - adapter_id: pettingzoo_arena
   role_type: arena
+  prompt_id: pettingzoo_turn_prompt_v1
   params:
     environment:
       impl: pettingzoo_aec_v1

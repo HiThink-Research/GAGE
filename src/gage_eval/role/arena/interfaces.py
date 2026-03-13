@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional, Protocol, Sequence
+from typing import Any, Iterable, Optional, Protocol, Sequence, runtime_checkable
 
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 
+@runtime_checkable
 class ArenaEnvironment(Protocol):
     """Defines the minimal interface for a game environment."""
 
@@ -72,5 +73,7 @@ class MoveParser(Protocol):
 class Scheduler(Protocol):
     """Defines a scheduler that runs the game loop."""
 
-    def run_loop(self, environment: ArenaEnvironment, players: Sequence[Player]) -> GameResult:
+    def run_loop(
+        self, environment: ArenaEnvironment, players: Sequence[Player]
+    ) -> GameResult:
         """Run the game loop and return the final result."""

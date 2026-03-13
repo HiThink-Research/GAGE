@@ -63,8 +63,10 @@ class AppWorldStreamableMcpClient:
         if not tools and callable(self._requester):
             tools = self._requester("list_tools", {"endpoint": self.endpoint}) or []
         if not tools:
-            self._ensure_session()
-            result = self._submit_coroutine(self._session.list_tools(), timeout_s=self.timeout_s)
+            result = self._request_with_reconnect(
+                lambda: self._session.list_tools(),
+                timeout_s=self.timeout_s,
+            )
             tools = _normalize_tool_list(result)
         tools = [tool for tool in tools if isinstance(tool, dict)]
         if self.allowlist:
@@ -83,12 +85,29 @@ class AppWorldStreamableMcpClient:
                 "call_tool",
                 {"name": name, "arguments": arguments, "endpoint": self.endpoint},
             )
-        self._ensure_session()
-        result = self._submit_coroutine(
-            self._session.call_tool(name, arguments=arguments or {}),
+        result = self._request_with_reconnect(
+            lambda: self._session.call_tool(name, arguments=arguments or {}),
             timeout_s=self.timeout_s,
         )
         return normalize_mcp_call_result(result)
+
+    def _request_with_reconnect(self, request_factory: Callable[[], Any], *, timeout_s: Optional[float] = None) -> Any:
+        """Submit an MCP request and reconnect once on transient failures."""
+
+        last_error: Optional[BaseException] = None
+        for attempt in range(2):
+            self._ensure_session()
+            try:
+                return self._submit_coroutine(request_factory(), timeout_s=timeout_s)
+            except BaseException as exc:
+                last_error = exc
+                if attempt == 0 and _should_reconnect(exc):
+                    self.disconnect()
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("mcp_request_failed: unknown_error")
 
     def disconnect(self) -> None:
         """Close the MCP session and event loop."""
@@ -267,6 +286,19 @@ def _normalize_tool_list(result: Any) -> List[Dict[str, Any]]:
     for tool in items or []:
         tools.append(_normalize_tool_entry(tool))
     return tools
+
+
+def _should_reconnect(error: BaseException) -> bool:
+    if isinstance(error, RuntimeError):
+        message = str(error)
+        reconnect_prefixes = (
+            "mcp_request_timeout:",
+            "mcp_session_failed:",
+            "mcp_endpoint_unreachable:",
+            "mcp_client_loop_missing",
+        )
+        return message.startswith(reconnect_prefixes)
+    return False
 
 
 def _coerce_retry_attempts(value: Any) -> int:
