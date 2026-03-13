@@ -1,0 +1,153 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: appworld_official_jsonl_remote
+  description: AppWorld official JSONL evaluation via Remote Sandbox + MCP + judge_extend.
+
+datasets:
+  - dataset_id: appworld_dev
+    loader: jsonl
+    params:
+      path: local-datasets/appworld/dev.jsonl
+      missing_hint: "Run: gage-eval-main/docker/appworld/export_datasets.sh --image appworld-mcp:latest --output local-datasets/appworld"
+      preprocess: appworld_preprocessor
+      preprocess_kwargs:
+        subset: dev
+        ground_truth_mode: full
+      streaming: false
+
+backends:
+  - backend_id: gpt52_openai_http
+    type: openai_http
+    config:
+      base_url: https://api.openai.com/v1
+      model: gpt-5.2
+      require_api_key: true
+      max_retries: 6
+
+agent_backends:
+  - agent_backend_id: agent_model_main
+    type: model_backend
+    backend_id: gpt52_openai_http
+    config:
+      force_tool_choice: first_turn
+
+sandbox_profiles:
+  - sandbox_id: appworld_remote
+    runtime: remote
+    image: appworld-mcp:latest
+    resources:
+      cpu: 2
+      memory: 4g
+    runtime_configs:
+      control_endpoint: ${SANDBOX_PLATFORM_URL}
+      auth_type: bearer
+      auth_token: ${SANDBOX_API_TOKEN}
+      startup_timeout_s: 180
+      max_retries: 3
+      retry_backoff_factor: 1.5
+
+mcp_clients:
+  - mcp_client_id: appworld_env
+    transport: streamable_http
+    endpoint: ${APPWORLD_MCP_ENDPOINT:-http://placeholder}
+    timeout_s: 180
+    params:
+      output_type: structured_data_only
+      session_retry_delay_s: 2
+      session_retry_timeout_s: 180
+
+metrics:
+  - metric_id: appworld_tgc
+    implementation: appworld_tgc
+  - metric_id: appworld_sgc
+    implementation: appworld_sgc
+  - metric_id: appworld_pass_count
+    implementation: appworld_pass_count
+  - metric_id: appworld_fail_count
+    implementation: appworld_fail_count
+  - metric_id: appworld_difficulty
+    implementation: appworld_difficulty
+    aggregation: categorical_count
+    params:
+      category_field: difficulty
+
+role_adapters:
+  - adapter_id: api_descriptions_context
+    role_type: context_provider
+    mcp_client_id: appworld_env
+    params:
+      implementation: appworld_api_docs
+      implementation_params:
+        mode: api_descriptions
+        auto_discover_apps: true
+        include_app_descriptions: true
+        max_chars: 200000
+
+  - adapter_id: api_predictor
+    role_type: helper_model
+    backend_id: gpt52_openai_http
+    prompt_id: helper/appworld_api_predictor@v1
+    params:
+      implementation: appworld_api_predictor
+      implementation_params:
+        max_apis: 16
+        always_include_apps:
+          - api_docs
+          - supervisor
+        always_include_tools:
+          - supervisor.complete_task
+
+  - adapter_id: toolchain_main
+    role_type: toolchain
+    mcp_client_id: appworld_env
+    params:
+      meta_tool_mode: false
+      tool_doc_enabled: false
+      tool_doc_format: schema_yaml
+      tool_doc_max_endpoints: 60
+      tool_doc_max_chars: 12000
+
+  - adapter_id: dut_agent_main
+    role_type: dut_agent
+    agent_backend_id: agent_model_main
+    prompt_id: dut/appworld@v1
+    sandbox:
+      sandbox_id: appworld_remote
+      lifecycle: per_sample
+    params:
+      max_turns: 120
+      pre_hooks:
+        - type: appworld_initialize
+      post_hooks:
+        - type: appworld_save
+
+  - adapter_id: appworld_judge
+    role_type: judge_extend
+    params:
+      implementation: appworld_evaluate
+      implementation_params:
+        appworld_root: /run
+        export_outputs: true
+
+tasks:
+  - task_id: appworld_dev_eval
+    dataset_id: appworld_dev
+    steps:
+      - step: support
+        adapter_id: api_descriptions_context
+      - step: support
+        adapter_id: api_predictor
+      - step: support
+        adapter_id: toolchain_main
+      - step: inference
+        adapter_id: dut_agent_main
+      - step: judge
+        adapter_id: appworld_judge
+      - step: auto_eval
+    concurrency: 4
+    max_samples: 20
+    reporting:
+      sinks:
+        - type: console

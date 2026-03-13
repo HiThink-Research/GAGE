@@ -9,8 +9,13 @@ from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.adapters import arena as arena_module
 from gage_eval.role.adapters.arena import ArenaRoleAdapter, _VisualizedEnvironment
 from gage_eval.role.adapters.base import RoleAdapterState
-from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
-from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
+from gage_eval.role.arena.sandboxed_env import SandboxedArenaEnvironment
+from gage_eval.role.arena.games.common.grid_coord_input_mapper import (
+    GridCoordInputMapper,
+)
+from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import (
+    DoudizhuInputMapper,
+)
 from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
 from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
 from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
@@ -40,7 +45,9 @@ def _make_result(
 
 def test_ainvoke_runs_sync_path_in_executor(monkeypatch) -> None:
     adapter = ArenaRoleAdapter(adapter_id="arena")
-    monkeypatch.setattr(adapter, "_invoke_sync", lambda payload, state: {"ok": True, "payload": payload})
+    monkeypatch.setattr(
+        adapter, "_invoke_sync", lambda payload, state: {"ok": True, "payload": payload}
+    )
 
     result = asyncio.run(adapter.ainvoke({"sample_id": "s1"}, RoleAdapterState()))
 
@@ -96,11 +103,19 @@ def test_invoke_sync_mahjong_passes_resolved_player_models(monkeypatch) -> None:
             "p0",
         ),
     )
-    monkeypatch.setattr(adapter, "_resolve_player_labels", lambda specs, role_manager: {"p0": "model-001"})
+    monkeypatch.setattr(
+        adapter,
+        "_resolve_player_labels",
+        lambda specs, role_manager: {"p0": "model-001"},
+    )
     monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
     monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
-    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
-    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
+    monkeypatch.setattr(
+        adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_ensure_action_server", lambda player_specs: (None, None)
+    )
     monkeypatch.setattr(
         adapter,
         "_build_environment",
@@ -108,7 +123,9 @@ def test_invoke_sync_mahjong_passes_resolved_player_models(monkeypatch) -> None:
     )
     monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
 
-    output = adapter._invoke_sync({"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState())
+    output = adapter._invoke_sync(
+        {"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState()
+    )
 
     assert output["result"] == "draw"
     assert captured_env_kwargs["player_models"] == {"p0": "model-001"}
@@ -136,11 +153,19 @@ def test_invoke_sync_doudizhu_fills_missing_player_name_from_label(monkeypatch) 
             "p0",
         ),
     )
-    monkeypatch.setattr(adapter, "_resolve_player_labels", lambda specs, role_manager: {"p0": "model-002"})
+    monkeypatch.setattr(
+        adapter,
+        "_resolve_player_labels",
+        lambda specs, role_manager: {"p0": "model-002"},
+    )
     monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
     monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
-    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
-    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
+    monkeypatch.setattr(
+        adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_ensure_action_server", lambda player_specs: (None, None)
+    )
     monkeypatch.setattr(
         adapter,
         "_build_environment",
@@ -148,7 +173,9 @@ def test_invoke_sync_doudizhu_fills_missing_player_name_from_label(monkeypatch) 
     )
     monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
 
-    adapter._invoke_sync({"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState())
+    adapter._invoke_sync(
+        {"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState()
+    )
 
     assert captured_env_kwargs["player_names"]["p0"] == "model-002"
 
@@ -187,16 +214,57 @@ def test_invoke_sync_waits_for_pending_players(monkeypatch) -> None:
     )
     monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
     monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
-    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
-    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
-    monkeypatch.setattr(adapter, "_build_environment", lambda sample, **kwargs: object())
-    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [pending_player])
+    monkeypatch.setattr(
+        adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_ensure_action_server", lambda player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_build_environment", lambda sample, **kwargs: object()
+    )
+    monkeypatch.setattr(
+        adapter, "_build_players", lambda *args, **kwargs: [pending_player]
+    )
 
-    output = adapter._invoke_sync({"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState())
+    output = adapter._invoke_sync(
+        {"sample": {"metadata": {}}, "role_manager": object()}, RoleAdapterState()
+    )
 
     assert output["result"] == "draw"
     assert pending_player.wait_calls == 1
     assert 0.0 < pending_player.last_timeout_s <= 1.5
+
+
+def test_build_environment_returns_sandboxed_env_when_provider_present() -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "tictactoe_v1", "board_size": 3},
+        rules={"win_len": 3},
+    )
+
+    class _FakeSandbox:
+        def exec(self, command: str, timeout: int = 30):  # noqa: ARG002
+            raise AssertionError(
+                "sandbox exec should not be called during construction"
+            )
+
+    class _FakeHandle:
+        sandbox = _FakeSandbox()
+
+    class _FakeProvider:
+        def get_handle(self):
+            return _FakeHandle()
+
+    environment = adapter._build_environment(
+        {"metadata": {}},
+        player_ids=["p1", "p2"],
+        player_names={"p1": "Alice", "p2": "Bob"},
+        start_player_id="p1",
+        sandbox_provider=_FakeProvider(),
+    )
+
+    assert isinstance(environment, SandboxedArenaEnvironment)
 
 
 def test_build_environment_for_pettingzoo_forwards_optional_kwargs(monkeypatch) -> None:
@@ -306,7 +374,9 @@ def test_build_environment_for_mahjong_forwards_run_context_and_models(monkeypat
     assert captured_env_kwargs["player_models"] == {"p0": "model-007"}
 
 
-def test_build_environment_for_retro_forwards_runtime_and_observation_kwargs(monkeypatch) -> None:
+def test_build_environment_for_retro_forwards_runtime_and_observation_kwargs(
+    monkeypatch,
+) -> None:
     captured_env_kwargs: dict[str, Any] = {}
 
     class _CapturedEnv:
@@ -806,7 +876,9 @@ def test_format_game_log_returns_preview_when_no_run_dir(monkeypatch) -> None:
     monkeypatch.setenv("GAGE_EVAL_GAME_LOG_INLINE_LIMIT", "0")
     monkeypatch.setenv("GAGE_EVAL_GAME_LOG_PREVIEW_LIMIT", "1")
 
-    output = adapter._format_game_log([{"idx": 1}, {"idx": 2}], {"id": "sample-2"}, trace=None)
+    output = adapter._format_game_log(
+        [{"idx": 1}, {"idx": 2}], {"id": "sample-2"}, trace=None
+    )
 
     assert "game_log_path" not in output
     assert output["game_log_total"] == 2
@@ -910,7 +982,9 @@ def test_visualized_environment_uses_last_action_in_status() -> None:
     assert latest["last_move"] == "A1"
 
 
-def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, monkeypatch) -> None:
+def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(
+    tmp_path, monkeypatch
+) -> None:
     adapter = ArenaRoleAdapter(
         adapter_id="arena",
         environment={
@@ -939,7 +1013,10 @@ def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, 
 
         def get_last_frame(self) -> dict[str, Any]:
             self._frame_counter += 1
-            return {"board_text": f"frame-{self._frame_counter}", "move_count": self._frame_counter}
+            return {
+                "board_text": f"frame-{self._frame_counter}",
+                "move_count": self._frame_counter,
+            }
 
         @staticmethod
         def get_active_player() -> str:
@@ -982,9 +1059,15 @@ def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, 
     )
     monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
     monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
-    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
-    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
-    monkeypatch.setattr(adapter, "_build_environment", lambda sample, **kwargs: _StubEnvironment())
+    monkeypatch.setattr(
+        adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_ensure_action_server", lambda player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_build_environment", lambda sample, **kwargs: _StubEnvironment()
+    )
     monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
 
     def _capture_replay_write(
@@ -1001,7 +1084,11 @@ def test_invoke_sync_collects_frame_events_when_frame_capture_enabled(tmp_path, 
     monkeypatch.setattr(adapter, "_maybe_write_replay_v1", _capture_replay_write)
 
     adapter._invoke_sync(
-        {"sample": {"id": "sample-frame", "metadata": {}}, "role_manager": object(), "trace": trace},
+        {
+            "sample": {"id": "sample-frame", "metadata": {}},
+            "role_manager": object(),
+            "trace": trace,
+        },
         RoleAdapterState(),
     )
 
