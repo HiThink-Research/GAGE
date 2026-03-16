@@ -304,6 +304,33 @@ def test_build_environment_for_pettingzoo_forwards_optional_kwargs(monkeypatch) 
     assert captured_env_kwargs["agent_map"] == {"first_0": "p0"}
 
 
+def test_build_environment_for_gomoku_forwards_obs_image(monkeypatch) -> None:
+    captured_env_kwargs: dict[str, Any] = {}
+
+    class _CapturedEnv:
+        def __init__(self, **kwargs: Any) -> None:
+            captured_env_kwargs.update(kwargs)
+
+    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={
+            "impl": "gomoku_local_v1",
+            "board_size": 15,
+            "coord_scheme": "A1",
+            "obs_image": True,
+        },
+    )
+
+    adapter._build_environment(
+        {"metadata": {}},
+        player_ids=["Black", "White"],
+        player_names={"Black": "Black", "White": "White"},
+    )
+
+    assert captured_env_kwargs["obs_image"] is True
+
+
 def test_build_players_forwards_scheme_configuration() -> None:
     adapter = ArenaRoleAdapter(
         adapter_id="arena",

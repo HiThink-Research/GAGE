@@ -3,6 +3,7 @@ from dataclasses import replace
 from unittest.mock import MagicMock
 
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
+from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
 from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, ArenaPromptSpec
 
@@ -303,6 +304,38 @@ def test_summarize_messages_for_log_includes_http_image_reference() -> None:
 
     assert "remote image" in summary
     assert "<image_ref:https://example.com/sample.jpg>" in summary
+
+
+def test_llm_player_build_image_fragment_dumps_gomoku_prompt_image(tmp_path) -> None:
+    env = GomokuArenaEnvironment(
+        board_size=5,
+        win_len=4,
+        player_ids=["black", "white"],
+        player_names={"black": "Black", "white": "White"},
+        coord_scheme="A1",
+        obs_image=True,
+    )
+    observation = env.observe("black")
+    player = LLMPlayer(
+        name="black",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "gomoku"}},
+        parser=MagicMock(),
+        scheme_id="S3_text_image_current",
+        scheme_params={
+            "debug_image_dump_dir": str(tmp_path),
+            "debug_image_dump_max": 2,
+            "debug_image_dump_stride": 1,
+        },
+    )
+
+    image_fragment = player._build_image_fragment(observation)
+
+    assert image_fragment is not None
+    dumped_files = sorted(tmp_path.glob("*.png"))
+    assert len(dumped_files) == 1
+    assert dumped_files[0].stat().st_size > 0
 
 
 def test_llm_player_scheme_prompt_overrides_game_owned_instruction_for_vizdoom() -> None:

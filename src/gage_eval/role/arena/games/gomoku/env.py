@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from gage_eval.role.arena.games.gomoku.observation_image import (
+    build_gomoku_observation_image_payload,
+)
 from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
 from gage_eval.role.arena.games.gomoku.rules import GomokuRuleEngine
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
@@ -297,6 +300,7 @@ class GomokuArenaEnvironment:
         rule_profile: str = "freestyle",
         win_directions: Optional[Sequence[str]] = None,
         illegal_policy: Optional[Dict[str, str | int]] = None,
+        obs_image: bool = False,
     ) -> None:
         resolved_player_ids = [str(pid) for pid in (player_ids or DEFAULT_PLAYER_IDS)]
         if len(resolved_player_ids) != 2:
@@ -321,6 +325,7 @@ class GomokuArenaEnvironment:
         self._illegal_policy = dict(illegal_policy or {})
         self._max_illegal = int(self._illegal_policy.get("retry", 0))
         self._illegal_on_fail = str(self._illegal_policy.get("on_fail", "loss"))
+        self._obs_image = bool(obs_image)
         self._core = GomokuLocalCore(
             board_size=board_size,
             win_len=win_len,
@@ -373,6 +378,15 @@ class GomokuArenaEnvironment:
             legal_moves=legal_moves,
         )
         view = {"text": board_text}
+        if self._obs_image:
+            image_payload = build_gomoku_observation_image_payload(
+                board=self._core.board,
+                coord_scheme=self._coord_scheme,
+                last_move=self._last_move,
+                winning_line=self._winning_line_coords,
+            )
+            if image_payload is not None:
+                view["image"] = image_payload
         legal_actions = {"items": list(legal_moves)}
         context = {"mode": "turn", "step": self._core.move_count}
         return ArenaObservation(
