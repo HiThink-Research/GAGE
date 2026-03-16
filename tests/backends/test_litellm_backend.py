@@ -217,6 +217,82 @@ class LiteLLMBackendTests(unittest.TestCase):
         call = fake_litellm.calls[0]
         self.assertEqual(call["api_key"], "openai-key")
 
+    def test_thinking_mode_disabled_injects_enable_thinking_false(self):
+        """Thinking mode 'disabled' should inject enable_thinking=False into litellm kwargs."""
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "qwen3-32b",
+                    "thinking_mode": "disabled",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            result = backend.generate(
+                {"messages": [{"role": "user", "content": "solve 2+2"}], "sampling_params": {"max_new_tokens": 16}}
+            )
+
+        self.assertEqual(result["answer"], "pong-lite")
+        call = fake_litellm.calls[0]
+        self.assertIn("enable_thinking", call)
+        self.assertFalse(call["enable_thinking"])
+
+    def test_thinking_mode_enabled_injects_enable_thinking_true(self):
+        """Thinking mode 'enabled' should inject enable_thinking=True into litellm kwargs."""
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "qwen3-32b",
+                    "thinking_mode": "enabled",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            result = backend.generate(
+                {"messages": [{"role": "user", "content": "solve 2+2"}], "sampling_params": {"max_new_tokens": 16}}
+            )
+
+        self.assertEqual(result["answer"], "pong-lite")
+        call = fake_litellm.calls[0]
+        self.assertIn("enable_thinking", call)
+        self.assertTrue(call["enable_thinking"])
+
+    def test_reasoning_effort_forwarded_in_kwargs(self):
+        """reasoning_effort from generation_parameters should be forwarded to litellm."""
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o",
+                    "generation_parameters": {"max_new_tokens": 16, "reasoning_effort": "high"},
+                }
+            )
+            result = backend.generate(
+                {"messages": [{"role": "user", "content": "think hard"}], "sampling_params": {"max_new_tokens": 16}}
+            )
+
+        self.assertEqual(result["answer"], "pong-lite")
+        call = fake_litellm.calls[0]
+        self.assertEqual(call.get("reasoning_effort"), "high")
+
+    def test_no_thinking_mode_does_not_inject_enable_thinking(self):
+        """When thinking_mode is None, enable_thinking should not appear in kwargs."""
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            result = backend.generate(
+                {"messages": [{"role": "user", "content": "ping"}], "sampling_params": {"max_new_tokens": 16}}
+            )
+
+        call = fake_litellm.calls[0]
+        self.assertNotIn("enable_thinking", call)
+        self.assertNotIn("reasoning_effort", call)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -150,12 +150,14 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
                 async with self._async_semaphore:
                     completion = await self._async_client.chat.completions.create(**inputs)
             answer = self._extract_answer(completion)
-            result = {
+            result: Dict[str, Any] = {
                 "answer": answer,
                 "raw_response": completion.model_dump(),
                 "usage": completion.usage.model_dump() if completion.usage else None,
             }
             result.setdefault("latency_ms", (time.time() - start) * 1000)
+            # NOTE: reasoning_content extraction is handled centrally by EngineBackend
+            self._enrich_result_with_reasoning(result)
             return result
         except (BadRequestError, UnprocessableEntityError, PermissionDeniedError) as exc:
             return {"error": str(exc), "status": getattr(exc, "status_code", None)}
@@ -193,6 +195,10 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
             "stop": params.get("stop"),
             "n": params.get("n"),
         }
+        # Reasoning effort for thinking models (e.g. GPT-OSS)
+        reasoning_effort = params.get("reasoning_effort") or self._reasoning_effort
+        if reasoning_effort:
+            mapped["reasoning_effort"] = reasoning_effort
         # remove None entries and unsupported keys
         return {k: v for k, v in mapped.items() if v is not None}
 

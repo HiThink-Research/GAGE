@@ -102,15 +102,6 @@ class LiteLLMBackend(EngineBackend):
             litellm.api_base = self.api_base
         if self.headers:
             litellm.headers = self.headers
-        self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
-        litellm.drop_params = True
-        litellm.verbose = bool(self._cfg.verbose)
-        if self.api_key:
-            litellm.api_key = self.api_key
-        if self.api_base:
-            litellm.api_base = self.api_base
-        if self.headers:
-            litellm.headers = self.headers
         return None
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -163,7 +154,7 @@ class LiteLLMBackend(EngineBackend):
             answer = self._extract_answer(completion)
             raw_response = completion
         raw_response = self._to_jsonable(raw_response)
-        result = {"answer": answer, "raw_response": raw_response}
+        result: Dict[str, Any] = {"answer": answer, "raw_response": raw_response}
         if not stream and hasattr(completion, "usage"):
             usage = getattr(completion, "usage")
             if hasattr(usage, "model_dump"):
@@ -208,6 +199,19 @@ class LiteLLMBackend(EngineBackend):
         if stop_sequences:
             kwargs["stop"] = stop_sequences
         kwargs.setdefault("n", inputs.get("num_samples"))
+
+        # STEP: Inject thinking-related parameters from base class config
+        thinking_config = self.get_thinking_config()
+        if "enable_thinking" in thinking_config:
+            kwargs["enable_thinking"] = thinking_config["enable_thinking"]
+        # Support reasoning_effort from config or per-request sampling params
+        reasoning_effort = (
+            sampling_params.get("reasoning_effort")
+            or thinking_config.get("reasoning_effort")
+        )
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         return kwargs, sampling_params
 
     def _extract_answer(self, completion: Any) -> str:
