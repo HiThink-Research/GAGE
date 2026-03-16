@@ -24,10 +24,25 @@ backends:
     config:
       cycle: true
       responses:
-        - '{"move":"right_run","hold_ticks":6}'
+        - '{"move":"noop","hold_ticks":6}'
+
+        - '{"move":"right_run","hold_ticks":8}'
         - '{"move":"right_run_jump","hold_ticks":6}'
-        - '{"move":"right","hold_ticks":4}'
-        - '{"move":"noop","hold_ticks":3}'
+        - '{"move":"right_jump","hold_ticks":12}'
+        - '{"move":"right","hold_ticks":8}'
+        - '{"move":"jump","hold_ticks":12}'
+        - '{"move":"right","hold_ticks":8}'
+        - '{"move":"run","hold_ticks":5}'
+        - '{"move":"noop","hold_ticks":8}'
+
+
+        - '{"move":"up","hold_ticks":2}'
+        - '{"move":"down","hold_ticks":2}'
+        - '{"move":"noop","hold_ticks":12}'
+        - '{"move":"noop","hold_ticks":6}'
+
+        - '{"move":"start","hold_ticks":1}'
+        - '{"move":"select","hold_ticks":1}'
 
 prompts:
   - prompt_id: retro_mario_turn_prompt_v1
@@ -76,11 +91,22 @@ role_adapters:
         obs_image: true
         record_bk2: false
         legal_moves:
+          # NOTE: Keep this list aligned with RetroActionCodec._build_default_macro_map().
           - noop
+          - left
           - right
-          - right_run
+          - up
+          - down
+          - jump
+          - run
+          - left_jump
           - right_jump
+          - left_run
+          - right_run
+          - left_run_jump
           - right_run_jump
+          - start
+          - select
         action_schema:
           hold_ticks_min: 1
           hold_ticks_max: 12
