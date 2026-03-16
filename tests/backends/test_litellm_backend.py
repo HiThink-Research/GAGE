@@ -124,6 +124,99 @@ class LiteLLMBackendTests(unittest.TestCase):
         self.assertEqual(call["api_type"], "azure")
         self.assertEqual(call["custom_llm_provider"], "azure")
 
+    def test_deepseek_flattens_image_messages_and_uses_native_provider(self):
+        fake_litellm = _FakeLitellm()
+        env = {
+            "DEEPSEEK_API_KEY": "deepseek-key",
+            "OPENAI_API_KEY": "",
+        }
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "provider": "openai",
+                    "model": "deepseek-chat",
+                    "api_base": "https://api.deepseek.com",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            prepared = backend.prepare_inputs(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Describe this image briefly."},
+                                {"type": "image_url", "image_url": {"url": "https://example.com/demo.png"}},
+                            ],
+                        }
+                    ]
+                }
+            )
+            result = backend.generate(prepared)
+
+        self.assertEqual(result["answer"], "pong-lite")
+        call = fake_litellm.calls[0]
+        self.assertEqual(call["model"], "deepseek/deepseek-chat")
+        self.assertEqual(call["api_key"], "deepseek-key")
+        self.assertEqual(call["custom_llm_provider"], "deepseek")
+        self.assertIsInstance(call["messages"][0]["content"], str)
+        self.assertIn("<image>", call["messages"][0]["content"])
+
+    def test_openai_multimodal_messages_keep_image_blocks(self):
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "api_key": "openai-key",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            prepared = backend.prepare_inputs(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "What is shown?"},
+                                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+                            ],
+                        }
+                    ]
+                }
+            )
+            result = backend.generate(prepared)
+
+        self.assertEqual(result["answer"], "pong-lite")
+        call = fake_litellm.calls[0]
+        self.assertIsInstance(call["messages"][0]["content"], list)
+        self.assertEqual(call["messages"][0]["content"][1]["type"], "image_url")
+        self.assertEqual(call["messages"][0]["content"][1]["image_url"]["url"], "https://example.com/image.png")
+
+    def test_non_deepseek_target_does_not_use_deepseek_api_key(self):
+        """Non-DeepSeek targets should ignore the DeepSeek-specific API key."""
+
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DEEPSEEK_API_KEY": "deepseek-key",
+                "OPENAI_API_KEY": "openai-key",
+            },
+            clear=True,
+        ), mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            result = backend.generate({"messages": [{"role": "user", "content": "ping"}]})
+
+        self.assertEqual(result["answer"], "pong-lite")
+        call = fake_litellm.calls[0]
+        self.assertEqual(call["api_key"], "openai-key")
+
 
 if __name__ == "__main__":
     unittest.main()

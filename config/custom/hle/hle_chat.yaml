@@ -81,7 +81,11 @@ role_adapters:
 metrics:
   - metric_id: hle_acc
     #implementation: hle_accuracy_local
-    implementation: hle_accuracy_openai
+    implementation: hle_accuracy_deepseek
+    params:
+      judge_model: ${HLE_JUDGE_MODEL:-deepseek-chat}
+      api_key: ${HLE_JUDGE_API_KEY:-}
+      api_base: ${HLE_JUDGE_API_BASE:-https://api.deepseek.com}
 
 tasks:
   - task_id: hle_eval

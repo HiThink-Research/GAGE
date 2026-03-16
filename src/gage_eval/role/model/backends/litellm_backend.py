@@ -11,9 +11,8 @@ from loguru import logger
 
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
-from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.registry import registry
-from gage_eval.utils.messages import stringify_message_content
+from gage_eval.utils.messages import normalize_messages_for_template, stringify_message_content
 
 
 @registry.asset(
@@ -42,17 +41,8 @@ class LiteLLMBackend(EngineBackend):
         self.model_name = self._cfg.model
         self.provider = self._cfg.provider or self._infer_provider(self.model_name)
         self.api_base = self._cfg.api_base
-        self.api_key = (
-            self._cfg.api_key
-            or os.getenv("LITELLM_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-            or os.getenv("XAI_API_KEY")
-            or os.getenv("GROK_API_KEY")
-            or os.getenv("AZURE_API_KEY")
-            or os.getenv("AZURE_OPENAI_API_KEY")
-            or os.getenv("KIMI_API_KEY")
-            or os.getenv("MOONSHOT_API_KEY")
-        )
+        self._is_deepseek_target = self._looks_like_deepseek(self.provider, self.model_name, self.api_base)
+        self.api_key = None
         self.headers = dict(self._cfg.extra_headers or {})
         self._timeout = self._cfg.timeout
         self._max_retries = max(1, int(self._cfg.max_retries))
@@ -63,6 +53,8 @@ class LiteLLMBackend(EngineBackend):
         self._is_kimi_target = self._looks_like_kimi(self.provider, self.model_name, self.api_base)
         self._is_grok_target = self._looks_like_grok(self.provider, self.model_name, self.api_base)
         self._is_azure_target = self._looks_like_azure(self.provider, self.model_name, self.api_base)
+        if self._is_deepseek_target and (not self.provider or self.provider.lower() == "openai"):
+            self.provider = "deepseek"
         if not self.provider and self._is_grok_target:
             self.provider = "grok"
         if not self.provider and self._is_kimi_target:
@@ -70,7 +62,9 @@ class LiteLLMBackend(EngineBackend):
         if not self.provider and self._is_azure_target:
             self.provider = "azure"
         if not self.api_base:
-            if self._is_kimi_target:
+            if self._is_deepseek_target:
+                self.api_base = "https://api.deepseek.com"
+            elif self._is_kimi_target:
                 self.api_base = "https://api.moonshot.cn/v1"
             elif self._is_grok_target:
                 self.api_base = "https://api.x.ai/v1"
@@ -79,6 +73,7 @@ class LiteLLMBackend(EngineBackend):
                 if self.api_base:
                     self.api_base = self.api_base.rstrip("/")
 
+        self.api_key = self._resolve_api_key()
         self._azure_api_version = self._cfg.azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION")
         if self._is_azure_target and not self._azure_api_version:
             self._azure_api_version = "2024-02-15-preview"
@@ -129,8 +124,7 @@ class LiteLLMBackend(EngineBackend):
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-        if self._should_sanitize_openai_messages():
-            messages = self._sanitize_openai_messages(messages)
+        messages = self._normalize_messages_for_provider(messages)
 
         sampling_params = dict(self._base_sampling)
         sampling_params.update(sample.get("sampling_params") or {})
@@ -183,7 +177,7 @@ class LiteLLMBackend(EngineBackend):
         stop_sequences = self._prepare_stop_sequences(sampling_params.get("stop"))
 
         kwargs: Dict[str, Any] = {
-            "model": inputs.get("model") or self.model_name,
+            "model": self._normalize_request_model(inputs.get("model") or self.model_name),
             "messages": inputs.get("messages") or [],
             "response_format": {"type": "text"},
             "stream": inputs.get("stream", False),
@@ -262,6 +256,19 @@ class LiteLLMBackend(EngineBackend):
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
+    def _normalize_messages_for_provider(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize message content according to the target provider's input contract."""
+
+        if self._should_flatten_multimodal_messages():
+            return normalize_messages_for_template(messages, image_placeholder="<image>")
+        if self._should_sanitize_openai_messages():
+            return self._sanitize_openai_messages(messages)
+        return messages
+
+    def _should_flatten_multimodal_messages(self) -> bool:
+        provider = (self._custom_llm_provider or self.provider or "").lower()
+        return provider == "deepseek" or self._looks_like_deepseek(self.provider, self.model_name, self.api_base)
+
     def _should_sanitize_openai_messages(self) -> bool:
         provider = (self._custom_llm_provider or self.provider or "").lower()
         return provider in {"openai", "azure"}
@@ -429,9 +436,13 @@ class LiteLLMBackend(EngineBackend):
     def _infer_provider(model_name: str | None) -> Optional[str]:
         if not model_name:
             return None
+        if model_name.startswith("deepseek/"):
+            return "deepseek"
         if "/" in model_name:
             return model_name.split("/")[0]
         lower = model_name.lower()
+        if lower.startswith("deepseek"):
+            return "deepseek"
         if lower.startswith("grok"):
             return "grok"
         if lower.startswith("moonshot"):
@@ -439,6 +450,13 @@ class LiteLLMBackend(EngineBackend):
         if lower.startswith("azure:"):
             return "azure"
         return None
+
+    @staticmethod
+    def _looks_like_deepseek(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
+        target = (provider or "").lower()
+        model_lower = (model or "").lower()
+        base = (api_base or "").lower()
+        return target == "deepseek" or model_lower.startswith("deepseek") or "deepseek.com" in base
 
     @staticmethod
     def _looks_like_kimi(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
@@ -467,6 +485,7 @@ class LiteLLMBackend(EngineBackend):
             return None
         lower = provider.lower()
         alias_map = {
+            "deepseek": "deepseek",
             "kimi": "moonshot",
             "moonshot": "moonshot",
             "grok": "xai",
@@ -483,6 +502,33 @@ class LiteLLMBackend(EngineBackend):
         if isinstance(part, dict) and "text" in part:
             return str(part["text"])
         return str(part)
+
+    def _normalize_request_model(self, model_name: str) -> str:
+        """Return the provider-qualified model name when LiteLLM expects one."""
+
+        if self._looks_like_deepseek(self.provider, model_name, self.api_base) and "/" not in model_name:
+            return f"deepseek/{model_name}"
+        return model_name
+
+    def _resolve_api_key(self) -> Optional[str]:
+        """Resolve API credentials without leaking DeepSeek keys to other providers."""
+
+        candidates: List[Optional[str]] = [self._cfg.api_key]
+        if self._is_deepseek_target:
+            candidates.append(os.getenv("DEEPSEEK_API_KEY"))
+        candidates.extend(
+            [
+                os.getenv("LITELLM_API_KEY"),
+                os.getenv("OPENAI_API_KEY"),
+                os.getenv("XAI_API_KEY"),
+                os.getenv("GROK_API_KEY"),
+                os.getenv("AZURE_API_KEY"),
+                os.getenv("AZURE_OPENAI_API_KEY"),
+                os.getenv("KIMI_API_KEY"),
+                os.getenv("MOONSHOT_API_KEY"),
+            ]
+        )
+        return next((candidate for candidate in candidates if candidate), None)
 
     @staticmethod
     def _to_jsonable(obj: Any) -> Any:
