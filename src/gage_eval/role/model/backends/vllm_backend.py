@@ -86,6 +86,9 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._model_supports_mm = True
         self._engine_mm_support: Optional[bool] = None
         self._engine_runtime = None
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_started = False
+        self._shutdown_completed = False
         if config.get("gpu_groups") is not None or config.get("auto_gpu_groups") is not None:
             raise ValueError(
                 "vllm_backend no longer supports gpu_groups/auto_gpu_groups router mode. "
@@ -118,7 +121,15 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._loop.run_forever()
 
     def shutdown(self) -> None:
-        graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
+        with self._shutdown_lock:
+            if self._shutdown_started or self._shutdown_completed:
+                return
+            self._shutdown_started = True
+        try:
+            graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
+        finally:
+            with self._shutdown_lock:
+                self._shutdown_completed = True
 
     def load_model(self, config: Dict[str, Any]):
         """Load the model/processor and apply compatibility patches (reward/MoE/rope scaling/low-memory)."""

@@ -559,8 +559,13 @@ def maybe_tokenize_messages(
 
 
 def graceful_loop_shutdown(loop: Any, loop_thread: Any, model: Any = None) -> None:
-    """Best-effort shutdown for background event loop and model cleanup."""
+    """Best-effort shutdown for model cleanup and background event loop."""
 
+    try:
+        if model and hasattr(model, "shutdown"):
+            model.shutdown()
+    except Exception:
+        logger.warning("backend model shutdown error", exc_info=True)
     try:
         if loop and loop.is_running():
             loop.call_soon_threadsafe(loop.stop)
@@ -568,11 +573,6 @@ def graceful_loop_shutdown(loop: Any, loop_thread: Any, model: Any = None) -> No
             loop_thread.join(timeout=1.0)
     except Exception:
         logger.warning("backend loop shutdown error", exc_info=True)
-    try:
-        if model and hasattr(model, "shutdown"):
-            model.shutdown()
-    except Exception:
-        pass
     torch_gpu_cleanup()
 
 
