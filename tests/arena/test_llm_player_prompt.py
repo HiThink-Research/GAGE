@@ -1,8 +1,11 @@
 import base64
+from types import SimpleNamespace
 from dataclasses import replace
 from unittest.mock import MagicMock
 
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
+from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
 from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, ArenaPromptSpec
@@ -169,6 +172,35 @@ class _CaptureRenderer(PromptRenderer):
         return PromptRenderResult(messages=[{"role": "system", "content": "arena-system"}])
 
 
+class _StaticRoleManager:
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    def borrow_role(self, adapter_id: str):  # noqa: ANN001
+        _ = adapter_id
+        return _StaticRoleLease(self._response)
+
+
+class _StaticRoleLease:
+    def __init__(self, response: dict) -> None:
+        self._role = _StaticRole(response)
+
+    def __enter__(self):
+        return self._role
+
+    def __exit__(self, exc_type, exc, tb):  # noqa: ANN001, ANN201
+        return False
+
+
+class _StaticRole:
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    def invoke(self, payload: dict, trace) -> dict:  # noqa: ANN001
+        _ = payload, trace
+        return dict(self._response)
+
+
 def test_llm_player_turn_messages_use_prompt_renderer_payload() -> None:
     sample = {"messages": [{"role": "system", "content": "legacy"}], "metadata": {"game_type": "gomoku"}}
     parser = MagicMock()
@@ -206,6 +238,68 @@ def test_llm_player_turn_messages_use_prompt_renderer_payload() -> None:
     assert renderer.last_payload["arena_observation"]["legal_moves"] == ["A1", "A2"]
     assert renderer.last_payload["messages"] == [{"role": "system", "content": "legacy"}]
     assert len(renderer.last_payload["legacy_messages"]) == 2
+
+
+def test_llm_player_emits_model_io_events_with_sanitized_image_refs() -> None:
+    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="llm-player-model-io"))
+    parser = MagicMock()
+    parser.parse.return_value = SimpleNamespace(
+        coord="A1",
+        error=None,
+        reason=None,
+        chat_text=None,
+        hold_ticks=None,
+    )
+    player = LLMPlayer(
+        name="player_0",
+        adapter_id="dummy",
+        role_manager=_StaticRoleManager(
+            {
+                "answer": "A1",
+                "usage": {"prompt_tokens": 11, "completion_tokens": 3},
+                "latency_ms": 12.5,
+            }
+        ),
+        sample={"messages": [], "metadata": {"game_type": "gomoku"}},
+        parser=parser,
+        trace=trace,
+        scheme_id="S3_text_image_current",
+    )
+    observation = ArenaObservation(
+        board_text="Board",
+        legal_moves=["A1", "A2"],
+        active_player="player_0",
+        metadata={"game_type": "gomoku"},
+        view={
+            "text": "Board",
+            "image": {"data_url": "data:image/png;base64,abc123"},
+        },
+        legal_actions={"items": ["A1", "A2"]},
+        context={"step": 7},
+    )
+
+    action = player.think(observation)
+
+    assert action.move == "A1"
+    request_event = next(event for event in trace.events if event["event"] == "arena_model_request")
+    response_event = next(event for event in trace.events if event["event"] == "arena_model_response")
+
+    request_payload = request_event["payload"]
+    image_refs = [
+        fragment["image_ref"]
+        for message in request_payload["messages"]
+        for fragment in (message["content"] if isinstance(message.get("content"), list) else [])
+        if isinstance(fragment, dict) and fragment.get("image_ref")
+    ]
+    assert len(image_refs) == 1
+    assert image_refs[0].startswith("<image_ref:data:image/png;base64;sha1=")
+    assert "data:image/png;base64,abc123" not in str(request_payload["messages"])
+    assert request_payload["legal_actions"]["items"] == ["A1", "A2"]
+
+    response_payload = response_event["payload"]
+    assert response_payload["response_text"] == "A1"
+    assert response_payload["usage"] == {"prompt_tokens": 11, "completion_tokens": 3}
+    assert response_payload["latency_ms"] == 12.5
 
 
 def test_llm_player_turn_messages_avoid_duplicate_image_fragment() -> None:
