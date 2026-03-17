@@ -11,29 +11,27 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
-def _ensure_package(name: str) -> None:
-    if name in sys.modules:
-        return
+def _make_package(name: str) -> types.ModuleType:
+    """Create a minimal package stub for import-time dependency injection."""
+
     module = types.ModuleType(name)
     module.__path__ = []
-    sys.modules[name] = module
+    return module
 
 
-def _install_metric_stubs() -> type:
-    if "openai" not in sys.modules:
-        openai_module = types.ModuleType("openai")
+def _build_metric_stubs() -> tuple[type, dict[str, types.ModuleType]]:
+    """Build temporary import stubs required to load the metric module."""
 
-        class OpenAI:
-            def __init__(self, **kwargs: object) -> None:
-                self.kwargs = kwargs
+    openai_module = types.ModuleType("openai")
 
-        openai_module.OpenAI = OpenAI
-        sys.modules["openai"] = openai_module
+    class OpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
 
-    if "loguru" not in sys.modules:
-        loguru_module = types.ModuleType("loguru")
-        loguru_module.logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
-        sys.modules["loguru"] = loguru_module
+    openai_module.OpenAI = OpenAI
+
+    loguru_module = types.ModuleType("loguru")
+    loguru_module.logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
 
     registry_module = types.ModuleType("gage_eval.registry")
 
@@ -97,14 +95,18 @@ def _install_metric_stubs() -> type:
     metrics_utils_module.get_first_reference = get_first_reference
     metrics_utils_module.get_text_content_of_first_predict_result = get_text_content_of_first_predict_result
 
-    _ensure_package("gage_eval")
-    _ensure_package("gage_eval.metrics")
-    _ensure_package("gage_eval.metrics.builtin")
-    _ensure_package("gage_eval.metrics.builtin.hle")
-    sys.modules["gage_eval.registry"] = registry_module
-    sys.modules["gage_eval.metrics.base"] = metrics_base_module
-    sys.modules["gage_eval.metrics.utils"] = metrics_utils_module
-    return MetricContext
+    stubs = {
+        "openai": openai_module,
+        "loguru": loguru_module,
+        "gage_eval": _make_package("gage_eval"),
+        "gage_eval.metrics": _make_package("gage_eval.metrics"),
+        "gage_eval.metrics.builtin": _make_package("gage_eval.metrics.builtin"),
+        "gage_eval.metrics.builtin.hle": _make_package("gage_eval.metrics.builtin.hle"),
+        "gage_eval.registry": registry_module,
+        "gage_eval.metrics.base": metrics_base_module,
+        "gage_eval.metrics.utils": metrics_utils_module,
+    }
+    return MetricContext, stubs
 
 
 def _load_module(name: str, relative_path: str) -> types.ModuleType:
@@ -118,11 +120,12 @@ def _load_module(name: str, relative_path: str) -> types.ModuleType:
 
 
 def _load_deepseek_module() -> tuple[type, types.ModuleType]:
-    metric_context_cls = _install_metric_stubs()
-    deepseek_module = _load_module(
-        "gage_eval.metrics.builtin.hle.hle_deepseek",
-        "src/gage_eval/metrics/builtin/hle/hle_deepseek.py",
-    )
+    metric_context_cls, stub_modules = _build_metric_stubs()
+    with patch.dict(sys.modules, stub_modules, clear=False):
+        deepseek_module = _load_module(
+            "gage_eval.metrics.builtin.hle.hle_deepseek",
+            "src/gage_eval/metrics/builtin/hle/hle_deepseek.py",
+        )
     return metric_context_cls, deepseek_module
 
 
