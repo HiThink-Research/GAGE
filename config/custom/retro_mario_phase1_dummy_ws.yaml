@@ -112,10 +112,10 @@ role_adapters:
           hold_ticks_max: 12
           hold_ticks_default: 6
         info_feeder:
-          impl: info_last_v1
+          impl: info_mario_v1
         replay:
           enabled: true
-          mode: action
+          mode: both
           frame_capture:
             enabled: true
             frame_stride: 3
@@ -124,7 +124,7 @@ role_adapters:
             quality: 75
       scheduler:
         type: tick
-        tick_ms: 100
+        tick_ms: 66
         max_ticks: 3600
       parser:
         impl: retro_action_v1
