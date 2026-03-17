@@ -80,6 +80,7 @@ class LLMPlayer:
         self._action_history_len = self._prompt_composer.action_history_len
         self._delta_key_limit = self._prompt_composer.delta_key_limit
         self._telemetry_limit = self._prompt_composer.telemetry_limit
+        self._emit_model_io_events = self._resolve_model_io_event_emission(role_manager)
         self._debug_image_dump_dir = self._resolve_debug_image_dump_dir(
             (scheme_params or {}).get("debug_image_dump_dir")
             if isinstance(scheme_params, dict)
@@ -406,7 +407,7 @@ class LLMPlayer:
     ) -> None:
         """Emit one structured model-request event for arena inference."""
 
-        if self._trace is None:
+        if self._trace is None or not self._emit_model_io_events:
             return
         payload = {
             "player_id": self.name,
@@ -431,7 +432,7 @@ class LLMPlayer:
     ) -> None:
         """Emit one structured model-response event for arena inference."""
 
-        if self._trace is None:
+        if self._trace is None or not self._emit_model_io_events:
             return
         payload = {
             "player_id": self.name,
@@ -448,6 +449,39 @@ class LLMPlayer:
             if output.get("usage") is not None:
                 payload["usage"] = self._normalize_trace_value(output.get("usage"))
         self._trace.emit("arena_model_response", payload)
+
+    def _resolve_model_io_event_emission(self, role_manager: Any) -> bool:
+        """Return whether model I/O observability events should be emitted."""
+
+        adapter_getter = getattr(role_manager, "get_adapter", None)
+        if not callable(adapter_getter):
+            return True
+        adapter = adapter_getter(self._adapter_id)
+        backend = self._unwrap_backend_proxy(getattr(adapter, "backend", None))
+        if backend is None:
+            return True
+        backend_cls = backend.__class__
+        backend_name = str(getattr(backend_cls, "__name__", ""))
+        backend_module = str(getattr(backend_cls, "__module__", ""))
+        if backend_name == "DummyBackend":
+            return False
+        if backend_module == "gage_eval.role.model.backends.dummy_backend":
+            return False
+        return True
+
+    @staticmethod
+    def _unwrap_backend_proxy(backend: Any) -> Any:
+        """Unwrap backend proxy layers to inspect the concrete backend instance."""
+
+        current = backend
+        seen: set[int] = set()
+        while current is not None and hasattr(current, "_backend"):
+            current_id = id(current)
+            if current_id in seen:
+                break
+            seen.add(current_id)
+            current = getattr(current, "_backend", None)
+        return current
 
     @staticmethod
     def _serialize_messages_for_trace(messages: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
