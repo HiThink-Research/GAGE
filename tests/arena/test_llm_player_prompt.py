@@ -9,6 +9,8 @@ from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
 from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, ArenaPromptSpec
+from gage_eval.role.model.backends import wrap_backend
+from gage_eval.role.model.backends.dummy_backend import DummyBackend
 
 
 def test_llm_player_uses_game_owned_prompt_instruction() -> None:
@@ -173,12 +175,17 @@ class _CaptureRenderer(PromptRenderer):
 
 
 class _StaticRoleManager:
-    def __init__(self, response: dict) -> None:
+    def __init__(self, response: dict, *, adapter: object | None = None) -> None:
         self._response = response
+        self._adapter = adapter
 
     def borrow_role(self, adapter_id: str):  # noqa: ANN001
         _ = adapter_id
         return _StaticRoleLease(self._response)
+
+    def get_adapter(self, adapter_id: str):  # noqa: ANN001
+        _ = adapter_id
+        return self._adapter
 
 
 class _StaticRoleLease:
@@ -300,6 +307,43 @@ def test_llm_player_emits_model_io_events_with_sanitized_image_refs() -> None:
     assert response_payload["response_text"] == "A1"
     assert response_payload["usage"] == {"prompt_tokens": 11, "completion_tokens": 3}
     assert response_payload["latency_ms"] == 12.5
+
+
+def test_llm_player_skips_model_io_events_for_dummy_backend() -> None:
+    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="llm-player-dummy-model-io"))
+    parser = MagicMock()
+    parser.parse.return_value = SimpleNamespace(
+        coord="A1",
+        error=None,
+        reason=None,
+        chat_text=None,
+        hold_ticks=None,
+    )
+    dummy_adapter = SimpleNamespace(
+        backend=wrap_backend(DummyBackend({"responses": ["A1"], "cycle": True}))
+    )
+    player = LLMPlayer(
+        name="player_0",
+        adapter_id="retro_dummy_player",
+        role_manager=_StaticRoleManager({"answer": "A1"}, adapter=dummy_adapter),
+        sample={"messages": [], "metadata": {"game_type": "gomoku"}},
+        parser=parser,
+        trace=trace,
+    )
+    observation = ArenaObservation(
+        board_text="Board",
+        legal_moves=["A1", "A2"],
+        active_player="player_0",
+        metadata={"game_type": "gomoku"},
+        view={"text": "Board"},
+        legal_actions={"items": ["A1", "A2"]},
+        context={"step": 3},
+    )
+
+    action = player.think(observation)
+
+    assert action.move == "A1"
+    assert not [event for event in trace.events if event["event"].startswith("arena_model_")]
 
 
 def test_llm_player_turn_messages_avoid_duplicate_image_fragment() -> None:
