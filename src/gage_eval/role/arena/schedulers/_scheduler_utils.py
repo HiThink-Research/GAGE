@@ -7,6 +7,10 @@ import time
 from queue import Queue
 from typing import Any, Optional
 
+from gage_eval.role.arena.action_trace import (
+    resolve_trace_action_applied,
+    sanitize_trace_action_metadata,
+)
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 _ILLEGAL_REASONS = {
@@ -181,12 +185,13 @@ def set_trace_action_fields(
         action_format: Serialization format (`flat` or `envelope`).
     """
 
+    metadata = sanitize_trace_action_metadata(action.metadata)
+    applied_value = resolve_trace_action_applied(action.move, action.metadata)
     if action_format == "flat":
         entry["action_raw"] = action.raw
-        entry["action_applied"] = action.move
+        entry["action_applied"] = applied_value
         return
 
-    metadata = dict(action.metadata) if isinstance(action.metadata, dict) else {}
     if action_format == "envelope":
         entry["action_raw"] = {
             "player_id": action.player,
@@ -195,7 +200,7 @@ def set_trace_action_fields(
         }
         entry["action_applied"] = {
             "player_id": action.player,
-            "move": action.move,
+            "move": applied_value,
             "metadata": metadata,
         }
         return

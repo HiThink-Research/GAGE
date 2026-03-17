@@ -120,7 +120,10 @@ def _build_vizdoom_observation() -> ArenaObservation:
         board_text="",
         legal_moves=["1", "2", "3"],
         active_player="p0",
-        metadata={"game_type": "vizdoom"},
+        metadata={
+            "game_type": "vizdoom",
+            "action_mapping": {"1": "ATTACK", "2": "TURN_LEFT", "3": "TURN_RIGHT"},
+        },
         view={"text": "tick 0"},
         legal_actions={"items": ["1", "2", "3"]},
     )
@@ -150,6 +153,7 @@ def test_human_player_async_polls_action() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "human"
+    assert action.metadata["trace_action_applied"] == "TURN_LEFT"
 
 
 def test_human_player_async_uses_timeout_fallback() -> None:
@@ -203,6 +207,7 @@ def test_human_player_async_polls_queue_source_adapter() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "human"
+    assert action.metadata["trace_action_applied"] == "TURN_LEFT"
 
 
 def test_human_player_async_queue_payload_respects_target_player_id() -> None:
@@ -262,6 +267,31 @@ def test_llm_player_async_returns_action() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "backend"
+    assert action.metadata["trace_action_applied"] == "TURN_LEFT"
+
+
+def test_vizdoom_observe_includes_action_mapping_in_metadata(monkeypatch) -> None:
+    backend = _VizDoomBackendStub()
+    monkeypatch.setattr(
+        vizdoom_env_module.ViZDoomArenaEnvironment,
+        "_build_env",
+        lambda self, cfg: backend,
+    )
+    env = vizdoom_env_module.ViZDoomArenaEnvironment(
+        player_ids=["p0", "p1"],
+        show_pov=False,
+        capture_pov=True,
+        replay_in_env=False,
+    )
+    env.reset()
+
+    observation = env.observe("p0")
+
+    assert observation.metadata["action_mapping"] == {
+        "1": "ATTACK",
+        "2": "TURN_LEFT",
+        "3": "TURN_RIGHT",
+    }
 
 
 def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:

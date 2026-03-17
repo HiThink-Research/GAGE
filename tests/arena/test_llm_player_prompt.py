@@ -615,6 +615,29 @@ def test_build_action_metadata_contains_decision_reason() -> None:
     assert metadata["retry_count"] == 1
 
 
+def test_llm_player_think_attaches_semantic_vizdoom_trace_action() -> None:
+    parser = MagicMock()
+    parser.parse.return_value = SimpleNamespace(
+        coord="1",
+        error=None,
+        reason="enemy centered",
+        chat_text=None,
+        hold_ticks=None,
+    )
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="vizdoom_backend",
+        role_manager=_StaticRoleManager({"answer": "Action: 1\nReason: enemy centered"}),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=parser,
+    )
+
+    action = player.think(_build_vizdoom_observation(step=6, health=94, reward=1.0))
+
+    assert action.move == "1"
+    assert action.metadata["trace_action_applied"] == "ATTACK"
+
+
 def _build_image_payload() -> dict[str, str | list[int]]:
     raw = base64.b64encode(bytes([0, 0, 0])).decode("ascii")
     return {
@@ -634,6 +657,7 @@ def _build_vizdoom_observation(*, step: int, health: int, reward: float) -> Aren
             "game_type": "vizdoom",
             "reward": reward,
             "t": step,
+            "action_mapping": {"1": "ATTACK", "2": "TURN_LEFT", "3": "TURN_RIGHT"},
         },
         view={
             "text": f"Tick {step}. Legal actions: 1, 2, 3",

@@ -15,6 +15,7 @@ from loguru import logger
 
 from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.role.arena.action_trace import attach_trace_action_applied
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.prompt_composer import ArenaPromptComposer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
@@ -190,6 +191,11 @@ class LLMPlayer:
                     parse_result.error,
                 )
                 metadata = self._build_action_metadata(parse_result, retry_count=retries)
+                metadata = attach_trace_action_applied(
+                    metadata,
+                    observation=observation,
+                    move=fallback_move,
+                )
                 metadata["error"] = parse_result.error
                 metadata["fallback"] = self._fallback_policy
                 action = ArenaAction(
@@ -202,6 +208,11 @@ class LLMPlayer:
                 return action
 
         metadata = self._build_action_metadata(parse_result, retry_count=retries)
+        metadata = attach_trace_action_applied(
+            metadata,
+            observation=observation,
+            move=parse_result.coord or "",
+        )
         if parse_result.error:
             metadata["error"] = parse_result.error
         action = ArenaAction(
