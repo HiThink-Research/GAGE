@@ -58,6 +58,7 @@ role_adapters:
         impl: gomoku_local_v1
         board_size: 15
         coord_scheme: A1
+        obs_image: true
       rules:
         win_len: 5
         illegal_policy:
@@ -85,6 +86,9 @@ role_adapters:
           ref: gomoku_black_litellm
           max_retries: 1
           fallback_policy: first_legal
+          scheme_id: S3_text_image_current
+          scheme_params:
+            debug_image_dump_max: 0
         - name: White
           type: human
           ref: gomoku_human
