@@ -1,10 +1,16 @@
 import base64
+from types import SimpleNamespace
 from dataclasses import replace
 from unittest.mock import MagicMock
 
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
+from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.reporting.recorders import InMemoryRecorder
+from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
 from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, ArenaPromptSpec
+from gage_eval.role.model.backends import wrap_backend
+from gage_eval.role.model.backends.dummy_backend import DummyBackend
 
 
 def test_llm_player_uses_game_owned_prompt_instruction() -> None:
@@ -168,6 +174,40 @@ class _CaptureRenderer(PromptRenderer):
         return PromptRenderResult(messages=[{"role": "system", "content": "arena-system"}])
 
 
+class _StaticRoleManager:
+    def __init__(self, response: dict, *, adapter: object | None = None) -> None:
+        self._response = response
+        self._adapter = adapter
+
+    def borrow_role(self, adapter_id: str):  # noqa: ANN001
+        _ = adapter_id
+        return _StaticRoleLease(self._response)
+
+    def get_adapter(self, adapter_id: str):  # noqa: ANN001
+        _ = adapter_id
+        return self._adapter
+
+
+class _StaticRoleLease:
+    def __init__(self, response: dict) -> None:
+        self._role = _StaticRole(response)
+
+    def __enter__(self):
+        return self._role
+
+    def __exit__(self, exc_type, exc, tb):  # noqa: ANN001, ANN201
+        return False
+
+
+class _StaticRole:
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    def invoke(self, payload: dict, trace) -> dict:  # noqa: ANN001
+        _ = payload, trace
+        return dict(self._response)
+
+
 def test_llm_player_turn_messages_use_prompt_renderer_payload() -> None:
     sample = {"messages": [{"role": "system", "content": "legacy"}], "metadata": {"game_type": "gomoku"}}
     parser = MagicMock()
@@ -205,6 +245,105 @@ def test_llm_player_turn_messages_use_prompt_renderer_payload() -> None:
     assert renderer.last_payload["arena_observation"]["legal_moves"] == ["A1", "A2"]
     assert renderer.last_payload["messages"] == [{"role": "system", "content": "legacy"}]
     assert len(renderer.last_payload["legacy_messages"]) == 2
+
+
+def test_llm_player_emits_model_io_events_with_sanitized_image_refs() -> None:
+    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="llm-player-model-io"))
+    parser = MagicMock()
+    parser.parse.return_value = SimpleNamespace(
+        coord="A1",
+        error=None,
+        reason=None,
+        chat_text=None,
+        hold_ticks=None,
+    )
+    player = LLMPlayer(
+        name="player_0",
+        adapter_id="dummy",
+        role_manager=_StaticRoleManager(
+            {
+                "answer": "A1",
+                "usage": {"prompt_tokens": 11, "completion_tokens": 3},
+                "latency_ms": 12.5,
+            }
+        ),
+        sample={"messages": [], "metadata": {"game_type": "gomoku"}},
+        parser=parser,
+        trace=trace,
+        scheme_id="S3_text_image_current",
+    )
+    observation = ArenaObservation(
+        board_text="Board",
+        legal_moves=["A1", "A2"],
+        active_player="player_0",
+        metadata={"game_type": "gomoku"},
+        view={
+            "text": "Board",
+            "image": {"data_url": "data:image/png;base64,abc123"},
+        },
+        legal_actions={"items": ["A1", "A2"]},
+        context={"step": 7},
+    )
+
+    action = player.think(observation)
+
+    assert action.move == "A1"
+    request_event = next(event for event in trace.events if event["event"] == "arena_model_request")
+    response_event = next(event for event in trace.events if event["event"] == "arena_model_response")
+
+    request_payload = request_event["payload"]
+    image_refs = [
+        fragment["image_ref"]
+        for message in request_payload["messages"]
+        for fragment in (message["content"] if isinstance(message.get("content"), list) else [])
+        if isinstance(fragment, dict) and fragment.get("image_ref")
+    ]
+    assert len(image_refs) == 1
+    assert image_refs[0].startswith("<image_ref:data:image/png;base64;sha1=")
+    assert "data:image/png;base64,abc123" not in str(request_payload["messages"])
+    assert request_payload["legal_actions"]["items"] == ["A1", "A2"]
+
+    response_payload = response_event["payload"]
+    assert response_payload["response_text"] == "A1"
+    assert response_payload["usage"] == {"prompt_tokens": 11, "completion_tokens": 3}
+    assert response_payload["latency_ms"] == 12.5
+
+
+def test_llm_player_skips_model_io_events_for_dummy_backend() -> None:
+    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="llm-player-dummy-model-io"))
+    parser = MagicMock()
+    parser.parse.return_value = SimpleNamespace(
+        coord="A1",
+        error=None,
+        reason=None,
+        chat_text=None,
+        hold_ticks=None,
+    )
+    dummy_adapter = SimpleNamespace(
+        backend=wrap_backend(DummyBackend({"responses": ["A1"], "cycle": True}))
+    )
+    player = LLMPlayer(
+        name="player_0",
+        adapter_id="retro_dummy_player",
+        role_manager=_StaticRoleManager({"answer": "A1"}, adapter=dummy_adapter),
+        sample={"messages": [], "metadata": {"game_type": "gomoku"}},
+        parser=parser,
+        trace=trace,
+    )
+    observation = ArenaObservation(
+        board_text="Board",
+        legal_moves=["A1", "A2"],
+        active_player="player_0",
+        metadata={"game_type": "gomoku"},
+        view={"text": "Board"},
+        legal_actions={"items": ["A1", "A2"]},
+        context={"step": 3},
+    )
+
+    action = player.think(observation)
+
+    assert action.move == "A1"
+    assert not [event for event in trace.events if event["event"].startswith("arena_model_")]
 
 
 def test_llm_player_turn_messages_avoid_duplicate_image_fragment() -> None:
@@ -303,6 +442,38 @@ def test_summarize_messages_for_log_includes_http_image_reference() -> None:
 
     assert "remote image" in summary
     assert "<image_ref:https://example.com/sample.jpg>" in summary
+
+
+def test_llm_player_build_image_fragment_dumps_gomoku_prompt_image(tmp_path) -> None:
+    env = GomokuArenaEnvironment(
+        board_size=5,
+        win_len=4,
+        player_ids=["black", "white"],
+        player_names={"black": "Black", "white": "White"},
+        coord_scheme="A1",
+        obs_image=True,
+    )
+    observation = env.observe("black")
+    player = LLMPlayer(
+        name="black",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "gomoku"}},
+        parser=MagicMock(),
+        scheme_id="S3_text_image_current",
+        scheme_params={
+            "debug_image_dump_dir": str(tmp_path),
+            "debug_image_dump_max": 2,
+            "debug_image_dump_stride": 1,
+        },
+    )
+
+    image_fragment = player._build_image_fragment(observation)
+
+    assert image_fragment is not None
+    dumped_files = sorted(tmp_path.glob("*.png"))
+    assert len(dumped_files) == 1
+    assert dumped_files[0].stat().st_size > 0
 
 
 def test_llm_player_scheme_prompt_overrides_game_owned_instruction_for_vizdoom() -> None:
@@ -444,6 +615,29 @@ def test_build_action_metadata_contains_decision_reason() -> None:
     assert metadata["retry_count"] == 1
 
 
+def test_llm_player_think_attaches_semantic_vizdoom_trace_action() -> None:
+    parser = MagicMock()
+    parser.parse.return_value = SimpleNamespace(
+        coord="1",
+        error=None,
+        reason="enemy centered",
+        chat_text=None,
+        hold_ticks=None,
+    )
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="vizdoom_backend",
+        role_manager=_StaticRoleManager({"answer": "Action: 1\nReason: enemy centered"}),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=parser,
+    )
+
+    action = player.think(_build_vizdoom_observation(step=6, health=94, reward=1.0))
+
+    assert action.move == "1"
+    assert action.metadata["trace_action_applied"] == "ATTACK"
+
+
 def _build_image_payload() -> dict[str, str | list[int]]:
     raw = base64.b64encode(bytes([0, 0, 0])).decode("ascii")
     return {
@@ -463,6 +657,7 @@ def _build_vizdoom_observation(*, step: int, health: int, reward: float) -> Aren
             "game_type": "vizdoom",
             "reward": reward,
             "t": step,
+            "action_mapping": {"1": "ATTACK", "2": "TURN_LEFT", "3": "TURN_RIGHT"},
         },
         view={
             "text": f"Tick {step}. Legal actions: 1, 2, 3",

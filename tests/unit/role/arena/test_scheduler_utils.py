@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from gage_eval.role.arena.schedulers._scheduler_utils import think_with_timeout
+from gage_eval.role.arena.schedulers._scheduler_utils import (
+    make_trace_entry,
+    set_trace_action_fields,
+    think_with_timeout,
+)
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 
 
@@ -103,3 +107,44 @@ def test_think_with_timeout_sync_player_without_timeout() -> None:
     assert timed_out is False
     assert error_type is None
     assert player.called is True
+
+
+def test_set_trace_action_fields_prefers_semantic_applied_value() -> None:
+    entry = make_trace_entry(
+        step_index=0,
+        player_id="p0",
+        timestamp_ms=1,
+        t_obs_ready_ms=2,
+    )
+    action = ArenaAction(
+        player="p0",
+        move="1",
+        raw="Action: 1",
+        metadata={"trace_action_applied": "ATTACK", "player_type": "backend"},
+    )
+
+    set_trace_action_fields(entry, action, action_format="flat")
+
+    assert entry["action_raw"] == "Action: 1"
+    assert entry["action_applied"] == "ATTACK"
+
+
+def test_set_trace_action_fields_strips_internal_trace_metadata_from_envelope() -> None:
+    entry = make_trace_entry(
+        step_index=0,
+        player_id="p0",
+        timestamp_ms=1,
+        t_obs_ready_ms=2,
+    )
+    action = ArenaAction(
+        player="p0",
+        move="1",
+        raw="Action: 1",
+        metadata={"trace_action_applied": "ATTACK", "player_type": "backend"},
+    )
+
+    set_trace_action_fields(entry, action, action_format="envelope")
+
+    assert entry["action_applied"]["move"] == "ATTACK"
+    assert entry["action_applied"]["metadata"] == {"player_type": "backend"}
+    assert entry["action_raw"]["metadata"] == {"player_type": "backend"}

@@ -56,6 +56,8 @@ prompts:
       - Legal moves: {{ payload.legal_moves | join(", ") }}.
       {% if payload.include_chat %}
       - Include a short table-talk line every turn.
+      - The table-talk line must be written in English only.
+      - Keep the tone playful or taunting, but concise.
       - Output JSON: {"action":"<action>","chat":"<short line>"}.
       {% else %}
       - Output the legal action string only.

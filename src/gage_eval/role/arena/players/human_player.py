@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional, Sequence
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.role.arena.action_trace import attach_trace_action_applied
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.utils.messages import stringify_message_content
@@ -79,6 +80,11 @@ class HumanPlayer:
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
         metadata = self._build_action_metadata(parse_result)
+        metadata = attach_trace_action_applied(
+            metadata,
+            observation=observation,
+            move=parse_result.coord or "",
+        )
         if parse_result.error:
             metadata["error"] = parse_result.error
         return ArenaAction(
@@ -310,6 +316,11 @@ class HumanPlayer:
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
         metadata = self._build_action_metadata(parse_result)
+        metadata = attach_trace_action_applied(
+            metadata,
+            observation=observation,
+            move=parse_result.coord or "",
+        )
         if parse_result.error:
             metadata["error"] = parse_result.error
         return ArenaAction(
