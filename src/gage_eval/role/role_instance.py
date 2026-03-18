@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.utils.messages import clone_json_like
 
 
 class ConversationHistory:
@@ -45,7 +45,7 @@ class ConversationHistory:
 
     @staticmethod
     def _clone(message: Dict[str, Any]) -> Dict[str, Any]:
-        return copy.deepcopy(message)
+        return clone_json_like(message)
 
 
 class Role:
@@ -91,28 +91,39 @@ class Role:
     # ------------------------------------------------------------------
     # Invocation
     # ------------------------------------------------------------------
-    def invoke(self, payload: Dict[str, Any], trace: ObservabilityTrace) -> Dict[str, Any]:
-        prepared_payload = dict(payload or {})
-        self._apply_history_override(prepared_payload.pop("history_override", None))
-        self._ingest_history_delta(prepared_payload.pop("history_delta", None))
+    def invoke(self, payload: Optional[Dict[str, Any]], trace: ObservabilityTrace) -> Dict[str, Any]:
+        """Invoke the role adapter with sample-scoped history wiring."""
 
-        history_view = self.history_snapshot()
-        if history_view:
-            prepared_payload.setdefault("history", history_view)
-            prepared_payload.setdefault("messages", history_view)
+        base_payload = payload or {}
+
+        # STEP 1: Apply request-scoped history mutations before building the adapter payload.
+        history_override = base_payload.get("history_override")
+        history_delta = base_payload.get("history_delta")
+        self._apply_history_override(history_override)
+        self._ingest_history_delta(history_delta)
+
+        # STEP 2: Materialize only the payload view required by downstream adapters.
+        prepared_payload, history_tokens = self._build_invoke_payload(
+            base_payload,
+            has_history_override=history_override is not None,
+            has_history_delta=history_delta is not None,
+        )
 
         logger.debug(
             "Role invoke adapter={} runtime={} history_tokens={}",
             self.adapter_id,
             bool(self._runtime),
-            len(history_view),
+            history_tokens,
         )
+
+        # STEP 3: Delegate execution to the runtime or adapter.
         if self._runtime:
             result = self._runtime.execute(prepared_payload, trace)
         else:
             state = self._adapter.clone_for_sample()
             result = self._adapter.invoke(prepared_payload, state)
 
+        # STEP 4: Persist any response-side history delta back into the session history.
         self._ingest_history_delta(result.get("history_delta"))
         logger.trace("Role invoke adapter={} produced keys={}", self.adapter_id, list(result.keys()))
         return result
@@ -136,3 +147,51 @@ class Role:
             return
         if isinstance(delta, Sequence):
             self._history.extend(delta)  # type: ignore[arg-type]
+
+    def _build_invoke_payload(
+        self,
+        base_payload: Dict[str, Any],
+        *,
+        has_history_override: bool,
+        has_history_delta: bool,
+    ) -> tuple[Dict[str, Any], int]:
+        has_history = "history" in base_payload
+        has_messages = "messages" in base_payload
+        history_view = base_payload.get("history") if has_history else None
+        messages_view = base_payload.get("messages") if has_messages else None
+        inject_history = False
+        inject_messages = False
+
+        if not has_history and not has_messages:
+            if not self._history.is_empty():
+                history_view = self.history_snapshot()
+                messages_view = history_view
+                inject_history = True
+                inject_messages = True
+        elif not has_history and messages_view is not None:
+            history_view = messages_view
+            inject_history = True
+        elif not has_messages and history_view is not None:
+            messages_view = history_view
+            inject_messages = True
+
+        needs_copy = has_history_override or has_history_delta or inject_history or inject_messages
+        prepared_payload = dict(base_payload) if needs_copy else base_payload
+        if needs_copy:
+            prepared_payload.pop("history_override", None)
+            prepared_payload.pop("history_delta", None)
+            if inject_history:
+                prepared_payload["history"] = history_view
+            if inject_messages:
+                prepared_payload["messages"] = messages_view
+
+        history_tokens = self._history_length(prepared_payload.get("messages"))
+        if history_tokens == 0:
+            history_tokens = self._history_length(prepared_payload.get("history"))
+        return prepared_payload, history_tokens
+
+    @staticmethod
+    def _history_length(messages: Any) -> int:
+        if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+            return len(messages)
+        return 0
