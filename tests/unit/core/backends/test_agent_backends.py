@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import json
+import shlex
+import sys
 
 import pytest
 
@@ -52,6 +56,10 @@ class DummyModelBackend:
         }
 
 
+def _python_command(script: str) -> str:
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+
 @pytest.mark.fast
 def test_class_backend_dict_output():
     backend = ClassBackend(
@@ -80,9 +88,50 @@ def test_class_backend_string_output():
 
 @pytest.mark.io
 def test_cli_backend_raw_stdout():
-    backend = CliBackend({"command": "python -c 'print(\"hello\")'"})
+    backend = CliBackend({"command": _python_command('print("hello")')})
     result = backend.invoke({})
     assert result["answer"] == "hello"
+
+
+@pytest.mark.fast
+def test_cli_backend_returns_error_payload_on_non_zero_exit() -> None:
+    backend = CliBackend(
+        {
+            "command": _python_command(
+                'import sys; print("partial"); sys.stderr.write("boom\\n"); sys.exit(7)'
+            )
+        }
+    )
+
+    result = backend.invoke({})
+
+    assert result["error"] == "boom"
+    assert result["status"] == 7
+    assert result["error_type"] == "cli_process_error"
+    assert result["backend"] == "CliBackend"
+    assert result["returncode"] == 7
+    assert result["answer"] == ""
+    assert result["raw_stdout"] == "partial\n"
+    assert result["raw_stderr"] == "boom\n"
+
+
+@pytest.mark.fast
+def test_cli_backend_ignores_output_file_when_process_fails(tmp_path) -> None:
+    output_path = tmp_path / "result.json"
+    output_path.write_text(json.dumps({"answer": "stale-success"}), encoding="utf-8")
+    backend = CliBackend(
+        {
+            "command": _python_command('import sys; sys.stderr.write("failed\\n"); sys.exit(9)'),
+            "output_path": str(output_path),
+        }
+    )
+
+    result = backend.invoke({})
+
+    assert result["error"] == "failed"
+    assert result["status"] == 9
+    assert result["returncode"] == 9
+    assert result["answer"] == ""
 
 
 @pytest.mark.fast

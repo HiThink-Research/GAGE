@@ -24,6 +24,16 @@ class CliBackend(AgentBackend):
         self._timeout_s = config.get("timeout_s", 60)
 
     def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Executes the configured command and normalizes the result.
+
+        Args:
+            payload: Request payload forwarded to the CLI backend.
+
+        Returns:
+            A normalized agent output payload. Non-zero process exit codes are
+            converted into the standard backend error envelope.
+        """
+
         if self._input_path:
             self._write_json(Path(self._input_path), payload)
         result = subprocess.run(
@@ -35,6 +45,24 @@ class CliBackend(AgentBackend):
             timeout=self._timeout_s,
             check=False,
         )
+        if result.returncode != 0:
+            error_message = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"cli process exited with code {result.returncode}"
+            )
+            normalized_error = normalize_agent_output(
+                {
+                    "error": error_message,
+                    "status": result.returncode,
+                    "error_type": "cli_process_error",
+                    "backend": self.__class__.__name__,
+                    "returncode": result.returncode,
+                }
+            )
+            normalized_error.setdefault("raw_stdout", result.stdout)
+            normalized_error.setdefault("raw_stderr", result.stderr)
+            return normalized_error
         raw_output = self._load_output(result.stdout)
         normalized = normalize_agent_output(raw_output)
         normalized.setdefault("raw_stdout", result.stdout)
