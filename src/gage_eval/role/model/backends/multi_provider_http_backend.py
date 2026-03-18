@@ -27,6 +27,7 @@ class MultiProviderHTTPBackend(EngineBackend):
     """Backend that fans out chat-completion requests to HuggingFace Inference Providers."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
+        self.http_retry_mode = "native"
         self.transport = "http"
         self.http_retry_params: Dict[str, Any] = {}
         self._semaphore: asyncio.Semaphore | None = None
@@ -142,19 +143,23 @@ class MultiProviderHTTPBackend(EngineBackend):
         return self._semaphore
 
     def _prepare_http_retry_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge user-provided retry settings with safe defaults required by wrappers."""
+        """Normalizes native retry settings for inference provider calls."""
 
+        params = params or {}
+        ignored_keys = sorted({"attempts", "interval"} & params.keys())
+        if ignored_keys:
+            logger.warning(
+                "Ignoring wrapper retry keys for MultiProviderHTTPBackend: {}. "
+                "Use max_retries/base_sleep/multiplier instead.",
+                ", ".join(ignored_keys),
+            )
         defaults = {
-            "attempts": 3,
-            "interval": 1.0,
             "max_retries": 5,
             "base_sleep": 3,
             "multiplier": 2,
         }
-        merged = {**defaults, **(params or {})}
-        merged["attempts"] = int(merged.get("attempts", defaults["attempts"]))
-        merged["max_retries"] = int(merged.get("max_retries", defaults["max_retries"]))
-        merged["interval"] = float(merged.get("interval", defaults["interval"]))
-        merged["base_sleep"] = float(merged.get("base_sleep", defaults["base_sleep"]))
-        merged["multiplier"] = float(merged.get("multiplier", defaults["multiplier"]))
+        merged = {key: params.get(key, value) for key, value in defaults.items()}
+        merged["max_retries"] = max(0, int(merged.get("max_retries", defaults["max_retries"])))
+        merged["base_sleep"] = max(0.0, float(merged.get("base_sleep", defaults["base_sleep"])))
+        merged["multiplier"] = max(1.0, float(merged.get("multiplier", defaults["multiplier"])))
         return merged

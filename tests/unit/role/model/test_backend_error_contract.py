@@ -17,6 +17,7 @@ class _ExplodingBackend(Backend):
 class _FlakyHTTPBackend(Backend):
     def __init__(self, config: dict) -> None:
         self.calls = 0
+        self.http_retry_mode = "wrapper"
         self.transport = "http"
         self.http_retry_params = {"attempts": 2, "interval": 0.0}
         super().__init__(config)

@@ -21,7 +21,7 @@ def wrap_backend(backend: Backend) -> Backend:
     """Wrap backend with async + retry capabilities based on metadata."""
 
     wrapped: Backend = _AsyncBackendProxy(backend)
-    if getattr(backend, "transport", None) == "http" or hasattr(backend, "http_retry_params"):
+    if _should_apply_http_retry(backend):
         params = getattr(backend, "http_retry_params", {}) or {}
         attempts = int(params.get("attempts", 3))
         interval = float(params.get("interval", 1.0))
@@ -101,6 +101,24 @@ class _ErrorNormalizingBackendProxy(Backend):
             )
             error_result = build_backend_error_result(exc, backend_name=backend_name)
             return [dict(error_result) for _ in payloads]
+
+
+def _should_apply_http_retry(backend: Backend) -> bool:
+    """Returns whether the shared HTTP retry wrapper should be applied."""
+
+    retry_mode = _resolve_http_retry_mode(backend)
+    is_http_backend = getattr(backend, "transport", None) == "http" or hasattr(backend, "http_retry_params")
+    return retry_mode == "wrapper" and is_http_backend
+
+
+def _resolve_http_retry_mode(backend: Backend) -> str:
+    """Resolves the retry ownership mode for a backend instance."""
+
+    retry_mode = str(getattr(backend, "http_retry_mode", "wrapper")).lower()
+    if retry_mode not in {"wrapper", "native", "none"}:
+        logger.warning("Unknown http_retry_mode={} on backend {}; falling back to wrapper", retry_mode, backend)
+        return "wrapper"
+    return retry_mode
 
 
 def _resolve_backend_name(backend: Backend) -> str:

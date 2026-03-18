@@ -1,14 +1,16 @@
+import asyncio
 import os
 import sys
 import types
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
+from gage_eval.role.model.backends import wrap_backend
 from gage_eval.role.model.backends.litellm_backend import LiteLLMBackend
 
 
@@ -134,6 +136,30 @@ class LiteLLMBackendTests(unittest.TestCase):
         self.assertIn("moonshot", call["base_url"])
         self.assertEqual(call["api_key"], "kimi-key")
         self.assertEqual(call["custom_llm_provider"], "moonshot")
+
+    def test_wrapped_litellm_backend_preserves_native_retry_budget(self):
+        fake_litellm = _FakeLitellm(raise_error=True)
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "moonshot-v1-8k",
+                    "provider": "kimi",
+                    "api_key": "kimi-key",
+                    "retry_sleep": 0.0,
+                    "max_retries": 2,
+                }
+            )
+            wrapped = wrap_backend(backend)
+
+            result = asyncio.run(
+                wrapped.ainvoke(
+                    {"messages": [{"role": "user", "content": "hello"}], "sampling_params": {"max_new_tokens": 5}}
+                )
+            )
+
+        self.assertEqual(result["error"], "litellm failure")
+        self.assertEqual(result["backend"], "LiteLLMBackend")
+        self.assertEqual(len(fake_litellm.calls), 2)
 
     def test_azure_easy_config_fills_base_and_version(self):
         fake_litellm = _FakeLitellm()

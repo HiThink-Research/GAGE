@@ -26,6 +26,7 @@ class LiteLLMBackend(EngineBackend):
     """LiteLLM backend with provider inference and sampling normalization."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
+        self.http_retry_mode = "native"
         self.transport = "http"
         self._litellm = None
         self._supports_reasoning_fn = None

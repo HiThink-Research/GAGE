@@ -18,11 +18,15 @@ class Backend:
     """Async-friendly backend interface consumed by role adapters."""
 
     kind = "backends"
+    http_retry_mode: str = "wrapper"
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = dict(config)
         # NOTE: Execution mode: `native` means local engine, `http` means remote API.
         self.execution_mode: str = self.config.get("execution_mode", "native")
+        # NOTE: Retry ownership is explicit so native-retry backends do not get
+        # wrapped by a second retry layer at runtime.
+        self.http_retry_mode = self.config.get("http_retry_mode", getattr(self, "http_retry_mode", "wrapper"))
 
     async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:  # pragma: no cover - abstract
         raise NotImplementedError

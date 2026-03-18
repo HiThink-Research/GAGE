@@ -9,7 +9,7 @@ from loguru import logger
 
 
 class HttpRetryMixin:
-    """Adds exponential backoff retries to ``_ainvoke_backend`` implementations."""
+    """Adds bounded retries with linear backoff to ``_ainvoke_backend`` implementations."""
 
     def __init__(self, *args, http_retry_attempts: int = 3, http_retry_interval: float = 1.0, **kwargs) -> None:
         self._http_retry_attempts = max(1, int(http_retry_attempts))
