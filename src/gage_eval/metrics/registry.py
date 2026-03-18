@@ -5,41 +5,53 @@ from __future__ import annotations
 import importlib
 import threading
 from dataclasses import replace
-from typing import Callable, Dict, Type, TYPE_CHECKING
+from functools import lru_cache
+from typing import Callable, Dict, Type
+
+from loguru import logger
 
 from gage_eval.config.pipeline_config import MetricSpec
-from gage_eval.metrics.aggregators import (
-    IdentityAggregator,
-    MeanAggregator,
-    MetricAggregator,
-    WeightedMeanAggregator,
-    CategoricalCountAggregator,
-)
-# Import MME-specific aggregator from builtin module
-try:
-    from gage_eval.metrics.builtin.mme_aggregator import MMEAccPlusAggregator
-except ImportError:
-    MMEAccPlusAggregator = None
-try:
-    from gage_eval.metrics.builtin.tau2_aggregator import Tau2PassHatAggregator
-except ImportError:
-    Tau2PassHatAggregator = None
+from gage_eval.metrics.aggregators import MetricAggregator
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
 from gage_eval.registry.entry import RegistryEntry
 
-if TYPE_CHECKING:
-    from gage_eval.metrics.aggregators import (
-        IdentityAggregator,
-        MeanAggregator,
-        MetricAggregator,
-        WeightedMeanAggregator,
-        CategoricalCountAggregator,
-    )
-    from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
-
 MetricFactory = Callable[[MetricSpec], "BaseMetric"]
 AggregatorFactory = Callable[[MetricSpec], "MetricAggregator"]
+
+_OPTIONAL_BUILTIN_AGGREGATORS: tuple[tuple[str, str, str], ...] = (
+    ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator", "MMEAccPlusAggregator"),
+    ("tau2_pass_hat", "gage_eval.metrics.builtin.tau2_aggregator", "Tau2PassHatAggregator"),
+)
+
+
+@lru_cache(maxsize=None)
+def _resolve_optional_builtin_aggregator(
+    aggregation_id: str,
+    module_name: str,
+    class_name: str,
+) -> tuple[type[MetricAggregator] | None, ImportError | None]:
+    """Imports an optional builtin aggregator and caches the result."""
+
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        logger.warning(
+            "Optional metric aggregator '{}' is unavailable because '{}' failed to import: {}",
+            aggregation_id,
+            module_name,
+            exc,
+        )
+        return None, exc
+
+    aggregator_cls = getattr(module, class_name)
+    if not issubclass(aggregator_cls, MetricAggregator):
+        raise TypeError(
+            f"Optional metric aggregator '{aggregation_id}' must inherit from MetricAggregator "
+            f"(found {aggregator_cls})"
+        )
+
+    return aggregator_cls, None
 
 
 class MetricRegistry:
@@ -54,21 +66,36 @@ class MetricRegistry:
         )
 
         self._aggregators: Dict[str, AggregatorFactory] = {}
+        self._optional_aggregator_errors: Dict[str, ImportError] = {}
         self.register_aggregator("mean", lambda spec: MeanAggregator(spec))
         self.register_aggregator("weighted_mean", lambda spec: WeightedMeanAggregator(spec))
         self.register_aggregator("identity", lambda spec: IdentityAggregator(spec))
         self.register_aggregator("categorical_count", lambda spec: CategoricalCountAggregator(spec))
-        # Register MME-specific aggregator if available
-        if MMEAccPlusAggregator is not None:
-            self.register_aggregator("mme_acc_plus", lambda spec: MMEAccPlusAggregator(spec))
-        if Tau2PassHatAggregator is not None:
-            self.register_aggregator("tau2_pass_hat", lambda spec: Tau2PassHatAggregator(spec))
+        self._register_optional_builtin_aggregators()
 
     # ------------------------------------------------------------------ #
     # Registration API
     # ------------------------------------------------------------------ #
     def register_aggregator(self, agg_id: str, factory: AggregatorFactory) -> None:
         self._aggregators[agg_id] = factory
+
+    def _register_optional_builtin_aggregators(self) -> None:
+        for aggregation_id, module_name, class_name in _OPTIONAL_BUILTIN_AGGREGATORS:
+            aggregator_cls, import_error = _resolve_optional_builtin_aggregator(
+                aggregation_id,
+                module_name,
+                class_name,
+            )
+            if import_error is not None:
+                self._optional_aggregator_errors[aggregation_id] = import_error
+                continue
+
+            if aggregator_cls is None:
+                continue
+            self.register_aggregator(
+                aggregation_id,
+                lambda spec, aggregator_cls=aggregator_cls: aggregator_cls(spec),
+            )
 
     # ------------------------------------------------------------------ #
     # Build API
@@ -79,6 +106,12 @@ class MetricRegistry:
         metric = self._build_metric_impl(runtime_spec, impl_key=impl_key, entry=entry)
         aggregation_id = runtime_spec.aggregation or "mean"
         if aggregation_id not in self._aggregators:
+            import_error = self._optional_aggregator_errors.get(aggregation_id)
+            if import_error is not None:
+                raise KeyError(
+                    f"Aggregator '{aggregation_id}' not registered because its optional import "
+                    f"failed: {import_error}"
+                ) from import_error
             raise KeyError(f"Aggregator '{aggregation_id}' not registered")
         aggregator = self._aggregators[aggregation_id](runtime_spec)
         return MetricInstance(runtime_spec, metric, aggregator)
