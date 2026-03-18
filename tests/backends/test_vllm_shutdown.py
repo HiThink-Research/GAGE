@@ -90,6 +90,25 @@ class VLLMShutdownTests(unittest.TestCase):
         self.assertTrue(backend._shutdown_started)
         self.assertTrue(backend._shutdown_completed)
 
+    def test_vllm_backend_shutdown_runs_on_init_failure(self) -> None:
+        fake_loop = object()
+        fake_thread = MagicMock()
+        unregister = MagicMock()
+
+        with (
+            patch("gage_eval.role.model.backends.vllm_backend.asyncio.new_event_loop", return_value=fake_loop),
+            patch("gage_eval.role.model.backends.vllm_backend.threading.Thread", return_value=fake_thread),
+            patch("gage_eval.role.model.backends.vllm_backend.install_signal_cleanup", return_value=unregister),
+            patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown") as shutdown_mock,
+            patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend.load_model", side_effect=RuntimeError("boom")),
+            self.assertRaisesRegex(RuntimeError, "boom"),
+        ):
+            VLLMBackend({"model_path": "dummy-model"})
+
+        fake_thread.start.assert_called_once_with()
+        shutdown_mock.assert_called_once_with(fake_loop, fake_thread, None)
+        unregister.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

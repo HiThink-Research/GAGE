@@ -244,6 +244,7 @@ def build_engine_args(config: Dict[str, Any], *, output_type: str, trust_remote_
     args.num_cpu_blocks = config.get("num_cpu_blocks")
     args.forced_num_gpu_blocks = config.get("forced_num_gpu_blocks")
     args.num_gpu_blocks_override = config.get("num_gpu_blocks_override")
+    args.limit_mm_per_prompt = config.get("limit_mm_per_prompt")
     return args
 
 

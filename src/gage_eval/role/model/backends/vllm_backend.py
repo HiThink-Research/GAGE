@@ -89,6 +89,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._shutdown_lock = threading.Lock()
         self._shutdown_started = False
         self._shutdown_completed = False
+        self._cleanup_unregister = lambda: None
         if config.get("gpu_groups") is not None or config.get("auto_gpu_groups") is not None:
             raise ValueError(
                 "vllm_backend no longer supports gpu_groups/auto_gpu_groups router mode. "
@@ -112,9 +113,13 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._loop = asyncio.new_event_loop()
         self._loop_thread = threading.Thread(target=self._run_loop, name="VLLMBackendLoop", daemon=True)
         self._loop_thread.start()
+        self._cleanup_unregister = install_signal_cleanup(self.shutdown)
 
-        super().__init__(cfg)
-        install_signal_cleanup(self.shutdown)
+        try:
+            super().__init__(cfg)
+        except Exception:
+            self.shutdown()
+            raise
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -128,6 +133,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         try:
             graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
         finally:
+            self._cleanup_unregister()
             with self._shutdown_lock:
                 self._shutdown_completed = True
 
@@ -559,7 +565,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
                 runtime.engine_variant,
                 runtime.async_llm_engine_cls.__module__,
             )
-            limit_mm = self._resolve_mm_limits(cfg, args) if self._is_multimodal_config(cfg, processor) else None
+            limit_mm = self._resolve_mm_limits(config, args) if self._is_multimodal_config(cfg, processor) else None
 
             # STEP 2: Assemble the superset of engine kwargs, then filter to the installed signature.
             engine_kwargs = self._collect_engine_kwargs(model_id, args, config, limit_mm=limit_mm)
@@ -691,14 +697,17 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
 
         return False
 
-    def _resolve_mm_limits(self, cfg: Any, args: SimpleNamespace) -> Dict[str, int]:
-        """Resolve multi-modal limits; default to a very high image cap to avoid ValueError."""
+    def _resolve_mm_limits(self, config: Dict[str, Any], args: SimpleNamespace) -> Optional[Dict[str, int]]:
+        """Resolve explicit multi-modal limits or defer to the runtime defaults."""
 
-        # Prefer explicit limits from args/config
-        limit_cfg = getattr(args, "limit_mm_per_prompt", None) or getattr(cfg, "limit_mm_per_prompt", None)
+        # STEP 1: Prefer explicit limits from backend config or normalized args.
+        limit_cfg = config.get("limit_mm_per_prompt") or getattr(args, "limit_mm_per_prompt", None)
         if isinstance(limit_cfg, dict) and limit_cfg:
-            return limit_cfg
+            limits = {str(key): int(value) for key, value in limit_cfg.items()}
+            logger.info("vllm_backend using multimodal limits source=config value={}", limits)
+            return limits
 
+        # STEP 2: Fall back to environment overrides for legacy setups.
         env_image = os.environ.get("GAGE_EVAL_VLLM_IMAGE_LIMIT")
         env_audio = os.environ.get("GAGE_EVAL_VLLM_AUDIO_LIMIT")
 
@@ -707,17 +716,23 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             try:
                 limits["image"] = int(env_image)
             except ValueError:
-                pass
+                logger.warning("vllm_backend ignoring invalid GAGE_EVAL_VLLM_IMAGE_LIMIT={!r}", env_image)
         if env_audio:
             try:
                 limits["audio"] = int(env_audio)
             except ValueError:
-                pass
+                logger.warning("vllm_backend ignoring invalid GAGE_EVAL_VLLM_AUDIO_LIMIT={!r}", env_audio)
 
-        # Default: effectively unlimited images; avoids vLLM default of 1 image raising ValueError
-        if not limits:
-            limits["image"] = 1_000_000
-        return limits
+        if limits:
+            logger.info("vllm_backend using multimodal limits source=env value={}", limits)
+            return limits
+
+        # STEP 3: Defer to vLLM defaults when no explicit boundary is configured.
+        logger.info(
+            "vllm_backend using multimodal limits source=runtime_default value=<unset>; "
+            "set config.limit_mm_per_prompt to make the boundary explicit"
+        )
+        return None
 
     def _init_tokenizer(self, config: Dict[str, Any]):
         return load_hf_tokenizer(config)
