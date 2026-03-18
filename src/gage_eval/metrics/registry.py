@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import threading
+from dataclasses import replace
 from typing import Callable, Dict, Type, TYPE_CHECKING
 
 from gage_eval.config.pipeline_config import MetricSpec
@@ -25,6 +26,7 @@ except ImportError:
     Tau2PassHatAggregator = None
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
+from gage_eval.registry.entry import RegistryEntry
 
 if TYPE_CHECKING:
     from gage_eval.metrics.aggregators import (
@@ -72,23 +74,47 @@ class MetricRegistry:
     # Build API
     # ------------------------------------------------------------------ #
     def build_metric(self, spec: MetricSpec) -> "MetricInstance":
-        metric = self._build_metric_impl(spec)
-        aggregation_id = spec.aggregation or "mean"
+        impl_key, entry = self._resolve_metric_registration(spec)
+        runtime_spec = self._resolve_runtime_spec(spec, entry)
+        metric = self._build_metric_impl(runtime_spec, impl_key=impl_key, entry=entry)
+        aggregation_id = runtime_spec.aggregation or "mean"
         if aggregation_id not in self._aggregators:
             raise KeyError(f"Aggregator '{aggregation_id}' not registered")
-        aggregator = self._aggregators[aggregation_id](spec)
-        return MetricInstance(spec, metric, aggregator)
+        aggregator = self._aggregators[aggregation_id](runtime_spec)
+        return MetricInstance(runtime_spec, metric, aggregator)
 
-    def _build_metric_impl(self, spec: MetricSpec) -> BaseMetric:
+    def _resolve_metric_registration(self, spec: MetricSpec) -> tuple[str, RegistryEntry | None]:
         impl_key = spec.implementation or spec.metric_id
         if not impl_key:
             raise ValueError(f"Metric '{spec.metric_id}' must declare implementation")
         try:
+            return impl_key, registry.entry("metrics", impl_key)
+        except KeyError:
+            return impl_key, None
+
+    def _resolve_runtime_spec(self, spec: MetricSpec, entry: RegistryEntry | None) -> MetricSpec:
+        if spec.aggregation:
+            return spec
+
+        default_aggregation = None if entry is None else entry.extra.get("default_aggregation")
+        aggregation_id = str(default_aggregation) if default_aggregation else "mean"
+        return replace(spec, aggregation=aggregation_id)
+
+    def _build_metric_impl(
+        self,
+        spec: MetricSpec,
+        *,
+        impl_key: str | None = None,
+        entry: RegistryEntry | None = None,
+    ) -> BaseMetric:
+        impl_key = impl_key or spec.implementation or spec.metric_id
+        if not impl_key:
+            raise ValueError(f"Metric '{spec.metric_id}' must declare implementation")
+        if entry is not None:
             metric_cls = registry.get("metrics", impl_key)
             return metric_cls(spec)
-        except KeyError:
-            cls = self._import_metric_class(impl_key)
-            return cls(spec)
+        cls = self._import_metric_class(impl_key)
+        return cls(spec)
 
     @staticmethod
     def _import_metric_class(implementation: str) -> Type[BaseMetric]:
@@ -104,7 +130,7 @@ class MetricRegistry:
             )
         module = importlib.import_module(module_name)
         candidate = getattr(module, class_name)
-        
+
         from gage_eval.metrics.base import BaseMetric
         if not issubclass(candidate, BaseMetric):
             raise TypeError(
