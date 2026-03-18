@@ -90,6 +90,17 @@ class VLLMShutdownTests(unittest.TestCase):
         self.assertTrue(backend._shutdown_started)
         self.assertTrue(backend._shutdown_completed)
 
+    def test_vllm_backend_shutdown_unregisters_cleanup_callback(self) -> None:
+        backend = make_backend()
+        unregister = MagicMock()
+        backend._cleanup_unregister = unregister
+
+        with patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown"):
+            backend.shutdown()
+            backend.shutdown()
+
+        unregister.assert_called_once_with()
+
     def test_vllm_backend_shutdown_runs_on_init_failure(self) -> None:
         fake_loop = object()
         fake_thread = MagicMock()

@@ -130,10 +130,12 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             if self._shutdown_started or self._shutdown_completed:
                 return
             self._shutdown_started = True
+            cleanup_unregister = self._cleanup_unregister
+            self._cleanup_unregister = lambda: None
         try:
             graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
         finally:
-            self._cleanup_unregister()
+            cleanup_unregister()
             with self._shutdown_lock:
                 self._shutdown_completed = True
 
