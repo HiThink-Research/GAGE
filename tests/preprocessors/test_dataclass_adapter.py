@@ -30,6 +30,28 @@ class DataclassAdapterTests(unittest.TestCase):
         self.assertEqual(back["id"], "s1")
         self.assertEqual(back["predict_result"][0]["message"]["content"][0]["text"], "A")
 
+    def test_string_message_content_stays_as_one_fragment(self):
+        raw = {
+            "id": "s2",
+            "messages": [{"role": "user", "content": "hello world"}],
+        }
+
+        sample = sample_from_dict(raw)
+
+        self.assertEqual(len(sample.messages[0].content), 1)
+        self.assertEqual(sample.messages[0].content[0].text, "hello world")
+
+    def test_dict_message_content_is_wrapped(self):
+        raw = {
+            "id": "s3",
+            "messages": [{"role": "user", "content": {"type": "text", "text": "hello"}}],
+        }
+
+        sample = sample_from_dict(raw)
+
+        self.assertEqual(len(sample.messages[0].content), 1)
+        self.assertEqual(sample.messages[0].content[0].text, "hello")
+
 
 if __name__ == "__main__":
     unittest.main()
