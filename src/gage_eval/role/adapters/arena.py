@@ -647,6 +647,10 @@ class ArenaRoleAdapter(RoleAdapter):
                 env_kwargs["run_id"] = str(run_id)
             if sample_id:
                 env_kwargs["sample_id"] = str(sample_id)
+        if "gomoku" in str(impl).lower():
+            for key in ("obs_image",):
+                if env_cfg.get(key) is not None:
+                    env_kwargs[key] = env_cfg.get(key)
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
         if "mahjong" in str(impl).lower():

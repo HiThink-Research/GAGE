@@ -238,7 +238,8 @@ class ViZDoomArenaEnvironment:
         raw_obs = self._obs_by_player.get(idx, {})
         legal_items = list(self._legal_action_items())
         action_hint = ", ".join(str(item) for item in legal_items)
-        mapping_hint = ", ".join(f"{idx}={label}" for idx, label in ACTION_ID_MAPPING.items())
+        action_mapping = {str(key): str(value) for key, value in ACTION_ID_MAPPING.items()}
+        mapping_hint = ", ".join(f"{move_id}={label}" for move_id, label in action_mapping.items())
         view = {
             "text": f"Tick {self._tick}. Legal actions: {action_hint}\nAction mapping: {mapping_hint}",
             "vector": raw_obs,
@@ -266,13 +267,14 @@ class ViZDoomArenaEnvironment:
             "player_id": player_id,
             "player_ids": list(self._player_ids),
             "player_names": dict(self._player_names),
+            "action_mapping": dict(action_mapping),
             **extra,
         }
         prompt = self._prompt_builder.build(
             game_id=self._cfg.game_id,
             active_player=player_id,
             legal_actions=legal_items,
-            action_mapping={str(key): str(value) for key, value in ACTION_ID_MAPPING.items()},
+            action_mapping=action_mapping,
             tick=self._tick,
             step=self._tick,
             last_reward=float(self._last_rewards.get(idx, 0.0)),

@@ -15,6 +15,7 @@ from loguru import logger
 
 from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.role.arena.action_trace import attach_trace_action_applied
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.prompt_composer import ArenaPromptComposer
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
@@ -80,6 +81,7 @@ class LLMPlayer:
         self._action_history_len = self._prompt_composer.action_history_len
         self._delta_key_limit = self._prompt_composer.delta_key_limit
         self._telemetry_limit = self._prompt_composer.telemetry_limit
+        self._emit_model_io_events = self._resolve_model_io_event_emission(role_manager)
         self._debug_image_dump_dir = self._resolve_debug_image_dump_dir(
             (scheme_params or {}).get("debug_image_dump_dir")
             if isinstance(scheme_params, dict)
@@ -136,7 +138,11 @@ class LLMPlayer:
         )
 
         # STEP 1: Run the primary request.
-        raw_text = self._invoke_model(messages)
+        raw_text = self._invoke_model(
+            messages,
+            observation=observation,
+            phase="primary",
+        )
         parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
         self._log_parse_result(parse_result, phase="primary")
 
@@ -160,7 +166,11 @@ class LLMPlayer:
                 messages=retry_messages,
                 phase=f"retry_{retries + 1}",
             )
-            raw_text = self._invoke_model(retry_messages)
+            raw_text = self._invoke_model(
+                retry_messages,
+                observation=observation,
+                phase=f"retry_{retries + 1}",
+            )
             parse_result = self._parser.parse(raw_text, legal_moves=observation.legal_actions_items)
             self._log_parse_result(parse_result, phase=f"retry_{retries + 1}")
             retries += 1
@@ -181,6 +191,11 @@ class LLMPlayer:
                     parse_result.error,
                 )
                 metadata = self._build_action_metadata(parse_result, retry_count=retries)
+                metadata = attach_trace_action_applied(
+                    metadata,
+                    observation=observation,
+                    move=fallback_move,
+                )
                 metadata["error"] = parse_result.error
                 metadata["fallback"] = self._fallback_policy
                 action = ArenaAction(
@@ -193,6 +208,11 @@ class LLMPlayer:
                 return action
 
         metadata = self._build_action_metadata(parse_result, retry_count=retries)
+        metadata = attach_trace_action_applied(
+            metadata,
+            observation=observation,
+            move=parse_result.coord or "",
+        )
         if parse_result.error:
             metadata["error"] = parse_result.error
         action = ArenaAction(
@@ -282,7 +302,13 @@ class LLMPlayer:
             return
         thread.join(timeout=max(0.0, float(timeout_s)))
 
-    def _invoke_model(self, messages: Sequence[Dict[str, Any]]) -> str:
+    def _invoke_model(
+        self,
+        messages: Sequence[Dict[str, Any]],
+        *,
+        observation: ArenaObservation,
+        phase: str,
+    ) -> str:
         logger.debug(
             "LLMPlayer {} outbound messages:\n{}",
             self.name,
@@ -296,9 +322,20 @@ class LLMPlayer:
         }
         if self._trace:
             payload["trace"] = self._trace
+            self._emit_model_request_event(
+                messages=messages,
+                observation=observation,
+                phase=phase,
+            )
         with self._role_manager.borrow_role(self._adapter_id) as role:
             output = role.invoke(payload, self._trace) if role else {}
         raw_text = _extract_text(output)
+        self._emit_model_response_event(
+            output=output,
+            response_text=raw_text,
+            observation=observation,
+            phase=phase,
+        )
         logger.debug("LLMPlayer {} output={}", self.name, raw_text)
         return raw_text
 
@@ -371,6 +408,177 @@ class LLMPlayer:
         if len(url) > 180:
             return f"<image_ref:{url[:180]}...>"
         return f"<image_ref:{url}>"
+
+    def _emit_model_request_event(
+        self,
+        *,
+        messages: Sequence[Dict[str, Any]],
+        observation: ArenaObservation,
+        phase: str,
+    ) -> None:
+        """Emit one structured model-request event for arena inference."""
+
+        if self._trace is None or not self._emit_model_io_events:
+            return
+        payload = {
+            "player_id": self.name,
+            "adapter_id": self._adapter_id,
+            "scheme_id": self._scheme_id,
+            "phase": str(phase),
+            "step": self._resolve_observation_step(observation),
+            "message_count": len(messages),
+            "messages": self._serialize_messages_for_trace(messages),
+            "message_summary": self._summarize_messages_for_log(messages),
+            "legal_actions": self._normalize_legal_actions_for_trace(observation),
+        }
+        self._trace.emit("arena_model_request", payload)
+
+    def _emit_model_response_event(
+        self,
+        *,
+        output: Any,
+        response_text: str,
+        observation: ArenaObservation,
+        phase: str,
+    ) -> None:
+        """Emit one structured model-response event for arena inference."""
+
+        if self._trace is None or not self._emit_model_io_events:
+            return
+        payload = {
+            "player_id": self.name,
+            "adapter_id": self._adapter_id,
+            "scheme_id": self._scheme_id,
+            "phase": str(phase),
+            "step": self._resolve_observation_step(observation),
+            "response_text": str(response_text or ""),
+        }
+        if isinstance(output, dict):
+            payload["output_keys"] = [str(key) for key in output.keys()]
+            if output.get("latency_ms") is not None:
+                payload["latency_ms"] = output.get("latency_ms")
+            if output.get("usage") is not None:
+                payload["usage"] = self._normalize_trace_value(output.get("usage"))
+        self._trace.emit("arena_model_response", payload)
+
+    def _resolve_model_io_event_emission(self, role_manager: Any) -> bool:
+        """Return whether model I/O observability events should be emitted."""
+
+        adapter_getter = getattr(role_manager, "get_adapter", None)
+        if not callable(adapter_getter):
+            return True
+        adapter = adapter_getter(self._adapter_id)
+        backend = self._unwrap_backend_proxy(getattr(adapter, "backend", None))
+        if backend is None:
+            return True
+        backend_cls = backend.__class__
+        backend_name = str(getattr(backend_cls, "__name__", ""))
+        backend_module = str(getattr(backend_cls, "__module__", ""))
+        if backend_name == "DummyBackend":
+            return False
+        if backend_module == "gage_eval.role.model.backends.dummy_backend":
+            return False
+        return True
+
+    @staticmethod
+    def _unwrap_backend_proxy(backend: Any) -> Any:
+        """Unwrap backend proxy layers to inspect the concrete backend instance."""
+
+        current = backend
+        seen: set[int] = set()
+        while current is not None and hasattr(current, "_backend"):
+            current_id = id(current)
+            if current_id in seen:
+                break
+            seen.add(current_id)
+            current = getattr(current, "_backend", None)
+        return current
+
+    @staticmethod
+    def _serialize_messages_for_trace(messages: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        """Serialize outbound messages while stripping large binary image payloads."""
+
+        serialized: list[Dict[str, Any]] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                serialized.append({"role": "unknown", "content": str(message)})
+                continue
+            serialized.append(
+                {
+                    "role": str(message.get("role") or "unknown"),
+                    "content": LLMPlayer._serialize_message_content_for_trace(message.get("content")),
+                }
+            )
+        return serialized
+
+    @staticmethod
+    def _serialize_message_content_for_trace(content: Any) -> Any:
+        """Serialize one message content block for structured observability events."""
+
+        if isinstance(content, list):
+            fragments: list[Dict[str, Any]] = []
+            for fragment in content:
+                if isinstance(fragment, dict):
+                    fragment_type = str(fragment.get("type") or "unknown")
+                    if fragment_type == "text":
+                        fragments.append(
+                            {
+                                "type": "text",
+                                "text": "" if fragment.get("text") is None else str(fragment.get("text")),
+                            }
+                        )
+                        continue
+                    if fragment_type in {"image", "image_url"}:
+                        fragments.append(
+                            {
+                                "type": fragment_type,
+                                "image_ref": LLMPlayer._format_image_reference_for_log(fragment),
+                            }
+                        )
+                        continue
+                    fragments.append(
+                        {
+                            "type": fragment_type,
+                            "value": LLMPlayer._normalize_trace_value(fragment),
+                        }
+                    )
+                    continue
+                fragments.append({"type": "text", "text": "" if fragment is None else str(fragment)})
+            return fragments
+        return "" if content is None else str(content)
+
+    @staticmethod
+    def _normalize_trace_value(value: Any) -> Any:
+        """Convert nested values into JSON-safe event payloads."""
+
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        shape = getattr(value, "shape", None)
+        if shape is not None:
+            return {"array_shape": LLMPlayer._normalize_trace_shape(shape)}
+        if isinstance(value, dict):
+            return {str(key): LLMPlayer._normalize_trace_value(item) for key, item in value.items()}
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [LLMPlayer._normalize_trace_value(item) for item in value]
+        return str(value)
+
+    @staticmethod
+    def _normalize_trace_shape(shape: Any) -> list[int]:
+        """Convert array-like shapes into JSON-safe integer lists."""
+
+        try:
+            return [int(dim) for dim in shape]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _normalize_legal_actions_for_trace(observation: ArenaObservation) -> Dict[str, Any]:
+        """Serialize legal action payloads for model-request observability."""
+
+        legal_actions = observation.legal_actions
+        if isinstance(legal_actions, dict) and legal_actions:
+            return LLMPlayer._normalize_trace_value(dict(legal_actions))
+        return {"items": [str(item) for item in observation.legal_actions_items]}
 
     def _format_observation(self, observation: ArenaObservation) -> str:
         return self._prompt_composer.format_observation(
