@@ -5,7 +5,6 @@ ROOT = __file__.rsplit("/tests/", 1)[0] + "/src"
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-from gage_eval.metrics.base import MetricContext
 from gage_eval.metrics.choice import extract_single_choice_letter
 
 
@@ -25,7 +24,15 @@ class ChoiceTests(unittest.TestCase):
 
         ss = "The Choice is D"
         ch = extract_single_choice_letter(ss)
-        self.assertEqual(ch, "D")                  
+        self.assertEqual(ch, "D")
+
+    def test_choice_supports_custom_patterns(self):
+        ch = extract_single_choice_letter("choice 7", patterns=[r"([0-9])"])
+        self.assertEqual(ch, "7")
+
+    def test_choice_respects_case_sensitive_defaults(self):
+        ch = extract_single_choice_letter("answer: a", ignore_case=False)
+        self.assertIsNone(ch)
 
 if __name__ == "__main__":
     unittest.main()
