@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import shlex
 import sys
+import threading
 
 import pytest
 
@@ -37,6 +39,31 @@ class DummyResponse:
 
 class DummyModelBackend:
     def invoke(self, payload):
+        return {
+            "raw_response": {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "t1",
+                                    "type": "function",
+                                    "function": {"name": "run", "arguments": "{\"x\": 1}"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+
+
+class AsyncDummyModelBackend:
+    def __init__(self) -> None:
+        self.thread_id: int | None = None
+
+    async def ainvoke(self, payload):
+        self.thread_id = threading.get_ident()
         return {
             "raw_response": {
                 "choices": [
@@ -176,3 +203,29 @@ def test_model_backend_extracts_tool_calls():
     backend = ModelBackend({"backend": DummyModelBackend()})
     result = backend.invoke({"messages": []})
     assert result["tool_calls"][0]["function"]["name"] == "run"
+
+
+@pytest.mark.fast
+def test_model_backend_ainvoke_reuses_running_thread() -> None:
+    wrapped_backend = AsyncDummyModelBackend()
+    backend = ModelBackend({"backend": wrapped_backend})
+
+    async def _run() -> None:
+        caller_thread_id = threading.get_ident()
+        result = await backend.ainvoke({"messages": []})
+
+        assert result["tool_calls"][0]["function"]["name"] == "run"
+        assert wrapped_backend.thread_id == caller_thread_id
+
+    asyncio.run(_run())
+
+
+@pytest.mark.fast
+def test_model_backend_invoke_fails_fast_in_active_loop() -> None:
+    backend = ModelBackend({"backend": AsyncDummyModelBackend()})
+
+    async def _run() -> None:
+        with pytest.raises(RuntimeError, match="active event loop"):
+            backend.invoke({"messages": []})
+
+    asyncio.run(_run())

@@ -76,7 +76,7 @@ class DUTAgentAdapter(RoleAdapter):
             pre_hooks=self._pre_hooks,
             post_hooks=self._post_hooks,
         )
-        result = loop.run(
+        result = await loop.arun(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,

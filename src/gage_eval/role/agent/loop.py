@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from loguru import logger
 
+from gage_eval.registry.utils import ensure_async, run_sync
 from gage_eval.role.agent.backends.base import AgentBackend, normalize_agent_output
 from gage_eval.role.agent.hooks import AgentHookContext, AgentLoopHook, build_hook_chain
 from gage_eval.role.agent.tool_router import ToolRouter
@@ -111,7 +113,7 @@ class AgentLoop:
                     "metadata": effective_metadata,
                 }
                 start = time.perf_counter()
-                raw_output = self._backend.invoke(backend_payload)
+                raw_output = _invoke_backend_sync(self._backend, backend_payload)
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 output = normalize_agent_output(raw_output)
                 usage = output.get("usage") or usage
@@ -222,6 +224,229 @@ class AgentLoop:
                 except BaseException:
                     if main_error is None:
                         raise
+
+    async def arun(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        sandbox_config: Optional[Dict[str, Any]] = None,
+        sandbox_provider: Optional[SandboxProvider] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        sample: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Execute the agent loop asynchronously until a stop condition is reached.
+
+        Args:
+            messages: Conversation messages to seed the agent.
+            tools: Tool schema list for tool-calling models.
+            tool_choice: Optional tool selection strategy.
+            sandbox_config: Sandbox configuration for tool execution.
+            sandbox_provider: Sample-scoped SandboxProvider instance.
+            metadata: Optional metadata payload passed to the backend.
+
+        Returns:
+            Normalized agent output containing answer, agent_trace, usage, and artifacts.
+        """
+
+        agent_trace: List[Dict[str, Any]] = []
+        sandbox_handle: Optional[SandboxHandle] = None
+        tool_registry = _build_tool_registry(tools or [])
+        hook_context: Optional[AgentHookContext] = None
+        hooks_ready = False
+        main_error: Optional[BaseException] = None
+        effective_metadata = metadata or (sample.get("metadata") if isinstance(sample, dict) else {}) or {}
+        try:
+            # STEP 1: Setup sandbox and hook context
+            if sandbox_config is not None and sandbox_provider is None:
+                raise RuntimeError("sandbox_provider_missing")
+            if sandbox_provider is not None:
+                sandbox_handle = sandbox_provider.get_handle()
+            runtime_handle = sandbox_handle.runtime_handle if sandbox_handle else {}
+            hook_context = AgentHookContext(
+                sample=sample or {},
+                metadata=effective_metadata,
+                runtime_handle=runtime_handle,
+                sandbox_config=sandbox_config or {},
+            )
+            # STEP 2: Run pre-hooks before model thinking
+            _run_hook_chain(self._pre_hooks, hook_context)
+            hooks_ready = True
+            # STEP 3: Execute agent loop
+            step_index = 1
+            answer = ""
+            usage: Optional[Dict[str, Any]] = None
+            artifacts = []
+            logger.debug(
+                "AgentLoop start max_turns={} messages={} tools={}",
+                self._max_turns,
+                len(messages),
+                len(tools or []),
+            )
+            for turn in range(1, self._max_turns + 1):
+                if sandbox_handle and hasattr(sandbox_handle.sandbox, "is_alive"):
+                    if not sandbox_handle.sandbox.is_alive():
+                        raise RuntimeError("sandbox_crashed")
+                logger.debug(
+                    "AgentLoop turn {} begin messages={} tools={}",
+                    turn,
+                    len(messages),
+                    len(tools or []),
+                )
+                backend_payload = {
+                    "messages": messages,
+                    "tools": tools or [],
+                    "tool_choice": tool_choice,
+                    "turn_index": turn,
+                    "runtime_handle": runtime_handle,
+                    "metadata": effective_metadata,
+                }
+                start = time.perf_counter()
+                raw_output = await _invoke_backend_async(self._backend, backend_payload)
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                output = normalize_agent_output(raw_output)
+                usage = output.get("usage") or usage
+                artifacts = output.get("artifacts") or artifacts
+                tool_calls = _extract_tool_calls(output)
+                if tool_calls:
+                    logger.info(
+                        "AgentLoop turn {} tool_calls={} names={}",
+                        turn,
+                        len(tool_calls),
+                        [_tool_call_name(call) for call in tool_calls],
+                    )
+                    messages.append(_build_tool_call_message(output, tool_calls))
+                    stop_after_tool = False
+                    for tool_call in tool_calls:
+                        tool_result = self._tool_router.execute(
+                            tool_call,
+                            sandbox_handle.sandbox if sandbox_handle else None,
+                            tool_registry=tool_registry,
+                        )
+                        tool_name = tool_result.get("name") or _tool_call_name(tool_call)
+                        trace_step = _build_trace_step(
+                            step_index,
+                            trace_role="tool",
+                            name=tool_name,
+                            input_payload=tool_result.get("input"),
+                            output_payload=tool_result.get("output"),
+                            status=tool_result.get("status"),
+                            latency_ms=tool_result.get("latency_ms"),
+                            turn_index=turn,
+                        )
+                        resolved_tool = tool_result.get("resolved_tool")
+                        if resolved_tool:
+                            trace_step["resolved_tool"] = resolved_tool
+                        agent_trace.append(trace_step)
+                        resolved_tool = tool_result.get("resolved_tool")
+                        if resolved_tool:
+                            logger.info(
+                                "AgentLoop tool {} resolved={} status={}",
+                                tool_result.get("name"),
+                                resolved_tool,
+                                tool_result.get("status"),
+                            )
+                        else:
+                            logger.debug(
+                                "AgentLoop tool {} status={}",
+                                tool_result.get("name"),
+                                tool_result.get("status"),
+                            )
+                        step_index += 1
+                        messages.append(_build_tool_message(tool_call, tool_result.get("output")))
+                        final_answer = _resolve_tool_final_answer(tool_result)
+                        if final_answer:
+                            answer = final_answer
+                            trace_output = {"answer": answer, "final_from_tool": tool_name}
+                            agent_trace.append(
+                                _build_trace_step(
+                                    step_index,
+                                    trace_role="assistant",
+                                    name="agent_response",
+                                    input_payload=None,
+                                    output_payload=trace_output,
+                                    status="success",
+                                    latency_ms=0.0,
+                                    usage=usage,
+                                    turn_index=turn,
+                                )
+                            )
+                            step_index += 1
+                            stop_after_tool = True
+                            break
+                    if stop_after_tool:
+                        break
+                    continue
+                answer = output.get("answer") or ""
+                logger.info("AgentLoop turn {} completed answer_len={}", turn, len(answer))
+                trace_output = _build_agent_output_payload(output, answer)
+                agent_trace.append(
+                    _build_trace_step(
+                        step_index,
+                        trace_role="assistant",
+                        name="agent_response",
+                        input_payload=None,
+                        output_payload=trace_output,
+                        status=_resolve_trace_status(output),
+                        latency_ms=elapsed_ms,
+                        usage=usage,
+                        turn_index=turn,
+                    )
+                )
+                break
+            # STEP 4: Return loop output
+            return {
+                "answer": answer,
+                "agent_trace": agent_trace,
+                "usage": usage,
+                "artifacts": artifacts,
+            }
+        except BaseException as exc:
+            main_error = exc
+            raise
+        finally:
+            # STEP 5: Run post-hooks before finalizing the loop
+            if hooks_ready and hook_context is not None:
+                post_context = hook_context.with_agent_trace(agent_trace)
+                try:
+                    _run_hook_chain(self._post_hooks, post_context)
+                except BaseException:
+                    if main_error is None:
+                        raise
+
+
+def _invoke_backend_sync(backend: Any, payload: Dict[str, Any]) -> Any:
+    backend_call = getattr(backend, "invoke", None)
+    if callable(backend_call):
+        return backend_call(payload)
+    if callable(backend):
+        return backend(payload)
+    async_backend_call = getattr(backend, "ainvoke", None)
+    if callable(async_backend_call):
+        _raise_if_active_event_loop()
+        return run_sync(async_backend_call(payload))
+    raise RuntimeError("agent_backend_missing_invoke")
+
+
+async def _invoke_backend_async(backend: Any, payload: Dict[str, Any]) -> Any:
+    async_backend_call = getattr(backend, "ainvoke", None)
+    if callable(async_backend_call):
+        return await async_backend_call(payload)
+    backend_call = getattr(backend, "invoke", None)
+    if callable(backend_call):
+        return await ensure_async(backend_call)(payload)
+    if callable(backend):
+        return await ensure_async(backend)(payload)
+    raise RuntimeError("agent_backend_missing_invoke")
+
+
+def _raise_if_active_event_loop() -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError("run_sync() cannot be used inside an active event loop")
 
 
 def _extract_tool_calls(output: Dict[str, Any]) -> List[Dict[str, Any]]:
