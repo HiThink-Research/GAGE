@@ -36,6 +36,7 @@ class LiteLLMBackend(EngineBackend):
     # Engine interface                                                   #
     # ------------------------------------------------------------------ #
     def load_model(self, config_dict: Dict[str, Any]):
+        # STEP 1: Resolve provider-specific routing, credentials, and sampling defaults.
         self._cfg = LiteLLMBackendConfig(**config_dict)
         self._tool_choice_default = config_dict.get("tool_choice")
         self.model_name = self._cfg.model
@@ -92,16 +93,11 @@ class LiteLLMBackend(EngineBackend):
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("liteLLM is not installed") from exc
 
+        # STEP 2: Initialize LiteLLM module behavior without mutating credential globals.
         self._litellm = litellm
         self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
         litellm.drop_params = True
         litellm.verbose = bool(self._cfg.verbose)
-        if self.api_key:
-            litellm.api_key = self.api_key
-        if self.api_base:
-            litellm.api_base = self.api_base
-        if self.headers:
-            litellm.headers = self.headers
         return None
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -140,6 +136,7 @@ class LiteLLMBackend(EngineBackend):
     # LiteLLM call path                                                 #
     # ------------------------------------------------------------------ #
     def _generate_litellm(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        # STEP 1: Build isolated request kwargs and execute the LiteLLM call path.
         kwargs, _ = self._build_litellm_kwargs(inputs)
         stream = kwargs.pop("stream", False)
         start = time.time()
@@ -148,6 +145,8 @@ class LiteLLMBackend(EngineBackend):
             return self._litellm.completion(stream=stream, **kwargs)
 
         completion = self._call_with_retries(_call)
+
+        # STEP 2: Normalize the response for downstream consumers and safe diagnostics.
         if stream:
             answer, raw_response = self._collect_stream(completion)
         else:
@@ -160,7 +159,19 @@ class LiteLLMBackend(EngineBackend):
             if hasattr(usage, "model_dump"):
                 result["usage"] = usage.model_dump()
         result.setdefault("latency_ms", (time.time() - start) * 1000)
-        logger.info("LiteLLM response json: {}", self._format_response_json(raw_response))
+        logger.info(
+            "LiteLLM response summary: {}",
+            self._format_response_json(
+                self._build_response_log_summary(
+                    raw_response,
+                    answer=answer,
+                    usage=result.get("usage"),
+                    stream=stream,
+                    request_model=kwargs.get("model"),
+                    latency_ms=result.get("latency_ms"),
+                )
+            ),
+        )
         return result
 
     def _build_litellm_kwargs(self, inputs: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -186,7 +197,7 @@ class LiteLLMBackend(EngineBackend):
             if self._azure_api_version:
                 kwargs["api_version"] = self._azure_api_version
         if self.headers:
-            kwargs["headers"] = self.headers
+            kwargs["headers"] = dict(self.headers)
         tool_defs = inputs.get("tools")
         if tool_defs:
             formatted_tools = self._format_tools(tool_defs)
@@ -553,6 +564,105 @@ class LiteLLMBackend(EngineBackend):
             return str(obj)
         except Exception:  # pragma: no cover - defensive
             return str(obj)
+
+    @staticmethod
+    def _build_response_log_summary(
+        raw_response: Any,
+        *,
+        answer: str,
+        usage: Optional[Dict[str, Any]],
+        stream: bool,
+        request_model: Optional[str],
+        latency_ms: Optional[float],
+    ) -> Dict[str, Any]:
+        """Builds a non-sensitive response summary for logs.
+
+        Args:
+            raw_response: JSON-safe LiteLLM response payload.
+            answer: Extracted answer text returned to callers.
+            usage: Usage payload captured from the completion object.
+            stream: Whether the request used streaming mode.
+            request_model: Model name sent to LiteLLM for this request.
+            latency_ms: End-to-end request latency in milliseconds.
+
+        Returns:
+            A compact summary that excludes response content and tool payloads.
+        """
+
+        summary: Dict[str, Any] = {
+            "stream": stream,
+            "request_model": request_model,
+            "latency_ms": round(float(latency_ms), 3) if latency_ms is not None else None,
+            "answer_chars": len(answer or ""),
+            "response_type": type(raw_response).__name__,
+        }
+
+        if isinstance(raw_response, dict):
+            choices = raw_response.get("choices") or []
+            first_choice = choices[0] if choices else {}
+            summary.update(
+                {
+                    "response_model": raw_response.get("model"),
+                    "response_object": raw_response.get("object"),
+                    "choice_count": len(choices),
+                    "finish_reason": LiteLLMBackend._extract_finish_reason(first_choice),
+                    "has_tool_calls": LiteLLMBackend._choice_has_tool_calls(first_choice),
+                }
+            )
+        elif isinstance(raw_response, list):
+            first_chunk = next((chunk for chunk in raw_response if isinstance(chunk, dict)), {})
+            finish_choice = LiteLLMBackend._find_stream_finish_choice(raw_response)
+            summary.update(
+                {
+                    "response_object": first_chunk.get("object"),
+                    "response_model": first_chunk.get("model") or request_model,
+                    "chunk_count": len(raw_response),
+                    "finish_reason": LiteLLMBackend._extract_finish_reason(finish_choice),
+                    "has_tool_calls": LiteLLMBackend._choice_has_tool_calls(finish_choice),
+                }
+            )
+
+        resolved_usage = usage
+        if resolved_usage is None and isinstance(raw_response, dict):
+            resolved_usage = raw_response.get("usage")
+        if resolved_usage:
+            summary["usage"] = LiteLLMBackend._to_jsonable(resolved_usage)
+
+        return {key: value for key, value in summary.items() if value is not None}
+
+    @staticmethod
+    def _find_stream_finish_choice(raw_response: List[Any]) -> Dict[str, Any]:
+        """Returns the most informative stream choice for logging metadata."""
+
+        for chunk in reversed(raw_response):
+            if not isinstance(chunk, dict):
+                continue
+            choices = chunk.get("choices") or []
+            if choices:
+                return choices[0]
+        return {}
+
+    @staticmethod
+    def _extract_finish_reason(choice: Any) -> Optional[str]:
+        """Extracts finish_reason from a choice payload without touching content."""
+
+        if isinstance(choice, dict):
+            finish_reason = choice.get("finish_reason")
+            if finish_reason is not None:
+                return str(finish_reason)
+        return None
+
+    @staticmethod
+    def _choice_has_tool_calls(choice: Any) -> bool:
+        """Returns whether the choice contains tool-call metadata."""
+
+        if not isinstance(choice, dict):
+            return False
+        message = choice.get("message") or choice.get("delta") or {}
+        if not isinstance(message, dict):
+            return False
+        tool_calls = message.get("tool_calls")
+        return bool(tool_calls)
 
     @staticmethod
     def _format_response_json(raw_response: Any) -> str:

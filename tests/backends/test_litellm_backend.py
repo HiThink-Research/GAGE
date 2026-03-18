@@ -13,10 +13,11 @@ from gage_eval.role.model.backends.litellm_backend import LiteLLMBackend
 
 
 class _FakeLitellm(types.SimpleNamespace):
-    def __init__(self, *, raise_error: bool = False):
+    def __init__(self, *, raise_error: bool = False, response: object | None = None):
         super().__init__()
         self.calls = []
         self.raise_error = raise_error
+        self.response = response or {"choices": [{"message": {"content": "pong-lite"}}]}
         self.drop_params = False
         self.verbose = False
         self.api_key = None
@@ -27,13 +28,48 @@ class _FakeLitellm(types.SimpleNamespace):
         self.calls.append(kwargs)
         if self.raise_error:
             raise RuntimeError("litellm failure")
-        return {"choices": [{"message": {"content": "pong-lite"}}]}
+        return self.response
 
     def supports_reasoning(self, _model):
         return False
 
 
 class LiteLLMBackendTests(unittest.TestCase):
+    def test_credentials_are_scoped_to_each_request_not_litellm_globals(self):
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend_a = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "api_key": "key-a",
+                    "api_base": "https://api-a.example/v1",
+                    "extra_headers": {"Authorization": "Bearer alpha"},
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            backend_b = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "api_key": "key-b",
+                    "api_base": "https://api-b.example/v1",
+                    "extra_headers": {"Authorization": "Bearer beta"},
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+
+            backend_a.generate({"messages": [{"role": "user", "content": "ping-a"}]})
+            backend_b.generate({"messages": [{"role": "user", "content": "ping-b"}]})
+
+        self.assertIsNone(fake_litellm.api_key)
+        self.assertIsNone(fake_litellm.api_base)
+        self.assertIsNone(fake_litellm.headers)
+        self.assertEqual(fake_litellm.calls[0]["api_key"], "key-a")
+        self.assertEqual(fake_litellm.calls[0]["api_base"], "https://api-a.example/v1")
+        self.assertEqual(fake_litellm.calls[0]["headers"]["Authorization"], "Bearer alpha")
+        self.assertEqual(fake_litellm.calls[1]["api_key"], "key-b")
+        self.assertEqual(fake_litellm.calls[1]["api_base"], "https://api-b.example/v1")
+        self.assertEqual(fake_litellm.calls[1]["headers"]["Authorization"], "Bearer beta")
+
     def test_litellm_backend_merges_sampling_and_headers(self):
         fake_litellm = _FakeLitellm()
         with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
@@ -292,6 +328,43 @@ class LiteLLMBackendTests(unittest.TestCase):
         call = fake_litellm.calls[0]
         self.assertNotIn("enable_thinking", call)
         self.assertNotIn("reasoning_effort", call)
+
+    def test_response_logging_uses_safe_summary_without_answer_content(self):
+        fake_litellm = _FakeLitellm(
+            response={
+                "id": "resp-1",
+                "object": "chat.completion",
+                "model": "gpt-4o-mini",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": "super-secret-answer",
+                            "tool_calls": [{"id": "tool-1"}],
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+            }
+        )
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            with mock.patch("gage_eval.role.model.backends.litellm_backend.logger.info") as mock_logger_info:
+                result = backend.generate({"messages": [{"role": "user", "content": "ping"}]})
+
+        self.assertEqual(result["answer"], "super-secret-answer")
+        message, payload = mock_logger_info.call_args_list[-1].args
+        self.assertEqual(message, "LiteLLM response summary: {}")
+        self.assertNotIn("super-secret-answer", payload)
+        self.assertNotIn("tool-1", payload)
+        self.assertIn("\"answer_chars\": 19", payload)
+        self.assertIn("\"has_tool_calls\": true", payload)
+        self.assertIn("\"finish_reason\": \"stop\"", payload)
 
 
 if __name__ == "__main__":
