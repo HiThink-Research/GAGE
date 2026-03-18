@@ -30,6 +30,7 @@ class SandboxHandle:
     config: Dict[str, Any]
     runtime_handle: Dict[str, Any]
     pool_key: Optional[str] = None
+    pool: Optional[SandboxPool] = None
 
 
 class SandboxManager:
@@ -48,11 +49,13 @@ class SandboxManager:
             "tau2": Tau2Runtime,
         }
         self._pools: Dict[str, SandboxPool] = {}
+        self._pools_lock = threading.Lock()
         self._active: Dict[int, BaseSandbox] = {}
         self._active_lock = threading.Lock()
         self._lease_registry = SandboxLeaseRegistry()
         self._startup_cleanup_done = False
         self._startup_cleanup_lock = threading.Lock()
+        self._shutdown = False
 
     def register_runtime(self, runtime: str, runtime_cls: Type[BaseSandbox]) -> None:
         self._runtime_registry[runtime] = runtime_cls
@@ -94,23 +97,23 @@ class SandboxManager:
         try:
             pool = None
             if pool_key:
-                pool = self._pools.setdefault(
-                    pool_key,
-                    SandboxPool(
-                        builder=lambda: self._build_tracked_sandbox(
-                            runtime_cls=runtime_cls,
-                            runtime=str(runtime),
-                            config=effective,
-                            pool_key=pool_key,
-                            trace=trace,
-                            run_id=run_id,
-                            task_id=task_id,
-                            sample_id=None,
-                        ),
-                        max_size=effective.get("pool_max") or effective.get("pool_size"),
-                        max_uses=effective.get("max_container_uses"),
+                pool = self._get_or_create_pool(
+                    pool_key=pool_key,
+                    builder=lambda: self._build_tracked_sandbox(
+                        runtime_cls=runtime_cls,
+                        runtime=str(runtime),
+                        config=effective,
+                        pool_key=pool_key,
+                        trace=trace,
+                        run_id=run_id,
+                        task_id=task_id,
+                        sample_id=None,
                     ),
+                    max_size=effective.get("pool_max") or effective.get("pool_size"),
+                    max_uses=effective.get("max_container_uses"),
                 )
+            else:
+                self._ensure_not_shutdown()
             sandbox = (
                 pool.acquire()
                 if pool
@@ -150,25 +153,60 @@ class SandboxManager:
             )
             _inject_runtime_handle(success, runtime_handle)
             trace.emit("sandbox_acquire_end", success, sample_id=sample_id)
-        return SandboxHandle(sandbox=sandbox, config=effective, runtime_handle=runtime_handle, pool_key=pool_key)
+        return SandboxHandle(
+            sandbox=sandbox,
+            config=effective,
+            runtime_handle=runtime_handle,
+            pool_key=pool_key,
+            pool=pool,
+        )
 
     def release(self, handle: SandboxHandle) -> None:
-        if handle.pool_key and handle.pool_key in self._pools:
-            self._pools[handle.pool_key].release(handle.sandbox)
+        if handle.pool is not None:
+            handle.pool.release(handle.sandbox)
             return
         self._unregister_active(handle.sandbox)
         handle.sandbox.teardown()
 
     def shutdown(self) -> None:
-        for pool in self._pools.values():
+        with self._pools_lock:
+            self._shutdown = True
+            pools = list(self._pools.values())
+            self._pools.clear()
+        for pool in pools:
             pool.shutdown()
-        self._pools.clear()
         active = self._drain_active()
         for sandbox in active:
             try:
                 sandbox.teardown()
             except Exception:
                 pass
+
+    def _get_or_create_pool(
+        self,
+        *,
+        pool_key: str,
+        builder: Callable[[], BaseSandbox],
+        max_size: Optional[int],
+        max_uses: Optional[int],
+    ) -> SandboxPool:
+        with self._pools_lock:
+            if self._shutdown:
+                raise RuntimeError("SandboxManager is shut down")
+            pool = self._pools.get(pool_key)
+            if pool is None:
+                pool = SandboxPool(
+                    builder=builder,
+                    max_size=max_size,
+                    max_uses=max_uses,
+                )
+                self._pools[pool_key] = pool
+            return pool
+
+    def _ensure_not_shutdown(self) -> None:
+        with self._pools_lock:
+            if self._shutdown:
+                raise RuntimeError("SandboxManager is shut down")
 
     def _ensure_startup_cleanup(self, trace: Optional[ObservabilityTrace]) -> None:
         if self._startup_cleanup_done:
