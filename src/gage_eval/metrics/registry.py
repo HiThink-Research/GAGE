@@ -149,8 +149,10 @@ class MetricInstance:
         self._lock = threading.Lock()
 
     def evaluate(self, context: MetricContext) -> MetricResult:
-        result = self.metric.compute(context)
         with self._lock:
+            # Metric implementations may keep mutable runtime state in `setup()`;
+            # compute and aggregation therefore need a single critical section.
+            result = self.metric.compute(context)
             self.aggregator.add(result)
         return result
 
