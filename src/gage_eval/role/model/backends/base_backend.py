@@ -36,6 +36,35 @@ class Backend:
         return self.invoke(payload)
 
 
+def build_backend_error_result(
+    exc: Exception,
+    *,
+    backend_name: str,
+    status: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Builds a normalized backend error payload from an exception.
+
+    Args:
+        exc: Original exception raised by the backend.
+        backend_name: Human-readable backend name for diagnostics.
+        status: Optional explicit status code override.
+
+    Returns:
+        A normalized backend error payload consumed by role adapters and steps.
+    """
+
+    resolved_status = status if status is not None else getattr(exc, "status_code", None)
+    if resolved_status is None:
+        response = getattr(exc, "response", None)
+        resolved_status = getattr(response, "status_code", None)
+    return {
+        "error": str(exc),
+        "status": resolved_status,
+        "error_type": type(exc).__name__,
+        "backend": backend_name,
+    }
+
+
 class EngineBackend(Backend):
     """Base class mirroring the llm-eval EngineBackend contract.
 
