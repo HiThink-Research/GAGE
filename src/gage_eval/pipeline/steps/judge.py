@@ -7,6 +7,7 @@ from typing import Optional
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.pipeline.steps._backend_error import raise_for_backend_error
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 
@@ -28,6 +29,13 @@ class JudgeStep(SampleStep):
         logger.debug("Judge step started adapter_id={}", self._adapter_id)
         with role_manager.borrow_role(self._adapter_id) as role:
             result = role.invoke(payload, trace) if role else {}
+        raise_for_backend_error(
+            event_prefix="judge",
+            step_label="Judge step",
+            adapter_id=self._adapter_id,
+            output=result,
+            trace=trace,
+        )
         trace.emit("judge_end", payload={"adapter_id": self._adapter_id})
         logger.debug("Judge step finished adapter_id={}", self._adapter_id)
         return result
