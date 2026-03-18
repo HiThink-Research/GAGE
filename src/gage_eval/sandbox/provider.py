@@ -60,7 +60,13 @@ class SandboxProvider:
                 "sandbox_provider_cache_miss",
                 _build_provider_payload(config, self._scope, pool_key),
             )
-            self._handle = self._manager.acquire(config, trace=self._trace, sample_id=self._scope.sample_id)
+            self._handle = self._manager.acquire(
+                config,
+                trace=self._trace,
+                run_id=self._scope.run_id,
+                task_id=self._scope.task_id,
+                sample_id=self._scope.sample_id,
+            )
         else:
             self._emit_event(
                 "sandbox_provider_cache_hit",

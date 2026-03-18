@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import threading
 import time
-from typing import Any, Dict, Optional, Type
+from typing import Any, Callable, Dict, Optional, Type
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.sandbox.aio_runtime import AioSandbox
 from gage_eval.sandbox.appworld_runtime import AppWorldRuntime
 from gage_eval.sandbox.base import BaseSandbox
 from gage_eval.sandbox.docker_runtime import DockerSandbox
+from gage_eval.sandbox.lease_registry import SandboxLease, SandboxLeaseRegistry
 from gage_eval.sandbox.llm_runtime import LlmSandbox
 from gage_eval.sandbox.local_runtime import LocalSubprocessSandbox
 from gage_eval.sandbox.opensandbox_runtime import OpenSandbox
@@ -48,6 +50,9 @@ class SandboxManager:
         self._pools: Dict[str, SandboxPool] = {}
         self._active: Dict[int, BaseSandbox] = {}
         self._active_lock = threading.Lock()
+        self._lease_registry = SandboxLeaseRegistry()
+        self._startup_cleanup_done = False
+        self._startup_cleanup_lock = threading.Lock()
 
     def register_runtime(self, runtime: str, runtime_cls: Type[BaseSandbox]) -> None:
         self._runtime_registry[runtime] = runtime_cls
@@ -68,8 +73,11 @@ class SandboxManager:
         config: Dict[str, Any],
         *,
         trace: Optional[ObservabilityTrace] = None,
+        run_id: Optional[str] = None,
+        task_id: Optional[str] = None,
         sample_id: Optional[str] = None,
     ) -> SandboxHandle:
+        self._ensure_startup_cleanup(trace)
         effective = dict(config or {})
         runtime = effective.get("runtime") or effective.get("backend") or "docker"
         runtime_cls = self._runtime_registry.get(runtime)
@@ -89,12 +97,34 @@ class SandboxManager:
                 pool = self._pools.setdefault(
                     pool_key,
                     SandboxPool(
-                        builder=lambda: self._build_sandbox(runtime_cls, effective, trace, sample_id),
+                        builder=lambda: self._build_tracked_sandbox(
+                            runtime_cls=runtime_cls,
+                            runtime=str(runtime),
+                            config=effective,
+                            pool_key=pool_key,
+                            trace=trace,
+                            run_id=run_id,
+                            task_id=task_id,
+                            sample_id=None,
+                        ),
                         max_size=effective.get("pool_max") or effective.get("pool_size"),
                         max_uses=effective.get("max_container_uses"),
                     ),
                 )
-            sandbox = pool.acquire() if pool else self._build_sandbox(runtime_cls, effective, trace, sample_id)
+            sandbox = (
+                pool.acquire()
+                if pool
+                else self._build_tracked_sandbox(
+                    runtime_cls=runtime_cls,
+                    runtime=str(runtime),
+                    config=effective,
+                    pool_key=pool_key,
+                    trace=trace,
+                    run_id=run_id,
+                    task_id=task_id,
+                    sample_id=sample_id,
+                )
+            )
             if not pool:
                 self._register_active(sandbox)
             runtime_handle = getattr(sandbox, "_runtime_handle", {}) or {}
@@ -139,6 +169,123 @@ class SandboxManager:
                 sandbox.teardown()
             except Exception:
                 pass
+
+    def _ensure_startup_cleanup(self, trace: Optional[ObservabilityTrace]) -> None:
+        if self._startup_cleanup_done:
+            return
+        with self._startup_cleanup_lock:
+            if self._startup_cleanup_done:
+                return
+            leases = list(self._lease_registry.iter_leases())
+            if trace:
+                trace.emit("sandbox_stale_cleanup_scan", {"lease_count": len(leases)})
+            for lease in leases:
+                if not self._lease_registry.is_stale(lease):
+                    continue
+                self._cleanup_stale_lease(lease, trace)
+            self._startup_cleanup_done = True
+
+    def _cleanup_stale_lease(
+        self,
+        lease: SandboxLease,
+        trace: Optional[ObservabilityTrace],
+    ) -> None:
+        payload = _build_stale_cleanup_payload(lease)
+        if trace:
+            trace.emit("sandbox_stale_cleanup_start", payload)
+        runtime_cls = self._runtime_registry.get(lease.runtime)
+        if runtime_cls is None:
+            if trace:
+                failed = dict(payload)
+                failed.update({"status": "failed", "error": f"unknown_runtime:{lease.runtime}"})
+                trace.emit("sandbox_stale_cleanup_end", failed)
+            return
+        start = time.perf_counter()
+        try:
+            cleaned = runtime_cls.cleanup_stale_runtime(lease.config, lease.runtime_handle)
+        except Exception as exc:
+            if trace:
+                failed = dict(payload)
+                failed.update(
+                    {
+                        "status": "failed",
+                        "error": str(exc),
+                        "latency_ms": (time.perf_counter() - start) * 1000.0,
+                    }
+                )
+                trace.emit("sandbox_stale_cleanup_end", failed)
+            return
+        if cleaned:
+            self._lease_registry.release(lease.lease_id)
+        if trace:
+            finished = dict(payload)
+            finished.update(
+                {
+                    "status": "success" if cleaned else "skipped",
+                    "latency_ms": (time.perf_counter() - start) * 1000.0,
+                }
+            )
+            trace.emit("sandbox_stale_cleanup_end", finished)
+
+    def _build_tracked_sandbox(
+        self,
+        *,
+        runtime_cls: Type[BaseSandbox],
+        runtime: str,
+        config: Dict[str, Any],
+        pool_key: Optional[str],
+        trace: Optional[ObservabilityTrace],
+        run_id: Optional[str],
+        task_id: Optional[str],
+        sample_id: Optional[str],
+    ) -> BaseSandbox:
+        # STEP 1: Attach management metadata before the runtime starts.
+        tracked_config = _with_management_metadata(
+            config,
+            runtime=runtime,
+            pool_key=pool_key,
+            run_id=run_id,
+            task_id=task_id,
+            sample_id=sample_id,
+        )
+        sandbox = self._build_sandbox(runtime_cls, tracked_config, trace, sample_id)
+
+        # STEP 2: Install teardown tracking so leases survive pool release but disappear on teardown.
+        self._install_teardown_tracking(sandbox)
+
+        # STEP 3: Persist a lease for crash-time orphan recovery.
+        runtime_handle = getattr(sandbox, "_runtime_handle", {}) or {}
+        try:
+            lease = self._lease_registry.register(
+                runtime=runtime,
+                sandbox_id=_resolve_sandbox_id(tracked_config),
+                pool_key=pool_key,
+                run_id=run_id,
+                task_id=task_id,
+                sample_id=sample_id,
+                config=tracked_config,
+                runtime_handle=runtime_handle,
+            )
+        except Exception:
+            sandbox.teardown()
+            raise
+        setattr(sandbox, "_gage_lease_id", lease.lease_id)
+        return sandbox
+
+    def _install_teardown_tracking(self, sandbox: BaseSandbox) -> None:
+        if getattr(sandbox, "_gage_teardown_tracking", False):
+            return
+        original_teardown: Callable[[], None] = sandbox.teardown
+
+        def tracked_teardown() -> None:
+            original_teardown()
+            lease_id = getattr(sandbox, "_gage_lease_id", None)
+            if lease_id:
+                self._lease_registry.release(str(lease_id))
+                setattr(sandbox, "_gage_lease_id", None)
+
+        setattr(sandbox, "teardown", tracked_teardown)
+        setattr(sandbox, "_gage_teardown_tracking", True)
 
     @staticmethod
     def _build_sandbox(
@@ -210,12 +357,50 @@ def _build_acquire_payload(
     return payload
 
 
+def _resolve_sandbox_id(config: Dict[str, Any]) -> Optional[str]:
+    sandbox_id = config.get("sandbox_id") or config.get("template_name")
+    if sandbox_id:
+        return str(sandbox_id)
+    return None
+
+
+def _with_management_metadata(
+    config: Dict[str, Any],
+    *,
+    runtime: str,
+    pool_key: Optional[str],
+    run_id: Optional[str],
+    task_id: Optional[str],
+    sample_id: Optional[str],
+) -> Dict[str, Any]:
+    copied = dict(config or {})
+    metadata = {
+        "managed": True,
+        "runtime": str(runtime),
+        "owner_pid": os.getpid(),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    sandbox_id = _resolve_sandbox_id(copied)
+    if sandbox_id:
+        metadata["sandbox_id"] = sandbox_id
+    if pool_key:
+        metadata["pool_key"] = str(pool_key)
+    if run_id:
+        metadata["run_id"] = str(run_id)
+    if task_id:
+        metadata["task_id"] = str(task_id)
+    if sample_id:
+        metadata["sample_id"] = str(sample_id)
+    copied["_gage_managed_metadata"] = metadata
+    return copied
+
+
 def _build_runtime_payload(config: Dict[str, Any]) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
     runtime = config.get("runtime") or config.get("backend")
     if runtime:
         payload["runtime"] = runtime
-    sandbox_id = config.get("sandbox_id") or config.get("template_name")
+    sandbox_id = _resolve_sandbox_id(config)
     if sandbox_id:
         payload["sandbox_id"] = sandbox_id
     return payload
@@ -232,3 +417,24 @@ def _inject_runtime_handle(payload: Dict[str, Any], runtime_handle: Dict[str, An
         value = runtime_handle.get(key)
         if value:
             payload[key] = value
+
+
+def _build_stale_cleanup_payload(lease: SandboxLease) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "lease_id": lease.lease_id,
+        "runtime": lease.runtime,
+        "owner_pid": lease.owner_pid,
+        "owner_host": lease.owner_host,
+    }
+    if lease.sandbox_id:
+        payload["sandbox_id"] = lease.sandbox_id
+    if lease.pool_key:
+        payload["pool_key"] = lease.pool_key
+    if lease.run_id:
+        payload["run_id"] = lease.run_id
+    if lease.task_id:
+        payload["task_id"] = lease.task_id
+    if lease.sample_id:
+        payload["sample_id"] = lease.sample_id
+    _inject_runtime_handle(payload, lease.runtime_handle)
+    return payload
