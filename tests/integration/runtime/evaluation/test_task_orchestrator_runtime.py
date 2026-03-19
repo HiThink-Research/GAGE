@@ -1,4 +1,8 @@
+import json
 from pathlib import Path
+
+import pytest
+from loguru import logger
 
 from gage_eval.config.pipeline_config import (
     CustomPipelineStep,
@@ -9,6 +13,7 @@ from gage_eval.config.pipeline_config import (
 )
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.runtime_builder import TaskOrchestratorRuntime, _prepare_task_entries, _record_config_metadata
+from gage_eval.observability.config import ObservabilityConfig, get_observability_config, set_observability_config
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.reporting.recorders import InMemoryRecorder, RecorderBase, ResilientRecorder, TraceEvent
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
@@ -17,6 +22,16 @@ from gage_eval.assets.datasets.manager import DataManager, DataSource
 from gage_eval.pipeline.steps.report import ReportStep
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.task_plan import build_task_plan_specs
+
+
+@pytest.fixture(autouse=True)
+def _enable_observability():
+    original = get_observability_config()
+    set_observability_config(ObservabilityConfig(enabled=True))
+    try:
+        yield
+    finally:
+        set_observability_config(original)
 
 
 class _EchoRole:
@@ -35,7 +50,27 @@ class _EchoRole:
         return {"answer": msg, "message": {"role": "assistant", "content": [{"type": "text", "text": msg}]}}
 
 
-def _make_runtime(tmp_path: Path, sample_count: int = 4, trace: ObservabilityTrace | None = None):
+class _LoggingRole(_EchoRole):
+    def invoke(self, payload, state=None):
+        sample = payload.get("sample", {})
+        logger.bind(stage="runtime_test_log").info("logging-role invoked sample={}", sample.get("id"))
+        return super().invoke(payload, state=state)
+
+
+class _FailingRole(_EchoRole):
+    def invoke(self, payload, state=None):
+        sample = payload.get("sample", {})
+        if sample.get("id") == "s0":
+            raise RuntimeError("boom")
+        return super().invoke(payload, state=state)
+
+
+def _make_runtime(
+    tmp_path: Path,
+    sample_count: int = 4,
+    trace: ObservabilityTrace | None = None,
+    role_cls=_EchoRole,
+):
     dataset = DataSource(
         dataset_id="ds",
         records=[
@@ -78,7 +113,7 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4, trace: ObservabilityTra
     )
 
     rm = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]))
-    rm.register_role_adapter("dut", _EchoRole("dut", "dut_model"))
+    rm.register_role_adapter("dut", role_cls("dut", "dut_model"))
 
     runtime = TaskOrchestratorRuntime(entries, rm, trace, report_step)
     _record_config_metadata(config, cache, trace=trace)
@@ -153,6 +188,10 @@ def test_task_orchestrator_runs_tasks(tmp_path: Path):
     assert cache.get_metadata("run_identity")["run_id"] == trace.run_id
     summary = cache.run_dir / "summary.json"
     assert summary.exists()
+    payload = json.loads(summary.read_text(encoding="utf-8"))
+    assert payload["observability_closed_cleanly"] is True
+    assert payload["observability_close_mode"] == "drain"
+    assert payload["observability_close_remaining_queue"] == 0
 
 
 def test_task_orchestrator_records_timings(tmp_path: Path):
@@ -195,3 +234,34 @@ def test_task_orchestrator_survives_trace_flush_failure(tmp_path: Path):
     assert health["observability_mode"] == "fallback"
     assert health["backlog_events"] == 0
     assert fallback.buffered_events()
+
+
+def test_task_orchestrator_routes_worker_logs_into_trace(tmp_path: Path):
+    runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=2)
+    for entry in entries:
+        entry.sample_loop.register_hook(
+            lambda sample, task_id=entry.task_id: logger.bind(stage="runtime_test_log").info(
+                "hook-log task={} sample={}",
+                task_id,
+                sample.get("id"),
+            )
+        )
+
+    runtime.run()
+
+    log_events = [event for event in trace.events if event["event"] == "log"]
+
+    assert log_events
+    assert any(event["payload"]["stage"] == "runtime_test_log" for event in log_events)
+
+
+def test_task_orchestrator_writes_task_execution_summary_on_abort(tmp_path: Path):
+    runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=3, role_cls=_FailingRole)
+
+    with pytest.raises(Exception, match="boom"):
+        runtime.run()
+
+    summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert summary["tasks"][0]["execution"]["status"] == "aborted"
+    assert summary["tasks"][0]["execution"]["failed_sample_id"] == "s0"

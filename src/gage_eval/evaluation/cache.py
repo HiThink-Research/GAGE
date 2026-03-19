@@ -131,9 +131,33 @@ class EvalCache:
         self._root_journal.flush()
         self.flush_writers()
         with self._lock:
+            pending_summary_fields = self._metadata.pop("_pending_summary_fields", None)
+            if isinstance(pending_summary_fields, dict):
+                payload = {**payload, **pending_summary_fields}
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default))
         logger.info("Wrote summary for run_id={} to {}", self._run_id, target)
+        return target
+
+    def merge_summary_fields(self, payload: Dict[str, Any]) -> Path | None:
+        """Merge additional observability fields into summary output."""
+
+        target = self._run_dir / "summary.json"
+        self._root_journal.flush()
+        self.flush_writers()
+        with self._lock:
+            if not target.exists():
+                pending = self._metadata.get("_pending_summary_fields")
+                merged = dict(pending) if isinstance(pending, dict) else {}
+                merged.update(payload)
+                self._metadata["_pending_summary_fields"] = merged
+                return None
+            existing = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                raise ValueError("summary.json must contain a JSON object")
+            existing.update(payload)
+            target.write_text(json.dumps(existing, ensure_ascii=False, indent=2, default=_json_default))
+        logger.info("Patched summary for run_id={} at {}", self._run_id, target)
         return target
 
     def iter_samples(self) -> Iterator[Dict]:

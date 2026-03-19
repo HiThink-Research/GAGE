@@ -6,8 +6,9 @@ import os
 import random
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED, ALL_COMPLETED
-from queue import Queue, Full
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, Future, wait
+from contextvars import copy_context
+from queue import Empty, Full, Queue
 from typing import (
     Any,
     Callable,
@@ -24,6 +25,12 @@ from typing import (
 
 from loguru import logger
 
+from gage_eval.evaluation.execution_controller import (
+    FailurePolicy,
+    SampleLoopExecutionError,
+    SampleLoopOutcome,
+    TaskExecutionController,
+)
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.step_contracts import get_step_contract_catalog
 from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
@@ -49,6 +56,8 @@ class SampleLoop:
         task_id: Optional[str] = None,
         prefetch_factor: Optional[int] = None,
         max_inflight: Optional[int] = None,
+        failure_policy: Optional[str] = None,
+        report_partial_on_failure: Optional[bool] = None,
         sandbox_manager: Optional[SandboxManager] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
@@ -95,6 +104,21 @@ class SampleLoop:
             self._max_inflight, self._concurrency * self._prefetch_factor
         )
         self._sequential_override = _env_flag("GAGE_EVAL_SEQUENTIAL", default=False)
+        self._legacy_ff_mode = (
+            failure_policy is None
+            and _env_flag("GAGE_EVAL_FF_MODE", default=False)
+        )
+        if failure_policy is not None:
+            self._failure_policy = failure_policy
+        elif self._legacy_ff_mode:
+            self._failure_policy = "best_effort"
+        else:
+            self._failure_policy = None
+        self._report_partial_on_failure = (
+            True
+            if report_partial_on_failure is None
+            else bool(report_partial_on_failure)
+        )
         self._materialized_samples: Optional[List[dict]] = None
         self._streaming = streaming
         if self._streaming and self._shuffle:
@@ -105,6 +129,7 @@ class SampleLoop:
         self._task_id = task_id
         self._processed_count = 0
         self._processed_lock = threading.Lock()
+        self._execution_controller: Optional[TaskExecutionController] = None
         self._sandbox_profiles = sandbox_profiles or {}
         self._sandbox_manager = sandbox_manager or SandboxManager(
             profiles=self._sandbox_profiles
@@ -124,84 +149,97 @@ class SampleLoop:
     def configure_custom_steps(self, steps: Sequence[dict]) -> None:
         self._custom_steps = steps
 
+    def attach_execution_controller(
+        self, controller: Optional[TaskExecutionController]
+    ) -> None:
+        self._execution_controller = controller
+
     def run(
         self, planner: TaskPlanner, role_manager: RoleManager, trace: ObservabilityTrace
-    ) -> None:
+    ) -> SampleLoopOutcome:
         work = self._iter_samples()
-        if self._should_run_sequentially():
-            logger.info("SampleLoop running sequentially over samples")
-            for idx, sample in work:
-                self._process_sample(idx, sample, planner, role_manager, trace)
-            return
-
-        ff_mode = _env_flag("GAGE_EVAL_FF_MODE", default=False)
+        controller = self._get_execution_controller(planner)
 
         logger.info(
-            "SampleLoop running with bounded buffer (workers={}, max_inflight={}, prefetch_factor={}, buffer_capacity={})",
-            self._concurrency,
+            "SampleLoop running with bounded buffer (workers={}, max_inflight={}, prefetch_factor={}, buffer_capacity={}, failure_policy={})",
+            controller.sample_workers,
             self._max_inflight,
             self._prefetch_factor,
             self._buffer_capacity,
+            controller.failure_policy.value,
         )
         sentinel = object()
         sample_queue: Queue = Queue(maxsize=self._buffer_capacity)
         stop_event = threading.Event()
         producer_errors: List[BaseException] = []
+        producer_context = copy_context()
         producer = threading.Thread(
-            target=self._prefetch_samples,
+            target=producer_context.run,
             name="SamplePrefetcher",
-            args=(work, sample_queue, sentinel, stop_event, trace, producer_errors),
+            args=(self._prefetch_samples, work, sample_queue, sentinel, stop_event, trace, producer_errors),
             daemon=True,
         )
         producer.start()
 
-        if ff_mode:
-            self._run_fire_and_forget(
-                sample_queue,
-                sentinel,
-                stop_event,
-                planner,
-                role_manager,
-                trace,
-                producer,
-                producer_errors,
-            )
-        else:
-            futures: Set = set()
-            try:
-                with ThreadPoolExecutor(max_workers=self._concurrency) as executor:
-                    while True:
-                        item = sample_queue.get()
-                        if item is sentinel:
-                            break
-                        logical_idx, sample = item
-                        future = executor.submit(
-                            self._process_sample,
-                            logical_idx,
-                            sample,
-                            planner,
-                            role_manager,
-                            trace,
-                        )
-                        futures.add(future)
-                        self._emit_buffer_state(trace, sample_queue, len(futures))
-                        if len(futures) >= self._max_inflight:
-                            self._drain_futures(futures, sample_queue, trace)
-                    self._drain_futures(futures, sample_queue, trace, drain_all=True)
-            except Exception:
-                stop_event.set()
-                raise
-            finally:
-                stop_event.set()
-                try:
-                    sample_queue.put_nowait(sentinel)
-                except Exception:
-                    pass
+        futures: Set[Future[Any]] = set()
+        try:
+            while True:
+                if controller.should_stop_submitting():
+                    stop_event.set()
+                    break
+                item = sample_queue.get()
+                if item is sentinel:
+                    break
+                if controller.should_stop_submitting():
+                    controller.record_queue_cancellations(1)
+                    stop_event.set()
+                    break
+                logical_idx, sample = item
+                preview_sample_id = self._preview_sample_id(logical_idx, sample)
+                future = controller.submit_sample(
+                    copy_context().run,
+                    self._process_sample,
+                    logical_idx,
+                    sample,
+                    planner,
+                    role_manager,
+                    trace,
+                    sample_id=preview_sample_id,
+                )
+                futures.add(future)
+                self._emit_buffer_state(trace, sample_queue, len(futures))
+                if len(futures) >= self._max_inflight:
+                    self._drain_futures(futures, sample_queue, trace)
+            if controller.should_stop_submitting():
+                if controller.failure_policy is not FailurePolicy.BEST_EFFORT:
+                    controller.cancel_pending_samples()
                 producer.join()
-            if producer_errors:
-                raise producer_errors[0]
+                controller.record_queue_cancellations(
+                    self._drain_pending_queue(sample_queue, sentinel)
+                )
+            self._drain_futures(futures, sample_queue, trace, drain_all=True)
+        finally:
+            stop_event.set()
+            try:
+                sample_queue.put_nowait(sentinel)
+            except Exception:
+                pass
+            producer.join()
+
+        if producer_errors:
+            controller.record_failure(None, producer_errors[0])
+
+        outcome = controller.snapshot(
+            processed_samples=self.processed_count,
+            max_inflight=self._max_inflight,
+        )
+        if outcome.error_type is not None and controller.first_error is not None:
+            raise SampleLoopExecutionError(outcome, controller.first_error)
+        return outcome
 
     def shutdown(self) -> None:
+        if self._execution_controller is not None:
+            self._execution_controller.shutdown()
         if self._sandbox_manager:
             self._sandbox_manager.shutdown()
 
@@ -418,6 +456,35 @@ class SampleLoop:
         with self._processed_lock:
             self._processed_count += 1
 
+    def _preview_sample_id(self, logical_idx: int, sample: dict) -> str:
+        return resolve_runtime_sample_id(
+            sample,
+            task_id=self._task_id,
+            logical_idx=logical_idx,
+        )
+
+    def _get_execution_controller(
+        self, planner: TaskPlanner
+    ) -> TaskExecutionController:
+        if self._execution_controller is not None:
+            return self._execution_controller
+        auto_eval_step = planner.get_auto_eval_step()
+        metric_count = auto_eval_step.metric_count() if auto_eval_step is not None else 0
+        metric_workers = _default_metric_workers(metric_count)
+        if self._legacy_ff_mode:
+            logger.warning(
+                "GAGE_EVAL_FF_MODE is deprecated; mapping SampleLoop to failure_policy='best_effort'"
+            )
+        self._execution_controller = TaskExecutionController(
+            sample_workers=1 if self._should_run_sequentially() else self._concurrency,
+            metric_workers=metric_workers,
+            failure_policy=self._failure_policy,
+            legacy_ff_mode=self._legacy_ff_mode,
+            report_partial_on_failure=self._report_partial_on_failure,
+        )
+        planner.attach_execution_controller(self._execution_controller)
+        return self._execution_controller
+
     def _prefetch_samples(
         self,
         iterator: Iterator[Tuple[int, dict]],
@@ -485,83 +552,27 @@ class SampleLoop:
         done, _ = wait(futures, return_when=return_when)
         for future in done:
             futures.discard(future)
+            if future.cancelled():
+                continue
             try:
                 future.result()
             except Exception as exc:
-                # NOTE: Do not swallow worker exceptions. Surface failures to the caller so
-                # the upper-level loop can trigger stop_event and fail fast.
                 logger.exception(
                     "SampleLoop worker failed (task_id={}): {}", self._task_id, exc
                 )
-                raise
         self._emit_buffer_state(trace, sample_queue, len(futures))
 
-    def _run_fire_and_forget(
-        self,
-        sample_queue: Queue,
-        sentinel: object,
-        stop_event: threading.Event,
-        planner: TaskPlanner,
-        role_manager: RoleManager,
-        trace: ObservabilityTrace,
-        producer: threading.Thread,
-        producer_errors: List[BaseException],
-    ) -> None:
-        """Runs in fire-and-forget mode with a semaphore-based max_inflight cap.
-
-        This mode does not track futures; instead it uses a semaphore to limit the
-        number of in-flight tasks.
-        """
-
-        logger.info(
-            "SampleLoop running in fire-and-forget mode (workers={}, max_inflight={}, buffer_capacity={})",
-            self._concurrency,
-            self._max_inflight,
-            self._buffer_capacity,
-        )
-        sem = threading.Semaphore(self._max_inflight)
-        worker_errors: List[BaseException] = []
-        try:
-            with ThreadPoolExecutor(max_workers=self._concurrency) as executor:
-                while True:
-                    item = sample_queue.get()
-                    if item is sentinel:
-                        break
-                    logical_idx, sample = item
-                    sem.acquire()
-
-                    def _run_one(idx=logical_idx, s=sample):
-                        try:
-                            self._process_sample(idx, s, planner, role_manager, trace)
-                        except BaseException as exc:
-                            worker_errors.append(exc)
-                            stop_event.set()
-                            logger.exception(
-                                "SampleLoop worker failed in FF mode (task_id={}): {}",
-                                self._task_id,
-                                exc,
-                            )
-                        finally:
-                            sem.release()
-
-                    executor.submit(_run_one)
-
-                # Wait for all in-flight tasks to finish: if we can acquire the semaphore
-                # `max_inflight` times consecutively, no task is holding a permit.
-                for _ in range(self._max_inflight):
-                    sem.acquire()
-        finally:
-            stop_event.set()
+    def _drain_pending_queue(self, sample_queue: Queue, sentinel: object) -> int:
+        cancelled = 0
+        while True:
             try:
-                sample_queue.put_nowait(sentinel)
-            except Exception:
-                pass
-            producer.join()
-        if producer_errors:
-            raise producer_errors[0]
-        if worker_errors:
-            # Raise the first worker error; details are already logged.
-            raise worker_errors[0]
+                item = sample_queue.get_nowait()
+            except Empty:
+                break
+            if item is sentinel:
+                continue
+            cancelled += 1
+        return cancelled
 
     def _emit_buffer_state(
         self, trace: ObservabilityTrace, sample_queue: Queue, inflight: int
@@ -587,6 +598,13 @@ class SampleLoop:
     @property
     def concurrency(self) -> int:
         return self._concurrency
+
+    @property
+    def report_partial_on_failure(self) -> bool:
+        controller = self._execution_controller
+        if controller is not None:
+            return controller.report_partial_on_failure
+        return self._report_partial_on_failure
 
     def _compose_metadata(self, sample: dict) -> dict:
         metadata = {
@@ -679,6 +697,15 @@ def _env_int(var: str) -> Optional[int]:
     except ValueError:
         logger.warning("Invalid integer for {}={}; ignoring override", var, value)
         return None
+
+
+def _default_metric_workers(metric_count: int) -> int:
+    if metric_count <= 0:
+        return 0
+    env_workers = _env_int("GAGE_EVAL_AUTOEVAL_WORKERS")
+    if env_workers is not None and env_workers > 0:
+        return max(1, min(env_workers, metric_count))
+    return max(1, min(metric_count, 2))
 
 
 def _resolve_step_type(step) -> Optional[str]:

@@ -144,11 +144,20 @@ class ReportStep(GlobalStep):
 
         return int(self._cache.sample_count)
 
+    @property
+    def cache_store(self) -> EvalCache:
+        return self._cache
+
     def record_timing(self, phase: str, seconds: float) -> None:
         self._cache.record_timing(phase, seconds)
 
     def get_timing(self, phase: str) -> Optional[float]:
         return self._cache.get_timing(phase)
+
+    def record_execution_summary(self, payload: Dict[str, Any]) -> None:
+        """Persist runtime execution summary for later report merging."""
+
+        self._cache.set_metadata("execution_summary", dict(payload))
 
     def _collect_summary_payload(self) -> Dict[str, Any]:
         entries = _select_summary_entries(self._cache, registry_view=self._registry_view)
@@ -220,6 +229,9 @@ class ReportStep(GlobalStep):
             "metrics": formatted_metrics,
             "sample_count": self.get_sample_count(),
         }
+        execution_summary = self._cache.get_metadata("execution_summary")
+        if isinstance(execution_summary, dict):
+            payload["execution"] = execution_summary
         validation_summary = self._cache.get_metadata("validation_summary")
         if isinstance(validation_summary, dict):
             payload.update(validation_summary)

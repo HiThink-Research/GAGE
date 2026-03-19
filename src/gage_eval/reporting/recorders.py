@@ -69,6 +69,28 @@ class ObservabilityHealth:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class RecorderCloseFailure:
+    """Structured close failure emitted by recorder shutdown aggregation."""
+
+    recorder_name: str
+    error_type: str
+    error_message: str
+
+
+class RecorderCloseError(RuntimeError):
+    """Raised when one or more recorder close operations fail."""
+
+    def __init__(self, failures: Sequence[RecorderCloseFailure]) -> None:
+        self.failures = tuple(failures)
+        super().__init__(
+            "; ".join(
+                f"{failure.recorder_name}:{failure.error_type}:{failure.error_message}"
+                for failure in self.failures
+            )
+        )
+
+
 class RecorderBase:
     """Base recorder that batches events and flushes them on demand."""
 
@@ -284,6 +306,7 @@ class HTTPRecorder(RecorderBase):
         self._failover_triggered = False
         self._sleep = time.sleep
         self._random_uniform = random.uniform
+        self._session_closed = False
 
     def _flush_events_internal(self, events: Sequence[TraceEvent]) -> None:
         if not events:
@@ -372,6 +395,26 @@ class HTTPRecorder(RecorderBase):
         )
         return self._random_uniform(0.0, capped)
 
+    def close(self) -> None:
+        flush_error: Optional[Exception] = None
+        try:
+            super().close()
+        except Exception as exc:
+            flush_error = exc
+        finally:
+            if not self._session_closed:
+                close_session = getattr(self._session, "close", None)
+                try:
+                    if callable(close_session):
+                        close_session()
+                except Exception as exc:  # pragma: no cover - defensive close path
+                    if flush_error is None:
+                        flush_error = exc
+                finally:
+                    self._session_closed = True
+        if flush_error is not None:
+            raise flush_error
+
 
 class ResilientRecorder:
     """Facade that keeps recorder failures from bubbling into the main flow."""
@@ -423,11 +466,32 @@ class ResilientRecorder:
 
     def close(self) -> None:
         self.flush_events()
+        close_failures: list[RecorderCloseFailure] = []
         for recorder in self._iter_recorders():
             try:
                 recorder.close()
             except Exception as exc:  # pragma: no cover - defensive close path
-                self._log_failure(stage="close", exc=exc, target_mode=self._mode, target=self._active_recorder())
+                close_failures.append(
+                    RecorderCloseFailure(
+                        recorder_name=_sink_name(recorder),
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+                )
+                with self._state_lock:
+                    self._failure_count += 1
+                    self._last_error_stage = "close"
+                    self._last_error_type = type(exc).__name__
+                    self._last_error_message = str(exc)
+                    if self._degraded_since is None:
+                        self._degraded_since = time.time()
+                logger.bind(skip_observability=True).warning(
+                    "Observability recorder close failed for {} with {}",
+                    _sink_name(recorder),
+                    type(exc).__name__,
+                )
+        if close_failures:
+            raise RecorderCloseError(tuple(close_failures))
 
     def health_snapshot(self) -> ObservabilityHealth:
         with self._state_lock:
