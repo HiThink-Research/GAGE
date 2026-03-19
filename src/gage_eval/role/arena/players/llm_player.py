@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import os
 from pathlib import Path
 import time
@@ -26,6 +27,7 @@ _DEFAULT_DEBUG_IMAGE_DUMP_STRIDE = 1
 _ENV_DEBUG_IMAGE_DUMP_DIR = "GAGE_ARENA_DEBUG_IMAGE_DUMP_DIR"
 _ENV_DEBUG_IMAGE_DUMP_MAX = "GAGE_ARENA_DEBUG_IMAGE_DUMP_MAX"
 _ENV_DEBUG_IMAGE_DUMP_STRIDE = "GAGE_ARENA_DEBUG_IMAGE_DUMP_STRIDE"
+_MISSING = object()
 
 
 class LLMPlayer:
@@ -468,7 +470,9 @@ class LLMPlayer:
         if not callable(adapter_getter):
             return True
         adapter = adapter_getter(self._adapter_id)
-        backend = self._unwrap_backend_proxy(getattr(adapter, "backend", None))
+        backend = self._unwrap_backend_proxy(
+            self._get_static_attr(adapter, "backend", default=None)
+        )
         if backend is None:
             return True
         backend_cls = backend.__class__
@@ -486,13 +490,35 @@ class LLMPlayer:
 
         current = backend
         seen: set[int] = set()
-        while current is not None and hasattr(current, "_backend"):
+        while current is not None:
             current_id = id(current)
             if current_id in seen:
                 break
             seen.add(current_id)
-            current = getattr(current, "_backend", None)
+            next_backend = LLMPlayer._get_static_attr(
+                current,
+                "_backend",
+                default=_MISSING,
+            )
+            if next_backend is _MISSING or next_backend is current:
+                break
+            current = next_backend
         return current
+
+    @staticmethod
+    def _get_static_attr(target: Any, attr_name: str, *, default: Any) -> Any:
+        """Read one attribute without triggering dynamic mock expansion."""
+
+        try:
+            marker = inspect.getattr_static(target, attr_name, _MISSING)
+        except Exception:
+            return default
+        if marker is _MISSING:
+            return default
+        try:
+            return getattr(target, attr_name)
+        except Exception:
+            return default
 
     @staticmethod
     def _serialize_messages_for_trace(messages: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:

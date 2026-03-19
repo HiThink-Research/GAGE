@@ -30,5 +30,8 @@ class InferenceProvidersBackendConfig(BackendConfigBase):
     )
     http_retry_params: Dict[str, Any] = Field(
         default_factory=dict,
-        description="HTTP 重试配置，支持 attempts/interval/base_sleep/multiplier/max_retries",
+        description=(
+            "Native HTTP retry config for inference providers, prefers "
+            "max_retries/base_sleep/multiplier and still accepts legacy attempts/interval"
+        ),
     )

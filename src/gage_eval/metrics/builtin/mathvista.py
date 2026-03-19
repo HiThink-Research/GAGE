@@ -91,6 +91,50 @@ def _extract_numeric_answer(prediction: str, answer_type: str) -> Optional[str]:
         return None
     return None
 
+
+def _normalize_prediction_text(value: Any) -> str:
+    """Normalize a prediction payload into comparable text."""
+
+    if value is None:
+        return ""
+    return normalize_text_advanced(str(value), strip=True, collapse_whitespace=True) or ""
+
+
+def _extract_last_non_empty_line(value: Any) -> Optional[str]:
+    """Extract the last non-empty line from execution output."""
+
+    if value is None:
+        return None
+
+    lines = [line.strip() for line in str(value).splitlines() if line and line.strip()]
+    return lines[-1] if lines else None
+
+
+def _resolve_code_prediction(context: MetricContext, prediction_raw: Any) -> tuple[str, dict[str, Any]]:
+    """Resolve MathVista code-mode predictions without executing model code."""
+
+    candidates = [
+        ("judge_output.mathvista.execution.answer", extract_field(context, "judge_output.mathvista.execution.answer")),
+        ("judge_output.answer", extract_field(context, "judge_output.answer")),
+        ("sample.predict_result.0.execution.answer", extract_field(context, "sample.predict_result.0.execution.answer")),
+        (
+            "sample.predict_result.0.execution.stdout",
+            _extract_last_non_empty_line(extract_field(context, "sample.predict_result.0.execution.stdout")),
+        ),
+    ]
+
+    # STEP 1: Prefer already-materialized execution answers from judge/sample payloads.
+    for source, value in candidates:
+        normalized = _normalize_prediction_text(value)
+        if normalized:
+            return normalized, {"prediction_source": source}
+
+    # STEP 2: Fall back to the raw model text so code mode remains non-fatal.
+    return _normalize_prediction_text(prediction_raw), {
+        "prediction_source": "predict_result.text",
+        "warning": "missing_code_execution_result",
+    }
+
 @registry.asset(
     "metrics",
     "mathvista_accuracy",
@@ -114,7 +158,7 @@ class MathVistaAccuracyMetric(SimpleMetric):
 
         # STEP 2: Load inputs and normalize the prediction.
         prediction_raw = extract_field(context, prediction_field, default="")
-        prediction = normalize_text_advanced(str(prediction_raw), strip=True, collapse_whitespace=True) or ""
+        prediction = _normalize_prediction_text(prediction_raw)
         option_map = extract_field(context, option_map_field, default={}) or {}
         choices = extract_field(context, choices_field, default=[]) or []
         answer = extract_field(context, correct_choice_field)
@@ -215,9 +259,10 @@ class MathVistaChataccuracyMetric(SimpleMetric):
         question_type = extract_field(sample_dict, "metadata.question_type")
         shot_type = extract_field(sample_dict, "metadata.shot_type")
         if shot_type == 'code':
-            prediction, error = evaluate_code(prediction_raw)
+            prediction, prediction_metadata = _resolve_code_prediction(context, prediction_raw)
         else:
-            prediction = normalize_text_advanced(str(prediction_raw), strip=True, collapse_whitespace=True) or ""
+            prediction = _normalize_prediction_text(prediction_raw)
+            prediction_metadata = {}
 
         is_multi_choice = question_type == 'multi_choice'
 
@@ -235,6 +280,7 @@ class MathVistaChataccuracyMetric(SimpleMetric):
                 "prediction_label": pred_label,
                 "expected_label": answer,
             }
+            metadata.update(prediction_metadata)
             return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
         # STEP 3: For open-ended numeric questions, extract and compare numbers.
@@ -252,8 +298,9 @@ class MathVistaChataccuracyMetric(SimpleMetric):
                     metadata={
                         "prediction": prediction, 
                         "extracted_prediction": extracted_num,
-                        "reference": ref_num
-                    }
+                        "reference": ref_num,
+                        **prediction_metadata,
+                    },
                 )
 
         # STEP 4: Fallback to normalized exact match for non-multiple-choice, non-numeric cases.
@@ -265,6 +312,7 @@ class MathVistaChataccuracyMetric(SimpleMetric):
         matched = bool(prediction and references and any(prediction == ref for ref in references))
         score = 1.0 if matched else 0.0
         metadata = {"prediction": prediction, "references": references}
+        metadata.update(prediction_metadata)
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)
 
 

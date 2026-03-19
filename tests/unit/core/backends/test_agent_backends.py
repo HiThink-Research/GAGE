@@ -1,4 +1,10 @@
+from __future__ import annotations
+
+import asyncio
 import json
+import shlex
+import sys
+import threading
 
 import pytest
 
@@ -52,6 +58,35 @@ class DummyModelBackend:
         }
 
 
+class AsyncDummyModelBackend:
+    def __init__(self) -> None:
+        self.thread_id: int | None = None
+
+    async def ainvoke(self, payload):
+        self.thread_id = threading.get_ident()
+        return {
+            "raw_response": {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "t1",
+                                    "type": "function",
+                                    "function": {"name": "run", "arguments": "{\"x\": 1}"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+
+
+def _python_command(script: str) -> str:
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+
 @pytest.mark.fast
 def test_class_backend_dict_output():
     backend = ClassBackend(
@@ -80,9 +115,50 @@ def test_class_backend_string_output():
 
 @pytest.mark.io
 def test_cli_backend_raw_stdout():
-    backend = CliBackend({"command": "python -c 'print(\"hello\")'"})
+    backend = CliBackend({"command": _python_command('print("hello")')})
     result = backend.invoke({})
     assert result["answer"] == "hello"
+
+
+@pytest.mark.fast
+def test_cli_backend_returns_error_payload_on_non_zero_exit() -> None:
+    backend = CliBackend(
+        {
+            "command": _python_command(
+                'import sys; print("partial"); sys.stderr.write("boom\\n"); sys.exit(7)'
+            )
+        }
+    )
+
+    result = backend.invoke({})
+
+    assert result["error"] == "boom"
+    assert result["status"] == 7
+    assert result["error_type"] == "cli_process_error"
+    assert result["backend"] == "CliBackend"
+    assert result["returncode"] == 7
+    assert result["answer"] == ""
+    assert result["raw_stdout"] == "partial\n"
+    assert result["raw_stderr"] == "boom\n"
+
+
+@pytest.mark.fast
+def test_cli_backend_ignores_output_file_when_process_fails(tmp_path) -> None:
+    output_path = tmp_path / "result.json"
+    output_path.write_text(json.dumps({"answer": "stale-success"}), encoding="utf-8")
+    backend = CliBackend(
+        {
+            "command": _python_command('import sys; sys.stderr.write("failed\\n"); sys.exit(9)'),
+            "output_path": str(output_path),
+        }
+    )
+
+    result = backend.invoke({})
+
+    assert result["error"] == "failed"
+    assert result["status"] == 9
+    assert result["returncode"] == 9
+    assert result["answer"] == ""
 
 
 @pytest.mark.fast
@@ -127,3 +203,29 @@ def test_model_backend_extracts_tool_calls():
     backend = ModelBackend({"backend": DummyModelBackend()})
     result = backend.invoke({"messages": []})
     assert result["tool_calls"][0]["function"]["name"] == "run"
+
+
+@pytest.mark.fast
+def test_model_backend_ainvoke_reuses_running_thread() -> None:
+    wrapped_backend = AsyncDummyModelBackend()
+    backend = ModelBackend({"backend": wrapped_backend})
+
+    async def _run() -> None:
+        caller_thread_id = threading.get_ident()
+        result = await backend.ainvoke({"messages": []})
+
+        assert result["tool_calls"][0]["function"]["name"] == "run"
+        assert wrapped_backend.thread_id == caller_thread_id
+
+    asyncio.run(_run())
+
+
+@pytest.mark.fast
+def test_model_backend_invoke_fails_fast_in_active_loop() -> None:
+    backend = ModelBackend({"backend": AsyncDummyModelBackend()})
+
+    async def _run() -> None:
+        with pytest.raises(RuntimeError, match="active event loop"):
+            backend.invoke({"messages": []})
+
+    asyncio.run(_run())

@@ -1,8 +1,11 @@
 import base64
 import io
 import sys
+import types
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(ROOT) not in sys.path:
@@ -121,6 +124,95 @@ class VLLMBackendMultimodalTests(unittest.TestCase):
         mm = backend._prepare_multi_modal_data(payload)
         self.assertEqual(len(mm["audio"]), 1)
         self.assertTrue(isinstance(mm["audio"][0], io.BytesIO))
+
+    def test_resolve_mm_limits_prefers_explicit_config(self):
+        backend = make_backend({"model_path": "repo", "limit_mm_per_prompt": {"image": 3}})
+
+        with patch.dict("os.environ", {"GAGE_EVAL_VLLM_IMAGE_LIMIT": "7"}, clear=False):
+            limits = backend._resolve_mm_limits(backend.config, SimpleNamespace())
+
+        self.assertEqual(limits, {"image": 3})
+
+    def test_resolve_mm_limits_uses_env_fallback(self):
+        backend = make_backend()
+
+        with patch.dict(
+            "os.environ",
+            {"GAGE_EVAL_VLLM_IMAGE_LIMIT": "4", "GAGE_EVAL_VLLM_AUDIO_LIMIT": "2"},
+            clear=False,
+        ):
+            limits = backend._resolve_mm_limits(backend.config, SimpleNamespace())
+
+        self.assertEqual(limits, {"image": 4, "audio": 2})
+
+    def test_resolve_mm_limits_returns_none_without_explicit_boundary(self):
+        backend = make_backend()
+
+        with patch.dict("os.environ", {}, clear=True):
+            limits = backend._resolve_mm_limits(backend.config, SimpleNamespace())
+
+        self.assertIsNone(limits)
+
+    def test_build_engine_forwards_explicit_mm_limits(self):
+        backend = make_backend({"model_path": "repo", "limit_mm_per_prompt": {"image": 8}})
+        args = SimpleNamespace(
+            tokenizer=None,
+            tensor_parallel_size=1,
+            trust_remote_code=True,
+            enforce_eager=None,
+            pipeline_parallel_size=None,
+            data_parallel_size=None,
+            data_parallel_rank=None,
+            data_parallel_size_local=None,
+            data_parallel_address=None,
+            data_parallel_rpc_port=None,
+            data_parallel_backend=None,
+            distributed_executor_backend=None,
+            enable_expert_parallel=None,
+            max_length=None,
+            block_size=None,
+            num_gpu_blocks=None,
+            num_cpu_blocks=None,
+            forced_num_gpu_blocks=None,
+            num_gpu_blocks_override=None,
+            limit_mm_per_prompt={"image": 8},
+        )
+
+        class FakeAsyncEngineArgs:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class FakeAsyncLLMEngine:
+            __module__ = "vllm.engine.async_llm_engine"
+
+            @classmethod
+            def from_engine_args(cls, engine_args):
+                return types.SimpleNamespace(engine_args=engine_args, engine=types.SimpleNamespace())
+
+        runtime = SimpleNamespace(
+            engine_variant="test",
+            async_engine_args_cls=FakeAsyncEngineArgs,
+            async_llm_engine_cls=FakeAsyncLLMEngine,
+        )
+
+        with (
+            patch("gage_eval.role.model.backends.vllm_backend.load_vllm_engine_runtime", return_value=runtime),
+            patch(
+                "gage_eval.role.model.backends.vllm_backend.prepare_async_engine_kwargs",
+                side_effect=lambda kwargs, _: (kwargs, ()),
+            ),
+            patch("gage_eval.role.model.backends.vllm_backend._prime_vllm_engine_renderer_state", return_value=None),
+        ):
+            engine, _ = backend._build_engine(
+                types.SimpleNamespace(model_type="vision"),
+                processor=None,
+                model_id="repo",
+                args=args,
+                config=backend.config,
+            )
+
+        self.assertEqual(engine.engine_args.limit_mm_per_prompt, {"image": 8})
 
 
 if __name__ == "__main__":

@@ -35,12 +35,13 @@ if [ ! -f "${MODEL_MATRIX}" ]; then
 fi
 
 gage_activate_venv "${VENV_PATH}"
+PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
 
 rendered_paths=()
 while IFS= read -r line; do
   rendered_paths+=("$line")
 done < <(
-  python - <<'PY' "${TEMPLATE}" "${GEN_DIR}" "${MODEL_MATRIX}" "${DEFAULT_MAX_NEW_TOKENS}" "${DEFAULT_TEMPERATURE}" "${DEFAULT_TOP_P}" "${DEFAULT_STOP}" "${DEFAULT_PRESENCE_PENALTY}" "${DEFAULT_MAX_SAMPLES}" "${DEFAULT_CONCURRENCY}" "${DEFAULT_DATA_LIMIT}" "${DEFAULT_TIMEOUT}"
+  "${PYTHON_BIN}" - <<'PY' "${TEMPLATE}" "${GEN_DIR}" "${MODEL_MATRIX}" "${DEFAULT_MAX_NEW_TOKENS}" "${DEFAULT_TEMPERATURE}" "${DEFAULT_TOP_P}" "${DEFAULT_STOP}" "${DEFAULT_PRESENCE_PENALTY}" "${DEFAULT_MAX_SAMPLES}" "${DEFAULT_CONCURRENCY}" "${DEFAULT_DATA_LIMIT}" "${DEFAULT_TIMEOUT}"
 import sys
 from pathlib import Path
 import yaml
@@ -136,7 +137,7 @@ for cfg in "${rendered_paths[@]}"; do
   if [ "${dry_flag}" = "1" ] || [ "${dry_flag}" = "true" ]; then
     continue
   fi
-  python "${ROOT}/run.py" \
+  "${PYTHON_BIN}" "${ROOT}/run.py" \
     --config "${cfg}" \
     --output-dir "${out_dir}"
 done

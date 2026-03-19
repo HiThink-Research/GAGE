@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 from gage_eval.sandbox.base import BaseSandbox
 
-# Builder signature: (**kwargs) -> BaseSandbox.  The pool forwards any
-# keyword arguments from acquire() so callers can pass trace context
-# without baking it into the builder closure at pool-creation time.
+# Builder signature: (**kwargs) -> BaseSandbox. The pool forwards acquire()
+# keyword arguments so callers can thread trace or scope metadata into lazy
+# runtime creation without baking that state into the pool itself.
 BuilderFn = Callable[..., BaseSandbox]
 
 
@@ -31,80 +31,159 @@ class SandboxPool:
         self._idle_timeout_s = (
             None if idle_timeout_s is None else max(0.0, float(idle_timeout_s))
         )
-        self._available: List[BaseSandbox] = []
-        self._in_use: Dict[int, BaseSandbox] = {}
-        self._uses: Dict[int, int] = {}
-        self._last_used_at: Dict[int, float] = {}
+        self._available: list[BaseSandbox] = []
+        self._in_use: dict[int, BaseSandbox] = {}
+        self._uses: dict[int, int] = {}
+        self._last_used_at: dict[int, float] = {}
+        self._creating = 0
+        self._closed = False
         self._lock = threading.Lock()
 
     def acquire(self, **builder_kwargs: Any) -> BaseSandbox:
+        """Acquire a sandbox instance from the pool."""
+
+        discarded: list[BaseSandbox] = []
+
+        # STEP 1: Reuse a live sandbox or reserve capacity for a new build.
         with self._lock:
-            self._cleanup_idle()
-            sandbox: Optional[BaseSandbox] = None
+            if self._closed:
+                raise RuntimeError("sandbox pool is shut down")
+            discarded.extend(self._drain_idle_unlocked())
             while self._available:
                 candidate = self._available.pop()
                 candidate_id = id(candidate)
-                if self._is_idle_expired(candidate_id):
-                    self._destroy(candidate)
+                if self._is_idle_expired(candidate_id) or not _sandbox_is_healthy(
+                    candidate
+                ):
+                    self._forget_unlocked(candidate)
+                    discarded.append(candidate)
                     continue
-                if _sandbox_is_healthy(candidate):
-                    sandbox = candidate
-                    break
-                self._destroy(candidate)
-            if sandbox is None:
-                if self._max_size is not None and self._total_size() >= self._max_size:
-                    raise RuntimeError("sandbox pool exhausted")
-                sandbox = self._builder(**builder_kwargs)
-            sandbox_id = id(sandbox)
-            self._in_use[sandbox_id] = sandbox
-            self._last_used_at.pop(sandbox_id, None)
-            self._uses[sandbox_id] = self._uses.get(sandbox_id, 0) + 1
+                self._mark_acquired_unlocked(candidate)
+                sandbox = candidate
+                break
+            else:
+                sandbox = None
+                if (
+                    self._max_size is not None
+                    and self._total_size_unlocked() >= self._max_size
+                ):
+                    exhausted = True
+                else:
+                    exhausted = False
+                    self._creating += 1
+
+        for stale in discarded:
+            self._destroy_sandbox(stale)
+        if sandbox is not None:
             return sandbox
+        if exhausted:
+            raise RuntimeError("sandbox pool exhausted")
+
+        # STEP 2: Build new sandboxes outside the lock because startup can block.
+        try:
+            sandbox = self._builder(**builder_kwargs)
+        except Exception:
+            with self._lock:
+                self._creating -= 1
+            raise
+
+        # STEP 3: Publish the sandbox only if the pool is still open.
+        should_teardown = False
+        with self._lock:
+            self._creating -= 1
+            if self._closed:
+                should_teardown = True
+            else:
+                self._mark_acquired_unlocked(sandbox)
+                return sandbox
+
+        if should_teardown:
+            self._destroy_sandbox(sandbox)
+        raise RuntimeError("sandbox pool is shut down")
 
     def release(self, sandbox: BaseSandbox) -> None:
+        """Release a sandbox instance back into the pool."""
+
+        discarded: list[BaseSandbox] = []
+        sandbox_id = id(sandbox)
+
+        # STEP 1: Reconcile the in-use set and decide whether this runtime can be reused.
         with self._lock:
-            self._cleanup_idle()
-            sandbox_id = id(sandbox)
+            discarded.extend(self._drain_idle_unlocked())
             if sandbox_id not in self._in_use:
-                return
-            self._in_use.pop(sandbox_id, None)
-            if (
-                self._max_uses is not None
-                and self._uses.get(sandbox_id, 0) >= self._max_uses
-            ):
-                self._destroy(sandbox)
-                return
-            if self._max_size is not None and len(self._available) >= self._max_size:
-                self._destroy(sandbox)
-                return
-            self._last_used_at[sandbox_id] = time.monotonic()
-            self._available.append(sandbox)
+                reusable = None
+            else:
+                reusable = True
+                self._in_use.pop(sandbox_id, None)
+                if self._closed:
+                    reusable = False
+                elif (
+                    self._max_uses is not None
+                    and self._uses.get(sandbox_id, 0) >= self._max_uses
+                ):
+                    reusable = False
+                elif self._max_size is not None and len(self._available) >= self._max_size:
+                    reusable = False
+            if reusable:
+                self._last_used_at[sandbox_id] = time.monotonic()
+                self._available.append(sandbox)
+            elif reusable is False:
+                self._forget_unlocked(sandbox)
+                discarded.append(sandbox)
+
+        # STEP 2: Tear down discarded sandboxes outside the lock.
+        seen: set[int] = set()
+        for stale in discarded:
+            stale_id = id(stale)
+            if stale_id in seen:
+                continue
+            seen.add(stale_id)
+            self._destroy_sandbox(stale)
 
     def shutdown(self) -> None:
+        """Shut down the pool and tear down tracked sandboxes."""
+
+        # STEP 1: Mark the pool as closed and snapshot tracked sandboxes.
         with self._lock:
-            for sandbox in list(self._available):
-                self._destroy(sandbox)
-            for sandbox in list(self._in_use.values()):
-                self._destroy(sandbox)
+            self._closed = True
+            sandboxes = list(self._available) + list(self._in_use.values())
             self._available.clear()
             self._in_use.clear()
             self._uses.clear()
             self._last_used_at.clear()
 
-    def _total_size(self) -> int:
-        return len(self._available) + len(self._in_use)
+        # STEP 2: Tear down outside the lock so concurrent release calls can return.
+        for sandbox in sandboxes:
+            self._destroy_sandbox(sandbox)
 
-    def _cleanup_idle(self) -> None:
-        if self._idle_timeout_s is None:
-            return
-        alive: List[BaseSandbox] = []
+    def _mark_acquired_unlocked(self, sandbox: BaseSandbox) -> None:
+        sandbox_id = id(sandbox)
+        self._in_use[sandbox_id] = sandbox
+        self._last_used_at.pop(sandbox_id, None)
+        self._uses[sandbox_id] = self._uses.get(sandbox_id, 0) + 1
+
+    def _forget_unlocked(self, sandbox: BaseSandbox) -> None:
+        sandbox_id = id(sandbox)
+        self._in_use.pop(sandbox_id, None)
+        self._uses.pop(sandbox_id, None)
+        self._last_used_at.pop(sandbox_id, None)
+
+    def _total_size_unlocked(self) -> int:
+        return len(self._available) + len(self._in_use) + self._creating
+
+    def _drain_idle_unlocked(self) -> list[BaseSandbox]:
+        if self._idle_timeout_s is None or not self._available:
+            return []
+        alive: list[BaseSandbox] = []
+        stale: list[BaseSandbox] = []
         for sandbox in self._available:
-            sandbox_id = id(sandbox)
-            if self._is_idle_expired(sandbox_id):
-                self._destroy(sandbox)
+            if self._is_idle_expired(id(sandbox)):
+                self._forget_unlocked(sandbox)
+                stale.append(sandbox)
                 continue
             alive.append(sandbox)
         self._available = alive
+        return stale
 
     def _is_idle_expired(self, sandbox_id: int) -> bool:
         if self._idle_timeout_s is None:
@@ -114,11 +193,8 @@ class SandboxPool:
             return False
         return (time.monotonic() - last_used_at) >= self._idle_timeout_s
 
-    def _destroy(self, sandbox: BaseSandbox) -> None:
-        sandbox_id = id(sandbox)
-        self._in_use.pop(sandbox_id, None)
-        self._uses.pop(sandbox_id, None)
-        self._last_used_at.pop(sandbox_id, None)
+    @staticmethod
+    def _destroy_sandbox(sandbox: BaseSandbox) -> None:
         try:
             sandbox.teardown()
         except Exception:

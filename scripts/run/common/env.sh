@@ -7,7 +7,29 @@ GAGE_RUN_COMMON_ENV_SH=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GAGE_REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-GAGE_WORKSPACE_ROOT="$(cd "${GAGE_REPO_ROOT}" && pwd)"
+
+gage_detect_workspace_root() {
+  local repo_root parent_root candidate
+  repo_root="$(cd "${GAGE_REPO_ROOT}" && pwd)"
+  parent_root="$(cd "${GAGE_REPO_ROOT}/.." && pwd)"
+  for candidate in "${parent_root}" "${repo_root}"; do
+    if [[ -d "${candidate}/env/.venv" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+    if [[ -f "${candidate}/env/scripts/run.env" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+    if [[ -f "${candidate}/env/localenv" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  printf '%s\n' "${repo_root}"
+}
+
+GAGE_WORKSPACE_ROOT="${GAGE_WORKSPACE_ROOT:-$(gage_detect_workspace_root)}"
 
 gage_default_local_env_file() {
   if [[ -n "${GAGE_LOCAL_ENV_FILE:-}" ]]; then

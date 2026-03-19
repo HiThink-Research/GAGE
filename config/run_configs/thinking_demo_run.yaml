@@ -1,0 +1,68 @@
+# Thinking Mode Configuration Demo
+#
+# This config demonstrates how to control thinking/no-thinking mode
+# for different backend types and model providers.
+#
+# Usage:
+#   python run.py --config config/run_configs/thinking_demo_run.yaml \
+#     --output-dir runs --run-id thinking_demo
+
+pipeline:
+  id: thinking_demo
+  description: "Demo config for thinking mode control"
+
+  # ---------------------------------------------------------------------------
+  # Example 1: Disable thinking for Qwen3 models via LiteLLM
+  # ---------------------------------------------------------------------------
+  # backends:
+  #   - backend_id: qwen3_no_think
+  #     type: litellm
+  #     model: qwen3-32b
+  #     thinking_mode: disabled  # Maps to enable_thinking=False
+  #     generation_parameters:
+  #       max_new_tokens: 4096
+  #       temperature: 0.7
+
+  # ---------------------------------------------------------------------------
+  # Example 2: Control reasoning effort for GPT-OSS via OpenAI HTTP
+  # ---------------------------------------------------------------------------
+  # backends:
+  #   - backend_id: gpt_oss_thinking
+  #     type: openai_http
+  #     model: gpt-4o
+  #     reasoning_effort: high  # low / medium / high
+  #     generation_parameters:
+  #       max_new_tokens: 8192
+
+  # ---------------------------------------------------------------------------
+  # Example 3: Explicit chat_template_kwargs for vLLM backend
+  # NOTE: chat_template_kwargs must be at the top-level of the backend config,
+  #       NOT nested inside sampling_params. The vLLM request normalizer reads
+  #       it from payload/sample level (vllm_request.py line 45).
+  # ---------------------------------------------------------------------------
+  # backends:
+  #   - backend_id: qwen3_vllm_no_think
+  #     type: vllm
+  #     model_path: /path/to/Qwen3-32B
+  #     chat_template_kwargs:
+  #       enable_thinking: false
+  #     sampling_params:
+  #       max_tokens: 4096
+
+  # ---------------------------------------------------------------------------
+  # Example 4: GenerationParameters-level thinking control
+  # ---------------------------------------------------------------------------
+  # backends:
+  #   - backend_id: litellm_with_effort
+  #     type: litellm
+  #     model: deepseek-reasoner
+  #     generation_parameters:
+  #       max_new_tokens: 16384
+  #       reasoning_effort: high
+  #       thinking_mode: enabled  # Explicit enable
+
+  backends:
+    - backend_id: echo_demo
+      type: dummy
+      generation_parameters:
+        max_new_tokens: 128
