@@ -7,8 +7,10 @@ from typing import Any, Dict, Optional
 
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.utils.run_identity import RunIdentity, build_run_identity_metadata
 
 RUNTIME_METADATA_SCHEMA_VERSION = 1
+RUN_METADATA_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,12 @@ class RuntimeMetadataSnapshot:
     models: tuple[dict[str, Any], ...]
     role_adapters: tuple[dict[str, Any], ...]
     summary_generators: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RunMetadataSnapshot:
+    schema_version: int
+    run_identity: dict[str, Any]
 
 
 def build_runtime_metadata_snapshot(config: PipelineConfig) -> RuntimeMetadataSnapshot:
@@ -60,6 +68,15 @@ def build_runtime_metadata_snapshot(config: PipelineConfig) -> RuntimeMetadataSn
     )
 
 
+def build_run_metadata_snapshot(identity: RunIdentity) -> RunMetadataSnapshot:
+    """Project stable run identity metadata for summaries and diagnostics."""
+
+    return RunMetadataSnapshot(
+        schema_version=RUN_METADATA_SCHEMA_VERSION,
+        run_identity=build_run_identity_metadata(identity),
+    )
+
+
 def record_runtime_metadata(cache_store: EvalCache, snapshot: RuntimeMetadataSnapshot) -> None:
     """Write runtime metadata using a single stable contract."""
 
@@ -73,3 +90,9 @@ def record_runtime_metadata(cache_store: EvalCache, snapshot: RuntimeMetadataSna
     if snapshot.summary_generators:
         cache_store.set_metadata("summary_generators", list(snapshot.summary_generators))
 
+
+def record_run_metadata(cache_store: EvalCache, snapshot: RunMetadataSnapshot) -> None:
+    """Write run identity metadata using a single stable contract."""
+
+    cache_store.set_metadata("run_metadata_schema_version", snapshot.schema_version)
+    cache_store.set_metadata("run_identity", dict(snapshot.run_identity))

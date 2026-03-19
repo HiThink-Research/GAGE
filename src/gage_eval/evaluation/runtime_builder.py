@@ -24,7 +24,9 @@ from gage_eval.evaluation.sample_ingress import (
     build_sample_ingress_policy,
 )
 from gage_eval.evaluation.runtime_metadata import (
+    build_run_metadata_snapshot,
     build_runtime_metadata_snapshot,
+    record_run_metadata,
     record_runtime_metadata,
 )
 from gage_eval.evaluation.sample_loop import SampleLoop
@@ -37,11 +39,21 @@ from gage_eval.role.resource_profile import ResourceProfile
 from gage_eval.role.role_manager import RoleManager
 
 
-def _record_config_metadata(config: PipelineConfig, cache_store: EvalCache) -> None:
+def _record_config_metadata(
+    config: PipelineConfig,
+    cache_store: EvalCache,
+    *,
+    trace: ObservabilityTrace | None = None,
+) -> None:
     record_runtime_metadata(
         cache_store,
         build_runtime_metadata_snapshot(config),
     )
+    if trace is not None:
+        record_run_metadata(
+            cache_store,
+            build_run_metadata_snapshot(trace.run_identity),
+        )
 
 
 def build_runtime(
@@ -187,7 +199,7 @@ def _build_task_orchestrator_runtime(
     aggregate_validation_ledger: ValidationLedger,
 ) -> "TaskOrchestratorRuntime":
     report_step = ReportStep(auto_eval_step=None, cache_store=cache_store)
-    _record_config_metadata(config, cache_store)
+    _record_config_metadata(config, cache_store, trace=trace)
     task_plan_specs = build_task_plan_specs(config)
     concurrency_hint = _max_concurrency_from_tasks(task_plan_specs, resource_profile)
     role_manager.update_concurrency_hint(concurrency_hint)
@@ -444,9 +456,9 @@ class TaskOrchestratorRuntime:
         self._wall_clock_start = start_s
 
     def _resolve_sample_count(self) -> int:
-        if self._report_step and hasattr(self._report_step, "_cache"):
+        if self._report_step:
             try:
-                return int(self._report_step._cache.sample_count)  # type: ignore[attr-defined]
+                return self._report_step.get_sample_count()
             except Exception:
                 pass
         total = 0

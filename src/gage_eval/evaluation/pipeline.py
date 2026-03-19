@@ -19,7 +19,9 @@ from gage_eval.evaluation.task_planner import TaskPlanner
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.runtime_metadata import (
+    build_run_metadata_snapshot,
     build_runtime_metadata_snapshot,
+    record_run_metadata,
     record_runtime_metadata,
 )
 from gage_eval.pipeline.steps.report import ReportStep
@@ -114,9 +116,9 @@ class PipelineRuntime:
         self.wall_clock_start = start_s
 
     def _resolve_sample_count(self) -> int:
-        if self.report_step and hasattr(self.report_step, "_cache"):
+        if self.report_step:
             try:
-                return int(self.report_step._cache.sample_count)  # type: ignore[attr-defined]
+                return self.report_step.get_sample_count()
             except Exception:
                 pass
         try:
@@ -203,6 +205,10 @@ class PipelineFactory:
         record_runtime_metadata(
             cache_store,
             build_runtime_metadata_snapshot(config),
+        )
+        record_run_metadata(
+            cache_store,
+            build_run_metadata_snapshot(trace.run_identity),
         )
         adapters = self._registry.materialize_role_adapters(
             config,

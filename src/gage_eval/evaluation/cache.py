@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 import os
 import threading
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, Mapping, Optional
 
 from loguru import logger
 from gage_eval.evaluation.buffered_writer import BufferedResultWriter
 from gage_eval.evaluation.sample_journal import LockedJsonlJournal, RunSampleJournal
+from gage_eval.utils.run_identity import RunIdentity, build_run_identity
 
 
 class EvalCache:
@@ -22,7 +21,8 @@ class EvalCache:
         env_base = os.environ.get("GAGE_EVAL_SAVE_DIR") or None
         default_base = env_base or "./runs"
         self._base_dir = Path(base_dir or default_base).expanduser()
-        self._run_id = run_id or self._generate_run_id()
+        self._run_identity = build_run_identity(run_id)
+        self._run_id = self._run_identity.run_id
         self._run_dir = self._base_dir / self._run_id
         self._samples_dir = self._run_dir / "samples"
         self._samples_jsonl = self._run_dir / "samples.jsonl"
@@ -59,6 +59,10 @@ class EvalCache:
     @property
     def run_dir(self) -> Path:
         return self._run_dir
+
+    @property
+    def run_identity(self) -> RunIdentity:
+        return self._run_identity
 
     @property
     def samples_dir(self) -> Path:
@@ -172,9 +176,7 @@ class EvalCache:
         self._samples_dir.mkdir(parents=True, exist_ok=True)
 
     def _generate_run_id(self) -> str:
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        suffix = uuid.uuid4().hex[:8]
-        return f"run-{timestamp}-{suffix}"
+        return build_run_identity().run_id
 
     @staticmethod
     def _sanitize_sample_id(sample_id: str) -> str:

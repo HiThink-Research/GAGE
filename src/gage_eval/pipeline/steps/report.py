@@ -128,6 +128,11 @@ class ReportStep(GlobalStep):
         self._auto_eval_step = auto_eval_step
         self._cache = cache_store
 
+    def get_sample_count(self) -> int:
+        """Return the number of persisted samples without leaking cache internals."""
+
+        return int(self._cache.sample_count)
+
     def record_timing(self, phase: str, seconds: float) -> None:
         self._cache.record_timing(phase, seconds)
 
@@ -174,7 +179,7 @@ class ReportStep(GlobalStep):
 
     @observable_stage(
         "report",
-        payload_fn=lambda self, *args, **kwargs: {"sample_count": self._cache.sample_count},
+        payload_fn=lambda self, *args, **kwargs: {"sample_count": self.get_sample_count()},
     )
     def finalize(
         self,
@@ -202,7 +207,7 @@ class ReportStep(GlobalStep):
         payload = {
             "run": self._cache.snapshot(),
             "metrics": formatted_metrics,
-            "sample_count": self._cache.sample_count,
+            "sample_count": self.get_sample_count(),
         }
         validation_summary = self._cache.get_metadata("validation_summary")
         if isinstance(validation_summary, dict):
@@ -216,7 +221,7 @@ class ReportStep(GlobalStep):
         _LOGGER.info(
             "report",
             "ReportStep finalized summary (samples={}, metrics={}, tasks={})",
-            self._cache.sample_count,
+            self.get_sample_count(),
             len(formatted_metrics),
             len(formatted_tasks or []),
             trace=trace,

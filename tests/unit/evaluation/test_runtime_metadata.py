@@ -2,10 +2,14 @@ from gage_eval.config.pipeline_config import BackendSpec, ModelSpec, PipelineCon
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.runtime_builder import _record_config_metadata
 from gage_eval.evaluation.runtime_metadata import (
+    RUN_METADATA_SCHEMA_VERSION,
     RUNTIME_METADATA_SCHEMA_VERSION,
+    build_run_metadata_snapshot,
     build_runtime_metadata_snapshot,
+    record_run_metadata,
     record_runtime_metadata,
 )
+from gage_eval.utils.run_identity import build_run_identity
 
 
 def _make_config() -> PipelineConfig:
@@ -81,3 +85,18 @@ def test_record_config_metadata_uses_shared_runtime_snapshot(tmp_path) -> None:
     assert cache.get_metadata("backends")[0]["backend_id"] == "b1"
     assert cache.get_metadata("role_adapters")[0]["adapter_id"] == "dut"
 
+
+def test_record_run_metadata_writes_identity_payload(tmp_path) -> None:
+    cache = EvalCache(base_dir=tmp_path, run_id="runtime-run-metadata")
+    identity = build_run_identity("run-20260319010101-ab12cd34")
+    snapshot = build_run_metadata_snapshot(identity)
+
+    record_run_metadata(cache, snapshot)
+
+    assert cache.get_metadata("run_metadata_schema_version") == RUN_METADATA_SCHEMA_VERSION
+    assert cache.get_metadata("run_identity") == {
+        "run_id": "run-20260319010101-ab12cd34",
+        "source": "provided",
+        "schema_version": 1,
+        "created_at_iso": identity.created_at_iso,
+    }

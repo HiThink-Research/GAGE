@@ -61,19 +61,27 @@ def _make_config() -> PipelineConfig:
 def test_single_and_task_runtime_metadata_share_one_contract(tmp_path) -> None:
     config = _make_config()
 
-    pipeline_cache = EvalCache(base_dir=tmp_path, run_id="single-runtime")
+    pipeline_trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="single-runtime"),
+        run_id="single-runtime",
+    )
+    pipeline_cache = EvalCache(base_dir=tmp_path, run_id=pipeline_trace.run_id)
     factory = PipelineFactory(_RegistryStub())
     factory.create_runtime(
         config=config,
         role_manager=RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)])),
         sample_loop=SampleLoop([]),
         task_planner=TaskPlanner(),
-        trace=ObservabilityTrace(recorder=InMemoryRecorder(run_id="runtime-trace")),
+        trace=pipeline_trace,
         cache_store=pipeline_cache,
     )
 
-    task_cache = EvalCache(base_dir=tmp_path, run_id="task-runtime")
-    _record_config_metadata(config, task_cache)
+    task_trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="task-runtime"),
+        run_id="task-runtime",
+    )
+    task_cache = EvalCache(base_dir=tmp_path, run_id=task_trace.run_id)
+    _record_config_metadata(config, task_cache, trace=task_trace)
 
     for key in (
         "runtime_metadata_schema_version",
@@ -83,4 +91,5 @@ def test_single_and_task_runtime_metadata_share_one_contract(tmp_path) -> None:
         "summary_generators",
     ):
         assert pipeline_cache.get_metadata(key) == task_cache.get_metadata(key)
-
+    assert pipeline_cache.get_metadata("run_identity")["run_id"] == pipeline_trace.run_id
+    assert task_cache.get_metadata("run_identity")["run_id"] == task_trace.run_id
