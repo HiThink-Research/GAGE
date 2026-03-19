@@ -16,6 +16,7 @@ from gage_eval.evaluation.sample_envelope import (
     ensure_arena_header,
     update_eval_result,
 )
+from gage_eval.evaluation.step_factory import StepFactory, TaskStepBundle
 from gage_eval.pipeline.step_contracts import (
     collect_step_sequence_issues,
     get_step_adapter_id,
@@ -42,6 +43,7 @@ class TaskPlan:
     auto_eval_step: Optional[AutoEvalStep] = None
     auto_eval_enabled: bool = False
     steps: Sequence[Any] = field(default_factory=tuple)
+    step_bundle: Optional[TaskStepBundle] = None
 
     def create_context(
         self,
@@ -51,22 +53,20 @@ class TaskPlan:
         *,
         sandbox_provider: Optional[SandboxProvider] = None,
     ):
-        from gage_eval.pipeline.steps.support import SupportStep
-        from gage_eval.pipeline.steps.inference import InferenceStep
-        from gage_eval.pipeline.steps.arena import ArenaStep
-        from gage_eval.pipeline.steps.judge import JudgeStep
-
-        support = SupportStep(self.support_steps)
-        inference = InferenceStep(self.inference_role)
-        arena = ArenaStep(self.arena_role)
-        judge = JudgeStep(self.judge_role)
+        bundle = self.step_bundle or StepFactory().build_bundle(
+            support_steps=self.support_steps,
+            inference_role=self.inference_role,
+            arena_role=self.arena_role,
+            judge_role=self.judge_role,
+            auto_eval_step=self.auto_eval_step,
+        )
         return StepExecutionContext(
             sample,
-            support,
-            inference,
-            arena,
-            judge,
-            self.auto_eval_step,
+            bundle.support,
+            bundle.inference,
+            bundle.arena,
+            bundle.judge,
+            bundle.auto_eval_step,
             trace,
             role_manager,
             metadata=self.metadata,
@@ -90,6 +90,8 @@ class TaskPlanner:
         self._auto_eval_requested: bool = False
         self._plan_spec: Optional["TaskPlanSpec"] = None
         self._cached_step_sequence: Sequence[Any] = ()
+        self._cached_step_bundle: Optional[TaskStepBundle] = None
+        self._step_factory = StepFactory()
 
     def configure_custom_steps(self, steps: Sequence[dict]) -> None:
         self._custom_steps = steps
@@ -101,6 +103,13 @@ class TaskPlanner:
             self._cached_judge_role,
             self._auto_eval_requested,
         ) = self._derive_layout(steps)
+        self._cached_step_bundle = self._step_factory.build_bundle(
+            support_steps=self._cached_support_steps,
+            inference_role=self._cached_inference_role,
+            arena_role=self._cached_arena_role,
+            judge_role=self._cached_judge_role,
+            auto_eval_step=self._auto_eval_step,
+        )
         logger.debug(
             "TaskPlanner configured {} custom steps (inference={}, arena={}, judge={}, auto_eval={})",
             len(steps),
@@ -133,6 +142,14 @@ class TaskPlanner:
             metric_registry=self._metric_registry,
             cache_store=cache_store,
         )
+        if self._cached_step_sequence:
+            self._cached_step_bundle = self._step_factory.build_bundle(
+                support_steps=self._cached_support_steps,
+                inference_role=self._cached_inference_role,
+                arena_role=self._cached_arena_role,
+                judge_role=self._cached_judge_role,
+                auto_eval_step=self._auto_eval_step,
+            )
         logger.info(
             "TaskPlanner registered {} metric specs (cache_enabled={})",
             len(metric_specs),
@@ -148,6 +165,13 @@ class TaskPlanner:
         if custom_steps is not None:
             ordered_steps: Sequence[Any] = tuple(custom_steps)
             support_steps, inference, arena, judge, auto_eval_requested = self._derive_layout(ordered_steps)
+            step_bundle = self._step_factory.build_bundle(
+                support_steps=support_steps,
+                inference_role=inference,
+                arena_role=arena,
+                judge_role=judge,
+                auto_eval_step=self._auto_eval_step,
+            )
         else:
             support_steps = self._cached_support_steps
             inference = self._cached_inference_role
@@ -155,6 +179,7 @@ class TaskPlanner:
             judge = self._cached_judge_role
             auto_eval_requested = self._auto_eval_requested
             ordered_steps = self._cached_step_sequence
+            step_bundle = self._cached_step_bundle
         final_metadata = {"sample_id": str(sample.get("id", "unknown"))}
         if metadata:
             final_metadata.update(metadata)
@@ -176,6 +201,7 @@ class TaskPlanner:
             auto_eval_step=self._auto_eval_step,
             auto_eval_enabled=auto_eval_requested,
             steps=ordered_steps,
+            step_bundle=step_bundle,
         )
 
     def get_auto_eval_step(self) -> Optional[AutoEvalStep]:
