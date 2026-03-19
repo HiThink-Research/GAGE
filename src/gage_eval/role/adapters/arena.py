@@ -18,6 +18,7 @@ from gage_eval.assets.prompts.renderers import PromptRenderer
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
+from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.players.agent_player import AgentPlayer
 from gage_eval.role.arena.players.human_player import HumanPlayer
@@ -259,6 +260,7 @@ class ArenaRoleAdapter(RoleAdapter):
         player_specs, player_ids, player_names, start_player_id = (
             self._normalize_player_specs(sample)
         )
+        sample_id = self._resolve_sample_id(sample)
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
         env_impl_lower = str(env_impl).lower()
         model_labels: Dict[str, str] = {}
@@ -272,68 +274,88 @@ class ArenaRoleAdapter(RoleAdapter):
             model_labels = self._resolve_player_labels(player_specs, role_manager)
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
-        visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
+        visualizer, fallback_action_queue = self._ensure_visualizer(sample, player_specs)
         action_server, action_queue_server = self._ensure_action_server(player_specs)
-        if action_queue is None:
-            action_queue = action_queue_server
-        environment = self._build_environment(
-            sample,
-            player_ids=player_ids,
-            player_names=player_names,
-            player_models=model_labels if "mahjong" in env_impl_lower else None,
-            start_player_id=start_player_id,
-            chat_queue=action_server.chat_queue if action_server is not None else None,
-            trace=trace,
-            sandbox_provider=sandbox_provider,
-        )
-        ws_session = self._maybe_build_ws_session_controller(sample=sample, env_impl=env_impl_lower)
-        if ws_session is not None:
-            environment = _SessionControlledEnvironment(environment, ws_session)
-        frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
-        if frame_recorder is not None:
-            environment = _FrameCaptureEnvironment(environment, frame_recorder)
-        ws_display_registered = self._maybe_register_ws_display(
-            sample=sample,
-            environment=environment,
-            action_queue=action_queue,
+        if fallback_action_queue is None:
+            fallback_action_queue = action_queue_server
+        action_router = self._build_sample_action_router(
+            sample_id=sample_id,
             player_specs=player_specs,
-            env_impl=env_impl_lower,
-            session_controller=ws_session,
         )
-        if not ws_display_registered:
-            ws_session = None
-        if visualizer is not None:
-            visualizer.reset_state()
-            visualizer.set_players(
+        player_action_queues = (
+            action_router.player_queues if action_router is not None else fallback_action_queue
+        )
+        players: list[Any] = []
+
+        if action_server is not None and action_router is not None:
+            action_server.register_action_queue(sample_id, action_router)
+        if visualizer is not None and action_router is not None:
+            visualizer.bind_action_queue(action_router, sample_id=sample_id)
+
+        try:
+            environment = self._build_environment(
+                sample,
                 player_ids=player_ids,
                 player_names=player_names,
-                player_labels=self._resolve_player_labels(player_specs, role_manager),
-                active_player=start_player_id,
+                player_models=model_labels if "mahjong" in env_impl_lower else None,
+                start_player_id=start_player_id,
+                chat_queue=action_server.chat_queue if action_server is not None else None,
+                trace=trace,
+                sandbox_provider=sandbox_provider,
             )
-            environment = _VisualizedEnvironment(environment, visualizer)
-        players = self._build_players(
-            sample,
-            role_manager,
-            parser,
-            trace=trace,
-            action_queue=action_queue,
-            player_specs=player_specs,
-        )
-
-        logger.info("ArenaRoleAdapter {} starting game", self.adapter_id)
-        if trace:
-            trace.emit(
-                "arena_loop_start",
-                {"adapter_id": self.adapter_id, "player_count": len(players)},
+            ws_session = self._maybe_build_ws_session_controller(
+                sample=sample,
+                env_impl=env_impl_lower,
+            )
+            if ws_session is not None:
+                environment = _SessionControlledEnvironment(environment, ws_session)
+            frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
+            if frame_recorder is not None:
+                environment = _FrameCaptureEnvironment(environment, frame_recorder)
+            ws_display_registered = self._maybe_register_ws_display(
+                sample=sample,
+                environment=environment,
+                action_queue=action_router if action_router is not None else fallback_action_queue,
+                player_specs=player_specs,
+                env_impl=env_impl_lower,
+                session_controller=ws_session,
+            )
+            if not ws_display_registered:
+                ws_session = None
+            if visualizer is not None:
+                visualizer.reset_state()
+                visualizer.set_players(
+                    player_ids=player_ids,
+                    player_names=player_names,
+                    player_labels=self._resolve_player_labels(player_specs, role_manager),
+                    active_player=start_player_id,
+                )
+                environment = _VisualizedEnvironment(environment, visualizer)
+            players = self._build_players(
+                sample,
+                role_manager,
+                parser,
+                trace=trace,
+                action_queue=player_action_queues,
+                player_specs=player_specs,
             )
 
-        # STEP 2: Run the scheduler loop and capture the final result.
-        try:
+            logger.info("ArenaRoleAdapter {} starting game", self.adapter_id)
+            if trace:
+                trace.emit(
+                    "arena_loop_start",
+                    {"adapter_id": self.adapter_id, "player_count": len(players)},
+                )
+
+            # STEP 2: Run the scheduler loop and capture the final result.
             result = scheduler.run_loop(environment, players)
         finally:
             self._wait_for_pending_players(players)
+            if action_server is not None and action_router is not None:
+                action_server.unregister_action_queue(sample_id)
+            if visualizer is not None and action_router is not None:
+                visualizer.clear_action_queue(sample_id=sample_id)
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
-            pass
         if trace:
             trace.emit(
                 "arena_loop_end",
@@ -956,6 +978,11 @@ class ArenaRoleAdapter(RoleAdapter):
             elif player_type == "human":
                 if not adapter_ref:
                     raise ValueError("human player requires ref human_adapter")
+                human_action_queue = (
+                    action_queue.get(player_id)
+                    if isinstance(action_queue, Mapping)
+                    else action_queue
+                )
                 players.append(
                     HumanPlayer(
                         name=player_id,
@@ -964,7 +991,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         sample=sample,
                         parser=parser,
                         trace=trace,
-                        action_queue=action_queue,
+                        action_queue=human_action_queue,
                         timeout_ms=spec.get("timeout_ms"),
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
                     )
@@ -972,6 +999,21 @@ class ArenaRoleAdapter(RoleAdapter):
             else:
                 raise ValueError(f"Unsupported player type: {player_type}")
         return players
+
+    def _build_sample_action_router(
+        self,
+        *,
+        sample_id: str,
+        player_specs: Sequence[Dict[str, Any]],
+    ) -> Optional[SampleActionRouter]:
+        human_player_ids = [
+            str(spec.get("player_id"))
+            for spec in player_specs
+            if spec.get("type") == "human" and spec.get("player_id")
+        ]
+        if not human_player_ids:
+            return None
+        return SampleActionRouter(sample_id=sample_id, player_ids=human_player_ids)
 
     def _wait_for_pending_players(self, players: Sequence[Any]) -> None:
         """Wait briefly for async player workers before adapter return.

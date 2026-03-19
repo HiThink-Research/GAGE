@@ -12,6 +12,10 @@ from typing import Any, Optional, Sequence, Tuple
 from loguru import logger
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.human_input_protocol import (
+    build_action_payload,
+    dump_action_payload,
+)
 from gage_eval.role.arena.visualizers.renderer_base import BoardRenderer
 
 _BOARD_CONTAINER_ID = "gomoku-board-container"
@@ -67,7 +71,9 @@ class GradioVisualizer:
         self._refresh_s = float(refresh_s)
         self._auto_close = bool(auto_close)
         self._wait_for_finish = bool(wait_for_finish)
-        self._action_queue: Queue[str] = Queue()
+        self._fallback_action_queue: Queue[str] = Queue()
+        self._bound_action_queue: Any = self._fallback_action_queue
+        self._bound_sample_id: Optional[str] = None
         self._lock = threading.Lock()
         self._board_text = ""
         self._renderer_impl = str(renderer_impl or "gomoku_board_v1")
@@ -112,10 +118,27 @@ class GradioVisualizer:
         self._title = str(title) if title else "GAGE Gomoku Arena"
 
     @property
-    def action_queue(self) -> Queue[str]:
+    def action_queue(self) -> Any:
         """Return the action queue used for human input."""
 
-        return self._action_queue
+        with self._lock:
+            return self._bound_action_queue
+
+    def bind_action_queue(self, action_queue: Any, *, sample_id: str) -> None:
+        """Bind a sample-scoped action route for the current session."""
+
+        with self._lock:
+            self._bound_action_queue = action_queue
+            self._bound_sample_id = str(sample_id)
+
+    def clear_action_queue(self, *, sample_id: Optional[str] = None) -> None:
+        """Clear the bound sample-scoped action route."""
+
+        with self._lock:
+            if sample_id is not None and self._bound_sample_id != str(sample_id):
+                return
+            self._bound_action_queue = self._fallback_action_queue
+            self._bound_sample_id = None
 
     def start(self) -> None:
         """Start the Gradio server in a background thread."""
@@ -325,7 +348,7 @@ class GradioVisualizer:
                                 logger.info(f"[_submit_move] Triggered with text: '{text}'")
                                 move = (text or "").strip().upper()
                                 if move:
-                                    self._action_queue.put(move)
+                                    self._enqueue_action(move)
                                     return "", self._last_status
                                 return "", self._last_status
 
@@ -505,6 +528,28 @@ class GradioVisualizer:
                 active_player=self._current_active_player,
                 elapsed=0.0,
             )
+
+    def _enqueue_action(self, move: str) -> None:
+        queue = self.action_queue
+        if queue is None:
+            return
+        with self._lock:
+            player_id = self._current_active_player
+            if player_id is None and len(self._player_ids) == 1:
+                player_id = self._player_ids[0]
+            sample_id = self._bound_sample_id
+        payload = build_action_payload(
+            action=move,
+            player_id=player_id,
+            sample_id=sample_id,
+            raw=move,
+            source="gradio_visualizer",
+        )
+        serialized = dump_action_payload(payload)
+        if hasattr(queue, "put_nowait"):
+            queue.put_nowait(serialized)
+            return
+        queue.put(serialized)
 
     def set_players(
         self,

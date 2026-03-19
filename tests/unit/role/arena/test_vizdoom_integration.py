@@ -66,6 +66,13 @@ class _DummyRole:
         return {"answer": self._answer}
 
 
+class _QueueRole:
+    def invoke(self, payload: dict[str, Any], trace: Any) -> dict[str, Any]:
+        _ = trace
+        queue = payload["action_queue"]
+        return {"answer": queue.get()}
+
+
 class _RoleManagerStub:
     def __init__(self, *, answer: str = "2", adapter: Any = None) -> None:
         self._answer = answer
@@ -79,6 +86,13 @@ class _RoleManagerStub:
     def get_adapter(self, adapter_id: str) -> Any:
         _ = adapter_id
         return self._adapter
+
+
+class _QueueRoleManagerStub(_RoleManagerStub):
+    @contextlib.contextmanager
+    def borrow_role(self, adapter_id: str) -> Iterator[_QueueRole]:
+        _ = adapter_id
+        yield _QueueRole()
 
 
 class _FrameStub:
@@ -227,13 +241,23 @@ def test_human_player_async_polls_queue_source_adapter() -> None:
     assert action.metadata["trace_action_applied"] == "TURN_LEFT"
 
 
-def test_human_player_async_queue_payload_respects_target_player_id() -> None:
+def test_human_player_async_queue_payload_respects_sample_and_player_route() -> None:
     from queue import Queue
 
     observation = _build_vizdoom_observation()
     queue: Queue[str] = Queue()
-    queue.put(json.dumps({"player_id": "p1", "move": "1"}, ensure_ascii=False))
-    queue.put(json.dumps({"player_id": "p0", "move": "2"}, ensure_ascii=False))
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-other", "player_id": "p0", "move": "1"},
+            ensure_ascii=False,
+        )
+    )
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-self", "player_id": "p0", "move": "2"},
+            ensure_ascii=False,
+        )
+    )
 
     adapter = HumanAdapter(adapter_id="human_queue", source="queue")
     role_manager = _RoleManagerStub(adapter=adapter)
@@ -241,7 +265,7 @@ def test_human_player_async_queue_payload_respects_target_player_id() -> None:
         name="p0",
         adapter_id="human_queue",
         role_manager=role_manager,
-        sample={},
+        sample={"id": "sample-self"},
         parser=_ParserStub(),
         action_queue=queue,
         timeout_ms=100,
@@ -258,7 +282,46 @@ def test_human_player_async_queue_payload_respects_target_player_id() -> None:
     assert action.metadata["player_type"] == "human"
 
     requeued = json.loads(queue.get_nowait())
-    assert requeued["player_id"] == "p1"
+    assert requeued["sample_id"] == "sample-other"
+    assert requeued["player_id"] == "p0"
+    assert requeued["move"] == "1"
+
+
+def test_human_player_sync_queue_payload_waits_for_matching_sample_route() -> None:
+    from queue import Queue
+
+    observation = _build_vizdoom_observation()
+    queue: Queue[str] = Queue()
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-other", "player_id": "p0", "move": "1"},
+            ensure_ascii=False,
+        )
+    )
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-sync", "player_id": "p0", "move": "2"},
+            ensure_ascii=False,
+        )
+    )
+
+    player = HumanPlayer(
+        name="p0",
+        adapter_id="human_queue",
+        role_manager=_QueueRoleManagerStub(),
+        sample={"id": "sample-sync"},
+        parser=_ParserStub(),
+        action_queue=queue,
+    )
+
+    action = player.think(observation)
+
+    assert action.move == "2"
+    assert action.metadata["player_type"] == "human"
+
+    requeued = json.loads(queue.get_nowait())
+    assert requeued["sample_id"] == "sample-other"
+    assert requeued["player_id"] == "p0"
     assert requeued["move"] == "1"
 
 
