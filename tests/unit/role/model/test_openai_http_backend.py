@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+import gage_eval.role.model.backends.openai_http_backend as openai_http_backend
 from gage_eval.role.model.backends.openai_http_backend import OpenAICompatibleHTTPBackend
 
 
@@ -130,7 +132,7 @@ def test_generate_collects_sync_stream_into_completion_payload() -> None:
     assert result["usage"] == {"prompt_tokens": 3, "completion_tokens": 2}
     assert result["raw_response"]["object"] == "chat.completion"
     assert result["raw_response"]["choices"][0]["message"]["content"] == "hello world"
-    assert len(result["raw_response"]["stream_chunks"]) == 2
+    assert result["raw_response"]["stream_chunk_count"] == 2
 
 
 @pytest.mark.fast
@@ -165,4 +167,33 @@ def test_ainvoke_collects_async_stream_into_completion_payload() -> None:
     assert result["usage"] == {"prompt_tokens": 4, "completion_tokens": 2}
     assert result["raw_response"]["object"] == "chat.completion"
     assert result["raw_response"]["choices"][0]["message"]["content"] == "hello async"
-    assert len(result["raw_response"]["stream_chunks"]) == 2
+    assert result["raw_response"]["stream_chunk_count"] == 2
+
+
+@pytest.mark.fast
+def test_generate_warns_and_falls_back_for_invalid_stream_indexes() -> None:
+    backend = _build_backend()
+    stream = _SyncStream(
+        [
+            {
+                "id": "cmpl_123",
+                "object": "chat.completion.chunk",
+                "created": 123,
+                "model": "fake-model",
+                "choices": [
+                    {
+                        "index": "bad-index",
+                        "delta": {"role": "assistant", "content": "hello"},
+                    }
+                ],
+            }
+        ]
+    )
+    backend.client = SimpleNamespace(chat=SimpleNamespace(completions=_SyncCreate(stream)))
+
+    with patch.object(openai_http_backend.logger, "warning") as warning_mock:
+        result = backend.generate({"stream": True})
+
+    assert result["answer"] == "hello"
+    warning_mock.assert_called_once()
+    assert "invalid stream index" in warning_mock.call_args.args[0]

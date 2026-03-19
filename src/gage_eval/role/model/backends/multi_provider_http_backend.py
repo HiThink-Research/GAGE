@@ -146,19 +146,37 @@ class MultiProviderHTTPBackend(EngineBackend):
         """Normalizes native retry settings for inference provider calls."""
 
         params = params or {}
-        ignored_keys = sorted({"attempts", "interval"} & params.keys())
-        if ignored_keys:
-            logger.warning(
-                "Ignoring wrapper retry keys for MultiProviderHTTPBackend: {}. "
-                "Use max_retries/base_sleep/multiplier instead.",
-                ", ".join(ignored_keys),
-            )
         defaults = {
             "max_retries": 5,
             "base_sleep": 3,
             "multiplier": 2,
         }
-        merged = {key: params.get(key, value) for key, value in defaults.items()}
+
+        # STEP 1: Preserve legacy wrapper retry knobs so older YAML stays behaviorally stable.
+        merged = dict(defaults)
+        if "attempts" in params and "max_retries" not in params:
+            attempts = max(1, int(params.get("attempts", 1)))
+            merged["max_retries"] = max(0, attempts - 1)
+            logger.warning(
+                "MultiProviderHTTPBackend mapped legacy http_retry_params.attempts={} to max_retries={}. "
+                "Prefer max_retries/base_sleep/multiplier in new configs.",
+                attempts,
+                merged["max_retries"],
+            )
+        if "interval" in params and "base_sleep" not in params:
+            merged["base_sleep"] = max(0.0, float(params.get("interval", defaults["base_sleep"])))
+            logger.warning(
+                "MultiProviderHTTPBackend mapped legacy http_retry_params.interval={} to base_sleep={}. "
+                "Prefer max_retries/base_sleep/multiplier in new configs.",
+                params.get("interval"),
+                merged["base_sleep"],
+            )
+
+        # STEP 2: Let explicit native retry keys override the compatibility mapping.
+        for key in defaults:
+            if key in params:
+                merged[key] = params[key]
+
         merged["max_retries"] = max(0, int(merged.get("max_retries", defaults["max_retries"])))
         merged["base_sleep"] = max(0.0, float(merged.get("base_sleep", defaults["base_sleep"])))
         merged["multiplier"] = max(1.0, float(merged.get("multiplier", defaults["multiplier"])))

@@ -318,7 +318,7 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
 
         metadata["object"] = "chat.completion"
         metadata["choices"] = [merged_choices[idx] for idx in sorted(merged_choices)]
-        metadata["stream_chunks"] = chunks
+        metadata["stream_chunk_count"] = len(chunks)
         if usage is not None:
             metadata["usage"] = usage
         return metadata
@@ -441,9 +441,23 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
 
     def _coerce_index(self, value: Any, *, default: int) -> int:
         try:
-            return int(value)
+            index = int(value)
         except (TypeError, ValueError):
+            if value is not None:
+                logger.warning(
+                    "OpenAICompatibleHTTPBackend received invalid stream index={!r}; using fallback index={}",
+                    value,
+                    default,
+                )
             return default
+        if index < 0:
+            logger.warning(
+                "OpenAICompatibleHTTPBackend received negative stream index={!r}; using fallback index={}",
+                value,
+                default,
+            )
+            return default
+        return index
 
     def _extract_answer(self, completion: Any) -> str:
         choices = completion.get("choices") if isinstance(completion, dict) else getattr(completion, "choices", None)

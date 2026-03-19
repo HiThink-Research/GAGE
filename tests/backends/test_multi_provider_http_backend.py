@@ -48,9 +48,42 @@ class MultiProviderHTTPBackendTests(unittest.TestCase):
 
             self.assertEqual(result["answer"], "pong")
             self.assertEqual(backend.http_retry_mode, "native")
-            self.assertNotIn("attempts", backend.http_retry_params)
+            self.assertEqual(
+                backend.http_retry_params,
+                {"max_retries": 5, "base_sleep": 3.0, "multiplier": 2.0},
+            )
             # config default sets parallel_calls_count to 10
             self.assertEqual(backend.parallel_calls, 10)
+
+    def test_multi_provider_maps_legacy_retry_keys_without_changing_behavior(self):
+        fake_transformers = types.SimpleNamespace(AutoTokenizer=FakeTokenizer)
+        client_holder = {}
+
+        def build_client(**kwargs):
+            client = FakeAsyncClient(failures_before_success=1, **kwargs)
+            client_holder["client"] = client
+            return client
+
+        with mock.patch.object(mp_backend, "AsyncInferenceClient", build_client), mock.patch.dict(
+            sys.modules, {"transformers": fake_transformers}
+        ):
+            backend = MultiProviderHTTPBackend(
+                {
+                    "provider": "together",
+                    "model_name": "stub-model",
+                    "http_retry_params": {"attempts": 2, "interval": 0.0},
+                }
+            )
+            wrapped = wrap_backend(backend)
+
+            result = asyncio.run(wrapped.ainvoke({"messages": [{"role": "user", "content": "hi"}]}))
+
+        self.assertEqual(result["answer"], "pong")
+        self.assertEqual(len(client_holder["client"].calls), 2)
+        self.assertEqual(
+            backend.http_retry_params,
+            {"max_retries": 1, "base_sleep": 0.0, "multiplier": 2.0},
+        )
 
     def test_wrapped_backend_does_not_apply_http_retry_proxy_on_top_of_native_retry(self):
         fake_transformers = types.SimpleNamespace(AutoTokenizer=FakeTokenizer)
