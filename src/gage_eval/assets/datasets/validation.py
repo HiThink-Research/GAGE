@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import importlib
 import logging
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, Optional, Type, Union
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
 try:  # Pydantic v2+
     from pydantic import ConfigDict  # type: ignore
@@ -15,17 +16,31 @@ except ImportError:  # pragma: no cover - v1 fallback
     ConfigDict = None
 
 from gage_eval.observability.trace import ObservabilityTrace
-from dataclasses import dataclass, asdict, is_dataclass
 from gage_eval.assets.datasets.sample import (
     Sample,
 )
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class ValidationFailure:
+    """Structured validation failure emitted to callers and ledgers."""
+
+    step: str
+    dataset_id: str
+    message: str
+    reason: str
+    index: Optional[int] = None
+    sample_id: Optional[str] = None
+    errors: tuple[Dict[str, Any], ...] = field(default_factory=tuple)
+
+
 class ValidationMode(str, Enum):
     OFF = "off"
     WARN = "warn"
     STRICT = "strict"
+
 
 class DefaultEnvelopeModel(BaseModel):
     """Minimal schema covering the core fields of the Sample envelope."""
@@ -39,6 +54,7 @@ class DefaultEnvelopeModel(BaseModel):
         class Config:
             extra = "allow"
             protected_namespaces = ()
+
 
 class SampleValidator:
     """Validates raw dataset records and/or standardized samples."""
@@ -64,6 +80,7 @@ class SampleValidator:
         dataset_id: str,
         index: int,
         trace: Optional[ObservabilityTrace] = None,
+        on_failure: Optional[Callable[[ValidationFailure], None]] = None,
     ) -> Optional[Dict[str, Any]]:
         record_dict = asdict(record) if is_dataclass(record) else record
         if not self._raw_model:
@@ -72,7 +89,14 @@ class SampleValidator:
             instance = self._model_validate(self._raw_model, record_dict)
             return self._model_dump(instance)
         except ValidationError as exc:
-            return self._handle_failure("raw_record", exc, dataset_id=dataset_id, index=index, trace=trace)
+            return self._handle_failure(
+                "raw_record",
+                exc,
+                dataset_id=dataset_id,
+                index=index,
+                trace=trace,
+                on_failure=on_failure,
+            )
 
     def validate_envelope(
         self,
@@ -81,6 +105,7 @@ class SampleValidator:
         dataset_id: str,
         sample_id: Optional[str],
         trace: Optional[ObservabilityTrace] = None,
+        on_failure: Optional[Callable[[ValidationFailure], None]] = None,
     ) -> Optional[Dict[str, Any]]:
         sample_dict = asdict(sample) if is_dataclass(sample) else sample
         if not self._envelope_model or self._mode == ValidationMode.OFF:
@@ -95,6 +120,7 @@ class SampleValidator:
                 dataset_id=dataset_id,
                 sample_id=sample_id,
                 trace=trace,
+                on_failure=on_failure,
             )
 
     # ------------------------------------------------------------------
@@ -109,10 +135,21 @@ class SampleValidator:
         index: Optional[int] = None,
         sample_id: Optional[str] = None,
         trace: Optional[ObservabilityTrace],
+        on_failure: Optional[Callable[[ValidationFailure], None]] = None,
     ) -> Optional[Dict[str, Any]]:
+        errors = tuple(error.errors())
         message = (
             f"Data validation failed ({step}) for dataset='{dataset_id}' "
             f"index={index} sample_id={sample_id}: {error}"
+        )
+        failure = ValidationFailure(
+            step=step,
+            dataset_id=dataset_id,
+            message=message,
+            reason=_summarize_validation_reason(step, errors),
+            index=index,
+            sample_id=sample_id,
+            errors=errors,
         )
         if self._mode == ValidationMode.STRICT:
             raise ValueError(message) from error
@@ -125,9 +162,11 @@ class SampleValidator:
                     "step": step,
                     "index": index,
                     "sample_id": sample_id,
-                    "errors": error.errors(),
+                    "errors": errors,
                 },
             )
+        if on_failure is not None:
+            on_failure(failure)
         return None
 
     @staticmethod
@@ -141,6 +180,7 @@ class SampleValidator:
         if hasattr(instance, "model_dump"):
             return instance.model_dump()  # type: ignore[attr-defined]
         return instance.dict()  # type: ignore[return-value]
+
 
 def _validate_list_field(sample, attr):
     """ Ensure each list filed of a Sample object"""
@@ -201,3 +241,19 @@ def _maybe_import_model(path: Optional[str]) -> Optional[Type[BaseModel]]:
     if not issubclass(model_cls, BaseModel):  # type: ignore[arg-type]
         raise TypeError(f"Schema model '{path}' must inherit from pydantic.BaseModel")
     return model_cls
+
+
+def _summarize_validation_reason(
+    step: str,
+    errors: tuple[Dict[str, Any], ...],
+) -> str:
+    """Build a stable, compact reason string for summary aggregation."""
+
+    if not errors:
+        return f"{step}:validation_error"
+    first = errors[0]
+    error_type = str(first.get("type") or "validation_error")
+    loc = ".".join(str(part) for part in first.get("loc") or ())
+    if loc:
+        return f"{step}:{loc}:{error_type}"
+    return f"{step}:{error_type}"

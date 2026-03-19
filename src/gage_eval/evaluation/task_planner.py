@@ -10,6 +10,7 @@ from loguru import logger
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
+from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
 from gage_eval.evaluation.sample_envelope import (
     append_arena_contract,
     append_predict_result,
@@ -180,7 +181,12 @@ class TaskPlanner:
             auto_eval_requested = self._auto_eval_requested
             ordered_steps = self._cached_step_sequence
             step_bundle = self._cached_step_bundle
-        final_metadata = {"sample_id": str(sample.get("id", "unknown"))}
+        resolved_task_id = None
+        if metadata and metadata.get("task_id") is not None:
+            resolved_task_id = str(metadata["task_id"])
+        final_metadata = {
+            "sample_id": resolve_runtime_sample_id(sample, task_id=resolved_task_id)
+        }
         if metadata:
             final_metadata.update(metadata)
         logger.debug(

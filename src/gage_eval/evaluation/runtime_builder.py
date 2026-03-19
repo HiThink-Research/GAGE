@@ -15,10 +15,14 @@ if TYPE_CHECKING:
 from loguru import logger
 from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.assets.datasets.manager import DataManager, DataSource
-from gage_eval.assets.datasets.validation import SampleValidator
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.pipeline import PipelineFactory, PipelineRuntime
+from gage_eval.evaluation.sample_ingress import (
+    SampleIngressCoordinator,
+    ValidationLedger,
+    build_sample_ingress_policy,
+)
 from gage_eval.evaluation.runtime_metadata import (
     build_runtime_metadata_snapshot,
     record_runtime_metadata,
@@ -62,6 +66,7 @@ def build_runtime(
         base_dir=os.environ.get("GAGE_EVAL_SAVE_DIR"),
         run_id=trace.run_id,
     )
+    validation_ledger = _ensure_validation_ledger(cache_store)
     data_manager = DataManager()
     dataset_start = time.perf_counter()
     datasets: Dict[str, DataSource] = registry.materialize_datasets(config, trace=trace)
@@ -87,6 +92,7 @@ def build_runtime(
             trace=trace,
             cache_store=cache_store,
             resource_profile=resource_profile,
+            aggregate_validation_ledger=validation_ledger,
         )
 
     return _build_single_runtime(
@@ -100,6 +106,7 @@ def build_runtime(
         dataset_id=dataset_id,
         trace=trace,
         cache_store=cache_store,
+        aggregate_validation_ledger=validation_ledger,
     )
 
 
@@ -114,6 +121,7 @@ def _build_single_runtime(
     dataset_id: Optional[str],
     trace: ObservabilityTrace,
     cache_store: EvalCache,
+    aggregate_validation_ledger: ValidationLedger,
 ) -> PipelineRuntime:
     sandbox_profiles = registry.materialize_sandbox_profiles(config)
     selected_dataset_id = _select_dataset_id(dataset_id, config, datasets)
@@ -131,12 +139,13 @@ def _build_single_runtime(
             "streaming": selected_source.streaming,
         },
     )
-    raw_samples = data_manager.iter_samples(selected_dataset_id, trace=trace)
-    samples = _validate_samples(
-        raw_samples,
-        validator=selected_source.validator,
+    samples = _prepare_samples_for_source(
+        data_manager=data_manager,
+        source=selected_source,
         dataset_id=selected_dataset_id,
         trace=trace,
+        cache_store=cache_store,
+        aggregate_validation_ledger=aggregate_validation_ledger,
     )
 
     concurrency = _resolve_concurrency(None, resource_profile)
@@ -175,6 +184,7 @@ def _build_task_orchestrator_runtime(
     trace: ObservabilityTrace,
     cache_store: EvalCache,
     resource_profile: ResourceProfile,
+    aggregate_validation_ledger: ValidationLedger,
 ) -> "TaskOrchestratorRuntime":
     report_step = ReportStep(auto_eval_step=None, cache_store=cache_store)
     _record_config_metadata(config, cache_store)
@@ -193,6 +203,7 @@ def _build_task_orchestrator_runtime(
         cache_store=cache_store,
         resource_profile=resource_profile,
         sandbox_profiles=sandbox_profiles,
+        aggregate_validation_ledger=aggregate_validation_ledger,
     )
     logger.info("Prepared {} task runtime entries", len(task_entries))
     trace.emit(
@@ -212,31 +223,51 @@ def _build_task_orchestrator_runtime(
     return TaskOrchestratorRuntime(task_entries, role_manager, trace, report_step)
 
 
-def _validate_samples(
-    raw_samples: Iterable[Dict[str, Any]],
+def _prepare_samples_for_source(
     *,
-    validator: Optional[SampleValidator],
+    data_manager: DataManager,
+    source: DataSource,
     dataset_id: str,
     trace: Optional[ObservabilityTrace],
+    cache_store: EvalCache,
+    aggregate_validation_ledger: Optional[ValidationLedger],
+    task_id: Optional[str] = None,
 ) -> Iterable[Dict[str, Any]]:
-    for record in raw_samples:
-        sample = dict(record)
-        if validator:
-            validated = validator.validate_envelope(
-                sample,
-                dataset_id=dataset_id,
-                sample_id=str(sample.get("id")),
-                trace=trace,
+    ledger = _ensure_validation_ledger(cache_store, aggregate_validation_ledger)
+    coordinator = SampleIngressCoordinator(
+        dataset_id=dataset_id,
+        validator=source.validator,
+        policy=build_sample_ingress_policy(source.validation),
+        trace=trace,
+        task_id=task_id,
+        aggregate_ledger=ledger,
+    )
+    raw_samples = data_manager.iter_samples(
+        dataset_id,
+        trace=trace,
+        record_seen=coordinator.record_seen,
+        validation_reporter=coordinator.record_failure,
+    )
+    prepared = coordinator.prepare(raw_samples)
+    if not source.streaming and coordinator.requires_eager_gate_check:
+        return list(prepared)
+    return prepared
+
+
+def _ensure_validation_ledger(
+    cache_store: EvalCache,
+    ledger: Optional[ValidationLedger] = None,
+) -> ValidationLedger:
+    """Return a cache-backed validation ledger for the current run."""
+
+    if ledger is None:
+        ledger = ValidationLedger(
+            on_update=lambda summary: cache_store.set_metadata(
+                "validation_summary", summary
             )
-            if validated is None:
-                logger.debug(
-                    "Validator skipped sample for dataset_id='{}'",
-                    dataset_id,
-                )
-                continue
-            sample = validated
-        logger.trace("Validated sample id='{}'", sample.get("id"))
-        yield sample
+        )
+    cache_store.set_metadata("validation_summary", ledger.snapshot())
+    return ledger
 
 
 def _select_dataset_id(
@@ -456,6 +487,7 @@ def _prepare_task_entries(
     cache_store: EvalCache,
     resource_profile: ResourceProfile,
     sandbox_profiles: Dict[str, Dict[str, Any]],
+    aggregate_validation_ledger: Optional[ValidationLedger] = None,
 ) -> Sequence[_TaskRuntimeEntry]:
     entries: List[_TaskRuntimeEntry] = []
     for plan in task_plans:
@@ -463,12 +495,14 @@ def _prepare_task_entries(
         if dataset_id not in datasets:
             raise KeyError(f"Dataset '{dataset_id}' referenced by task '{plan.task_id}' is not registered")
         source = data_manager.get(dataset_id)
-        raw_samples = data_manager.iter_samples(dataset_id, trace=trace)
-        samples = _validate_samples(
-            raw_samples,
-            validator=source.validator,
+        samples = _prepare_samples_for_source(
+            data_manager=data_manager,
+            source=source,
             dataset_id=dataset_id,
             trace=trace,
+            cache_store=cache_store,
+            aggregate_validation_ledger=aggregate_validation_ledger,
+            task_id=plan.task_id,
         )
         concurrency = _resolve_concurrency(plan.runtime_policy.concurrency, resource_profile)
         concurrency = _apply_fixed_port_guard(

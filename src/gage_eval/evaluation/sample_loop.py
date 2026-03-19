@@ -26,6 +26,7 @@ from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.step_contracts import get_step_contract_catalog
+from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
 from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
 from gage_eval.sandbox.manager import SandboxManager
@@ -405,8 +406,10 @@ class SampleLoop:
             sample,
             metadata=self._compose_metadata(sample),
         )
-        sample_id = plan.metadata.get("sample_id") or str(
-            sample.get("id") or logical_idx
+        sample_id = plan.metadata.get("sample_id") or resolve_runtime_sample_id(
+            sample,
+            task_id=self._task_id,
+            logical_idx=logical_idx,
         )
         logger.debug(
             "Processing sample logical_idx={} sample_id={}", logical_idx, sample_id
@@ -586,7 +589,9 @@ class SampleLoop:
         return self._concurrency
 
     def _compose_metadata(self, sample: dict) -> dict:
-        metadata = {"sample_id": str(sample.get("id", "unknown"))}
+        metadata = {
+            "sample_id": resolve_runtime_sample_id(sample, task_id=self._task_id)
+        }
         if self._task_id:
             metadata["task_id"] = self._task_id
         return metadata

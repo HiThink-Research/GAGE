@@ -204,6 +204,9 @@ class ReportStep(GlobalStep):
             "metrics": formatted_metrics,
             "sample_count": self._cache.sample_count,
         }
+        validation_summary = self._cache.get_metadata("validation_summary")
+        if isinstance(validation_summary, dict):
+            payload.update(validation_summary)
         if summary_payload:
             payload.update(summary_payload)
         if formatted_tasks:

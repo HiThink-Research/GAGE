@@ -15,6 +15,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 from loguru import logger
 
 from gage_eval.assets.prompts.renderers import PromptRenderer
+from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
@@ -1152,8 +1153,7 @@ class ArenaRoleAdapter(RoleAdapter):
 
     @staticmethod
     def _resolve_sample_id(sample: Dict[str, Any]) -> str:
-        sample_id = sample.get("id") or sample.get("sample_id") or "sample"
-        return str(sample_id)
+        return resolve_runtime_sample_id(sample)
 
     def _write_game_log(
         self,
