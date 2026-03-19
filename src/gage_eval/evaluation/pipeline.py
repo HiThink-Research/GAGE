@@ -18,6 +18,10 @@ from gage_eval.evaluation.sample_loop import SampleLoop
 from gage_eval.evaluation.task_planner import TaskPlanner
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.runtime_metadata import (
+    build_runtime_metadata_snapshot,
+    record_runtime_metadata,
+)
 from gage_eval.pipeline.steps.report import ReportStep
 from gage_eval.role.role_manager import RoleManager
 from gage_eval.observability.trace import ObservabilityTrace
@@ -196,43 +200,10 @@ class PipelineFactory:
         sandbox_profiles = self._registry.materialize_sandbox_profiles(config)
         mcp_clients = self._registry.materialize_mcp_clients(config)
         prompt_assets = self._registry.materialize_prompts(config)
-        backend_specs = [
-            {
-                "backend_id": spec.backend_id,
-                "type": spec.type,
-                "config": spec.config,
-            }
-            for spec in config.backends
-        ]
-        if backend_specs:
-            cache_store.set_metadata("backends", backend_specs)
-        model_specs = [
-            {
-                "model_id": spec.model_id,
-                "source": spec.source,
-                "hub": spec.hub,
-                "hub_params": spec.hub_params,
-                "params": spec.params,
-            }
-            for spec in config.models
-        ]
-        if model_specs:
-            cache_store.set_metadata("models", model_specs)
-        role_specs = [
-            {
-                "adapter_id": spec.adapter_id,
-                "role_type": spec.role_type,
-                "backend_id": spec.backend_id,
-                "backend_inline": spec.backend,
-                "capabilities": list(spec.capabilities or ()),
-                "prompt_id": spec.prompt_id,
-            }
-            for spec in config.role_adapters
-        ]
-        if role_specs:
-            cache_store.set_metadata("role_adapters", role_specs)
-        if config.summary_generators:
-            cache_store.set_metadata("summary_generators", list(config.summary_generators))
+        record_runtime_metadata(
+            cache_store,
+            build_runtime_metadata_snapshot(config),
+        )
         adapters = self._registry.materialize_role_adapters(
             config,
             backends=backend_instances,
