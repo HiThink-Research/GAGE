@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Sequence
 
-ALLOWED_STEPS = {"support", "inference", "arena", "judge", "auto_eval", "report", "hook"}
+from gage_eval.pipeline.step_contracts import collect_step_sequence_issues
 
 
 class SchemaValidationError(ValueError):
@@ -60,7 +60,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     metric_ids = _ensure_unique(metrics, "metric_id", "metric", errors, allow_str=True)
 
     _validate_role_bindings(role_adapters, backend_ids, agent_backend_ids, prompt_ids, mcp_client_ids, errors)
-    _validate_steps(custom, errors)
+    _validate_steps(custom, adapter_ids=adapter_ids, errors=errors)
     _validate_tasks(
         tasks=tasks,
         dataset_ids=dataset_ids,
@@ -210,19 +210,24 @@ def _prompt_id_in_registry(prompt_id: str) -> bool:
         return False
 
 
-def _validate_steps(custom: Any, errors: List[str]) -> None:
+def _validate_steps(
+    custom: Any,
+    *,
+    adapter_ids: List[str],
+    errors: List[str],
+) -> None:
     if not custom:
         return
     steps = custom.get("steps")
     if steps is None:
         errors.append("custom pipeline must declare 'steps'")
         return
-    for idx, step in enumerate(steps):
-        step_type = (step or {}).get("step")
-        if step_type not in ALLOWED_STEPS:
-            errors.append(
-                f"custom steps[{idx}] uses invalid step '{step_type}', allowed values: {sorted(ALLOWED_STEPS)}"
-            )
+    _validate_step_sequence(
+        steps,
+        adapter_ids=adapter_ids,
+        owner_label="custom steps",
+        errors=errors,
+    )
 
 
 def _validate_tasks(
@@ -236,7 +241,6 @@ def _validate_tasks(
     errors: List[str],
 ) -> None:
     dataset_set = set(dataset_ids)
-    adapter_set = set(adapter_ids)
     metric_set = set(metric_ids)
     for task in tasks:
         task_id = task.get("task_id", "<unknown>")
@@ -248,18 +252,12 @@ def _validate_tasks(
             errors.append(
                 f"task '{task_id}' must declare steps when pipeline has no builtin/custom definition"
             )
-        for idx, step in enumerate(steps):
-            step_type = (step or {}).get("step")
-            if step_type not in ALLOWED_STEPS:
-                errors.append(
-                    f"task '{task_id}' step[{idx}] uses invalid step '{step_type}' "
-                    f"(allowed: {sorted(ALLOWED_STEPS)})"
-                )
-            adapter_id = (step or {}).get("adapter_id") or (step or {}).get("role_ref")
-            if adapter_id and adapter_id not in adapter_set:
-                errors.append(
-                    f"task '{task_id}' references unknown role adapter '{adapter_id}'"
-                )
+        _validate_step_sequence(
+            steps,
+            adapter_ids=adapter_ids,
+            owner_label=f"task '{task_id}' step",
+            errors=errors,
+        )
         overrides = task.get("metric_overrides") or []
         for metric in overrides:
             metric_id = metric.get("metric_id")
@@ -267,3 +265,20 @@ def _validate_tasks(
                 errors.append(
                     f"task '{task_id}' overrides metric '{metric_id}' which is not defined globally"
                 )
+
+
+def _validate_step_sequence(
+    steps: List[dict],
+    *,
+    adapter_ids: List[str],
+    owner_label: str,
+    errors: List[str],
+) -> None:
+    errors.extend(
+        issue.message
+        for issue in collect_step_sequence_issues(
+            steps,
+            owner_label=owner_label,
+            adapter_ids=adapter_ids,
+        )
+    )

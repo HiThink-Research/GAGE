@@ -166,6 +166,7 @@ cython_debug/
 .idea/
 
 # custom .gitignore
+DEVLOG.md
 user.config
 saves/
 cache/

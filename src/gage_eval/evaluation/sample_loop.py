@@ -25,6 +25,7 @@ from typing import (
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.pipeline.step_contracts import get_step_contract_catalog
 from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
 from gage_eval.sandbox.manager import SandboxManager
@@ -226,29 +227,13 @@ class SampleLoop:
             ):
                 if plan.steps:
                     for step in plan.steps:
-                        step_type = _resolve_step_type(step)
-                        if step_type == "support":
-                            if plan.support_steps:
-                                session.execute_support_step(step)
-                            continue
-                        if step_type == "inference":
-                            if plan.inference_role:
-                                session.execute_inference()
-                            continue
-                        if step_type == "arena":
-                            if plan.arena_role:
-                                session.execute_arena()
-                            continue
-                        if step_type == "judge":
-                            if plan.judge_role:
-                                session.execute_judge()
-                            continue
-                        if step_type == "auto_eval":
-                            if plan.auto_eval_enabled:
-                                session.execute_auto_eval(sample_identifier)
-                            continue
-                        logger.debug(
-                            "Unknown step type '{}' skipped during execution", step_type
+                        self._dispatch_step(
+                            session,
+                            step,
+                            plan,
+                            role_manager,
+                            trace,
+                            sample_identifier,
                         )
                 else:
                     if plan.support_steps:
@@ -265,6 +250,120 @@ class SampleLoop:
             # STEP 3: Release sandbox resources
             if sandbox_provider is not None:
                 sandbox_provider.release()
+
+    def _dispatch_step(
+        self,
+        session,
+        step,
+        plan: TaskPlan,
+        role_manager: RoleManager,
+        trace: ObservabilityTrace,
+        sample_identifier: str,
+    ) -> None:
+        step_type = _resolve_step_type(step)
+        catalog = get_step_contract_catalog()
+        contract = catalog.get(step_type)
+        payload = self._build_step_event_payload(
+            step_type=step_type,
+            plan=plan,
+            step=step,
+            sample_identifier=sample_identifier,
+        )
+        if contract is None:
+            payload["error_type"] = "unsupported_step"
+            trace.emit("step_execution_failed", payload, sample_id=sample_identifier)
+            raise ValueError(f"Unsupported configured step '{step_type}'")
+        if contract.step_kind.value != "sample":
+            payload["error_type"] = "invalid_step_kind"
+            trace.emit("step_execution_failed", payload, sample_id=sample_identifier)
+            raise ValueError(
+                f"Configured step '{step_type}' is global and cannot run inside sample execution"
+            )
+        executor_name = contract.executor_name
+        if executor_name is None or not hasattr(session, executor_name):
+            payload["error_type"] = "missing_executor"
+            trace.emit("step_execution_failed", payload, sample_id=sample_identifier)
+            raise ValueError(
+                f"Configured step '{step_type}' has no sample executor mapping"
+            )
+        adapter_id = payload.get("adapter_id")
+        if contract.requires_adapter:
+            try:
+                self._assert_runtime_adapter_binding(
+                    step_type=step_type,
+                    adapter_id=adapter_id,
+                    role_manager=role_manager,
+                )
+            except Exception as exc:
+                failure_payload = dict(payload)
+                failure_payload["error_type"] = exc.__class__.__name__
+                failure_payload["error"] = str(exc)
+                trace.emit(
+                    "step_execution_failed",
+                    failure_payload,
+                    sample_id=sample_identifier,
+                )
+                raise
+        trace.emit("step_execution_started", payload, sample_id=sample_identifier)
+        started_at = time.perf_counter()
+        try:
+            executor = getattr(session, executor_name)
+            if step_type == "support":
+                executor(step)
+            elif step_type == "auto_eval":
+                executor(sample_identifier)
+            else:
+                executor()
+        except Exception as exc:
+            failure_payload = dict(payload)
+            failure_payload["error_type"] = exc.__class__.__name__
+            failure_payload["error"] = str(exc)
+            trace.emit(
+                "step_execution_failed",
+                failure_payload,
+                sample_id=sample_identifier,
+            )
+            raise
+        completed_payload = dict(payload)
+        completed_payload["duration_ms"] = int(
+            (time.perf_counter() - started_at) * 1000
+        )
+        trace.emit(
+            "step_execution_completed",
+            completed_payload,
+            sample_id=sample_identifier,
+        )
+
+    def _assert_runtime_adapter_binding(
+        self,
+        *,
+        step_type: Optional[str],
+        adapter_id: Optional[str],
+        role_manager: RoleManager,
+    ) -> None:
+        if not adapter_id:
+            raise RuntimeError(
+                f"Configured step '{step_type}' requires a resolved adapter_id at runtime"
+            )
+        if role_manager.get_adapter(adapter_id) is None:
+            raise KeyError(
+                f"Configured step '{step_type}' references unregistered adapter '{adapter_id}'"
+            )
+
+    def _build_step_event_payload(
+        self,
+        *,
+        step_type: Optional[str],
+        plan: TaskPlan,
+        step,
+        sample_identifier: str,
+    ) -> Dict[str, Any]:
+        return {
+            "task_id": plan.metadata.get("task_id") or self._task_id,
+            "sample_id": sample_identifier,
+            "step_type": step_type,
+            "adapter_id": _resolve_runtime_adapter_id(step, step_type, plan),
+        }
 
     def _iter_samples(self) -> Iterator[Tuple[int, dict]]:
         if self._shuffle:
@@ -582,4 +681,16 @@ def _resolve_step_type(step) -> Optional[str]:
         return getattr(step, "step_type")
     if hasattr(step, "get"):
         return step.get("step") or step.get("step_type")
+    return None
+
+
+def _resolve_runtime_adapter_id(step, step_type: Optional[str], plan: TaskPlan) -> Optional[str]:
+    if step_type == "support" and hasattr(step, "get"):
+        return step.get("adapter_id") or step.get("role_ref")
+    if step_type == "inference":
+        return plan.inference_role
+    if step_type == "arena":
+        return plan.arena_role
+    if step_type == "judge":
+        return plan.judge_role
     return None

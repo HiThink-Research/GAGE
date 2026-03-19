@@ -13,6 +13,10 @@ from gage_eval.config.pipeline_config import (
     RoleAdapterSpec,
     TaskSpec,
 )
+from gage_eval.pipeline.step_contracts import (
+    collect_step_sequence_issues,
+    get_step_contract_catalog,
+)
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,7 @@ def _build_task_plan(
         raise ValueError(
             f"Task '{task.task_id}' must declare steps explicitly or via custom pipeline"
         )
+    _validate_task_steps(steps, role_map, task_id=task.task_id)
 
     # NOTE: Auto-fill missing `adapter_id` for common cases (currently focused on inference steps).
     resolved_steps = _infer_step_bindings(steps, role_map, task_id=task.task_id)
@@ -121,8 +126,13 @@ def _infer_step_bindings(
     automatically bound to that DUT adapter.
     """
 
-    # STEP 1: If all steps specify adapter_id explicitly, keep them unchanged.
-    if all(step.adapter_id for step in steps):
+    contracts = get_step_contract_catalog()
+
+    # STEP 1: If every adapter-requiring step is already bound, keep steps unchanged.
+    if all(
+        step.adapter_id or not contracts.require(step.step_type).requires_adapter
+        for step in steps
+    ):
         return steps
 
     resolved: List[CustomPipelineStep] = []
@@ -134,7 +144,8 @@ def _infer_step_bindings(
 
     # STEP 3: Walk steps and infer bindings only for `inference` when safe.
     for step in steps:
-        if step.adapter_id:
+        contract = contracts.require(step.step_type)
+        if step.adapter_id or not contract.requires_adapter:
             resolved.append(step)
             continue
         # Only infer for `inference`; keep other step types unchanged.
@@ -158,7 +169,29 @@ def _infer_step_bindings(
                 )
             )
         else:
-            resolved.append(step)
+            raise ValueError(
+                f"Task '{task_id}' step '{step.step_type}' requires adapter_id and cannot be inferred"
+            )
 
     # STEP 4: Return the resolved step list.
     return tuple(resolved)
+
+
+def _validate_task_steps(
+    steps: Sequence[CustomPipelineStep],
+    role_map: Dict[str, RoleAdapterSpec],
+    *,
+    task_id: str,
+) -> None:
+    issues = collect_step_sequence_issues(
+        steps,
+        owner_label=f"Task '{task_id}' step",
+        adapter_ids=role_map.keys(),
+    )
+    if not issues:
+        return
+
+    issue = issues[0]
+    if issue.code == "unknown_adapter":
+        raise KeyError(issue.message)
+    raise ValueError(issue.message)

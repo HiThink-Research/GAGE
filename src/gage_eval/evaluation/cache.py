@@ -8,10 +8,11 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Mapping, Optional
 
 from loguru import logger
 from gage_eval.evaluation.buffered_writer import BufferedResultWriter
+from gage_eval.evaluation.sample_journal import LockedJsonlJournal, RunSampleJournal
 
 
 class EvalCache:
@@ -44,6 +45,10 @@ class EvalCache:
         else:
             self._use_buffered_writes = False
             self._buffer_auto_mode = self._buffer_threshold > 0
+        self._root_journal: RunSampleJournal = LockedJsonlJournal(
+            target=self._samples_jsonl,
+            serializer=_serialize_jsonl_entry,
+        )
         self._writers: Dict[str, BufferedResultWriter] = {}
         self._writer_lock = threading.Lock()
 
@@ -105,7 +110,7 @@ class EvalCache:
                     self._buffer_threshold,
                 )
                 self._use_buffered_writes = True
-        self._append_jsonl(payload_with_meta)
+        self._root_journal.append(payload_with_meta)
         if self._use_buffered_writes:
             writer = self._get_writer(namespace)
             writer.record(payload_with_meta)
@@ -119,6 +124,7 @@ class EvalCache:
         """Persist the aggregated summary to disk."""
 
         target = self._run_dir / "summary.json"
+        self._root_journal.flush()
         self.flush_writers()
         with self._lock:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -174,12 +180,6 @@ class EvalCache:
     def _sanitize_sample_id(sample_id: str) -> str:
         return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
 
-    def _append_jsonl(self, payload: Dict) -> None:
-        self._samples_jsonl.parent.mkdir(parents=True, exist_ok=True)
-        with self._samples_jsonl.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, default=_json_default))
-            handle.write("\n")
-
     def _get_writer(self, namespace: str) -> BufferedResultWriter:
         with self._writer_lock:
             writer = self._writers.get(namespace)
@@ -202,6 +202,7 @@ class EvalCache:
 
     def close(self) -> None:
         self.flush_writers()
+        self._root_journal.close()
 
     def _write_sample_legacy(self, namespace: str, sample_id: str, payload: Dict) -> Path:
         target = self._samples_dir / namespace / f"{sample_id}.json"
@@ -238,6 +239,12 @@ def _json_default(obj: Any) -> Any:
         except Exception:  # pragma: no cover
             return str(obj)
     return str(obj)
+
+
+def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:
+    """Serializes one root journal payload into a single JSONL entry."""
+
+    return json.dumps(payload, ensure_ascii=False, default=_json_default)
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:

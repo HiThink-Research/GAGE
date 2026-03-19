@@ -16,6 +16,11 @@ from gage_eval.evaluation.sample_envelope import (
     ensure_arena_header,
     update_eval_result,
 )
+from gage_eval.pipeline.step_contracts import (
+    collect_step_sequence_issues,
+    get_step_adapter_id,
+    get_step_type,
+)
 from gage_eval.sandbox.provider import SandboxProvider
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -178,15 +183,34 @@ class TaskPlanner:
 
     @staticmethod
     def _derive_layout(
-        steps: Sequence[dict],
+        steps: Sequence[Any],
     ) -> tuple[Sequence[dict], Optional[str], Optional[str], Optional[str], bool]:
+        issues = collect_step_sequence_issues(
+            steps,
+            owner_label="Configured step",
+        )
+        if issues:
+            raise ValueError(issues[0].message)
         # Support steps are executed sequentially before handing off to inference/judge roles.
-        support_steps = tuple(step for step in steps if step.get("step") == "support")
-        inference = next((step.get("adapter_id") or step.get("role_ref") for step in steps if step.get("step") == "inference"), None)
-        arena = next((step.get("adapter_id") or step.get("role_ref") for step in steps if step.get("step") == "arena"), None)
-        judge = next((step.get("adapter_id") or step.get("role_ref") for step in steps if step.get("step") == "judge"), None)
-        auto_eval = any(step.get("step") == "auto_eval" for step in steps)
+        support_steps = tuple(step for step in steps if get_step_type(step) == "support")
+        inference = _resolve_single_role_binding(steps, "inference")
+        arena = _resolve_single_role_binding(steps, "arena")
+        judge = _resolve_single_role_binding(steps, "judge")
+        auto_eval = any(get_step_type(step) == "auto_eval" for step in steps)
         return support_steps, inference, arena, judge, auto_eval
+
+
+def _resolve_single_role_binding(steps: Sequence[Any], step_type: str) -> Optional[str]:
+    bindings = [
+        get_step_adapter_id(step)
+        for step in steps
+        if get_step_type(step) == step_type
+    ]
+    if len(bindings) > 1:
+        raise ValueError(
+            f"Configured step '{step_type}' appears {len(bindings)} times, but only one role binding is supported"
+        )
+    return bindings[0] if bindings else None
 
 
 class StepExecutionContext:
