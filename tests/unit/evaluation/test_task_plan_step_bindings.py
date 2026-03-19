@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from gage_eval.config.pipeline_config import CustomPipelineStep, RoleAdapterSpec
-from gage_eval.evaluation.task_plan import _infer_step_bindings, _validate_task_steps
+from gage_eval.config.pipeline_config import CustomPipelineStep, PipelineConfig, RoleAdapterSpec
+from gage_eval.evaluation.task_plan import _infer_step_bindings, _validate_task_steps, build_task_plan_specs
 
 
 def _role_map(**adapters: str):
@@ -69,3 +69,25 @@ def test_validate_task_steps_requires_prerequisite_step() -> None:
 
     with pytest.raises(ValueError, match="requires a preceding inference/arena/judge step"):
         _validate_task_steps(steps, role_map, task_id="task-1")
+
+
+@pytest.mark.fast
+def test_build_task_plan_specs_resolves_role_ref_from_pipeline_payload() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [{"dataset_id": "ds"}],
+            "role_adapters": [{"adapter_id": "helper", "role_type": "helper_model"}],
+            "tasks": [
+                {
+                    "task_id": "task-1",
+                    "dataset_id": "ds",
+                    "steps": [{"step": "support", "role_ref": "helper"}],
+                }
+            ],
+        }
+    )
+
+    plans = build_task_plan_specs(config)
+
+    assert plans[0].steps[0].adapter_id == "helper"
+    assert plans[0].role_bindings["helper"].adapter_id == "helper"

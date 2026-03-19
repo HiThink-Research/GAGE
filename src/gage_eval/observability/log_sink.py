@@ -53,6 +53,8 @@ class ObservabilityLogSink:
             return
         record = message.record
         extra = record.get("extra", {})
+        if _should_skip_observability(record):
+            return
         stage = extra.get("stage") or record.get("name") or "log"
         sample_id = extra.get("sample_id")
         sample_idx = extra.get("sample_idx")
@@ -150,3 +152,8 @@ def _log_sink_enabled() -> bool:
 def is_log_sink_active() -> bool:
     with _SINK_LOCK:
         return _GLOBAL_SINK is not None
+
+
+def _should_skip_observability(record: Dict[str, Any]) -> bool:
+    extra = record.get("extra", {})
+    return bool(extra.get("skip_observability"))

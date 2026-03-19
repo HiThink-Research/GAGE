@@ -10,7 +10,7 @@ from gage_eval.config.pipeline_config import (
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.runtime_builder import TaskOrchestratorRuntime, _prepare_task_entries, _record_config_metadata
 from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.reporting.recorders import InMemoryRecorder
+from gage_eval.reporting.recorders import InMemoryRecorder, RecorderBase, ResilientRecorder, TraceEvent
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_manager import RoleManager
 from gage_eval.assets.datasets.manager import DataManager, DataSource
@@ -35,7 +35,7 @@ class _EchoRole:
         return {"answer": msg, "message": {"role": "assistant", "content": [{"type": "text", "text": msg}]}}
 
 
-def _make_runtime(tmp_path: Path, sample_count: int = 4):
+def _make_runtime(tmp_path: Path, sample_count: int = 4, trace: ObservabilityTrace | None = None):
     dataset = DataSource(
         dataset_id="ds",
         records=[
@@ -61,7 +61,7 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4):
     )
     plans = build_task_plan_specs(config)
     cache = EvalCache(base_dir=tmp_path, run_id="runtime-test")
-    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="runtime-trace"))
+    trace = trace or ObservabilityTrace(recorder=InMemoryRecorder(run_id="runtime-trace"))
     report_step = ReportStep(auto_eval_step=None, cache_store=cache)
     entries = _prepare_task_entries(
         task_plans=plans,
@@ -80,6 +80,14 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4):
     runtime = TaskOrchestratorRuntime(entries, rm, trace, report_step)
     _record_config_metadata(config, cache)
     return runtime, trace, cache, entries
+
+
+class _FlushFailRecorder(RecorderBase):
+    def __init__(self, run_id: str) -> None:
+        super().__init__(run_id, min_flush_events=10_000, min_flush_seconds=10_000.0)
+
+    def _flush_events_internal(self, events: tuple[TraceEvent, ...] | list[TraceEvent]) -> None:
+        raise RuntimeError("flush failed")
 
 
 def _make_runtime_with_steps(tmp_path: Path, steps, sample_count: int = 2):
@@ -160,3 +168,22 @@ def test_auto_eval_writes_samples_without_metrics(tmp_path: Path):
     samples_jsonl = cache.run_dir / "samples.jsonl"
     assert samples_jsonl.exists()
     assert samples_jsonl.read_text(encoding="utf-8").strip()
+
+
+def test_task_orchestrator_survives_trace_flush_failure(tmp_path: Path):
+    fallback = InMemoryRecorder(run_id="runtime-trace-fallback")
+    trace = ObservabilityTrace(
+        recorder=ResilientRecorder(_FlushFailRecorder(run_id="runtime-trace"), fallback=fallback),
+        run_id="runtime-trace",
+    )
+    runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=2, trace=trace)
+
+    runtime.run()
+
+    health = trace.health_snapshot()
+    summary = cache.run_dir / "summary.json"
+
+    assert summary.exists()
+    assert health["observability_degraded"] is True
+    assert health["observability_mode"] == "fallback"
+    assert fallback.buffered_events()

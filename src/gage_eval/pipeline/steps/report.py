@@ -208,6 +208,7 @@ class ReportStep(GlobalStep):
             payload.update(summary_payload)
         if formatted_tasks:
             payload["tasks"] = formatted_tasks
+        payload.update(trace.health_snapshot())
         self._cache.write_summary(payload)
         _LOGGER.info(
             "report",

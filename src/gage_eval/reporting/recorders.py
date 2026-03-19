@@ -38,6 +38,34 @@ class TraceEvent:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ObservabilityHealth:
+    """Structured health snapshot for the active observability pipeline."""
+
+    degraded: bool
+    mode: str
+    primary_sink: str
+    active_sink: str
+    failure_count: int
+    last_error_stage: Optional[str] = None
+    last_error_type: Optional[str] = None
+    last_error_message: Optional[str] = None
+    degraded_since: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "observability_degraded": self.degraded,
+            "observability_mode": self.mode,
+            "primary_sink": self.primary_sink,
+            "active_sink": self.active_sink,
+            "failure_count": self.failure_count,
+            "last_error_stage": self.last_error_stage,
+            "last_error_type": self.last_error_type,
+            "last_error_message": self.last_error_message,
+            "degraded_since": self.degraded_since,
+        }
+
+
 class RecorderBase:
     """Base recorder that batches events and flushes them on demand."""
 
@@ -54,6 +82,7 @@ class RecorderBase:
         self._events: List[TraceEvent] = []
         self._written = 0
         self._lock = threading.Lock()
+        self._flush_lock = threading.Lock()
         self._sample_id: ContextVar[Optional[str]] = ContextVar("recorder_sample_id", default=None)
         self._min_flush_events = max(1, min_flush_events)
         self._min_flush_seconds = max(0.1, min_flush_seconds)
@@ -67,9 +96,15 @@ class RecorderBase:
         finally:
             self._sample_id.reset(token)
 
-    def record_event(self, event: str, payload: Dict[str, Any], *, sample_id: Optional[str] = None) -> None:
+    def _build_trace_event(
+        self,
+        event: str,
+        payload: Dict[str, Any],
+        *,
+        sample_id: Optional[str] = None,
+    ) -> TraceEvent:
         sample_ref = sample_id if sample_id is not None else self._sample_id.get()
-        trace_event = TraceEvent(
+        return TraceEvent(
             run_id=self.run_id,
             event_id=len(self._events),
             event=event,
@@ -77,6 +112,12 @@ class RecorderBase:
             sample_id=sample_ref,
             created_at=time.time(),
         )
+
+    def record_event(self, event: str, payload: Dict[str, Any], *, sample_id: Optional[str] = None) -> None:
+        trace_event = self._build_trace_event(event, payload, sample_id=sample_id)
+        self.record_trace_event(trace_event)
+
+    def record_trace_event(self, trace_event: TraceEvent) -> None:
         with self._lock:
             self._events.append(trace_event)
             should_flush = (
@@ -90,14 +131,24 @@ class RecorderBase:
         with self._lock:
             return list(self._events)
 
-    def flush_events(self) -> None:
+    def pending_events(self) -> Sequence[TraceEvent]:
         with self._lock:
-            if self._written >= len(self._events):
-                return
-            events_to_write = self._events[self._written :]
-            self._written = len(self._events)
-            self._last_flush_ts = time.time()
-        self._flush_events_internal(events_to_write)
+            return list(self._events[self._written :])
+
+    def write_events(self, events: Sequence[TraceEvent]) -> None:
+        self._flush_events_internal(events)
+
+    def flush_events(self) -> None:
+        with self._flush_lock:
+            with self._lock:
+                if self._written >= len(self._events):
+                    return
+                start_idx = self._written
+                events_to_write = tuple(self._events[start_idx:])
+            self.write_events(events_to_write)
+            with self._lock:
+                self._written = max(self._written, start_idx + len(events_to_write))
+                self._last_flush_ts = time.time()
         logger.debug(
             "Recorder '{}' flushed {} events (written={})",
             self.__class__.__name__,
@@ -154,6 +205,28 @@ class FileRecorder(RecorderBase):
                 handle.write(json.dumps(event.to_dict(), ensure_ascii=False))
                 handle.write("\n")
         logger.info("FileRecorder wrote {} events to {}", len(events), self.output_path)
+
+
+class NoopRecorder(RecorderBase):
+    """Recorder that drops all events after the observability pipeline gives up."""
+
+    def record_event(self, event: str, payload: Dict[str, Any], *, sample_id: Optional[str] = None) -> None:
+        return
+
+    def record_trace_event(self, trace_event: TraceEvent) -> None:
+        return
+
+    def pending_events(self) -> Sequence[TraceEvent]:
+        return ()
+
+    def flush_events(self) -> None:
+        return
+
+    def close(self) -> None:
+        return
+
+    def _flush_events_internal(self, events: Sequence[TraceEvent]) -> None:
+        return
 
 
 @registry.asset(
@@ -227,6 +300,144 @@ class HTTPRecorder(RecorderBase):
             )
 
 
+class ResilientRecorder:
+    """Facade that keeps recorder failures from bubbling into the main flow."""
+
+    def __init__(self, primary: RecorderBase, *, fallback: Optional[RecorderBase] = None) -> None:
+        self.run_id = primary.run_id
+        self._primary = primary
+        self._fallback = fallback if fallback is not primary else None
+        self._noop = NoopRecorder(run_id=primary.run_id)
+        self._active: RecorderBase = primary
+        self._mode = "primary"
+        self._failure_count = 0
+        self._last_error_stage: Optional[str] = None
+        self._last_error_type: Optional[str] = None
+        self._last_error_message: Optional[str] = None
+        self._degraded_since: Optional[float] = None
+        self._state_lock = threading.Lock()
+
+    @contextlib.contextmanager
+    def use_sample(self, sample_id: Optional[str]):
+        with self._active_recorder().use_sample(sample_id):
+            yield
+
+    def record_event(self, event: str, payload: Dict[str, Any], *, sample_id: Optional[str] = None) -> None:
+        trace_event = self._primary._build_trace_event(event, payload, sample_id=sample_id)
+        self.record_trace_event(trace_event)
+
+    def record_trace_event(self, trace_event: TraceEvent) -> None:
+        try:
+            self._active_recorder().record_trace_event(trace_event)
+        except Exception as exc:
+            self._handle_failure(stage="record", exc=exc, current_event=trace_event)
+
+    def flush_events(self) -> None:
+        try:
+            self._active_recorder().flush_events()
+        except Exception as exc:
+            self._handle_failure(stage="flush", exc=exc)
+
+    def close(self) -> None:
+        self.flush_events()
+        for recorder in self._iter_recorders():
+            try:
+                recorder.close()
+            except Exception as exc:  # pragma: no cover - defensive close path
+                self._log_failure(stage="close", exc=exc, target_mode=self._mode, target=self._active_recorder())
+
+    def health_snapshot(self) -> ObservabilityHealth:
+        with self._state_lock:
+            return ObservabilityHealth(
+                degraded=self._mode != "primary",
+                mode=self._mode,
+                primary_sink=_sink_name(self._primary),
+                active_sink=_sink_name(self._active),
+                failure_count=self._failure_count,
+                last_error_stage=self._last_error_stage,
+                last_error_type=self._last_error_type,
+                last_error_message=self._last_error_message,
+                degraded_since=self._degraded_since,
+            )
+
+    def _handle_failure(
+        self,
+        *,
+        stage: str,
+        exc: Exception,
+        current_event: Optional[TraceEvent] = None,
+    ) -> None:
+        with self._state_lock:
+            failed_recorder = self._active
+            backlog = tuple(failed_recorder.pending_events()) if hasattr(failed_recorder, "pending_events") else ()
+            self._failure_count += 1
+            self._last_error_stage = stage
+            self._last_error_type = type(exc).__name__
+            self._last_error_message = str(exc)
+            if self._degraded_since is None:
+                self._degraded_since = time.time()
+            target_mode, target = self._next_target_locked()
+            self._mode = target_mode
+            self._active = target
+        self._log_failure(stage=stage, exc=exc, target_mode=target_mode, target=target)
+
+        delivery_batch = _merge_events(backlog, current_event)
+        if not delivery_batch:
+            return
+        try:
+            target.write_events(delivery_batch)
+        except Exception as fallback_exc:
+            with self._state_lock:
+                self._failure_count += 1
+                self._last_error_stage = stage
+                self._last_error_type = type(fallback_exc).__name__
+                self._last_error_message = str(fallback_exc)
+                self._mode = "noop"
+                self._active = self._noop
+            self._log_failure(stage=stage, exc=fallback_exc, target_mode="noop", target=self._noop)
+
+    def _active_recorder(self) -> RecorderBase:
+        with self._state_lock:
+            return self._active
+
+    def _next_target_locked(self) -> tuple[str, RecorderBase]:
+        if self._mode == "primary" and self._fallback is not None:
+            return "fallback", self._fallback
+        return "noop", self._noop
+
+    def _iter_recorders(self) -> Sequence[RecorderBase]:
+        recorders = [self._primary]
+        if self._fallback is not None:
+            recorders.append(self._fallback)
+        return tuple(recorders)
+
+    def _log_failure(self, *, stage: str, exc: Exception, target_mode: str, target: RecorderBase) -> None:
+        logger.bind(skip_observability=True).warning(
+            "Observability recorder failed during {} with {}. Switching to {} ({})",
+            stage,
+            type(exc).__name__,
+            target_mode,
+            _sink_name(target),
+        )
+
+
 def _chunk(events: Sequence[TraceEvent], size: int) -> Iterable[Sequence[TraceEvent]]:
     for idx in range(0, len(events), size):
         yield events[idx : idx + size]
+
+
+def _merge_events(
+    events: Sequence[TraceEvent],
+    current_event: Optional[TraceEvent],
+) -> tuple[TraceEvent, ...]:
+    merged = list(events)
+    if current_event is not None and not any(event.event_id == current_event.event_id for event in merged):
+        merged.append(current_event)
+    return tuple(merged)
+
+
+def _sink_name(recorder: RecorderBase) -> str:
+    name = recorder.__class__.__name__
+    if name.endswith("Recorder"):
+        name = name[: -len("Recorder")]
+    return name.lower()

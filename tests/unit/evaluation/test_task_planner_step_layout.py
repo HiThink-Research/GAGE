@@ -54,3 +54,18 @@ def test_task_planner_requires_prerequisite_step() -> None:
                 {"step": "inference", "adapter_id": "dut"},
             )
         )
+
+
+@pytest.mark.fast
+def test_task_planner_accepts_role_ref_binding_for_sample_steps() -> None:
+    planner = TaskPlanner()
+    steps = (
+        {"step": "support", "role_ref": "helper"},
+        {"step": "inference", "role_ref": "dut"},
+    )
+
+    planner.configure_custom_steps(steps)
+    plan = planner.prepare_plan({"id": "sample-1"})
+
+    assert tuple(plan.support_steps) == steps[:1]
+    assert plan.inference_role == "dut"
