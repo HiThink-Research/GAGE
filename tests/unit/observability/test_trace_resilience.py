@@ -27,6 +27,7 @@ def test_trace_falls_back_without_interrupting_main_flow() -> None:
 
     assert health["observability_degraded"] is True
     assert health["observability_mode"] == "fallback"
+    assert health["backlog_events"] == 0
     assert buffered
     assert buffered[0]["event"] == "runtime_ready"
     assert trace.events[-1]["event"] == "runtime_ready"
@@ -46,3 +47,4 @@ def test_trace_switches_to_noop_when_no_fallback_exists() -> None:
 
     assert health["observability_degraded"] is True
     assert health["observability_mode"] == "noop"
+    assert health["backlog_events"] == 1

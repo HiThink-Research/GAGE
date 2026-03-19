@@ -60,8 +60,11 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4, trace: ObservabilityTra
         ),
     )
     plans = build_task_plan_specs(config)
-    cache = EvalCache(base_dir=tmp_path, run_id="runtime-test")
-    trace = trace or ObservabilityTrace(recorder=InMemoryRecorder(run_id="runtime-trace"))
+    trace = trace or ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="runtime-test"),
+        run_id="runtime-test",
+    )
+    cache = EvalCache(base_dir=tmp_path, run_id=trace.run_id)
     report_step = ReportStep(auto_eval_step=None, cache_store=cache)
     entries = _prepare_task_entries(
         task_plans=plans,
@@ -78,7 +81,7 @@ def _make_runtime(tmp_path: Path, sample_count: int = 4, trace: ObservabilityTra
     rm.register_role_adapter("dut", _EchoRole("dut", "dut_model"))
 
     runtime = TaskOrchestratorRuntime(entries, rm, trace, report_step)
-    _record_config_metadata(config, cache)
+    _record_config_metadata(config, cache, trace=trace)
     return runtime, trace, cache, entries
 
 
@@ -112,8 +115,11 @@ def _make_runtime_with_steps(tmp_path: Path, steps, sample_count: int = 2):
         tasks=(TaskSpec(task_id="t1", dataset_id="ds", steps=steps),),
     )
     plans = build_task_plan_specs(config)
-    cache = EvalCache(base_dir=tmp_path, run_id="runtime-auto-eval-test")
-    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="runtime-trace"))
+    trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="runtime-auto-eval-test"),
+        run_id="runtime-auto-eval-test",
+    )
+    cache = EvalCache(base_dir=tmp_path, run_id=trace.run_id)
     report_step = ReportStep(auto_eval_step=None, cache_store=cache)
     entries = _prepare_task_entries(
         task_plans=plans,
@@ -130,7 +136,7 @@ def _make_runtime_with_steps(tmp_path: Path, steps, sample_count: int = 2):
     rm.register_role_adapter("dut", _EchoRole("dut", "dut_model"))
 
     runtime = TaskOrchestratorRuntime(entries, rm, trace, report_step)
-    _record_config_metadata(config, cache)
+    _record_config_metadata(config, cache, trace=trace)
     return runtime, cache
 
 
@@ -144,6 +150,7 @@ def test_task_orchestrator_runs_tasks(tmp_path: Path):
     assert len(task_starts) == 2
     assert len(task_ends) == 2
     assert all(entry.sample_loop.processed_count > 0 for entry in entries)
+    assert cache.get_metadata("run_identity")["run_id"] == trace.run_id
     summary = cache.run_dir / "summary.json"
     assert summary.exists()
 
@@ -186,4 +193,5 @@ def test_task_orchestrator_survives_trace_flush_failure(tmp_path: Path):
     assert summary.exists()
     assert health["observability_degraded"] is True
     assert health["observability_mode"] == "fallback"
+    assert health["backlog_events"] == 0
     assert fallback.buffered_events()

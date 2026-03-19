@@ -28,7 +28,7 @@ def test_report_summary_includes_observability_health(tmp_path) -> None:
         run_id="summary-trace",
     )
     trace.emit("runtime_ready", {"selected_dataset": "ds"})
-    cache = EvalCache(base_dir=tmp_path, run_id="summary-run")
+    cache = EvalCache(base_dir=tmp_path, run_id=trace.run_id)
     report = ReportStep(auto_eval_step=None, cache_store=cache)
 
     payload = report.finalize(trace)
@@ -36,5 +36,7 @@ def test_report_summary_includes_observability_health(tmp_path) -> None:
 
     assert payload["observability_degraded"] is True
     assert payload["observability_mode"] == "noop"
+    assert payload["backlog_events"] == 1
     assert summary["observability_degraded"] is True
     assert summary["observability_mode"] == "noop"
+    assert summary["backlog_events"] == 1

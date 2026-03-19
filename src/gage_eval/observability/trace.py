@@ -21,13 +21,15 @@ from gage_eval.reporting.recorders import (
 )
 from gage_eval.observability.config import get_observability_config
 from gage_eval.observability.log_sink import configure_observable_log_sink
+from gage_eval.utils.run_identity import RunIdentity, build_run_identity
 
 
 class ObservabilityTrace:
     """Thread-safe event bus backed by Recorder implementations."""
 
     def __init__(self, recorder: Optional[RecorderBase | ResilientRecorder] = None, run_id: Optional[str] = None) -> None:
-        self.run_id = run_id or self._generate_run_id()
+        self.run_identity: RunIdentity = build_run_identity(run_id)
+        self.run_id = self.run_identity.run_id
         self._events: List[Dict[str, Any]] = []
         self._lock = Lock()
         self._next_event_id = 0
@@ -83,12 +85,20 @@ class ObservabilityTrace:
             batch = int(os.environ.get("GAGE_EVAL_REPORT_HTTP_BATCH", "50"))
             fail_pct = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_FAIL_PCT", "5"))
             timeout = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_TIMEOUT", "10"))
+            max_retries = int(os.environ.get("GAGE_EVAL_REPORT_HTTP_MAX_RETRIES", "2"))
+            base_retry_delay_ms = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_RETRY_BASE_MS", "50"))
+            max_retry_delay_ms = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_RETRY_MAX_MS", "500"))
+            backoff_multiplier = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_RETRY_MULTIPLIER", "2.0"))
             primary = HTTPRecorder(
                 run_id=self.run_id,
                 url=http_url,
                 batch_size=batch,
                 timeout=timeout,
                 fail_threshold_pct=fail_pct,
+                max_retries=max_retries,
+                base_retry_delay_ms=base_retry_delay_ms,
+                max_retry_delay_ms=max_retry_delay_ms,
+                backoff_multiplier=backoff_multiplier,
                 fallback=file_recorder,
             )
             return ResilientRecorder(primary, fallback=file_recorder)
@@ -110,9 +120,7 @@ class ObservabilityTrace:
         *,
         sample_id: Optional[str] = None,
     ) -> TraceEvent:
-        with self._lock:
-            event_id = self._next_event_id
-            self._next_event_id += 1
+        event_id = self._allocate_event_id()
         return TraceEvent(
             run_id=self.run_id,
             event_id=event_id,
@@ -122,8 +130,15 @@ class ObservabilityTrace:
             created_at=time.time(),
         )
 
+    def _allocate_event_id(self) -> int:
+        allocate = getattr(self._recorder, "allocate_event_id", None)
+        if callable(allocate):
+            return int(allocate())
+        with self._lock:
+            event_id = self._next_event_id
+            self._next_event_id += 1
+            return event_id
+
     @staticmethod
     def _generate_run_id() -> str:
-        # NOTE: Use a human-friendly timestamp (MMddHHMMSS) while keeping second-level
-        # precision to reduce collisions.
-        return datetime.now().strftime("%m%d%H%M%S")
+        return build_run_identity().run_id
