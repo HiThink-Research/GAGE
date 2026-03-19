@@ -5,16 +5,49 @@ from __future__ import annotations
 from contextlib import nullcontext
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import Dict, Iterator, Optional
+import time
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 from loguru import logger
-from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.role.auto_pool import AutoPoolPlanner
+from gage_eval.role.auto_pool import AutoPoolPlanner, PoolShardPlan
 from gage_eval.role.role_instance import ConversationHistory, Role
+from gage_eval.role.role_pool import RolePool
 from gage_eval.role.resource_profile import ResourceProfile
-from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
-from gage_eval.role.runtime.rate_limiter import RateLimiter
 from gage_eval.role.runtime.base_pool import BasePool
+from gage_eval.role.runtime.rate_limiter import RateLimiter
+from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
+
+
+@dataclass(frozen=True)
+class PoolAssemblyPlan:
+    """Summarize the configured pool contract for one adapter."""
+
+    adapter_id: str
+    role_type: str
+    planned_capacity: int
+    effective_capacity: int
+    shard_count: int
+    hint_adjusted: bool = False
+
+
+@dataclass(frozen=True)
+class ShutdownIssue:
+    """Describe one shutdown failure without aborting the full close path."""
+
+    phase: str
+    component_type: str
+    component_id: str
+    error_type: str
+    error_message: str
+    duration_ms: float
+
+
+class RoleManagerShutdownError(RuntimeError):
+    """Raised when RoleManager shutdown completed with one or more issues."""
+
+    def __init__(self, issues: Sequence[ShutdownIssue]) -> None:
+        self.issues = tuple(issues)
+        super().__init__(f"RoleManager shutdown completed with {len(self.issues)} issue(s)")
 
 
 class RoleManager:
@@ -23,8 +56,9 @@ class RoleManager:
     def __init__(self, resource_profile: ResourceProfile, concurrency_hint: Optional[int] = None) -> None:
         self._resource_profile = resource_profile
         self._auto_pool = AutoPoolPlanner()
-        self._adapters: Dict[str, any] = {}
+        self._adapters: Dict[str, Any] = {}
         self._role_pools: Dict[str, BasePool] = {}
+        self._pool_plans: Dict[str, PoolAssemblyPlan] = {}
         self._session_ctx: ContextVar[Optional["_SampleSessionContext"]] = ContextVar(
             "role_manager_session", default=None
         )
@@ -32,14 +66,18 @@ class RoleManager:
 
     def register_role_adapter(self, adapter_id: str, adapter) -> None:
         self._adapters[adapter_id] = adapter
-        # Translate hardware profile constraints into concrete pool shards (per endpoint/per node).
+
+        # STEP 1: Build the shard plan and apply the optional concurrency hint.
         shard_plans = self._auto_pool.plan_instances(self._resource_profile, adapter)
         total_planned = sum(plan.size for plan in shard_plans) or 1
-        if not adapter.resource_requirement.get("pool_size") and self._concurrency_hint:
+        hint_adjusted = False
+        requirement = getattr(adapter, "resource_requirement", {}) or {}
+        if not requirement.get("pool_size") and self._concurrency_hint:
             if self._concurrency_hint > total_planned and shard_plans:
                 deficit = self._concurrency_hint - total_planned
                 shard_plans[0].size += deficit
                 adjusted = sum(plan.size for plan in shard_plans)
+                hint_adjusted = adjusted != total_planned
                 logger.warning(
                     "Pool size smaller than concurrency hint, auto-bumping adapter={} from {} to {}",
                     adapter_id,
@@ -47,14 +85,8 @@ class RoleManager:
                     adjusted,
                 )
                 total_planned = adjusted
-        max_workers = sum(plan.size for plan in shard_plans) or 1
-        logger.info(
-            "Registering adapter '{}' (role_type={}, shards={}, max_workers={})",
-            adapter_id,
-            getattr(adapter, "role_type", "unknown"),
-            len(shard_plans),
-            max_workers,
-        )
+
+        # STEP 2: Preserve the current role runtime logging while keeping runtime selection unchanged.
         runtime: Optional[object] = None
         if adapter.role_type in {"dut_model", "judge_model", "helper_model"}:
             backend = getattr(adapter, "backend", None)
@@ -73,38 +105,27 @@ class RoleManager:
                     adapter_id,
                 )
 
-        pool_capacity = adapter.resource_requirement.get("pool_size")
-        if not pool_capacity:
-            pool_capacity = max_workers
-            plan = shard_plans[0]
-            pool_capacity = plan.size or pool_capacity
-            from gage_eval.role.role_pool import RolePool
-
-            self._role_pools[adapter_id] = RolePool(
-                adapter_id=adapter_id,
-                builder=lambda adapter_id=adapter_id, adapter=adapter, runtime=runtime: Role(adapter_id, adapter, runtime),
-                max_size=pool_capacity,
-            )
-        else:
-            shards = []
-            for plan in shard_plans:
-                rate_limiter = _build_rate_limiter(plan.rate_limit)
-                from gage_eval.role.role_pool import RolePool
-
-                shard_pool = RolePool(
-                    adapter_id=f"{adapter_id}:{plan.shard_id}",
-                    builder=lambda adapter_id=adapter_id, adapter=adapter, runtime=runtime: Role(adapter_id, adapter, runtime),
-                    max_size=plan.size,
-                )
-                shards.append(
-                    PoolShard(
-                        shard_id=plan.shard_id,
-                        pool=shard_pool,
-                        rate_limiter=rate_limiter,
-                        metadata=plan.metadata,
-                    )
-                )
-            self._role_pools[adapter_id] = ShardedRolePool(adapter_id, shards)
+        # STEP 3: Always expose a composite pool to keep capacity, shutdown, and snapshot semantics aligned.
+        composite_pool = _build_composite_pool(adapter_id, adapter, runtime, shard_plans)
+        effective_capacity = sum(max(1, int(plan.size)) for plan in shard_plans) or 1
+        self._role_pools[adapter_id] = composite_pool
+        self._pool_plans[adapter_id] = PoolAssemblyPlan(
+            adapter_id=adapter_id,
+            role_type=getattr(adapter, "role_type", "unknown"),
+            planned_capacity=total_planned,
+            effective_capacity=effective_capacity,
+            shard_count=len(shard_plans),
+            hint_adjusted=hint_adjusted,
+        )
+        logger.info(
+            "Registered adapter '{}' (role_type={}, shard_count={}, planned_capacity={}, effective_capacity={}, hint_adjusted={})",
+            adapter_id,
+            getattr(adapter, "role_type", "unknown"),
+            len(shard_plans),
+            total_planned,
+            effective_capacity,
+            hint_adjusted,
+        )
 
     def update_concurrency_hint(self, value: Optional[int]) -> None:
         if value is None:
@@ -150,17 +171,69 @@ class RoleManager:
 
     def shutdown(self) -> None:
         logger.info("Shutting down RoleManager ({} adapters)", len(self._adapters))
-        for adapter in self._adapters.values():
-            if hasattr(adapter, "shutdown"):
-                adapter.shutdown()
-        for role_pool in self._role_pools.values():
-            role_pool.shutdown()
+        issues: list[ShutdownIssue] = []
+        self._shutdown_phase(
+            phase="adapter_shutdown",
+            component_type="adapter",
+            components=self._adapters.items(),
+            issues=issues,
+        )
+        self._shutdown_phase(
+            phase="pool_shutdown",
+            component_type="pool",
+            components=self._role_pools.items(),
+            issues=issues,
+        )
+        if issues:
+            raise RoleManagerShutdownError(issues)
 
-    def snapshot(self) -> Dict[str, Dict[str, float]]:
-        # NOTE: The legacy implementation relied on InferenceRuntime to collect
-        # queue/concurrency stats. The runtime has been removed, so we return an
-        # empty dict for now.
-        return {}
+    def snapshot(self) -> dict[str, Any]:
+        """Return the current runtime state for all registered adapters."""
+
+        adapters: list[dict[str, Any]] = []
+        for adapter_id in sorted(self._role_pools):
+            pool = self._role_pools[adapter_id]
+            adapter = self._adapters.get(adapter_id)
+            pool_snapshot = pool.snapshot()
+            assembly_plan = self._pool_plans.get(adapter_id)
+            adapters.append(
+                {
+                    "adapter_id": adapter_id,
+                    "role_type": getattr(adapter, "role_type", "unknown"),
+                    "pool_type": pool_snapshot.get("pool_type", "unknown"),
+                    "planned_capacity": (
+                        assembly_plan.planned_capacity
+                        if assembly_plan is not None
+                        else pool_snapshot.get("capacity_total", 0)
+                    ),
+                    "effective_capacity": (
+                        assembly_plan.effective_capacity
+                        if assembly_plan is not None
+                        else pool_snapshot.get("capacity_total", 0)
+                    ),
+                    "capacity_total": pool_snapshot.get("capacity_total", pool_snapshot.get("capacity")),
+                    "in_use_total": pool_snapshot.get("in_use_total", pool_snapshot.get("in_use", 0)),
+                    "available_total": pool_snapshot.get("available_total", pool_snapshot.get("available", 0)),
+                    "created_total": pool_snapshot.get("created_total", pool_snapshot.get("created", 0)),
+                    "healthy": pool_snapshot.get("healthy", True),
+                    "shard_count": (
+                        assembly_plan.shard_count
+                        if assembly_plan is not None
+                        else pool_snapshot.get("shard_count", 0)
+                    ),
+                    "hint_adjusted": (
+                        assembly_plan.hint_adjusted if assembly_plan is not None else False
+                    ),
+                    "shards": list(pool_snapshot.get("shards", ())),
+                    "extensions": dict(pool_snapshot.get("extensions", {})),
+                }
+            )
+        return {
+            "snapshot_version": "role_manager.v1",
+            "timestamp_ms": int(time.time() * 1000),
+            "adapters": adapters,
+            "extensions": {},
+        }
 
     # ------------------------------------------------------------------
     # Session & history helpers
@@ -179,6 +252,41 @@ class RoleManager:
         if session is None:
             return ConversationHistory()
         return session.get_history(adapter_id)
+
+    def _shutdown_phase(
+        self,
+        *,
+        phase: str,
+        component_type: str,
+        components: Sequence[tuple[str, Any]] | Any,
+        issues: list[ShutdownIssue],
+    ) -> None:
+        for component_id, component in components:
+            shutdown_fn = getattr(component, "shutdown", None)
+            if not callable(shutdown_fn):
+                continue
+            start = time.perf_counter()
+            try:
+                shutdown_fn()
+            except Exception as exc:
+                duration_ms = (time.perf_counter() - start) * 1000.0
+                issue = ShutdownIssue(
+                    phase=phase,
+                    component_type=component_type,
+                    component_id=component_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    duration_ms=duration_ms,
+                )
+                issues.append(issue)
+                logger.error(
+                    "RoleManager shutdown issue phase={} component_type={} component_id={} error_type={} error={}",
+                    phase,
+                    component_type,
+                    component_id,
+                    issue.error_type,
+                    issue.error_message,
+                )
 
 
 def _build_rate_limiter(config):
@@ -200,6 +308,30 @@ def _build_rate_limiter(config):
     if qps and not capacity:
         return RateLimiter(1, 1.0 / float(qps))
     return None
+
+
+def _build_composite_pool(
+    adapter_id: str,
+    adapter: Any,
+    runtime: Optional[object],
+    shard_plans: Sequence[PoolShardPlan],
+) -> ShardedRolePool:
+    shards: list[PoolShard] = []
+    for plan in shard_plans:
+        shard_pool = RolePool(
+            adapter_id=plan.shard_id,
+            builder=lambda adapter_id=adapter_id, adapter=adapter, runtime=runtime: Role(adapter_id, adapter, runtime),
+            max_size=max(1, int(plan.size)),
+        )
+        shards.append(
+            PoolShard(
+                shard_id=plan.shard_id,
+                pool=shard_pool,
+                rate_limiter=_build_rate_limiter(plan.rate_limit),
+                metadata=dict(plan.metadata),
+            )
+        )
+    return ShardedRolePool(adapter_id, shards)
 
 
 class PerSampleSession:
