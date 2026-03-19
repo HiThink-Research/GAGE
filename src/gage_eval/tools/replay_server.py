@@ -6,7 +6,7 @@ import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Iterator, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
@@ -145,16 +145,61 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _iter_events_jsonl(
+    path: Path,
+    *,
+    event_type: Optional[str] = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield replay events from a JSONL stream one line at a time."""
+
+    normalized_event_type = str(event_type).strip().lower() if event_type else None
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            parsed = json.loads(stripped)
+            if not isinstance(parsed, dict):
+                continue
+            if normalized_event_type is not None:
+                current_type = str(parsed.get("type") or "").strip().lower()
+                if current_type != normalized_event_type:
+                    continue
+            yield parsed
+
+
 def _load_events_jsonl(path: Path) -> list[dict[str, Any]]:
+    return list(_iter_events_jsonl(path))
+
+
+def _load_events_page_jsonl(
+    path: Path,
+    *,
+    offset: int = 0,
+    limit: Optional[int] = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Load one page of replay events from JSONL without materializing the whole file."""
+
+    if offset < 0:
+        raise ValueError("events_offset_must_be_non_negative")
+    if limit is not None and limit < 0:
+        raise ValueError("events_limit_must_be_non_negative")
+
     events: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped:
+    matched_count = 0
+    has_more = False
+
+    for event in _iter_events_jsonl(path):
+        if matched_count < offset:
+            matched_count += 1
             continue
-        parsed = json.loads(stripped)
-        if isinstance(parsed, dict):
-            events.append(parsed)
-    return events
+        if limit is not None and len(events) >= limit:
+            has_more = True
+            break
+        events.append(event)
+        matched_count += 1
+
+    return events, has_more
 
 
 def _resolve_frame_events(
@@ -169,14 +214,9 @@ def _resolve_frame_events(
     if events_path is None or not events_path.exists():
         return [], "frame_events_not_found"
     try:
-        events = _load_events_jsonl(events_path)
+        frame_events = [dict(event) for event in _iter_events_jsonl(events_path, event_type="frame")]
     except Exception:
         return [], "frame_events_read_failed"
-    frame_events = [
-        dict(event)
-        for event in events
-        if isinstance(event, Mapping) and str(event.get("type") or "").strip().lower() == "frame"
-    ]
     if not frame_events:
         return [], "frame_events_not_found"
     return frame_events, None
@@ -348,6 +388,14 @@ class ReplayRequestHandler(BaseHTTPRequestHandler):
         replay_path = _first_param(params, "replay_path")
         run_id = _first_param(params, "run_id")
         sample_id = _first_param(params, "sample_id")
+        offset = _parse_int(_first_param(params, "offset"))
+        limit = _parse_int(_first_param(params, "limit"))
+        if offset is not None and offset < 0:
+            self._send_json({"error": "Invalid offset"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if limit is not None and limit < 0:
+            self._send_json({"error": "Invalid limit"}, status=HTTPStatus.BAD_REQUEST)
+            return
         base_dir = Path(self.server.base_dir)  # type: ignore[attr-defined]
         target = _resolve_replay_path(
             base_dir,
@@ -368,13 +416,19 @@ class ReplayRequestHandler(BaseHTTPRequestHandler):
             return
 
         events: list[dict[str, Any]]
+        has_more = False
+        normalized_offset = 0 if offset is None else offset
         if payload.get("schema") == "gage_replay/v1":
             events_path = _resolve_events_path(base_dir, replay_file=target, payload=payload)
             if events_path is None or not events_path.exists():
                 self._send_json({"error": "Replay events not found"}, status=HTTPStatus.NOT_FOUND)
                 return
             try:
-                events = _load_events_jsonl(events_path)
+                events, has_more = _load_events_page_jsonl(
+                    events_path,
+                    offset=normalized_offset,
+                    limit=limit,
+                )
             except Exception as exc:
                 self._send_json(
                     {"error": f"Failed to read replay events: {exc}"},
@@ -383,12 +437,21 @@ class ReplayRequestHandler(BaseHTTPRequestHandler):
                 return
         else:
             events = _legacy_payload_to_events(payload)
+            if normalized_offset:
+                events = events[normalized_offset:]
+            if limit is not None:
+                has_more = len(events) > limit
+                events = events[:limit]
 
         response = {
             "schema": "gage_replay/events.v1",
             "replay_path": str(target),
             "events": events,
         }
+        if offset is not None or limit is not None:
+            response["offset"] = normalized_offset
+            response["limit"] = limit
+            response["has_more"] = has_more
         self._send_json(response, status=HTTPStatus.OK)
 
     def _handle_frame(self, parsed_url) -> None:

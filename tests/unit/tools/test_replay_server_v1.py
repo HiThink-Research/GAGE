@@ -67,6 +67,50 @@ def test_resolve_events_path_and_load_events(tmp_path: Path) -> None:
     assert events[0]["type"] == "action"
 
 
+def test_load_events_jsonl_streams_without_read_text(tmp_path: Path, monkeypatch) -> None:
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "action", "seq": 1}),
+                json.dumps({"type": "result", "seq": 2}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    original_read_text = Path.read_text
+
+    def _fail_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        _ = args, kwargs
+        if self == events_file:
+            raise AssertionError("event loader should stream via open()")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _fail_read_text)
+
+    events = rs._load_events_jsonl(events_file)  # noqa: SLF001
+
+    assert [event["seq"] for event in events] == [1, 2]
+
+
+def test_load_events_page_jsonl_returns_slice_and_has_more(tmp_path: Path) -> None:
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        "\n".join(json.dumps({"type": "action", "seq": index}) for index in range(1, 5)),
+        encoding="utf-8",
+    )
+
+    events, has_more = rs._load_events_page_jsonl(  # noqa: SLF001
+        events_file,
+        offset=1,
+        limit=2,
+    )
+
+    assert [event["seq"] for event in events] == [2, 3]
+    assert has_more is True
+
+
 def test_is_origin_allowed_accepts_loopback_origin_by_default() -> None:
     assert rs._is_origin_allowed("http://127.0.0.1:5800", ())  # noqa: SLF001
     assert rs._is_origin_allowed("http://localhost:7860", ())  # noqa: SLF001
