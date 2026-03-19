@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.adapters import arena as arena_module
 from gage_eval.role.adapters.arena import ArenaRoleAdapter, _VisualizedEnvironment
 from gage_eval.role.adapters.base import RoleAdapterState
@@ -234,6 +235,65 @@ def test_invoke_sync_waits_for_pending_players(monkeypatch) -> None:
     assert output["result"] == "draw"
     assert pending_player.wait_calls == 1
     assert 0.0 < pending_player.last_timeout_s <= 1.5
+
+
+def test_invoke_sync_emits_loop_lifecycle_events(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        players=[{"player_id": "p0", "type": "backend", "ref": "backend.alpha"}],
+    )
+    trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="arena-loop-events"),
+        run_id="arena-loop-events",
+    )
+
+    class _StubScheduler:
+        @staticmethod
+        def run_loop(environment, players) -> GameResult:
+            _ = environment, players
+            return _make_result(move_log=[{"move": "A1"}])
+
+    monkeypatch.setattr(
+        adapter,
+        "_normalize_player_specs",
+        lambda sample: (
+            [{"player_id": "p0", "type": "backend", "ref": "backend.alpha"}],
+            ["p0"],
+            {"p0": "P0"},
+            "p0",
+        ),
+    )
+    monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
+    monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
+    monkeypatch.setattr(
+        adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_ensure_action_server", lambda player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_environment",
+        lambda sample, **kwargs: object(),
+    )
+    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
+    monkeypatch.setattr(
+        adapter,
+        "_format_result",
+        lambda result, sample, trace, frame_events=None: {"result": result.result},
+    )
+
+    output = adapter._invoke_sync(
+        {"sample": {"metadata": {}}, "role_manager": object(), "trace": trace},
+        RoleAdapterState(),
+    )
+
+    assert output["result"] == "draw"
+    events = [event["event"] for event in trace.events]
+    assert "arena_loop_start" in events
+    assert "arena_loop_end" in events
+    assert "arena_start" not in events
+    assert "arena_end" not in events
 
 
 def test_build_environment_returns_sandboxed_env_when_provider_present() -> None:

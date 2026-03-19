@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
 
+_LOOPBACK_ORIGIN_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 
 def _sanitize_sample_id(value: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value))
@@ -42,6 +44,46 @@ def _parse_int(value: Optional[str]) -> Optional[int]:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_allowed_origins(origins: Optional[Sequence[str]]) -> tuple[str, ...]:
+    """Normalize configured replay CORS origins."""
+
+    if not origins:
+        return ()
+    normalized: list[str] = []
+    for value in origins:
+        for item in str(value).split(","):
+            candidate = item.strip()
+            if candidate:
+                normalized.append(candidate)
+    return tuple(dict.fromkeys(normalized))
+
+
+def _is_origin_allowed(origin: Optional[str], allowed_origins: Optional[Sequence[str]]) -> bool:
+    """Return whether the request origin is allowed to access replay endpoints."""
+
+    if not origin:
+        return True
+    normalized_origin = str(origin).strip()
+    if not normalized_origin:
+        return True
+
+    parsed_origin = urlparse(normalized_origin)
+    hostname = str(parsed_origin.hostname or "").strip().lower()
+    if hostname in _LOOPBACK_ORIGIN_HOSTS:
+        return True
+
+    normalized_allowed = _normalize_allowed_origins(allowed_origins)
+    if "*" in normalized_allowed:
+        return True
+
+    candidate_origin = (
+        f"{parsed_origin.scheme}://{parsed_origin.netloc}"
+        if parsed_origin.scheme and parsed_origin.netloc
+        else normalized_origin
+    )
+    return normalized_origin in normalized_allowed or candidate_origin in normalized_allowed
 
 
 def _safe_resolve(base_dir: Path, candidate: Path) -> Optional[Path]:
@@ -242,13 +284,15 @@ class ReplayRequestHandler(BaseHTTPRequestHandler):
     server_version = "GAGEReplayServer/1.0"
 
     def do_OPTIONS(self) -> None:
+        if self._reject_disallowed_origin():
+            return
         self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._send_cors_headers()
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 - matching BaseHTTPRequestHandler
+        if self._reject_disallowed_origin():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/tournament/replay":
             self._handle_replay(parsed)
@@ -438,12 +482,33 @@ class ReplayRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:  # noqa: A003 - match base signature
         logger.debug("ReplayServer {}", format % args)
 
+    def _reject_disallowed_origin(self) -> bool:
+        """Reject cross-origin requests that are outside the replay allowlist."""
+
+        request_origin = self.headers.get("Origin")
+        allowed_origins = getattr(self.server, "allowed_origins", ())  # type: ignore[attr-defined]
+        if _is_origin_allowed(request_origin, allowed_origins):
+            return False
+        self._send_json({"error": "Origin not allowed"}, status=HTTPStatus.FORBIDDEN)
+        return True
+
+    def _send_cors_headers(self) -> None:
+        """Emit CORS headers for allowed replay requests."""
+
+        request_origin = self.headers.get("Origin")
+        allowed_origins = getattr(self.server, "allowed_origins", ())  # type: ignore[attr-defined]
+        if request_origin and _is_origin_allowed(request_origin, allowed_origins):
+            self.send_header("Access-Control-Allow-Origin", str(request_origin))
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
     def _send_json(self, payload: dict[str, object], *, status: HTTPStatus) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -451,7 +516,7 @@ class ReplayRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", str(content_type))
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -467,6 +532,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs"),
         help="Base directory that contains run outputs.",
     )
+    parser.add_argument(
+        "--allowed-origin",
+        action="append",
+        dest="allowed_origins",
+        default=[],
+        help="Explicitly allow one non-loopback replay origin. Repeat to add multiple values.",
+    )
     return parser
 
 
@@ -478,7 +550,14 @@ def main() -> None:
     base_dir = Path(args.replay_dir).expanduser()
     server = HTTPServer((args.host, args.port), ReplayRequestHandler)
     setattr(server, "base_dir", str(base_dir))
-    logger.info("Replay server listening on http://{}:{} (base={})", args.host, args.port, base_dir)
+    setattr(server, "allowed_origins", _normalize_allowed_origins(args.allowed_origins))
+    logger.info(
+        "Replay server listening on http://{}:{} (base={} allowed_origins={})",
+        args.host,
+        args.port,
+        base_dir,
+        list(getattr(server, "allowed_origins", ())),
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

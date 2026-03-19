@@ -67,6 +67,22 @@ def test_resolve_events_path_and_load_events(tmp_path: Path) -> None:
     assert events[0]["type"] == "action"
 
 
+def test_is_origin_allowed_accepts_loopback_origin_by_default() -> None:
+    assert rs._is_origin_allowed("http://127.0.0.1:5800", ())  # noqa: SLF001
+    assert rs._is_origin_allowed("http://localhost:7860", ())  # noqa: SLF001
+
+
+def test_is_origin_allowed_rejects_remote_origin_without_allowlist() -> None:
+    assert not rs._is_origin_allowed("https://example.com", ())  # noqa: SLF001
+
+
+def test_is_origin_allowed_accepts_explicit_allowlist_origin() -> None:
+    assert rs._is_origin_allowed(  # noqa: SLF001
+        "https://viewer.example.com",
+        ("https://viewer.example.com",),
+    )
+
+
 def test_legacy_payload_to_events_includes_result() -> None:
     payload = {
         "moves": [{"player_id": "player_0", "action_text": "A1", "timestamp_ms": 1}],

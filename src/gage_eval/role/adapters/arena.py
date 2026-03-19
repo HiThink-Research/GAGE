@@ -323,7 +323,7 @@ class ArenaRoleAdapter(RoleAdapter):
         logger.info("ArenaRoleAdapter {} starting game", self.adapter_id)
         if trace:
             trace.emit(
-                "arena_start",
+                "arena_loop_start",
                 {"adapter_id": self.adapter_id, "player_count": len(players)},
             )
 
@@ -336,7 +336,7 @@ class ArenaRoleAdapter(RoleAdapter):
             pass
         if trace:
             trace.emit(
-                "arena_end",
+                "arena_loop_end",
                 {
                     "adapter_id": self.adapter_id,
                     "winner": result.winner,
@@ -1426,6 +1426,8 @@ class ArenaRoleAdapter(RoleAdapter):
         show_parsed_move = bool(self._visualizer_cfg.get("show_parsed_move", True))
         show_chat = bool(self._visualizer_cfg.get("show_chat", False))
         chat_max_entries = int(self._visualizer_cfg.get("chat_max_entries", 60))
+        allow_status_html = bool(self._visualizer_cfg.get("allow_status_html", False))
+        demo_mode = bool(self._visualizer_cfg.get("demo_mode", False))
         title = self._visualizer_cfg.get("title")
 
         visualizer = GradioVisualizer(
@@ -1444,6 +1446,8 @@ class ArenaRoleAdapter(RoleAdapter):
             show_parsed_move=show_parsed_move,
             show_chat=show_chat,
             chat_max_entries=chat_max_entries,
+            allow_status_html=allow_status_html,
+            demo_mode=demo_mode,
             title=title,
         )
         visualizer.start()
