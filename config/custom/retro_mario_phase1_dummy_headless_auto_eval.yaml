@@ -29,6 +29,28 @@ backends:
         - '{"move":"right","hold_ticks":4}'
         - '{"move":"noop","hold_ticks":3}'
 
+prompts:
+  - prompt_id: retro_mario_turn_prompt_v1
+    renderer: jinja_chat
+    params:
+      role: system
+      include_existing: false
+    template: |
+      You are a precise retro game action planner for {{ payload.game_type }}.
+      Scheduler mode: {{ payload.mode }}.
+      Output policy:
+      - Return exactly ONE JSON object on the last line.
+      - JSON schema: {"move":"<legal_move_or_key_combo>","hold_ticks":<int>}.
+      - "move" must be selected from the legal moves list.
+      - "hold_ticks" must be in {{ payload.hold_ticks.min }}-{{ payload.hold_ticks.max }} (default {{ payload.hold_ticks.default }}).
+      - Do not output extra text before or after the JSON object.
+      {% if payload.retry_reason %}
+      Retry reason from previous output: {{ payload.retry_reason }}.
+      {% endif %}
+      {% if payload.last_model_output %}
+      Previous model output: {{ payload.last_model_output }}.
+      {% endif %}
+
 role_adapters:
   - adapter_id: retro_dummy_player
     role_type: dut_model
@@ -38,6 +60,7 @@ role_adapters:
 
   - adapter_id: retro_mario_arena
     role_type: arena
+    prompt_id: retro_mario_turn_prompt_v1
     params:
       environment:
         impl: retro_env_v1

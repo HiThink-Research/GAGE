@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Sequence
 from loguru import logger
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.games.pettingzoo.observation import PettingZooPromptBuilder
 from gage_eval.role.arena.parsers.pettingzoo_actions import DiscreteActionCodec
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
@@ -118,6 +119,7 @@ class PettingZooAecArenaEnvironment:
         self._final_result: Optional[GameResult] = None
         self._render_logged = False
         self._last_frame: Optional[Dict[str, Any]] = None
+        self._prompt_builder = PettingZooPromptBuilder()
 
         self.reset()
 
@@ -218,6 +220,16 @@ class PettingZooAecArenaEnvironment:
         if action_mask is not None:
             legal_actions["mask"] = action_mask
         context = {"mode": "turn", "step": self._move_count}
+        prompt = self._prompt_builder.build(
+            env_id=str(self._env_id or ""),
+            active_player=player_id,
+            last_action=self._last_move,
+            legal_moves=legal_moves,
+            mode=str(context.get("mode") or "turn"),
+            step=int(context.get("step") or 0),
+            view_text=board_text,
+            metadata=metadata,
+        )
         return ArenaObservation(
             board_text=board_text,
             legal_moves=legal_moves,
@@ -227,6 +239,7 @@ class PettingZooAecArenaEnvironment:
             view=view,
             legal_actions=legal_actions,
             context=context,
+            prompt=prompt,
         )
 
     def apply(self, action: ArenaAction) -> Optional[GameResult]:

@@ -102,3 +102,43 @@ def test_streamable_mcp_client_session_retry_timeout(monkeypatch: pytest.MonkeyP
         client._ensure_session()
 
     assert calls["count"] == 4
+
+
+@pytest.mark.fast
+def test_streamable_mcp_client_list_tools_reconnect_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeSession:
+        def list_tools(self) -> object:
+            return object()
+
+    client = AppWorldStreamableMcpClient(
+        mcp_client_id="appworld_env",
+        endpoint="http://127.0.0.1:5001",
+    )
+    client._session = _FakeSession()
+
+    submit_calls = {"count": 0}
+    disconnect_calls = {"count": 0}
+
+    def fake_ensure_session() -> None:
+        if client._session is None:
+            client._session = _FakeSession()
+
+    def fake_submit(_: object, *, timeout_s: float | None = None) -> Any:
+        submit_calls["count"] += 1
+        if submit_calls["count"] == 1:
+            raise RuntimeError("mcp_request_timeout:180s")
+        return [{"name": "ok_tool", "description": "ok", "inputSchema": {}}]
+
+    def fake_disconnect() -> None:
+        disconnect_calls["count"] += 1
+        client._session = None
+
+    monkeypatch.setattr(client, "_ensure_session", fake_ensure_session)
+    monkeypatch.setattr(client, "_submit_coroutine", fake_submit)
+    monkeypatch.setattr(client, "disconnect", fake_disconnect)
+
+    tools = client.list_tools()
+
+    assert [tool["name"] for tool in tools] == ["ok_tool"]
+    assert submit_calls["count"] == 2
+    assert disconnect_calls["count"] == 1

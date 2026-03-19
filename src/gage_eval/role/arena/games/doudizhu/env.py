@@ -18,6 +18,7 @@ from gage_eval.role.arena.games.doudizhu.core_factory import make_core
 from gage_eval.role.arena.games.doudizhu.cores.base import AbstractGameCore
 from gage_eval.role.arena.games.doudizhu.formatters.base import CardGameFormatter
 from gage_eval.role.arena.games.doudizhu.formatters.doudizhu import DoudizhuFormatter
+from gage_eval.role.arena.games.doudizhu.observation import DoudizhuPromptBuilder
 from gage_eval.role.arena.games.doudizhu.parsers.base import CardMoveParser, ParsedAction
 from gage_eval.role.arena.games.doudizhu.parsers.doudizhu import DoudizhuMoveParser
 from gage_eval.role.arena.games.doudizhu.renderers.base import CardGameRenderer
@@ -466,6 +467,7 @@ class DoudizhuArenaEnvironment:
         self._final_result: Optional[GameResult] = None
         self._start_time_ms: Optional[int] = None
         self._last_frame: Optional[dict[str, Any] | str] = None
+        self._prompt_builder = DoudizhuPromptBuilder()
         self.reset()
 
     def reset(self) -> None:
@@ -529,29 +531,47 @@ class DoudizhuArenaEnvironment:
             ui_state=ui_state,
             board_text=board_text,
         )
+        active_player = self.get_active_player()
         view = {"text": board_text}
         legal_actions = {"items": list(legal_moves)}
         context = {"mode": "turn", "step": self._move_count}
+        metadata = {
+            "game_type": "doudizhu",
+            "env_id": "doudizhu",
+            "player_id": active_player,
+            "player_ids": list(self._player_ids),
+            "player_names": dict(self._player_names),
+            "start_player_id": self._start_player_id,
+            "rule_profile": self._rule_profile,
+            "public_state": public_state,
+            "private_state": private_state,
+            "chat_log": list(self._chat_log),
+            "chat_mode": self._chat_mode,
+            "last_move": self._last_move,
+        }
+        prompt = self._prompt_builder.build(
+            player_id=active_player,
+            player_names=dict(self._player_names),
+            player_ids=list(self._player_ids),
+            public_state=public_state if isinstance(public_state, dict) else {},
+            last_move=self._last_move,
+            legal_moves=legal_moves,
+            chat_mode=self._chat_mode,
+            mode=str(context.get("mode") or "turn"),
+            step=int(context.get("step") or 0),
+            view_text=board_text,
+            metadata=metadata,
+        )
         return ArenaObservation(
             board_text=board_text,
             legal_moves=legal_moves,
-            active_player=self.get_active_player(),
+            active_player=active_player,
             last_move=self._last_move,
-            metadata={
-                "player_id": player,
-                "player_ids": list(self._player_ids),
-                "player_names": dict(self._player_names),
-                "start_player_id": self._start_player_id,
-                "rule_profile": self._rule_profile,
-                "public_state": public_state,
-                "private_state": private_state,
-                "chat_log": list(self._chat_log),
-                "chat_mode": self._chat_mode,
-                "last_move": self._last_move,
-            },
+            metadata=metadata,
             view=view,
             legal_actions=legal_actions,
             context=context,
+            prompt=prompt,
         )
 
     def get_last_frame(self) -> dict[str, Any] | str:

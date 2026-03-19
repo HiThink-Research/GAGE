@@ -56,10 +56,36 @@ def test_retro_env_reset_normalizes_info_and_supports_seed():
     env.reset()
 
     assert retro_env.reset_seeds == [123]
-    assert env.get_last_frame() is frame
+    frame_payload = env.get_last_frame()
+    assert frame_payload["_rgb"] is frame
+    assert frame_payload["move_count"] == 0
+    assert frame_payload["metadata"]["tick"] == 0
 
     obs = env.observe("player_0")
     assert '"score": 1' in (obs.view_text or "")
+
+
+def test_retro_env_get_last_frame_includes_live_summary_fields():
+    frame = object()
+    retro_env = FakeRetroEnv(
+        reset_result=(frame, {"score": 0}),
+        step_results=[(frame, 0.5, False, False, {"tick": 1, "score": 7})],
+    )
+    codec = RetroActionCodec(buttons=["LEFT"])
+    env = _make_env_with_stubbed_runtime(retro_env=retro_env, codec=codec)
+    env.reset()
+
+    result = env.apply(ArenaAction(player="player_0", move="noop", raw='{"move":"noop","hold_ticks":1}'))
+
+    assert result is None
+    frame_payload = env.get_last_frame()
+    assert frame_payload["_rgb"] is frame
+    assert frame_payload["move_count"] == 1
+    assert frame_payload["last_move"] == "noop"
+    assert frame_payload["metadata"]["tick"] == 1
+    assert frame_payload["metadata"]["info"] == {"tick": 1, "score": 7}
+    assert "tick=1" in frame_payload["board_text"]
+    assert "last_move=noop" in frame_payload["board_text"]
 
 
 def test_retro_env_reset_falls_back_when_seed_not_supported():

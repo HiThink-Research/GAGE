@@ -1,0 +1,179 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: vizdoom_llm_vs_llm_s2_vs_s1
+  description: ViZDoom LLM vs LLM comparison (p0=S2, p1=S1).
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: vizdoom_s2_vs_s1_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: vizdoom_demo_dataset
+    loader: jsonl
+    params:
+      path: tests/data/Test_ViZDoom_Demo.jsonl
+      preprocess: grid_game_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: vizdoom_litellm
+    type: litellm
+    config:
+      provider: openai
+      api_base: https://api.openai.com/v1
+      model: gpt-5.2
+      generation_parameters:
+        max_new_tokens: 256
+        temperature: 0.2
+      streaming: false
+      max_retries: 6
+
+prompts:
+  - prompt_id: vizdoom_strategy_turn_prompt_v1
+    renderer: jinja_chat
+    params:
+      role: system
+      include_existing: false
+    template: |
+      You are a precise ViZDoom action planner for {{ payload.env_id or payload.game_type }}.
+      Scheduler mode: {{ payload.mode }}.
+      Active player: {{ payload.player_id }}.
+      Strategy scheme: {{ payload.scheme_id }}.
+      Goal:
+      - Eliminate the opposing player to win the match.
+
+      Tactical rules:
+      - Move first until you are facing the enemy before firing.
+      - A shot can hit only when the enemy and your weapon barrel are vertically aligned.
+      - If the enemy appears on the left side, move or turn left to center them before firing.
+      - If the enemy appears on the right side, move or turn right to center them before firing.
+      - Avoid firing when the enemy is far from the center of your view.
+      - Action mapping: {{ payload.vizdoom_strategy.action_mapping_hint }}.
+
+      Scheme focus:
+      {% if payload.scheme_id == "S1_rich_text_only" %}
+      - Use text observation and telemetry only; reason from perspective and state text.
+      {% elif payload.scheme_id == "S2_image_only_current" %}
+      - Prioritize the current frame image for aiming and alignment decisions.
+      {% elif payload.scheme_id == "S3_text_image_current" %}
+      - Combine image cues with current telemetry to decide actions.
+      {% elif payload.scheme_id == "S5_image_compact_state" %}
+      - Use compact state summaries with image cues and ignore low-value noise.
+      {% elif payload.scheme_id == "S6_text_image_action_hist" %}
+      - Use recent action history to avoid repeating ineffective moves.
+      {% elif payload.scheme_id == "S6_v2_text_image_action_outcome_hist" %}
+      - Use action-outcome history to infer what worked and adjust next action.
+      {% elif payload.scheme_id == "S7_text_image_delta_summary" %}
+      - Use delta summaries between observations to detect movement trends.
+      {% else %}
+      - Use the provided observation snapshot and legal actions to decide.
+      {% endif %}
+
+      {% if payload.vizdoom_strategy.has_action_outcome_history_block %}
+      Observation includes recent action-outcome history.
+      {% elif payload.vizdoom_strategy.has_action_history_block %}
+      Observation includes recent action history.
+      {% endif %}
+      {% if payload.vizdoom_strategy.has_delta_summary_block %}
+      Observation includes delta summary from the previous observation.
+      {% endif %}
+
+      Output policy:
+      - Choose exactly one legal action id from: {{ payload.legal_moves | join(", ") }}.
+      - Output exactly two lines:
+        Action: <action_id>
+        Reason: <short reason>
+      {% if payload.retry_reason %}
+      Retry reason from previous output: {{ payload.retry_reason }}.
+      {% endif %}
+      {% if payload.last_model_output %}
+      Previous model output: {{ payload.last_model_output }}.
+      {% endif %}
+
+role_adapters:
+  - adapter_id: vizdoom_llm_p0
+    role_type: dut_model
+    backend_id: vizdoom_litellm
+    capabilities:
+      - chat_completion
+
+  - adapter_id: vizdoom_llm_p1
+    role_type: dut_model
+    backend_id: vizdoom_litellm
+    capabilities:
+      - chat_completion
+
+  - adapter_id: vizdoom_s2_vs_s1_arena
+    role_type: arena
+    prompt_id: vizdoom_strategy_turn_prompt_v1
+    params:
+      environment:
+        impl: vizdoom_env_v1
+        replay_output_dir: runs/vizdoom_replays
+        replay:
+          enabled: true
+          primary_mode: true
+          mode: both
+          frame:
+            enabled: true
+            stride: 2
+            encoding: jpeg
+            quality: 80
+        render_mode: both
+        show_pov: false
+        show_automap: false
+        use_single_process: false
+        max_steps: 20000
+        action_repeat: 4
+        sleep_s: 0.00
+        obs_image: true
+        no_attack_seconds: 0
+        allow_partial_actions: true
+      scheduler:
+        type: tick
+        tick_ms: 20
+      parser:
+        impl: vizdoom_parser_v1
+      players:
+        - name: p0
+          type: backend
+          ref: vizdoom_llm_p0
+          max_retries: 1
+          fallback_policy: first_legal
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+          scheme_id: S2_image_only_current
+          scheme_params:
+            action_history_len: 4
+            delta_key_limit: 6
+            telemetry_limit: 12
+        - name: p1
+          type: backend
+          ref: vizdoom_llm_p1
+          max_retries: 1
+          fallback_policy: first_legal
+          timeout_ms: 100
+          timeout_fallback_move: "0"
+          scheme_id: S1_rich_text_only
+          scheme_params:
+            action_history_len: 4
+            delta_key_limit: 6
+            telemetry_limit: 12
+
+metrics: []
+
+tasks:
+  - task_id: vizdoom_s2_vs_s1_task
+    dataset_id: vizdoom_demo_dataset
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/vizdoom_s2_vs_s1_events.jsonl

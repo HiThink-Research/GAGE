@@ -9,14 +9,10 @@ import time
 from typing import Any, Callable, Dict, Optional, Type
 
 from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.sandbox.aio_runtime import AioSandbox
-from gage_eval.sandbox.appworld_runtime import AppWorldRuntime
 from gage_eval.sandbox.base import BaseSandbox
 from gage_eval.sandbox.docker_runtime import DockerSandbox
 from gage_eval.sandbox.lease_registry import SandboxLease, SandboxLeaseRegistry
-from gage_eval.sandbox.llm_runtime import LlmSandbox
 from gage_eval.sandbox.local_runtime import LocalSubprocessSandbox
-from gage_eval.sandbox.opensandbox_runtime import OpenSandbox
 from gage_eval.sandbox.pool import SandboxPool
 from gage_eval.sandbox.remote_runtime import RemoteSandbox
 from gage_eval.sandbox.tau2_runtime import Tau2Runtime
@@ -42,10 +38,15 @@ class SandboxManager:
             "docker": DockerSandbox,
             "local": LocalSubprocessSandbox,
             "remote": RemoteSandbox,
-            "aio": AioSandbox,
-            "appworld": AppWorldRuntime,
-            "llm": LlmSandbox,
-            "opensandbox": OpenSandbox,
+        }
+        self._runtime_aliases: Dict[str, str] = {
+            "tau2": "local",
+            "aio": "docker",
+            "appworld": "docker",
+            "llm": "docker",
+            "opensandbox": "docker",
+        }
+        self._runtime_enhancers: Dict[str, Type[BaseSandbox]] = {
             "tau2": Tau2Runtime,
         }
         self._pools: Dict[str, SandboxPool] = {}
@@ -60,7 +61,17 @@ class SandboxManager:
     def register_runtime(self, runtime: str, runtime_cls: Type[BaseSandbox]) -> None:
         self._runtime_registry[runtime] = runtime_cls
 
-    def resolve_config(self, role_config: Dict[str, Any], sample_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def __del__(self) -> None:  # pragma: no cover - best-effort interpreter cleanup
+        try:
+            self.shutdown()
+        except Exception:
+            pass
+
+    def resolve_config(
+        self,
+        role_config: Dict[str, Any],
+        sample_config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Merge sandbox config with optional template and sample overrides."""
 
         base = dict(role_config or {})
@@ -80,46 +91,66 @@ class SandboxManager:
         task_id: Optional[str] = None,
         sample_id: Optional[str] = None,
     ) -> SandboxHandle:
+        """Acquire a sandbox instance, reusing a pool when configured."""
+
+        # STEP 1: Resolve the logical runtime into the concrete implementation.
         self._ensure_startup_cleanup(trace)
         effective = dict(config or {})
-        runtime = effective.get("runtime") or effective.get("backend") or "docker"
-        runtime_cls = self._runtime_registry.get(runtime)
-        if runtime_cls is None:
-            raise KeyError(f"Unknown sandbox runtime '{runtime}'")
+        raw_runtime = str(
+            effective.get("runtime") or effective.get("backend") or "docker"
+        )
+        transport, runtime_cls = self._resolve_runtime(raw_runtime)
+
+        # STEP 2: Derive pooling metadata and emit the acquire start event.
         lifecycle = effective.get("lifecycle", "per_sample")
         pool_key = effective.get("pool_key")
         if pool_key is None and lifecycle != "per_sample":
-            pool_key = effective.get("sandbox_id") or effective.get("template_name") or runtime
-        payload = _build_acquire_payload(effective, runtime, lifecycle, pool_key)
+            pool_key = (
+                effective.get("sandbox_id")
+                or effective.get("template_name")
+                or raw_runtime
+            )
+        payload = _build_acquire_payload(
+            effective, raw_runtime, lifecycle, pool_key, transport
+        )
         if trace:
             trace.emit("sandbox_acquire_start", payload, sample_id=sample_id)
         start = time.perf_counter()
+
+        # STEP 3: Acquire an existing pooled sandbox or build a tracked runtime.
         try:
             pool = None
             if pool_key:
                 pool = self._get_or_create_pool(
                     pool_key=pool_key,
-                    builder=lambda: self._build_tracked_sandbox(
-                        runtime_cls=runtime_cls,
-                        runtime=str(runtime),
-                        config=effective,
-                        pool_key=pool_key,
-                        trace=trace,
-                        run_id=run_id,
-                        task_id=task_id,
+                    builder=lambda _cls=runtime_cls, _cfg=effective, _runtime=raw_runtime, _pool_key=pool_key, **kw: self._build_tracked_sandbox(
+                        runtime_cls=_cls,
+                        runtime=_runtime,
+                        config=_cfg,
+                        pool_key=_pool_key,
+                        trace=kw.get("trace"),
+                        run_id=kw.get("run_id"),
+                        task_id=kw.get("task_id"),
                         sample_id=None,
                     ),
                     max_size=effective.get("pool_max") or effective.get("pool_size"),
-                    max_uses=effective.get("max_container_uses"),
+                    max_uses=effective.get("max_uses")
+                    or effective.get("max_container_uses"),
+                    idle_timeout_s=effective.get("idle_timeout_s"),
                 )
             else:
                 self._ensure_not_shutdown()
             sandbox = (
-                pool.acquire()
+                pool.acquire(
+                    trace=trace,
+                    run_id=run_id,
+                    task_id=task_id,
+                    sample_id=sample_id,
+                )
                 if pool
                 else self._build_tracked_sandbox(
                     runtime_cls=runtime_cls,
-                    runtime=str(runtime),
+                    runtime=raw_runtime,
                     config=effective,
                     pool_key=pool_key,
                     trace=trace,
@@ -143,6 +174,8 @@ class SandboxManager:
                 )
                 trace.emit("sandbox_acquire_end", failure, sample_id=sample_id)
             raise
+
+        # STEP 4: Emit the acquire completion event and return the handle.
         if trace:
             success = dict(payload)
             success.update(
@@ -162,6 +195,8 @@ class SandboxManager:
         )
 
     def release(self, handle: SandboxHandle) -> None:
+        """Release a sandbox handle back to its pool or tear it down."""
+
         if handle.pool is not None:
             handle.pool.release(handle.sandbox)
             return
@@ -169,6 +204,8 @@ class SandboxManager:
         handle.sandbox.teardown()
 
     def shutdown(self) -> None:
+        """Shut down all managed pools and active sandbox instances."""
+
         with self._pools_lock:
             self._shutdown = True
             pools = list(self._pools.values())
@@ -182,13 +219,30 @@ class SandboxManager:
             except Exception:
                 pass
 
+    def close(self) -> None:
+        """Close all managed pools and active sandbox instances."""
+
+        self.shutdown()
+
+    def _resolve_runtime(self, runtime: str) -> tuple[str, Type[BaseSandbox]]:
+        transport = self._runtime_aliases.get(runtime, runtime)
+        runtime_cls = self._runtime_enhancers.get(runtime) or self._runtime_registry.get(
+            transport
+        )
+        if runtime_cls is None:
+            raise KeyError(
+                f"Unknown sandbox runtime '{runtime}' (resolved transport '{transport}')"
+            )
+        return transport, runtime_cls
+
     def _get_or_create_pool(
         self,
         *,
         pool_key: str,
-        builder: Callable[[], BaseSandbox],
+        builder: Callable[..., BaseSandbox],
         max_size: Optional[int],
         max_uses: Optional[int],
+        idle_timeout_s: Optional[float],
     ) -> SandboxPool:
         with self._pools_lock:
             if self._shutdown:
@@ -199,6 +253,7 @@ class SandboxManager:
                     builder=builder,
                     max_size=max_size,
                     max_uses=max_uses,
+                    idle_timeout_s=idle_timeout_s,
                 )
                 self._pools[pool_key] = pool
             return pool
@@ -231,8 +286,9 @@ class SandboxManager:
         payload = _build_stale_cleanup_payload(lease)
         if trace:
             trace.emit("sandbox_stale_cleanup_start", payload)
-        runtime_cls = self._runtime_registry.get(lease.runtime)
-        if runtime_cls is None:
+        try:
+            _, runtime_cls = self._resolve_runtime(lease.runtime)
+        except KeyError:
             if trace:
                 failed = dict(payload)
                 failed.update({"status": "failed", "error": f"unknown_runtime:{lease.runtime}"})
@@ -382,11 +438,14 @@ def _build_acquire_payload(
     runtime: str,
     lifecycle: str,
     pool_key: Optional[str],
+    transport: Optional[str] = None,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "runtime": runtime,
         "lifecycle": str(lifecycle),
     }
+    if transport and transport != runtime:
+        payload["transport"] = transport
     sandbox_id = config.get("sandbox_id") or config.get("template_name")
     if sandbox_id:
         payload["sandbox_id"] = sandbox_id
@@ -444,14 +503,21 @@ def _build_runtime_payload(config: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _inject_runtime_handle(payload: Dict[str, Any], runtime_handle: Dict[str, Any]) -> None:
+def _inject_runtime_handle(
+    payload: Dict[str, Any], runtime_handle: Dict[str, Any]
+) -> None:
     if not runtime_handle:
         return
     for key in ("container_id", "container_name"):
         value = runtime_handle.get(key)
         if value:
             payload[key] = value
-    for key in ("env_endpoint", "environment_endpoint", "apis_endpoint", "mcp_endpoint"):
+    for key in (
+        "env_endpoint",
+        "environment_endpoint",
+        "apis_endpoint",
+        "mcp_endpoint",
+    ):
         value = runtime_handle.get(key)
         if value:
             payload[key] = value

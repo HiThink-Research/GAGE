@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from gage_eval.sandbox.protocols import (
+    StateQueryProtocol,
+    TaskInitProtocol,
+    ToolExecutionProtocol,
+)
 from gage_eval.sandbox.tau2_runtime import Tau2Runtime
 from tests.tau2_stub import install_tau2_stub, STOP
 
@@ -50,3 +57,26 @@ def test_tau2_runtime_user_tools_and_stop(tmp_path: Path, monkeypatch) -> None:
     state = runtime.get_state()
     term = state["termination_reason"]
     assert (term.value if hasattr(term, "value") else str(term)) == "user_stop"
+
+
+def test_tau2_runtime_satisfies_protocols(tmp_path: Path, monkeypatch) -> None:
+    """Tau2Runtime satisfies all three tool-protocol runtime contracts."""
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    assert isinstance(runtime, ToolExecutionProtocol)
+    assert isinstance(runtime, StateQueryProtocol)
+    assert isinstance(runtime, TaskInitProtocol)
+
+
+def test_tau2_runtime_exec_reports_protocol_mismatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """exec() raises NotImplementedError with a clear protocol-mismatch message."""
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    with pytest.raises(NotImplementedError, match="exec_tool|tool protocol"):
+        runtime.exec("ls")

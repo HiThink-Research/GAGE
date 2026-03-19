@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import time
@@ -80,12 +81,49 @@ class _RoleManagerStub:
         return self._adapter
 
 
+class _FrameStub:
+    def __init__(self, marker: int) -> None:
+        self.shape = (1, 1, 3)
+        self.dtype = "uint8"
+        self._bytes = bytes([marker, 0, 0])
+
+    def tobytes(self) -> bytes:
+        return self._bytes
+
+
+class _VizDoomBackendStub:
+    def __init__(self) -> None:
+        self._pov_frames = {0: _FrameStub(11), 1: _FrameStub(22)}
+        self.view_history: list[str] = []
+
+    def reset(self, seed: Optional[int] = None) -> dict[int, dict[str, Any]]:
+        _ = seed
+        return {0: {"HEALTH": 100.0}, 1: {"HEALTH": 100.0}}
+
+    def close(self) -> None:
+        return None
+
+    def get_pov_frames(self) -> dict[int, _FrameStub]:
+        return dict(self._pov_frames)
+
+    def set_view(self, view: str) -> None:
+        self.view_history.append(view)
+
+
+def _decode_raw_frame_marker(image_payload: dict[str, Any]) -> int:
+    raw = base64.b64decode(str(image_payload["data"]))
+    return raw[0]
+
+
 def _build_vizdoom_observation() -> ArenaObservation:
     return ArenaObservation(
         board_text="",
         legal_moves=["1", "2", "3"],
         active_player="p0",
-        metadata={"game_type": "vizdoom"},
+        metadata={
+            "game_type": "vizdoom",
+            "action_mapping": {"1": "ATTACK", "2": "TURN_LEFT", "3": "TURN_RIGHT"},
+        },
         view={"text": "tick 0"},
         legal_actions={"items": ["1", "2", "3"]},
     )
@@ -115,6 +153,7 @@ def test_human_player_async_polls_action() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "human"
+    assert action.metadata["trace_action_applied"] == "TURN_LEFT"
 
 
 def test_human_player_async_uses_timeout_fallback() -> None:
@@ -168,6 +207,7 @@ def test_human_player_async_polls_queue_source_adapter() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "human"
+    assert action.metadata["trace_action_applied"] == "TURN_LEFT"
 
 
 def test_human_player_async_queue_payload_respects_target_player_id() -> None:
@@ -227,6 +267,31 @@ def test_llm_player_async_returns_action() -> None:
     action = player.pop_action()
     assert action.move == "2"
     assert action.metadata["player_type"] == "backend"
+    assert action.metadata["trace_action_applied"] == "TURN_LEFT"
+
+
+def test_vizdoom_observe_includes_action_mapping_in_metadata(monkeypatch) -> None:
+    backend = _VizDoomBackendStub()
+    monkeypatch.setattr(
+        vizdoom_env_module.ViZDoomArenaEnvironment,
+        "_build_env",
+        lambda self, cfg: backend,
+    )
+    env = vizdoom_env_module.ViZDoomArenaEnvironment(
+        player_ids=["p0", "p1"],
+        show_pov=False,
+        capture_pov=True,
+        replay_in_env=False,
+    )
+    env.reset()
+
+    observation = env.observe("p0")
+
+    assert observation.metadata["action_mapping"] == {
+        "1": "ATTACK",
+        "2": "TURN_LEFT",
+        "3": "TURN_RIGHT",
+    }
 
 
 def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
@@ -322,3 +387,55 @@ def test_vizdoom_backend_loader_wraps_import_error(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="optional deps"):
         vizdoom_env_module._load_vizdoom_backend_module("dummy.module")
+
+
+def test_vizdoom_observe_uses_player_specific_pov_frame(monkeypatch) -> None:
+    backend = _VizDoomBackendStub()
+    monkeypatch.setattr(
+        vizdoom_env_module.ViZDoomArenaEnvironment,
+        "_build_env",
+        lambda self, cfg: backend,
+    )
+    env = vizdoom_env_module.ViZDoomArenaEnvironment(
+        player_ids=["p0", "p1"],
+        show_pov=False,
+        capture_pov=True,
+        obs_image=True,
+        replay_in_env=False,
+    )
+    env.reset()
+
+    p0_obs = env.observe("p0")
+    p1_obs = env.observe("p1")
+
+    assert _decode_raw_frame_marker(p0_obs.view["image"]) == 11
+    assert _decode_raw_frame_marker(p1_obs.view["image"]) == 22
+
+
+def test_vizdoom_last_frame_respects_configured_pov_view(monkeypatch) -> None:
+    backend = _VizDoomBackendStub()
+    monkeypatch.setattr(
+        vizdoom_env_module.ViZDoomArenaEnvironment,
+        "_build_env",
+        lambda self, cfg: backend,
+    )
+    env = vizdoom_env_module.ViZDoomArenaEnvironment(
+        player_ids=["p0", "p1"],
+        show_pov=False,
+        capture_pov=True,
+        pov_view="p1",
+        replay_in_env=False,
+    )
+    env.reset()
+
+    frame_payload = env.get_last_frame()
+
+    assert frame_payload["player_index"] == 1
+    assert frame_payload["actor"] == "p1"
+
+    env.set_view("p0")
+    frame_payload = env.get_last_frame()
+
+    assert backend.view_history[-1] == "p0"
+    assert frame_payload["player_index"] == 0
+    assert frame_payload["actor"] == "p0"

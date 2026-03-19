@@ -1,16 +1,8 @@
-import rlcard
-from rlcard.agents import RandomAgent
-print("RLCard version:", rlcard.__version__)
-try:
-    from rlcard.agents import RuleBasedAgent
-    print("RuleBasedAgent available")
-except ImportError:
-    print("RuleBasedAgent NOT available directly")
+#!/usr/bin/env python3
+from pathlib import Path
+import runpy
 
-# Check if mahjong environment works
-try:
-    env = rlcard.make('mahjong')
-    print("Mahjong Env created successfully")
-    print("Action space:", env.num_actions)
-except Exception as e:
-    print("Error creating mahjong env:", e)
+runpy.run_path(
+    str(Path(__file__).resolve().parent / "verify" / "rlcard" / "check.py"),
+    run_name="__main__",
+)

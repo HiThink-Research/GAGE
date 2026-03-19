@@ -37,3 +37,29 @@ def test_parser_registry_resolves_vizdoom_parser() -> None:
 
     assert result.coord == "2"
     assert result.error is None
+
+
+def test_vizdoom_parser_parses_action_with_reason_lines() -> None:
+    parser = VizDoomParser(default_action=0)
+
+    result = parser.parse(
+        "Action: 2\nReason: Enemy appears on the left side, so move left to center.",
+        legal_moves=["1", "2", "3"],
+    )
+
+    assert result.coord == "2"
+    assert result.error is None
+    assert result.reason == "Enemy appears on the left side, so move left to center."
+
+
+def test_vizdoom_parser_parses_json_reason_payload() -> None:
+    parser = VizDoomParser(default_action=0)
+
+    result = parser.parse(
+        '{"action": 3, "reason": "Enemy is right of center; adjust right before firing."}',
+        legal_moves=["1", "2", "3"],
+    )
+
+    assert result.coord == "3"
+    assert result.error is None
+    assert result.reason == "Enemy is right of center; adjust right before firing."
