@@ -100,11 +100,16 @@ def _run_pipeline(config_path: Path, extra_env: dict, output_dir: Path):
     if result.returncode != 0:
         raise AssertionError(f"run.py failed: {result.stderr}")
     # NOTE: run.py creates a run_id subdirectory under GAGE_EVAL_SAVE_DIR.
-    run_dirs = list(output_dir.iterdir())
+    # Internal helper directories such as .sandbox_leases may also appear there.
+    run_dirs = [
+        path
+        for path in output_dir.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    ]
     assert run_dirs, f"no run_dir created under {output_dir}"
-    summary_path = run_dirs[0] / "summary.json"
-    assert summary_path.exists(), "summary.json should be generated"
-    summary = json.loads(summary_path.read_text())
+    summary_paths = [path / "summary.json" for path in run_dirs if (path / "summary.json").exists()]
+    assert summary_paths, "summary.json should be generated"
+    summary = json.loads(summary_paths[0].read_text())
     metrics = summary.get("metrics") or []
     assert metrics, "metrics should not be empty"
     return summary
