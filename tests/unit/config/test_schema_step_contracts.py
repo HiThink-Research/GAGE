@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gage_eval.config.schema import SchemaValidationError, normalize_pipeline_payload
+from gage_eval.registry import registry
 
 
 def _base_payload() -> dict:
@@ -75,3 +76,23 @@ def test_schema_accepts_role_ref_binding_for_sample_steps() -> None:
     normalized = normalize_pipeline_payload(payload)
 
     assert normalized["custom"]["steps"][0]["role_ref"] == "judge"
+
+
+@pytest.mark.fast
+def test_schema_accepts_builtin_prompt_reference_without_forcing_global_registration() -> None:
+    payload = _base_payload()
+    payload["custom"] = {"steps": [{"step": "inference"}]}
+    payload["role_adapters"][0]["prompt_id"] = "dut/general@v1"
+
+    prompt_was_present = True
+    try:
+        registry.get("prompts", "dut/general@v1")
+    except KeyError:
+        prompt_was_present = False
+
+    normalized = normalize_pipeline_payload(payload)
+
+    assert normalized["role_adapters"][0]["prompt_id"] == "dut/general@v1"
+    if not prompt_was_present:
+        with pytest.raises(KeyError):
+            registry.get("prompts", "dut/general@v1")

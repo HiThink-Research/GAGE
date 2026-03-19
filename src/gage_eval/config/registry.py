@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, Dict, Optional, TYPE_CHECKING
+import os
+from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 from loguru import logger
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from gage_eval.assets.prompts.assets import PromptTemplateAsset
     from gage_eval.metrics.registry import MetricRegistry
     from gage_eval.registry.manager import RegistryManager
+    from gage_eval.registry.runtime import RuntimeRegistryContext
 
 
 class ConfigRegistry:
@@ -31,8 +33,78 @@ class ConfigRegistry:
     some pragmatic shortcuts from llm-eval's YAML-driven loaders.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        registry_view=None,
+        runtime_registry_context: Optional["RuntimeRegistryContext"] = None,
+        bootstrap_coordinator=None,
+    ) -> None:
         """ConfigRegistry no longer stores per-kind builders; registry handles extensibility."""
+        from gage_eval.registry import RegistryBootstrapCoordinator, registry
+
+        self._registry_view = registry_view
+        self._runtime_registry_context = runtime_registry_context
+        self._bootstrap_coordinator = bootstrap_coordinator or RegistryBootstrapCoordinator(registry)
+
+    @property
+    def registry_view(self):
+        return self._registry_view
+
+    @property
+    def runtime_registry_context(self) -> Optional["RuntimeRegistryContext"]:
+        return self._runtime_registry_context
+
+    def with_runtime_registry_context(self, context: "RuntimeRegistryContext") -> "ConfigRegistry":
+        return ConfigRegistry(
+            registry_view=context.view,
+            runtime_registry_context=context,
+            bootstrap_coordinator=self._bootstrap_coordinator,
+        )
+
+    def prepare_runtime_registry_context(
+        self,
+        config: PipelineConfig,
+        *,
+        run_id: str,
+    ) -> "RuntimeRegistryContext":
+        from gage_eval.assets.prompts.assets import PromptTemplateAsset
+        from gage_eval.registry import DiscoveryPolicy, RegistryOverlayAsset
+
+        overlays = [
+            RegistryOverlayAsset(
+                kind="prompts",
+                name=spec.prompt_id,
+                obj=PromptTemplateAsset(
+                    prompt_id=spec.prompt_id,
+                    renderer_type=spec.renderer,
+                    template=spec.template,
+                    default_args=spec.params,
+                ),
+                desc=f"Prompt asset '{spec.prompt_id}' ({spec.renderer})",
+                extra={
+                    "renderer": spec.renderer,
+                    "has_template": bool(spec.template),
+                },
+            )
+            for spec in config.prompts
+        ]
+        return self._bootstrap_coordinator.prepare_runtime_context(
+            run_id=run_id,
+            required_packages=_collect_runtime_registry_packages(config),
+            overlay_assets=overlays,
+            policy=DiscoveryPolicy(
+                mode=_resolve_discovery_mode(),
+                freeze_strict=_resolve_freeze_strict(),
+            ),
+        )
+
+    def _registry_lookup(self):
+        if self._registry_view is not None:
+            return self._registry_view
+        from gage_eval.registry import registry
+
+        return registry
 
     # ------------------------------------------------------------------
     # Resolution API
@@ -46,13 +118,13 @@ class ConfigRegistry:
             if loader_name in {"hf_hub", "modelscope"}:
                 raise ValueError(f"Dataset '{spec.dataset_id}' using loader '{loader_name}' requires explicit 'hub'")
             hub_name = "inline"
-        from gage_eval.registry import registry
-        
+        lookup = self._registry_lookup()
+
         hub_params = dict(spec.hub_params or spec.params.get("hub_params", {}))
-        hub_cls = registry.get("dataset_hubs", hub_name)
+        hub_cls = lookup.get("dataset_hubs", hub_name)
         hub = hub_cls(spec, hub_args=hub_params)
         hub_handle = hub.resolve()
-        loader_cls = registry.get("dataset_loaders", loader_name)
+        loader_cls = lookup.get("dataset_loaders", loader_name)
         loader = loader_cls(spec)
         return loader.load(hub_handle, trace=trace)
 
@@ -66,6 +138,7 @@ class ConfigRegistry:
         mcp_clients: Optional[Dict[str, Any]] = None,
     ) -> Any:
         adapter_cls = self._resolve_role_class(spec)
+        lookup = self._registry_lookup()
         adapter_kwargs = dict(spec.params)
         backend_obj: Any = None
         # NOTE: Inline backend takes precedence: when an inline backend is declared,
@@ -113,6 +186,8 @@ class ConfigRegistry:
             adapter_kwargs.setdefault("sandbox_profiles", sandbox_profiles)
         if spec.role_type == "dut_agent" and mcp_clients is not None:
             adapter_kwargs.setdefault("mcp_clients", mcp_clients)
+        if spec.role_type in {"helper_model", "context_provider", "judge_extend"}:
+            adapter_kwargs.setdefault("registry_view", lookup)
         adapter = adapter_cls(
             adapter_id=spec.adapter_id,
             role_type=spec.role_type,
@@ -128,10 +203,10 @@ class ConfigRegistry:
             module_name, class_name = spec.class_path.rsplit(".", 1)
             module = importlib.import_module(module_name)
             return getattr(module, class_name)
-        from gage_eval.registry import registry
-        
+
+        lookup = self._registry_lookup()
         try:
-            return registry.get("roles", spec.role_type)
+            return lookup.get("roles", spec.role_type)
         except KeyError as exc:
             raise KeyError(
                 f"RoleAdapter '{spec.adapter_id}' must declare class_path or reference a registered role_type"
@@ -168,9 +243,13 @@ class ConfigRegistry:
 
         from gage_eval.role.model.backends.builder import build_backend  # delayed import to avoid heavy deps
 
+        lookup = self._registry_lookup()
         instances: Dict[str, Any] = {}
         for spec in config.backends:
-            instances[spec.backend_id] = build_backend({"type": spec.type, "config": spec.config})
+            instances[spec.backend_id] = build_backend(
+                {"type": spec.type, "config": spec.config},
+                registry_view=lookup,
+            )
         return instances
 
     def materialize_agent_backends(
@@ -224,12 +303,13 @@ class ConfigRegistry:
 
     def materialize_prompts(self, config: PipelineConfig) -> Dict[str, PromptTemplateAsset]:
         from gage_eval.assets.prompts.assets import PromptTemplateAsset
-        from gage_eval.registry import registry
 
+        lookup = self._registry_lookup()
         prompts: Dict[str, PromptTemplateAsset] = {}
-        registry.auto_discover("prompts", "gage_eval.assets.prompts.catalog")
-        for entry in registry.list("prompts"):
-            asset = registry.get("prompts", entry.name)
+        if self._registry_view is None:
+            lookup.auto_discover("prompts", "gage_eval.assets.prompts.catalog", mode="warn")
+        for entry in lookup.list("prompts"):
+            asset = lookup.get("prompts", entry.name)
             if isinstance(asset, PromptTemplateAsset):
                 prompts[entry.name] = asset
         for spec in config.prompts:
@@ -239,15 +319,7 @@ class ConfigRegistry:
                 template=spec.template,
                 default_args=spec.params,
             )
-            prompts[spec.prompt_id] = asset
-            registry.register(
-                "prompts",
-                spec.prompt_id,
-                asset,
-                desc=f"Prompt asset '{spec.prompt_id}' ({spec.renderer})",
-                renderer=spec.renderer,
-                has_template=bool(spec.template),
-            )
+            prompts.setdefault(spec.prompt_id, asset)
         return prompts
 
     def materialize_datasets(self, config: PipelineConfig, *, trace=None) -> Dict[str, Any]:
@@ -286,7 +358,7 @@ class ConfigRegistry:
         if not backend_type:
             raise ValueError("Inline backend must declare field 'type'")
         backend_payload.setdefault("config", backend_payload.get("config", {}) or {})
-        return build_backend(backend_payload)
+        return build_backend(backend_payload, registry_view=self._registry_lookup())
 
     def _build_inline_agent_backend(self, spec: Dict[str, Any]) -> Any:
         from gage_eval.role.agent.backends import build_agent_backend
@@ -311,3 +383,44 @@ def _resolve_mcp_client_class(transport: Optional[str]) -> Any:
     from gage_eval.mcp import McpClient
 
     return McpClient
+
+
+def _env_truthy(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_discovery_mode() -> str:
+    if "GAGE_EVAL_DISCOVERY_STRICT" in os.environ:
+        return "strict" if _env_truthy(os.environ.get("GAGE_EVAL_DISCOVERY_STRICT")) else "warn"
+    return "strict" if _env_truthy(os.environ.get("CI")) else "warn"
+
+
+def _resolve_freeze_strict() -> bool:
+    if "GAGE_EVAL_REGISTRY_FREEZE_STRICT" in os.environ:
+        return _env_truthy(os.environ.get("GAGE_EVAL_REGISTRY_FREEZE_STRICT"))
+    return True
+
+
+def _collect_runtime_registry_packages(config: PipelineConfig) -> Dict[str, Iterable[str]]:
+    packages: Dict[str, tuple[str, ...]] = {
+        "pipeline_steps": ("gage_eval.pipeline.steps",),
+        "summary_generators": ("gage_eval.reporting.summary_generators",),
+    }
+    if config.prompts or any(spec.prompt_id for spec in config.role_adapters):
+        packages["prompts"] = ("gage_eval.assets.prompts.catalog",)
+    if any(
+        spec.role_type == "helper_model" and spec.params.get("implementation")
+        for spec in config.role_adapters
+    ):
+        packages["helper_impls"] = ("gage_eval.role.helper",)
+    if any(
+        spec.role_type == "context_provider" and spec.params.get("implementation")
+        for spec in config.role_adapters
+    ):
+        packages["context_impls"] = ("gage_eval.role.context",)
+    if any(
+        spec.role_type == "judge_extend" and spec.params.get("implementation")
+        for spec in config.role_adapters
+    ):
+        packages["judge_impls"] = ("gage_eval.role.judge",)
+    return packages

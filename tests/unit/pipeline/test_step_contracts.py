@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from gage_eval.pipeline.step_contracts import (
@@ -10,6 +12,7 @@ from gage_eval.pipeline.step_contracts import (
     get_step_type,
 )
 from gage_eval.pipeline.steps.base import StepKind
+from gage_eval.registry import registry
 
 
 @pytest.mark.fast
@@ -89,3 +92,30 @@ def test_collect_step_sequence_issues_reports_missing_prerequisite() -> None:
     assert len(issues) == 1
     assert issues[0].code == "missing_prerequisite"
     assert "requires a preceding inference/arena/judge step" in issues[0].message
+
+
+@pytest.mark.fast
+def test_step_contract_catalog_supports_view_scoped_cache() -> None:
+    clone = registry.clone()
+    step_name = f"unit_step_{uuid4().hex}"
+    clone.register(
+        "pipeline_steps",
+        step_name,
+        object(),
+        desc="unit step",
+        step_kind="sample",
+        executor_name="execute_unit",
+    )
+    view = clone.freeze(view_id=f"view-{uuid4().hex}")
+
+    first = get_step_contract_catalog(registry_view=view)
+    second = get_step_contract_catalog(registry_view=view)
+
+    assert first is second
+    assert first.require(step_name).executor_name == "execute_unit"
+
+    clear_step_contract_catalog_cache(registry_view=view)
+    third = get_step_contract_catalog(registry_view=view)
+
+    assert third is not first
+    assert third.require(step_name).executor_name == "execute_unit"

@@ -92,20 +92,34 @@ class StepContractCatalog:
         return tuple(self._contracts.values())
 
 
-def get_step_contract_catalog() -> StepContractCatalog:
-    return _load_step_contract_catalog()
+def get_step_contract_catalog(registry_view=None) -> StepContractCatalog:
+    if registry_view is None:
+        return _load_step_contract_catalog()
+    cache = registry_view.get_scoped_cache("step_contract_catalog")
+    catalog = cache.get("catalog")
+    if catalog is None:
+        catalog = _build_catalog_from_entries(registry_view.list("pipeline_steps"))
+        cache["catalog"] = catalog
+    return catalog
 
 
-def clear_step_contract_catalog_cache() -> None:
+def clear_step_contract_catalog_cache(registry_view=None) -> None:
+    if registry_view is not None:
+        registry_view.get_scoped_cache("step_contract_catalog").clear()
+        return
     _load_step_contract_catalog.cache_clear()
 
 
 @lru_cache(maxsize=1)
 def _load_step_contract_catalog() -> StepContractCatalog:
-    registry.auto_discover("pipeline_steps", "gage_eval.pipeline.steps")
+    registry.auto_discover("pipeline_steps", "gage_eval.pipeline.steps", mode="warn")
+    return _build_catalog_from_entries(registry.list("pipeline_steps"))
+
+
+def _build_catalog_from_entries(entries: Sequence[RegistryEntry]) -> StepContractCatalog:
     contracts = {
         entry.name: _build_contract(entry)
-        for entry in registry.list("pipeline_steps")
+        for entry in entries
     }
     return StepContractCatalog(contracts)
 
@@ -132,10 +146,11 @@ def collect_step_sequence_issues(
     *,
     owner_label: str,
     adapter_ids: Optional[Iterable[str]] = None,
+    registry_view=None,
 ) -> tuple[StepSequenceIssue, ...]:
     """Collect contract violations for an ordered step sequence."""
 
-    catalog = get_step_contract_catalog()
+    catalog = get_step_contract_catalog(registry_view=registry_view)
     adapter_set = {str(adapter_id) for adapter_id in adapter_ids} if adapter_ids is not None else None
     seen_counts: Dict[str, int] = {}
     seen_prerequisites: set[str] = set()

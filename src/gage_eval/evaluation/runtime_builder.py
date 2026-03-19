@@ -68,58 +68,69 @@ def build_runtime(
 
     trace = trace or ObservabilityTrace()
     configure_observability(config.observability)
-    logger.info(
-        "Bootstrapping runtime for pipeline='{}' (datasets={}, tasks={})",
-        config.pipeline_id,
-        len(config.datasets or []),
-        len(config.tasks or []),
-    )
-    cache_store = EvalCache(
-        base_dir=os.environ.get("GAGE_EVAL_SAVE_DIR"),
+    runtime_registry_context = registry.prepare_runtime_registry_context(
+        config,
         run_id=trace.run_id,
     )
-    validation_ledger = _ensure_validation_ledger(cache_store)
-    data_manager = DataManager()
-    dataset_start = time.perf_counter()
-    datasets: Dict[str, DataSource] = registry.materialize_datasets(config, trace=trace)
-    dataset_elapsed = time.perf_counter() - dataset_start
-    cache_store.record_timing("dataset_materialization_s", dataset_elapsed)
-    registry.materialize_models(config)
-    if not datasets:
-        raise ValueError("PipelineConfig must declare at least one dataset")
-    for source in datasets.values():
-        data_manager.register_source(source, trace=trace)
+    registry = registry.with_runtime_registry_context(runtime_registry_context)
+    try:
+        logger.info(
+            "Bootstrapping runtime for pipeline='{}' (datasets={}, tasks={})",
+            config.pipeline_id,
+            len(config.datasets or []),
+            len(config.tasks or []),
+        )
+        cache_store = EvalCache(
+            base_dir=os.environ.get("GAGE_EVAL_SAVE_DIR"),
+            run_id=trace.run_id,
+        )
+        validation_ledger = _ensure_validation_ledger(cache_store)
+        data_manager = DataManager()
+        dataset_start = time.perf_counter()
+        datasets: Dict[str, DataSource] = registry.materialize_datasets(config, trace=trace)
+        dataset_elapsed = time.perf_counter() - dataset_start
+        cache_store.record_timing("dataset_materialization_s", dataset_elapsed)
+        registry.materialize_models(config)
+        if not datasets:
+            raise ValueError("PipelineConfig must declare at least one dataset")
+        for source in datasets.values():
+            data_manager.register_source(source, trace=trace)
 
-    role_manager = RoleManager(resource_profile)
-    factory = PipelineFactory(registry)
+        role_manager = RoleManager(resource_profile)
+        factory = PipelineFactory(registry)
 
-    if config.tasks:
-        logger.info("Detected task orchestrator config with {} tasks", len(config.tasks))
-        return _build_task_orchestrator_runtime(
+        if config.tasks:
+            logger.info("Detected task orchestrator config with {} tasks", len(config.tasks))
+            return _build_task_orchestrator_runtime(
+                config=config,
+                registry=registry,
+                data_manager=data_manager,
+                datasets=datasets,
+                role_manager=role_manager,
+                trace=trace,
+                cache_store=cache_store,
+                resource_profile=resource_profile,
+                aggregate_validation_ledger=validation_ledger,
+                shutdown_callback=runtime_registry_context.close,
+            )
+
+        return _build_single_runtime(
             config=config,
             registry=registry,
+            factory=factory,
             data_manager=data_manager,
             datasets=datasets,
+            resource_profile=resource_profile,
             role_manager=role_manager,
+            dataset_id=dataset_id,
             trace=trace,
             cache_store=cache_store,
-            resource_profile=resource_profile,
             aggregate_validation_ledger=validation_ledger,
+            shutdown_callback=runtime_registry_context.close,
         )
-
-    return _build_single_runtime(
-        config=config,
-        registry=registry,
-        factory=factory,
-        data_manager=data_manager,
-        datasets=datasets,
-        resource_profile=resource_profile,
-        role_manager=role_manager,
-        dataset_id=dataset_id,
-        trace=trace,
-        cache_store=cache_store,
-        aggregate_validation_ledger=validation_ledger,
-    )
+    except Exception:
+        runtime_registry_context.close()
+        raise
 
 
 def _build_single_runtime(
@@ -134,6 +145,7 @@ def _build_single_runtime(
     trace: ObservabilityTrace,
     cache_store: EvalCache,
     aggregate_validation_ledger: ValidationLedger,
+    shutdown_callback,
 ) -> PipelineRuntime:
     sandbox_profiles = registry.materialize_sandbox_profiles(config)
     selected_dataset_id = _select_dataset_id(dataset_id, config, datasets)
@@ -183,6 +195,7 @@ def _build_single_runtime(
         trace=trace,
         cache_store=cache_store,
     )
+    runtime.attach_shutdown_callback(shutdown_callback)
     trace.emit("runtime_ready", {"selected_dataset": selected_dataset_id})
     return runtime
 
@@ -197,8 +210,14 @@ def _build_task_orchestrator_runtime(
     cache_store: EvalCache,
     resource_profile: ResourceProfile,
     aggregate_validation_ledger: ValidationLedger,
+    shutdown_callback,
 ) -> "TaskOrchestratorRuntime":
-    report_step = ReportStep(auto_eval_step=None, cache_store=cache_store)
+    registry_view = getattr(registry, "registry_view", None)
+    report_step = ReportStep(
+        auto_eval_step=None,
+        cache_store=cache_store,
+        registry_view=registry_view,
+    )
     _record_config_metadata(config, cache_store, trace=trace)
     task_plan_specs = build_task_plan_specs(config)
     concurrency_hint = _max_concurrency_from_tasks(task_plan_specs, resource_profile)
@@ -232,7 +251,13 @@ def _build_task_orchestrator_runtime(
             "datasets": list(datasets.keys()),
         },
     )
-    return TaskOrchestratorRuntime(task_entries, role_manager, trace, report_step)
+    return TaskOrchestratorRuntime(
+        task_entries,
+        role_manager,
+        trace,
+        report_step,
+        shutdown_callback=shutdown_callback,
+    )
 
 
 def _prepare_samples_for_source(
@@ -343,11 +368,13 @@ class TaskOrchestratorRuntime:
         role_manager: RoleManager,
         trace: ObservabilityTrace,
         report_step: ReportStep,
+        shutdown_callback=None,
     ) -> None:
         self._tasks = list(tasks)
         self._role_manager = role_manager
         self._trace = trace
         self._report_step = report_step
+        self._shutdown_callback = shutdown_callback
         self._wall_clock_start: Optional[float] = None
         self._shutdown_called = False
 
@@ -442,6 +469,9 @@ class TaskOrchestratorRuntime:
     def attach_report_step(self, step: ReportStep) -> None:
         self._report_step = step
 
+    def attach_shutdown_callback(self, callback) -> None:
+        self._shutdown_callback = callback
+
     def shutdown(self) -> None:
         if self._shutdown_called:
             return
@@ -450,7 +480,11 @@ class TaskOrchestratorRuntime:
             for entry in self._tasks:
                 entry.sample_loop.shutdown()
         finally:
-            self._role_manager.shutdown()
+            try:
+                self._role_manager.shutdown()
+            finally:
+                if self._shutdown_callback is not None:
+                    self._shutdown_callback()
 
     def set_wall_clock_start(self, start_s: float) -> None:
         self._wall_clock_start = start_s

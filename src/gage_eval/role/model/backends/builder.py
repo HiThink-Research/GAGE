@@ -87,7 +87,7 @@ def register_backend(
     logger.info("Registered backend '{}' (version={})", kind, version)
 
 
-def build_backend(spec: Dict[str, Any]) -> EngineBackend:
+def build_backend(spec: Dict[str, Any], *, registry_view=None) -> EngineBackend:
     """Builds a backend instance from a registry-backed backend spec.
 
     Args:
@@ -113,9 +113,10 @@ def build_backend(spec: Dict[str, Any]) -> EngineBackend:
         raise ValueError("Backend spec must declare 'type'")
     
     from gage_eval.registry import registry
-    
+
+    lookup = registry_view or registry
     try:
-        backend_cls = registry.get("backends", backend_type)
+        backend_cls = lookup.get("backends", backend_type)
     except KeyError as exc:
         raise KeyError(f"Backend '{backend_type}' is not registered") from exc
 

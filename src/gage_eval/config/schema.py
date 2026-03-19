@@ -201,8 +201,18 @@ def _prompt_id_in_registry(prompt_id: str) -> bool:
     except Exception:
         return False
     try:
-        registry.auto_discover("prompts", "gage_eval.assets.prompts.catalog")
         registry.get("prompts", prompt_id)
+        return True
+    except KeyError:
+        pass
+    except Exception:
+        return False
+
+    try:
+        probe = registry.clone()
+        with registry.route_to(probe):
+            registry.auto_discover("prompts", "gage_eval.assets.prompts.catalog", mode="warn")
+        probe.get("prompts", prompt_id)
         return True
     except KeyError:
         return False

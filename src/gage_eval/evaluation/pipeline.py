@@ -39,12 +39,14 @@ class PipelineRuntime:
         role_manager: RoleManager,
         trace: ObservabilityTrace,
         report_step: Optional[ReportStep] = None,
+        shutdown_callback: Optional[Callable[[], None]] = None,
     ) -> None:
         self.sample_loop = sample_loop
         self.task_planner = task_planner
         self.role_manager = role_manager
         self.trace = trace
         self.report_step = report_step
+        self._shutdown_callback = shutdown_callback
         self.wall_clock_start: Optional[float] = None
         self._shutdown_called = False
 
@@ -103,6 +105,9 @@ class PipelineRuntime:
     def attach_report_step(self, step: ReportStep) -> None:
         self.report_step = step
 
+    def attach_shutdown_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        self._shutdown_callback = callback
+
     def shutdown(self) -> None:
         if self._shutdown_called:
             return
@@ -110,7 +115,11 @@ class PipelineRuntime:
         try:
             self.sample_loop.shutdown()
         finally:
-            self.role_manager.shutdown()
+            try:
+                self.role_manager.shutdown()
+            finally:
+                if self._shutdown_callback is not None:
+                    self._shutdown_callback()
 
     def set_wall_clock_start(self, start_s: float) -> None:
         self.wall_clock_start = start_s
@@ -193,7 +202,12 @@ class PipelineFactory:
             run_id=trace.run_id,
         )
         task_planner.configure_metrics(config.metrics, metric_registry, cache_store=cache_store)
-        report_step = ReportStep(task_planner.get_auto_eval_step(), cache_store)
+        registry_view = getattr(self._registry, "registry_view", None)
+        report_step = ReportStep(
+            task_planner.get_auto_eval_step(),
+            cache_store,
+            registry_view=registry_view,
+        )
         backend_instances = self._registry.materialize_backends(config)
         agent_backend_instances = self._registry.materialize_agent_backends(
             config,
