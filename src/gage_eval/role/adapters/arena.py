@@ -362,7 +362,9 @@ class ArenaRoleAdapter(RoleAdapter):
             frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
         )
 
-        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
+        if visualizer is not None and self._coerce_bool(
+            self._visualizer_cfg.get("wait_for_finish"), default=False
+        ):
             visualizer.wait_for_finish()
 
         logger.info("ArenaRoleAdapter {} finished result={}", self.adapter_id, result.result)
@@ -1396,7 +1398,7 @@ class ArenaRoleAdapter(RoleAdapter):
 
         if not self._visualizer_cfg:
             return None, None
-        enabled = bool(self._visualizer_cfg.get("enabled", False))
+        enabled = self._coerce_bool(self._visualizer_cfg.get("enabled"), default=False)
         if not enabled:
             return None, None
 
@@ -1407,9 +1409,13 @@ class ArenaRoleAdapter(RoleAdapter):
             metadata.get("board_size", self._visualizer_cfg.get("board_size", 15))
         )
         port = int(self._visualizer_cfg.get("port", 7860))
-        launch_browser = bool(self._visualizer_cfg.get("launch_browser", False))
+        launch_browser = self._coerce_bool(
+            self._visualizer_cfg.get("launch_browser"), default=False
+        )
         refresh_s = float(self._visualizer_cfg.get("refresh_s", 0.3))
-        wait_for_finish = bool(self._visualizer_cfg.get("wait_for_finish", False))
+        wait_for_finish = self._coerce_bool(
+            self._visualizer_cfg.get("wait_for_finish"), default=False
+        )
         has_human = any(spec.get("type") == "human" for spec in player_specs)
         mode = "interactive" if has_human else "observer"
         coord_scheme = metadata.get(
@@ -1421,13 +1427,19 @@ class ArenaRoleAdapter(RoleAdapter):
             self._visualizer_cfg.get("renderer_impl", "gomoku_board_v1"),
         )
         renderer_params = dict(renderer_cfg.get("params") or {})
-        sanitize_output = bool(self._visualizer_cfg.get("sanitize_output", True))
+        sanitize_output = self._coerce_bool(
+            self._visualizer_cfg.get("sanitize_output"), default=True
+        )
         max_output_chars = int(self._visualizer_cfg.get("max_output_chars", 2000))
-        show_parsed_move = bool(self._visualizer_cfg.get("show_parsed_move", True))
-        show_chat = bool(self._visualizer_cfg.get("show_chat", False))
+        show_parsed_move = self._coerce_bool(
+            self._visualizer_cfg.get("show_parsed_move"), default=True
+        )
+        show_chat = self._coerce_bool(self._visualizer_cfg.get("show_chat"), default=False)
         chat_max_entries = int(self._visualizer_cfg.get("chat_max_entries", 60))
-        allow_status_html = bool(self._visualizer_cfg.get("allow_status_html", False))
-        demo_mode = bool(self._visualizer_cfg.get("demo_mode", False))
+        allow_status_html = self._coerce_bool(
+            self._visualizer_cfg.get("allow_status_html"), default=False
+        )
+        demo_mode = self._coerce_bool(self._visualizer_cfg.get("demo_mode"), default=False)
         title = self._visualizer_cfg.get("title")
 
         visualizer = GradioVisualizer(
@@ -1436,7 +1448,9 @@ class ArenaRoleAdapter(RoleAdapter):
             launch_browser=launch_browser,
             mode=mode,
             refresh_s=refresh_s,
-            auto_close=bool(self._visualizer_cfg.get("auto_close", False)),
+            auto_close=self._coerce_bool(
+                self._visualizer_cfg.get("auto_close"), default=False
+            ),
             wait_for_finish=wait_for_finish,
             renderer_impl=renderer_impl,
             renderer_params=renderer_params,
@@ -1460,7 +1474,7 @@ class ArenaRoleAdapter(RoleAdapter):
 
         if not self._human_input_cfg:
             return None, None
-        enabled = bool(self._human_input_cfg.get("enabled", False))
+        enabled = self._coerce_bool(self._human_input_cfg.get("enabled"), default=False)
         if not enabled:
             return None, None
         has_human = any(spec.get("type") == "human" for spec in player_specs)

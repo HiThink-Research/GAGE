@@ -11,6 +11,7 @@ from gage_eval.role.adapters import arena as arena_module
 from gage_eval.role.adapters.arena import ArenaRoleAdapter, _VisualizedEnvironment
 from gage_eval.role.adapters.base import RoleAdapterState
 from gage_eval.role.arena.sandboxed_env import SandboxedArenaEnvironment
+from gage_eval.role.arena.visualizers import gradio_visualizer as gradio_visualizer_module
 from gage_eval.role.arena.games.common.grid_coord_input_mapper import (
     GridCoordInputMapper,
 )
@@ -23,6 +24,7 @@ from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInput
 from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import ArenaObservation, GameResult
+from gage_eval.tools import action_server as action_server_module
 
 
 def _make_result(
@@ -955,6 +957,90 @@ def test_format_result_keeps_small_game_log_and_trace_fields() -> None:
     assert output["game_log"] == [{"turn": 1}]
     assert output["replay_path"] == "replay/sample.json"
     assert output["arena_trace"] == [{"step_index": 1}]
+
+
+def test_ensure_visualizer_skips_string_false_enabled(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        visualizer={"enabled": "false"},
+    )
+
+    def _fail_constructor(**kwargs: Any) -> None:
+        raise AssertionError(f"visualizer should not be created: {kwargs}")
+
+    monkeypatch.setattr(gradio_visualizer_module, "GradioVisualizer", _fail_constructor)
+
+    visualizer, action_queue = adapter._ensure_visualizer(
+        {"metadata": {}},
+        [{"player_id": "p0", "type": "human"}],
+    )
+
+    assert visualizer is None
+    assert action_queue is None
+
+
+def test_ensure_visualizer_coerces_string_bool_flags(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        visualizer={
+            "enabled": "true",
+            "launch_browser": "false",
+            "wait_for_finish": "off",
+            "sanitize_output": "0",
+            "show_parsed_move": "no",
+            "show_chat": "false",
+            "allow_status_html": "0",
+            "demo_mode": "off",
+            "auto_close": "false",
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    class _StubVisualizer:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+            self.action_queue = object()
+
+        def start(self) -> None:
+            captured["started"] = True
+
+    monkeypatch.setattr(gradio_visualizer_module, "GradioVisualizer", _StubVisualizer)
+
+    visualizer, action_queue = adapter._ensure_visualizer(
+        {"metadata": {}},
+        [{"player_id": "p0", "type": "human"}],
+    )
+
+    assert visualizer is not None
+    assert action_queue is visualizer.action_queue
+    assert captured["started"] is True
+    assert captured["launch_browser"] is False
+    assert captured["wait_for_finish"] is False
+    assert captured["sanitize_output"] is False
+    assert captured["show_parsed_move"] is False
+    assert captured["show_chat"] is False
+    assert captured["allow_status_html"] is False
+    assert captured["demo_mode"] is False
+    assert captured["auto_close"] is False
+
+
+def test_ensure_action_server_skips_string_false_enabled(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        human_input={"enabled": "false"},
+    )
+
+    def _fail_constructor(**kwargs: Any) -> None:
+        raise AssertionError(f"action server should not be created: {kwargs}")
+
+    monkeypatch.setattr(action_server_module, "ActionQueueServer", _fail_constructor)
+
+    server, action_queue = adapter._ensure_action_server(
+        [{"player_id": "p0", "type": "human"}]
+    )
+
+    assert server is None
+    assert action_queue is None
 
 
 def test_format_game_log_returns_preview_when_no_run_dir(monkeypatch) -> None:
