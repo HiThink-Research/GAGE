@@ -179,7 +179,7 @@ class _StaticRoleManager:
         self._response = response
         self._adapter = adapter
 
-    def borrow_role(self, adapter_id: str):  # noqa: ANN001
+    def borrow_role(self, adapter_id: str, **_kwargs):  # noqa: ANN001
         _ = adapter_id
         return _StaticRoleLease(self._response)
 

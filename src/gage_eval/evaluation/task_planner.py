@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 from gage_eval.config.pipeline_config import CustomPipelineStep, MetricSpec
-from gage_eval.evaluation.support_artifacts import build_support_slot_id
 from gage_eval.evaluation.execution_controller import TaskExecutionController
+from gage_eval.evaluation.support_artifacts import build_support_slot_id
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
@@ -24,6 +24,10 @@ from gage_eval.pipeline.step_contracts import (
     collect_step_sequence_issues,
     get_step_adapter_id,
     get_step_type,
+)
+from gage_eval.role.runtime.invocation import (
+    RoleSessionStore,
+    SampleExecutionContext,
 )
 from gage_eval.sandbox.provider import SandboxProvider
 
@@ -55,6 +59,7 @@ class TaskPlan:
         trace: ObservabilityTrace,
         role_manager,
         *,
+        execution_context: Optional[SampleExecutionContext] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ):
         bundle = self.step_bundle or StepFactory().build_bundle(
@@ -76,6 +81,7 @@ class TaskPlan:
             metadata=self.metadata,
             auto_eval_enabled=self.auto_eval_enabled,
             support_payload_policy=self.support_payload_policy,
+            execution_context=execution_context,
             sandbox_provider=sandbox_provider,
         )
 
@@ -281,6 +287,7 @@ class StepExecutionContext:
         metadata: Optional[Dict[str, Any]] = None,
         auto_eval_enabled: bool = False,
         support_payload_policy: Optional[Dict[str, Any]] = None,
+        execution_context: Optional[SampleExecutionContext] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
         self.sample = sample
@@ -294,6 +301,21 @@ class StepExecutionContext:
         self.trace = trace
         self.role_manager = role_manager
         self.metadata = metadata or {}
+        self.execution_context = execution_context or SampleExecutionContext(
+            sample=self.sample,
+            sample_id=str(
+                self.metadata.get("sample_id")
+                or self.sample.get("id")
+                or "sample"
+            ),
+            task_id=(
+                str(self.metadata.get("task_id"))
+                if self.metadata.get("task_id") is not None
+                else None
+            ),
+            trace=self.trace,
+            session_store=RoleSessionStore(self.sample),
+        )
         self.sandbox_provider = sandbox_provider
         self._model_output: Optional[dict] = None
         self._judge_output: Optional[dict] = None
@@ -308,6 +330,7 @@ class StepExecutionContext:
             self.role_manager,
             self.trace,
             support_payload_policy=self.support_payload_policy,
+            execution_context=self.execution_context,
             sandbox_provider=self.sandbox_provider,
         )
 
@@ -320,6 +343,7 @@ class StepExecutionContext:
                 self.role_manager,
                 self.trace,
                 support_payload_policy=self.support_payload_policy,
+                execution_context=self.execution_context,
                 sandbox_provider=self.sandbox_provider,
             )
         else:
@@ -328,6 +352,7 @@ class StepExecutionContext:
                 self.role_manager,
                 self.trace,
                 support_payload_policy=self.support_payload_policy,
+                execution_context=self.execution_context,
                 sandbox_provider=self.sandbox_provider,
             )
 
@@ -337,6 +362,7 @@ class StepExecutionContext:
             self.sample,
             self.role_manager,
             self.trace,
+            execution_context=self.execution_context,
             sandbox_provider=self.sandbox_provider,
         )
         append_predict_result(self.sample, self._model_output)
@@ -349,6 +375,7 @@ class StepExecutionContext:
             self.sample,
             self.role_manager,
             self.trace,
+            execution_context=self.execution_context,
             sandbox_provider=self.sandbox_provider,
         )
         append_arena_contract(
@@ -365,7 +392,12 @@ class StepExecutionContext:
             "trace": self.trace,
             "sandbox_provider": self.sandbox_provider,
         }
-        self._judge_output = self.judge.execute(payload, self.role_manager, self.trace)
+        self._judge_output = self.judge.execute(
+            payload,
+            self.role_manager,
+            self.trace,
+            execution_context=self.execution_context,
+        )
         update_eval_result(self.sample, self._judge_output)
 
     def execute_auto_eval(self, sample_id: str) -> None:

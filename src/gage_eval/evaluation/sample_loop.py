@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import random
 import threading
 import time
@@ -34,11 +35,24 @@ from gage_eval.evaluation.execution_controller import (
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.step_contracts import get_step_contract_catalog
 from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
+from gage_eval.evaluation.shuffle_store import (
+    iter_external_shuffle_samples,
+    iter_reservoir_samples,
+    try_resolve_length,
+)
 from gage_eval.evaluation.task_planner import TaskPlanner, TaskPlan
 from gage_eval.role.role_manager import RoleManager
+from gage_eval.role.runtime.invocation import (
+    RoleSessionStore,
+    SampleExecutionContext,
+)
 from gage_eval.sandbox.manager import SandboxManager
+from gage_eval.sandbox.session_router import SandboxSessionRouter
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 from gage_eval.assets.datasets.sample import Sample, Message, MessageContent
+
+_DEFAULT_SHUFFLE_STRATEGY = "auto"
+_DEFAULT_SHUFFLE_SMALL_DATASET_THRESHOLD = 20_000
 
 
 class SampleLoop:
@@ -50,10 +64,14 @@ class SampleLoop:
         *,
         shuffle: Optional[bool] = None,
         shuffle_seed: Optional[int] = None,
+        shuffle_strategy: Optional[str] = None,
+        shuffle_small_dataset_threshold: Optional[int] = None,
+        keep_shuffle_artifacts: Optional[bool] = None,
         max_samples: Optional[int] = None,
         concurrency: Optional[int] = None,
         streaming: bool = False,
         task_id: Optional[str] = None,
+        shuffle_artifact_root: Optional[Path] = None,
         prefetch_factor: Optional[int] = None,
         max_inflight: Optional[int] = None,
         failure_policy: Optional[str] = None,
@@ -71,6 +89,30 @@ class SampleLoop:
         )
         self._shuffle_seed = shuffle_seed or int(
             os.environ.get("GAGE_EVAL_SHUFFLE_SEED", "123")
+        )
+        self._shuffle_strategy = _normalize_shuffle_strategy(
+            shuffle_strategy or os.environ.get("GAGE_EVAL_SHUFFLE_STRATEGY")
+        )
+        env_shuffle_threshold = _env_int("GAGE_EVAL_SHUFFLE_SMALL_DATASET_THRESHOLD")
+        self._shuffle_small_dataset_threshold = max(
+            1,
+            shuffle_small_dataset_threshold
+            if shuffle_small_dataset_threshold is not None
+            else (
+                env_shuffle_threshold
+                if env_shuffle_threshold is not None
+                else _DEFAULT_SHUFFLE_SMALL_DATASET_THRESHOLD
+            ),
+        )
+        self._keep_shuffle_artifacts = (
+            keep_shuffle_artifacts
+            if keep_shuffle_artifacts is not None
+            else _env_flag("GAGE_EVAL_KEEP_SHUFFLE_ARTIFACTS", default=False)
+        )
+        self._shuffle_artifact_root = (
+            Path(shuffle_artifact_root).expanduser()
+            if shuffle_artifact_root is not None
+            else None
         )
         env_max_samples = os.environ.get("GAGE_EVAL_MAX_SAMPLES")
         self._max_samples = (
@@ -121,22 +163,28 @@ class SampleLoop:
         )
         self._materialized_samples: Optional[List[dict]] = None
         self._streaming = streaming
-        if self._streaming and self._shuffle:
-            logger.warning(
-                "Streaming datasets do not support shuffling; disabling shuffle"
-            )
-            self._shuffle = False
         self._task_id = task_id
         self._processed_count = 0
         self._processed_lock = threading.Lock()
         self._execution_controller: Optional[TaskExecutionController] = None
+        self._shuffle_summary: Dict[str, Any] = {
+            "enabled": bool(self._shuffle),
+            "requested": self._shuffle_strategy if self._shuffle else "disabled",
+            "resolved": "pending" if self._shuffle else "sequential",
+            "seed": self._shuffle_seed if self._shuffle else None,
+            "max_samples": self._max_samples,
+            "small_dataset_threshold": (
+                self._shuffle_small_dataset_threshold if self._shuffle else None
+            ),
+        }
         self._sandbox_profiles = sandbox_profiles or {}
         self._sandbox_manager = sandbox_manager or SandboxManager(
             profiles=self._sandbox_profiles
         )
         logger.info(
-            "SampleLoop initialized (shuffle={}, max_samples={}, concurrency={}, streaming={}, task_id={})",
+            "SampleLoop initialized (shuffle={}, strategy={}, max_samples={}, concurrency={}, streaming={}, task_id={})",
             self._shuffle,
+            self._shuffle_strategy,
             self._max_samples,
             self._concurrency,
             self._streaming,
@@ -157,7 +205,7 @@ class SampleLoop:
     def run(
         self, planner: TaskPlanner, role_manager: RoleManager, trace: ObservabilityTrace
     ) -> SampleLoopOutcome:
-        work = self._iter_samples()
+        work = self._iter_samples(trace)
         controller = self._get_execution_controller(planner)
 
         logger.info(
@@ -251,14 +299,20 @@ class SampleLoop:
         trace: ObservabilityTrace,
         sample_identifier: str,
     ) -> None:
-        # STEP 1: Build sample-scoped sandbox provider
-        sandbox_provider = self._build_sandbox_provider(
-            plan, sample, role_manager, trace, sample_identifier
+        # STEP 1: Build sample-scoped execution context.
+        execution_context = self._build_execution_context(
+            plan,
+            sample,
+            trace,
+            sample_identifier,
         )
-        # STEP 2: Execute plan within a per-sample session
+        # STEP 2: Execute plan within a per-sample session.
         try:
             per_sample_ctx = plan.create_context(
-                sample, trace, role_manager, sandbox_provider=sandbox_provider
+                sample,
+                trace,
+                role_manager,
+                execution_context=execution_context,
             )
             with (
                 trace.use_sample(sample_identifier),
@@ -286,9 +340,31 @@ class SampleLoop:
                     if plan.auto_eval_enabled:
                         session.execute_auto_eval(sample_identifier)
         finally:
-            # STEP 3: Release sandbox resources
-            if sandbox_provider is not None:
-                sandbox_provider.release()
+            # STEP 3: Release all sample-scoped runtime resources.
+            execution_context.close()
+
+    def _build_execution_context(
+        self,
+        plan: TaskPlan,
+        sample: dict,
+        trace: ObservabilityTrace,
+        sample_identifier: str,
+    ) -> SampleExecutionContext:
+        return SampleExecutionContext(
+            sample=sample,
+            sample_id=sample_identifier,
+            run_id=trace.run_id,
+            task_id=plan.metadata.get("task_id") or self._task_id,
+            trace=trace,
+            session_store=RoleSessionStore(sample),
+            sandbox_router=SandboxSessionRouter(
+                self._sandbox_manager,
+                run_id=trace.run_id,
+                task_id=plan.metadata.get("task_id") or self._task_id,
+                sample_id=sample_identifier,
+                trace=trace,
+            ),
+        )
 
     def _dispatch_step(
         self,
@@ -404,8 +480,27 @@ class SampleLoop:
             "adapter_id": _resolve_runtime_adapter_id(step, step_type, plan),
         }
 
-    def _iter_samples(self) -> Iterator[Tuple[int, dict]]:
+    def _iter_samples(self, trace: ObservabilityTrace) -> Iterator[Tuple[int, dict]]:
         if self._shuffle:
+            strategy = self._resolve_shuffle_strategy(trace)
+            if strategy == "reservoir":
+                yield from iter_reservoir_samples(
+                    self._samples,
+                    max_samples=self._max_samples or 0,
+                    seed=self._shuffle_seed,
+                )
+                return
+            if strategy == "external_index":
+                for logical_idx, sample in iter_external_shuffle_samples(
+                    self._samples,
+                    seed=self._shuffle_seed,
+                    artifact_root=self._shuffle_artifact_root,
+                    keep_artifacts=bool(self._keep_shuffle_artifacts),
+                ):
+                    if self._max_samples is not None and logical_idx >= self._max_samples:
+                        break
+                    yield logical_idx, sample
+                return
             samples = self._materialize_samples()
             indices = list(range(len(samples)))
             random.Random(self._shuffle_seed).shuffle(indices)
@@ -414,6 +509,14 @@ class SampleLoop:
             for logical_idx, sample_idx in enumerate(indices):
                 yield logical_idx, samples[sample_idx]
             return
+
+        self._record_shuffle_decision(
+            trace,
+            requested="disabled",
+            resolved="sequential",
+            reason="shuffle_disabled",
+            size_hint=try_resolve_length(self._samples),
+        )
 
         for idx, sample in enumerate(self._samples):
             if self._max_samples is not None and idx >= self._max_samples:
@@ -429,6 +532,106 @@ class SampleLoop:
                 "Materialized {} samples into memory", len(self._materialized_samples)
             )
         return self._materialized_samples
+
+    def _resolve_shuffle_strategy(self, trace: ObservabilityTrace) -> str:
+        requested = self._shuffle_strategy
+        size_hint = None if self._streaming else try_resolve_length(self._samples)
+        reason = None
+        resolved = requested
+
+        if requested == "reservoir":
+            if self._max_samples is None:
+                raise RuntimeError(
+                    "shuffle_strategy='reservoir' requires max_samples to be set"
+                )
+            reason = "explicit_reservoir"
+        elif requested == "in_memory":
+            if self._streaming:
+                raise RuntimeError(
+                    "shuffle_strategy='in_memory' is not supported for streaming datasets"
+                )
+            resolved = "in_memory"
+            reason = "explicit_in_memory"
+        elif requested == "external_index":
+            if (
+                not self._streaming
+                and size_hint is not None
+                and size_hint <= self._shuffle_small_dataset_threshold
+            ):
+                resolved = "in_memory"
+                reason = "small_dataset_threshold"
+            else:
+                resolved = "external_index"
+                reason = "explicit_external_index"
+        elif requested == "auto":
+            if self._max_samples is not None:
+                resolved = "reservoir"
+                reason = "max_samples_present"
+            elif (
+                not self._streaming
+                and size_hint is not None
+                and size_hint <= self._shuffle_small_dataset_threshold
+            ):
+                resolved = "in_memory"
+                reason = "small_dataset_threshold"
+            else:
+                resolved = "external_index"
+                reason = "streaming_or_large_dataset"
+        else:
+            raise RuntimeError(f"Unsupported shuffle strategy '{requested}'")
+
+        self._record_shuffle_decision(
+            trace,
+            requested=requested,
+            resolved=resolved,
+            reason=reason,
+            size_hint=size_hint,
+        )
+        return resolved
+
+    def _record_shuffle_decision(
+        self,
+        trace: ObservabilityTrace,
+        *,
+        requested: str,
+        resolved: str,
+        reason: Optional[str],
+        size_hint: Optional[int],
+    ) -> None:
+        summary: Dict[str, Any] = {
+            "enabled": bool(self._shuffle),
+            "requested": requested,
+            "resolved": resolved,
+            "seed": self._shuffle_seed if self._shuffle else None,
+            "max_samples": self._max_samples,
+            "small_dataset_threshold": (
+                self._shuffle_small_dataset_threshold if self._shuffle else None
+            ),
+            "size_hint": size_hint,
+        }
+        if reason:
+            summary["reason"] = reason
+        if self._shuffle_artifact_root is not None and resolved == "external_index":
+            summary["artifact_root"] = str(self._shuffle_artifact_root)
+        self._shuffle_summary = summary
+        trace.emit(
+            "shuffle_strategy_selected",
+            {
+                **summary,
+                "task_id": self._task_id,
+            },
+        )
+        if requested != resolved:
+            trace.emit(
+                "shuffle_fallback",
+                {
+                    "task_id": self._task_id,
+                    "requested": requested,
+                    "resolved": resolved,
+                    "reason": reason,
+                    "size_hint": size_hint,
+                },
+            )
 
     def _process_sample(
         self,
@@ -606,6 +809,10 @@ class SampleLoop:
             return controller.report_partial_on_failure
         return self._report_partial_on_failure
 
+    @property
+    def shuffle_summary(self) -> Dict[str, Any]:
+        return dict(self._shuffle_summary)
+
     def _compose_metadata(self, sample: dict) -> dict:
         metadata = {
             "sample_id": resolve_runtime_sample_id(sample, task_id=self._task_id)
@@ -697,6 +904,13 @@ def _env_int(var: str) -> Optional[int]:
     except ValueError:
         logger.warning("Invalid integer for {}={}; ignoring override", var, value)
         return None
+
+
+def _normalize_shuffle_strategy(value: Optional[str]) -> str:
+    normalized = str(value or _DEFAULT_SHUFFLE_STRATEGY).strip().lower()
+    if normalized in {"auto", "in_memory", "reservoir", "external_index"}:
+        return normalized
+    return _DEFAULT_SHUFFLE_STRATEGY
 
 
 def _default_metric_workers(metric_count: int) -> int:

@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
+
+if TYPE_CHECKING:  # pragma: no cover
+    from gage_eval.role.runtime.invocation import (
+        RoleInvocationContext,
+        RuntimeRouteDecision,
+    )
 
 
 @dataclass(frozen=True)
@@ -115,6 +121,15 @@ class ConversationHistory:
         return selected
 
 
+@dataclass
+class RoleInvocationBinding:
+    """Transient invocation binding attached while a role lease is active."""
+
+    route_decision: "RuntimeRouteDecision"
+    sandbox_provider: Optional[Any] = None
+    execution_context: Optional["RoleInvocationContext"] = None
+
+
 class Role:
     """Encapsulates an adapter (and optional runtime) for a single invocation."""
 
@@ -130,6 +145,7 @@ class Role:
         self._adapter = adapter
         self._runtime = runtime
         self._history = history or ConversationHistory()
+        self._invocation_binding: Optional[RoleInvocationBinding] = None
 
     # ------------------------------------------------------------------
     # Conversation history helpers
@@ -152,6 +168,26 @@ class Role:
     def reset_history(self) -> None:
         self._history.clear()
 
+    def attach_invocation_binding(
+        self,
+        route_decision: "RuntimeRouteDecision",
+        *,
+        sandbox_provider: Optional[Any] = None,
+        execution_context: Optional["RoleInvocationContext"] = None,
+    ) -> None:
+        """Attach route and sandbox metadata for the current lease."""
+
+        self._invocation_binding = RoleInvocationBinding(
+            route_decision=route_decision,
+            sandbox_provider=sandbox_provider,
+            execution_context=execution_context,
+        )
+
+    def clear_invocation_binding(self) -> None:
+        """Clear the transient invocation binding when the lease is released."""
+
+        self._invocation_binding = None
+
     def history_snapshot(
         self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
     ) -> List[Dict[str, Any]]:
@@ -172,11 +208,14 @@ class Role:
             # copy_mode=deep when a role needs to mutate nested message content.
             prepared_payload.setdefault("history", history_view)
             prepared_payload.setdefault("messages", history_view)
+        self._apply_invocation_binding(prepared_payload)
+        route_mode = self._invocation_binding.route_decision.runtime_mode if self._invocation_binding else "direct"
 
         logger.debug(
-            "Role invoke adapter={} runtime={} history_tokens={} history_copy_mode={} history_window={}",
+            "Role invoke adapter={} runtime={} route_mode={} history_tokens={} history_copy_mode={} history_window={}",
             self.adapter_id,
             bool(self._runtime),
+            route_mode,
             len(history_view),
             history_policy.copy_mode,
             history_policy.window_messages,
@@ -216,3 +255,27 @@ class Role:
         if isinstance(params, Mapping):
             return HistorySnapshotPolicy.parse(params.get("history_policy"))
         return HistorySnapshotPolicy()
+
+    def _apply_invocation_binding(self, prepared_payload: Dict[str, Any]) -> None:
+        if self._invocation_binding is None:
+            return
+        route_payload = dict(prepared_payload.get("runtime_route") or {})
+        for key, value in self._invocation_binding.route_decision.to_payload().items():
+            route_payload.setdefault(key, value)
+        prepared_payload["runtime_route"] = route_payload
+        if self._invocation_binding.sandbox_provider is not None:
+            prepared_payload.setdefault(
+                "sandbox_provider", self._invocation_binding.sandbox_provider
+            )
+        execution_context = self._invocation_binding.execution_context
+        if execution_context is not None:
+            prepared_payload.setdefault(
+                "execution_context",
+                {
+                    "run_id": execution_context.run_id,
+                    "task_id": execution_context.task_id,
+                    "sample_id": execution_context.sample_id,
+                    "step_type": execution_context.step_type,
+                    "adapter_id": execution_context.adapter_id,
+                },
+            )

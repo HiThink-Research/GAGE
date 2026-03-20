@@ -19,7 +19,7 @@ class StubRoleManager:
     def __init__(self, output: dict) -> None:
         self._output = output
 
-    def borrow_role(self, _adapter_id: str):
+    def borrow_role(self, _adapter_id: str, **_kwargs):
         output = dict(self._output)
 
         class Lease:

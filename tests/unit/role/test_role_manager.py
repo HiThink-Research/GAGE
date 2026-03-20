@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_instance import Role
+from gage_eval.role.runtime.invocation import RoleSessionStore, SampleExecutionContext
 from gage_eval.role.role_manager import RoleManager, RoleManagerShutdownError
 from gage_eval.role.runtime.sharded_pool import ShardedRolePool
 
@@ -20,6 +24,8 @@ class _StubAdapter(RoleAdapter):
         *,
         resource_requirement: dict[str, Any] | None = None,
         fail_on_shutdown: bool = False,
+        runtime_mode: str = "native",
+        captured_payloads: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             adapter_id=adapter_id,
@@ -27,13 +33,16 @@ class _StubAdapter(RoleAdapter):
             capabilities=(),
             resource_requirement=resource_requirement,
         )
-        self.backend = None
+        self.backend = SimpleNamespace(execution_mode=runtime_mode)
         self.shutdown_calls = 0
         self.fail_on_shutdown = fail_on_shutdown
+        self.captured_payloads = captured_payloads if captured_payloads is not None else []
 
     async def ainvoke(
         self, payload: dict[str, Any], state: RoleAdapterState
     ) -> dict[str, Any]:
+        del state
+        self.captured_payloads.append(dict(payload))
         return {"answer": "ok"}
 
     def shutdown(self) -> None:
@@ -89,6 +98,10 @@ def test_role_manager_uses_composite_pool_for_single_shard_snapshot() -> None:
     assert initial["snapshot_version"] == "role_manager.v1"
     assert adapter_snapshot["adapter_id"] == "dut"
     assert adapter_snapshot["role_type"] == "dut_model"
+    assert adapter_snapshot["runtime_mode"] == "native"
+    assert adapter_snapshot["runtime_strategy"] == "native_runtime"
+    assert adapter_snapshot["session_mode"] == "explicit_context"
+    assert adapter_snapshot["sandbox_enabled_default"] is False
     assert adapter_snapshot["pool_type"] == "sharded"
     assert adapter_snapshot["planned_capacity"] == 1
     assert adapter_snapshot["effective_capacity"] == 1
@@ -137,6 +150,52 @@ def test_role_manager_preserves_multi_shard_capacity_without_explicit_pool_size(
         "http://judge-a",
         "http://judge-b",
     }
+
+
+@pytest.mark.fast
+def test_role_manager_snapshot_exposes_http_runtime_strategy() -> None:
+    manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)]))
+    adapter = _StubAdapter("http_model", runtime_mode="http")
+
+    manager.register_role_adapter("http_model", adapter)
+
+    snapshot = manager.snapshot()["adapters"][0]
+
+    assert snapshot["runtime_mode"] == "http"
+    assert snapshot["runtime_strategy"] == "http_runtime"
+
+
+@pytest.mark.fast
+def test_role_manager_legacy_context_bridge_emits_event_and_injects_route_metadata() -> None:
+    captured_payloads: list[dict[str, Any]] = []
+    manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)]))
+    adapter = _StubAdapter("dut", captured_payloads=captured_payloads)
+    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="legacy-bridge"))
+    sample = {"id": "sample-1", "messages": [{"role": "user", "content": "hello"}]}
+    sample_context = SampleExecutionContext(
+        sample=sample,
+        sample_id="sample-1",
+        trace=trace,
+        session_store=RoleSessionStore(sample),
+    )
+
+    manager.register_role_adapter("dut", adapter)
+    token = manager._activate_session(sample_context)
+    try:
+        with manager.borrow_role("dut") as role:
+            result = role.invoke({"sample": sample}, trace)
+    finally:
+        manager._deactivate_session(token)
+
+    assert result["answer"] == "ok"
+    assert captured_payloads
+    route_payload = captured_payloads[0]["runtime_route"]
+    assert route_payload["session_mode"] == "legacy_contextvar"
+    assert route_payload["runtime_mode"] == "native"
+    assert captured_payloads[0]["history"][0]["content"] == "hello"
+    assert any(
+        event["event"] == "legacy_context_bridge_used" for event in trace.events
+    )
 
 
 @pytest.mark.fast
