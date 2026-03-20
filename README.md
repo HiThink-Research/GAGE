@@ -32,7 +32,7 @@
 <p align="center">
   <img src="docs/assets/space-invaders-game.gif" width="33.3333%" alt="Space Invaders demo">
   <img src="docs/assets/mario-game.gif" width="33.3333%" alt="Mario demo">
-  <img src="docs/assets/vizdoom-game.gif" width="32.55%" alt="VizDoom demo">
+  <img src="docs/assets/vizdoom-game.gif" width="32%" alt="VizDoom demo">
 </p>
 
 ## ✨ Why GAGE？
