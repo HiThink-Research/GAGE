@@ -3,10 +3,40 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, List, Optional, Sequence, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
+
+
+@dataclass(frozen=True)
+class HistorySnapshotPolicy:
+    """Controls how runtime history is materialized for adapters."""
+
+    copy_mode: str = "shallow"
+    window_messages: Optional[int] = None
+    preserve_system_messages: bool = True
+    fallback_to_deep_on_error: bool = True
+
+    @classmethod
+    def parse(cls, value: Any) -> "HistorySnapshotPolicy":
+        if isinstance(value, HistorySnapshotPolicy):
+            return value
+        if not isinstance(value, Mapping):
+            return cls()
+        copy_mode = str(value.get("copy_mode") or "shallow").strip().lower()
+        if copy_mode not in {"shallow", "deep"}:
+            raise ValueError(f"Unsupported history copy_mode '{copy_mode}'")
+        window_messages = value.get("window_messages")
+        if window_messages is not None:
+            window_messages = max(0, int(window_messages))
+        return cls(
+            copy_mode=copy_mode,
+            window_messages=window_messages,
+            preserve_system_messages=bool(value.get("preserve_system_messages", True)),
+            fallback_to_deep_on_error=bool(value.get("fallback_to_deep_on_error", True)),
+        )
 
 
 class ConversationHistory:
@@ -31,8 +61,19 @@ class ConversationHistory:
         if isinstance(message, dict):
             self._messages.append(self._clone(message))
 
-    def snapshot(self) -> List[Dict[str, Any]]:
-        return [self._clone(msg) for msg in self._messages]
+    def snapshot(
+        self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        resolved_policy = HistorySnapshotPolicy.parse(policy)
+        selected = self._select_messages(resolved_policy)
+        if resolved_policy.copy_mode == "deep":
+            return [self._clone(msg) for msg in selected]
+        try:
+            return [dict(msg) for msg in selected]
+        except Exception:
+            if resolved_policy.fallback_to_deep_on_error:
+                return [self._clone(msg) for msg in selected]
+            raise
 
     def clear(self) -> None:
         self._messages.clear()
@@ -46,6 +87,32 @@ class ConversationHistory:
     @staticmethod
     def _clone(message: Dict[str, Any]) -> Dict[str, Any]:
         return copy.deepcopy(message)
+
+    def _select_messages(self, policy: HistorySnapshotPolicy) -> List[Dict[str, Any]]:
+        if policy.window_messages is None:
+            return list(self._messages)
+        if policy.window_messages <= 0:
+            if not policy.preserve_system_messages:
+                return []
+            return [
+                message
+                for message in self._messages
+                if str(message.get("role") or "").lower() == "system"
+            ]
+        if not policy.preserve_system_messages:
+            return list(self._messages[-policy.window_messages :])
+        non_system: List[Dict[str, Any]] = [
+            message
+            for message in self._messages
+            if str(message.get("role") or "").lower() != "system"
+        ]
+        retained_non_system = set(map(id, non_system[-policy.window_messages :]))
+        selected: List[Dict[str, Any]] = []
+        for message in self._messages:
+            role = str(message.get("role") or "").lower()
+            if role == "system" or id(message) in retained_non_system:
+                selected.append(message)
+        return selected
 
 
 class Role:
@@ -85,8 +152,10 @@ class Role:
     def reset_history(self) -> None:
         self._history.clear()
 
-    def history_snapshot(self) -> List[Dict[str, Any]]:
-        return self._history.snapshot()
+    def history_snapshot(
+        self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        return self._history.snapshot(policy)
 
     # ------------------------------------------------------------------
     # Invocation
@@ -96,16 +165,21 @@ class Role:
         self._apply_history_override(prepared_payload.pop("history_override", None))
         self._ingest_history_delta(prepared_payload.pop("history_delta", None))
 
-        history_view = self.history_snapshot()
+        history_policy = self._resolve_history_policy()
+        history_view = self.history_snapshot(policy=history_policy)
         if history_view:
+            # NOTE: Adapters/backends must treat these views as read-only. Use
+            # copy_mode=deep when a role needs to mutate nested message content.
             prepared_payload.setdefault("history", history_view)
             prepared_payload.setdefault("messages", history_view)
 
         logger.debug(
-            "Role invoke adapter={} runtime={} history_tokens={}",
+            "Role invoke adapter={} runtime={} history_tokens={} history_copy_mode={} history_window={}",
             self.adapter_id,
             bool(self._runtime),
             len(history_view),
+            history_policy.copy_mode,
+            history_policy.window_messages,
         )
         if self._runtime:
             result = self._runtime.execute(prepared_payload, trace)
@@ -136,3 +210,9 @@ class Role:
             return
         if isinstance(delta, Sequence):
             self._history.extend(delta)  # type: ignore[arg-type]
+
+    def _resolve_history_policy(self) -> HistorySnapshotPolicy:
+        params = getattr(self._adapter, "params", None)
+        if isinstance(params, Mapping):
+            return HistorySnapshotPolicy.parse(params.get("history_policy"))
+        return HistorySnapshotPolicy()

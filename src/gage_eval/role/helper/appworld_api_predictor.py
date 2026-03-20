@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from gage_eval.evaluation.support_artifacts import iter_support_outputs, resolve_support_field
 from gage_eval.registry import registry
 
 
@@ -186,10 +187,10 @@ def _extract_instruction(sample: Dict[str, Any]) -> str:
 
 
 def _extract_api_descriptions(sample: Dict[str, Any]) -> str:
-    outputs = sample.get("support_outputs") or []
-    for output in outputs:
-        if not isinstance(output, dict):
-            continue
+    context = resolve_support_field(sample, "api_descriptions_context")
+    if isinstance(context, str) and context.strip():
+        return context.strip()
+    for output in iter_support_outputs(sample):
         context = output.get("api_descriptions_context")
         if isinstance(context, str) and context.strip():
             return context.strip()
@@ -213,10 +214,7 @@ def _extract_allowed_api_info(sample: Dict[str, Any]) -> _AllowedApiInfo:
     api_names: List[str] = []
     tool_names: List[str] = []
     app_names: List[str] = []
-    outputs = sample.get("support_outputs") or []
-    for output in outputs:
-        if not isinstance(output, dict):
-            continue
+    for output in iter_support_outputs(sample):
         allowed_apis = output.get("api_descriptions_allowed_apis")
         if isinstance(allowed_apis, list):
             api_names.extend([str(item).lower() for item in allowed_apis if item])

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.evaluation.support_artifacts import build_support_slot_id, record_support_output
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.sandbox.provider import SandboxProvider
@@ -31,10 +32,18 @@ class SupportStep(SampleStep):
         role_manager,
         trace: ObservabilityTrace,
         *,
+        support_payload_policy: Optional[Dict[str, Any]] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
         for step in self._steps:
-            self._execute_single(step, sample, role_manager, trace, sandbox_provider=sandbox_provider)
+            self._execute_single(
+                step,
+                sample,
+                role_manager,
+                trace,
+                support_payload_policy=support_payload_policy,
+                sandbox_provider=sandbox_provider,
+            )
 
     def execute_single(
         self,
@@ -43,9 +52,17 @@ class SupportStep(SampleStep):
         role_manager,
         trace: ObservabilityTrace,
         *,
+        support_payload_policy: Optional[Dict[str, Any]] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
-        self._execute_single(step, sample, role_manager, trace, sandbox_provider=sandbox_provider)
+        self._execute_single(
+            step,
+            sample,
+            role_manager,
+            trace,
+            support_payload_policy=support_payload_policy,
+            sandbox_provider=sandbox_provider,
+        )
 
     def _execute_single(
         self,
@@ -54,22 +71,31 @@ class SupportStep(SampleStep):
         role_manager,
         trace: ObservabilityTrace,
         *,
+        support_payload_policy: Optional[Dict[str, Any]] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
         adapter_id = step.get("adapter_id")
+        slot_id = _resolve_support_slot_id(step, self._steps)
         logger.debug("Support step start adapter_id={}", adapter_id)
-        trace.emit("support_start", payload={"step": _serialize_step(step)})
+        trace.emit("support_start", payload={"step": _serialize_step(step), "slot_id": slot_id})
         if adapter_id:
             with role_manager.borrow_role(adapter_id) as role:
                 payload = {"sample": sample, "step": step}
                 if sandbox_provider is not None:
                     payload["sandbox_provider"] = sandbox_provider
                 output = role.invoke(payload, trace) if role else {}
-                sample.setdefault("support_outputs", []).append(output)
+                if isinstance(output, dict):
+                    record_support_output(
+                        sample,
+                        slot_id=slot_id,
+                        adapter_id=str(adapter_id),
+                        output=output,
+                        policy=support_payload_policy,
+                    )
                 _emit_tool_doc_metrics(trace, adapter_id, sample, output)
                 _emit_observability_events(trace, sample, output)
                 logger.trace("Support step output appended keys={}", list(output.keys()))
-        trace.emit("support_end", payload={"step": _serialize_step(step)})
+        trace.emit("support_end", payload={"step": _serialize_step(step), "slot_id": slot_id})
         logger.debug("Support step end adapter_id={}", adapter_id)
 
 
@@ -81,6 +107,18 @@ def _serialize_step(step):
         if hasattr(step, key):
             attrs[key] = getattr(step, key)
     return attrs or str(step)
+
+
+def _resolve_support_slot_id(step, steps: Sequence[Any]) -> str:
+    params = step.get("params") if hasattr(step, "get") else getattr(step, "params", {})
+    if isinstance(params, dict):
+        candidate = params.get("support_slot_id")
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    for ordinal, item in enumerate(steps):
+        if item is step:
+            return build_support_slot_id(item, ordinal)
+    return build_support_slot_id(step, 0)
 
 
 def _emit_tool_doc_metrics(trace: ObservabilityTrace, adapter_id: Optional[str], sample: dict, output: dict) -> None:

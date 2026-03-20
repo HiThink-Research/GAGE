@@ -207,6 +207,7 @@ class TaskSpec:
     failure_policy: Optional[str] = None
     metric_concurrency: Optional[int] = None
     report_partial_on_failure: Optional[bool] = None
+    support_payload_policy: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

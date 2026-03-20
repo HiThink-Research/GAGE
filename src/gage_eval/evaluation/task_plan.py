@@ -30,6 +30,7 @@ class TaskRuntimePolicy:
     failure_policy: Optional[str]
     metric_concurrency: Optional[int]
     report_partial_on_failure: Optional[bool]
+    support_payload_policy: Dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,7 @@ def _build_task_plan(
         failure_policy=task.failure_policy,
         metric_concurrency=task.metric_concurrency,
         report_partial_on_failure=task.report_partial_on_failure,
+        support_payload_policy=dict(task.support_payload_policy or {}),
     )
     return TaskPlanSpec(
         task_id=task.task_id,

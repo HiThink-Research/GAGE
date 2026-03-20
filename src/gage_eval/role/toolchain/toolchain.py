@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from loguru import logger
 
 from gage_eval.registry import registry
+from gage_eval.evaluation.support_artifacts import resolve_support_filters
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.role.toolchain.tool_docs import (
     build_app_catalog,
@@ -193,15 +194,11 @@ def _resolve_dynamic_filters(sample: Dict[str, Any]) -> _DynamicToolFilters:
     doc_allowed_apps: List[str] = []
     max_tools: Optional[int] = None
     if isinstance(sample, dict):
-        for output in sample.get("support_outputs") or []:
-            if not isinstance(output, dict):
-                continue
-            allowlist.extend(_normalize_tool_filter(output.get("tool_allowlist")))
-            prefixes.extend(_normalize_tool_filter(output.get("tool_prefixes")))
-            doc_allowed_apps.extend(_normalize_tool_filter(output.get("tool_doc_allowed_apps")))
-            candidate = _coerce_int(output.get("tool_max_tools"))
-            if candidate is not None:
-                max_tools = candidate if max_tools is None else min(max_tools, candidate)
+        resolved = resolve_support_filters(sample)
+        allowlist = _normalize_tool_filter(resolved.get("allowlist"))
+        prefixes = _normalize_tool_filter(resolved.get("prefixes"))
+        doc_allowed_apps = _normalize_tool_filter(resolved.get("doc_allowed_apps"))
+        max_tools = _coerce_int(resolved.get("max_tools"))
     return _DynamicToolFilters(
         allowlist=allowlist,
         prefixes=prefixes,

@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from loguru import logger
-from gage_eval.config.pipeline_config import MetricSpec
+from gage_eval.config.pipeline_config import CustomPipelineStep, MetricSpec
+from gage_eval.evaluation.support_artifacts import build_support_slot_id
 from gage_eval.evaluation.execution_controller import TaskExecutionController
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
@@ -44,6 +45,7 @@ class TaskPlan:
     metric_registry: Optional[MetricRegistry] = None
     auto_eval_step: Optional[AutoEvalStep] = None
     auto_eval_enabled: bool = False
+    support_payload_policy: Dict[str, Any] = field(default_factory=dict)
     steps: Sequence[Any] = field(default_factory=tuple)
     step_bundle: Optional[TaskStepBundle] = None
 
@@ -73,6 +75,7 @@ class TaskPlan:
             role_manager,
             metadata=self.metadata,
             auto_eval_enabled=self.auto_eval_enabled,
+            support_payload_policy=self.support_payload_policy,
             sandbox_provider=sandbox_provider,
         )
 
@@ -97,15 +100,16 @@ class TaskPlanner:
         self._step_factory = StepFactory()
 
     def configure_custom_steps(self, steps: Sequence[dict]) -> None:
-        self._custom_steps = steps
-        self._cached_step_sequence = tuple(steps)
+        normalized_steps = _annotate_support_steps(steps)
+        self._custom_steps = normalized_steps
+        self._cached_step_sequence = tuple(normalized_steps)
         (
             self._cached_support_steps,
             self._cached_inference_role,
             self._cached_arena_role,
             self._cached_judge_role,
             self._auto_eval_requested,
-        ) = self._derive_layout(steps)
+        ) = self._derive_layout(normalized_steps)
         self._cached_step_bundle = self._step_factory.build_bundle(
             support_steps=self._cached_support_steps,
             inference_role=self._cached_inference_role,
@@ -174,7 +178,7 @@ class TaskPlanner:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> TaskPlan:
         if custom_steps is not None:
-            ordered_steps: Sequence[Any] = tuple(custom_steps)
+            ordered_steps = _annotate_support_steps(custom_steps)
             support_steps, inference, arena, judge, auto_eval_requested = self._derive_layout(ordered_steps)
             step_bundle = self._step_factory.build_bundle(
                 support_steps=support_steps,
@@ -216,6 +220,7 @@ class TaskPlanner:
             metric_registry=self._metric_registry,
             auto_eval_step=self._auto_eval_step,
             auto_eval_enabled=auto_eval_requested,
+            support_payload_policy=self._resolve_support_payload_policy(),
             steps=ordered_steps,
             step_bundle=step_bundle,
         )
@@ -240,6 +245,11 @@ class TaskPlanner:
         judge = _resolve_single_role_binding(steps, "judge")
         auto_eval = any(get_step_type(step) == "auto_eval" for step in steps)
         return support_steps, inference, arena, judge, auto_eval
+
+    def _resolve_support_payload_policy(self) -> Dict[str, Any]:
+        if self._plan_spec is None:
+            return {}
+        return dict(self._plan_spec.runtime_policy.support_payload_policy or {})
 
 
 def _resolve_single_role_binding(steps: Sequence[Any], step_type: str) -> Optional[str]:
@@ -270,6 +280,7 @@ class StepExecutionContext:
         role_manager,
         metadata: Optional[Dict[str, Any]] = None,
         auto_eval_enabled: bool = False,
+        support_payload_policy: Optional[Dict[str, Any]] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
         self.sample = sample
@@ -279,6 +290,7 @@ class StepExecutionContext:
         self.judge = judge
         self.auto_eval_step = auto_eval_step
         self.auto_eval_enabled = auto_eval_enabled
+        self.support_payload_policy = dict(support_payload_policy or {})
         self.trace = trace
         self.role_manager = role_manager
         self.metadata = metadata or {}
@@ -291,7 +303,13 @@ class StepExecutionContext:
     def execute_support(self) -> None:
         support_steps = getattr(self.support, "_steps", ())
         logger.trace("Executing support step with {} entries", len(support_steps))
-        self.support.execute(self.sample, self.role_manager, self.trace, sandbox_provider=self.sandbox_provider)
+        self.support.execute(
+            self.sample,
+            self.role_manager,
+            self.trace,
+            support_payload_policy=self.support_payload_policy,
+            sandbox_provider=self.sandbox_provider,
+        )
 
     def execute_support_step(self, step) -> None:
         logger.trace("Executing support entry adapter={}", step.get("adapter_id") if hasattr(step, "get") else None)
@@ -301,10 +319,17 @@ class StepExecutionContext:
                 self.sample,
                 self.role_manager,
                 self.trace,
+                support_payload_policy=self.support_payload_policy,
                 sandbox_provider=self.sandbox_provider,
             )
         else:
-            self.support.execute(self.sample, self.role_manager, self.trace, sandbox_provider=self.sandbox_provider)
+            self.support.execute(
+                self.sample,
+                self.role_manager,
+                self.trace,
+                support_payload_policy=self.support_payload_policy,
+                sandbox_provider=self.sandbox_provider,
+            )
 
     def execute_inference(self) -> None:
         logger.trace("Executing inference step adapter={}", getattr(self.inference, "_adapter_id", None))
@@ -357,3 +382,45 @@ class StepExecutionContext:
             trace=self.trace,
             task_id=self.metadata.get("task_id"),
         )
+
+
+def _annotate_support_steps(steps: Sequence[Any]) -> Sequence[Any]:
+    annotated: List[Any] = []
+    support_ordinal = 0
+    for step in steps:
+        if get_step_type(step) != "support":
+            annotated.append(step)
+            continue
+        slot_id = build_support_slot_id(step, support_ordinal)
+        support_ordinal += 1
+        annotated.append(_clone_step_with_param(step, "support_slot_id", slot_id))
+    return tuple(annotated)
+
+
+def _clone_step_with_param(step: Any, key: str, value: Any) -> Any:
+    if isinstance(step, CustomPipelineStep):
+        params = dict(step.params or {})
+        params.setdefault(key, value)
+        return CustomPipelineStep(
+            step_type=step.step_type,
+            adapter_id=step.adapter_id,
+            params=params,
+        )
+    if isinstance(step, dict):
+        cloned = dict(step)
+        params = dict(cloned.get("params") or {})
+        params.setdefault(key, value)
+        cloned["params"] = params
+        return cloned
+    if hasattr(step, "params"):
+        params = dict(getattr(step, "params") or {})
+        params.setdefault(key, value)
+        try:
+            return step.__class__(
+                step_type=getattr(step, "step_type"),
+                adapter_id=getattr(step, "adapter_id", None),
+                params=params,
+            )
+        except Exception:
+            pass
+    return step

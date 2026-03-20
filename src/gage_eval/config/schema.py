@@ -277,6 +277,11 @@ def _validate_tasks(
                 errors.append(
                     f"task '{task_id}' overrides metric '{metric_id}' which is not defined globally"
                 )
+        support_payload_policy = task.get("support_payload_policy")
+        if support_payload_policy is not None and not isinstance(support_payload_policy, dict):
+            errors.append(
+                f"task '{task_id}' field 'support_payload_policy' must be a mapping"
+            )
         failure_policy = task.get("failure_policy")
         if failure_policy is not None and str(failure_policy).strip().lower() not in _VALID_FAILURE_POLICIES:
             errors.append(

@@ -286,6 +286,7 @@ class PipelineConfigBuilder:
                         failure_policy=item.get("failure_policy"),
                         metric_concurrency=item.get("metric_concurrency"),
                         report_partial_on_failure=item.get("report_partial_on_failure"),
+                        support_payload_policy=item.get("support_payload_policy") or {},
                     )
                 )
             except Exception as exc:
