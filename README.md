@@ -25,24 +25,21 @@
 
 ## 🎮 Game Arena Showcase
 
-<table width="100%">
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/spacegame.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/mahjong.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-  </tr>
-</table>
+<p align="center"><img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" width="37.8571%" alt="Game Arena demo 1"><!--
+--><img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" width="28.6905%" alt="Game Arena demo 2"><!--
+--><img src="docs/assets/mahjong.gif" width="33.4524%" alt="Mahjong demo"></p>
+
+<p align="center">
+  <img src="docs/assets/space-invaders.gif" width="100%" alt="Space Invaders demo">
+</p>
+
+<p align="center">
+  <img src="docs/assets/mario.gif" width="100%" alt="Mario demo">
+</p>
+
+<p align="center">
+  <img src="docs/assets/vizdoom.gif" width="100%" alt="VizDoom demo">
+</p>
 
 ## ✨ Why GAGE？
 
