@@ -204,6 +204,9 @@ class TaskSpec:
     concurrency: Optional[int] = None
     prefetch_factor: Optional[int] = None
     max_inflight: Optional[int] = None
+    failure_policy: Optional[str] = None
+    metric_concurrency: Optional[int] = None
+    report_partial_on_failure: Optional[bool] = None
 
 
 @dataclass(frozen=True)

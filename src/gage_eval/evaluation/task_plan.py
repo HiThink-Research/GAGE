@@ -27,6 +27,9 @@ class TaskRuntimePolicy:
     concurrency: Optional[int]
     prefetch_factor: Optional[int]
     max_inflight: Optional[int]
+    failure_policy: Optional[str]
+    metric_concurrency: Optional[int]
+    report_partial_on_failure: Optional[bool]
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,9 @@ def _build_task_plan(
         concurrency=task.concurrency,
         prefetch_factor=task.prefetch_factor,
         max_inflight=task.max_inflight,
+        failure_policy=task.failure_policy,
+        metric_concurrency=task.metric_concurrency,
+        report_partial_on_failure=task.report_partial_on_failure,
     )
     return TaskPlanSpec(
         task_id=task.task_id,

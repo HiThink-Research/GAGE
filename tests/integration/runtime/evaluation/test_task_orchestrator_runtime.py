@@ -267,6 +267,18 @@ def test_task_orchestrator_writes_task_execution_summary_on_abort(tmp_path: Path
     assert summary["tasks"][0]["execution"]["failed_sample_id"] == "s0"
 
 
+def test_task_orchestrator_writes_task_execution_summary_on_abort(tmp_path: Path):
+    runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=3, role_cls=_FailingRole)
+
+    with pytest.raises(Exception, match="boom"):
+        runtime.run()
+
+    summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert summary["tasks"][0]["execution"]["status"] == "aborted"
+    assert summary["tasks"][0]["execution"]["failed_sample_id"] == "s0"
+
+
 @pytest.mark.fast
 def test_task_orchestrator_interval_writer_close_patches_final_fsync(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("GAGE_EVAL_ENABLE_BUFFERED_WRITER", "1")

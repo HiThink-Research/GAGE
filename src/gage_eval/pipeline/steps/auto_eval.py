@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from gage_eval.config.pipeline_config import MetricSpec
+from gage_eval.evaluation.execution_controller import TaskExecutionController
 from gage_eval.observability.decorators import observable_stage
 from gage_eval.observability.logger import ObservableLogger
 from gage_eval.observability.trace import ObservabilityTrace
@@ -47,6 +48,7 @@ class AutoEvalStep(SampleStep):
         metric_specs: Sequence[MetricSpec],
         metric_registry: Optional[MetricRegistry] = None,
         cache_store: Optional[EvalCache] = None,
+        execution_controller: Optional[TaskExecutionController] = None,
     ) -> None:
         super().__init__("AutoEvalStep")
         self._registry = metric_registry or MetricRegistry()
@@ -55,9 +57,18 @@ class AutoEvalStep(SampleStep):
         self._aggregate_lock = threading.Lock()
         self._logger = ObservableLogger()
         self._worker_hint = _env_int("GAGE_EVAL_AUTOEVAL_WORKERS")
+        self._execution_controller = execution_controller
 
     def has_metrics(self) -> bool:
         return bool(self._instances)
+
+    def metric_count(self) -> int:
+        return len(self._instances)
+
+    def attach_execution_controller(
+        self, controller: Optional[TaskExecutionController]
+    ) -> None:
+        self._execution_controller = controller
 
     @observable_stage(
         "auto_eval",
@@ -84,7 +95,7 @@ class AutoEvalStep(SampleStep):
         logger = self._logger
         worker_count = self._determine_worker_count()
         if self._instances:
-            if worker_count <= 1 or len(self._instances) == 1:
+            if self._execution_controller is None:
                 for instance in self._instances:
                     metric_id, result_dict = self._evaluate_metric(
                         instance,
@@ -98,7 +109,6 @@ class AutoEvalStep(SampleStep):
             else:
                 per_metric_results.update(
                     self._evaluate_metrics_concurrently(
-                        worker_count,
                         sample_id,
                         sample,
                         resolved_model_output,
@@ -176,7 +186,6 @@ class AutoEvalStep(SampleStep):
 
     def _evaluate_metrics_concurrently(
         self,
-        worker_count: int,
         sample_id: str,
         sample: dict,
         model_output: Dict,
@@ -185,22 +194,27 @@ class AutoEvalStep(SampleStep):
     ) -> Dict[str, Dict]:
         per_metric_results: Dict[str, Dict] = {}
         start = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_map = {
-                executor.submit(
-                    self._evaluate_metric,
-                    instance,
-                    sample_id,
-                    sample,
-                    model_output,
-                    judge_output,
-                    trace,
-                ): instance.spec.metric_id
-                for instance in self._instances
-            }
-            for future in as_completed(future_map):
-                metric_id, result_dict = future.result()
-                per_metric_results[metric_id] = result_dict
+        controller = self._execution_controller
+        if controller is None:
+            return per_metric_results
+        future_map = {
+            controller.submit_metric(
+                self._evaluate_metric,
+                instance,
+                sample_id,
+                sample,
+                model_output,
+                judge_output,
+                trace,
+                sample_id=sample_id,
+                trace=trace,
+            ): instance.spec.metric_id
+            for instance in self._instances
+        }
+        for future in as_completed(future_map):
+            metric_id, result_dict = future.result()
+            per_metric_results[metric_id] = result_dict
+        worker_count = self._determine_worker_count()
         elapsed = time.perf_counter() - start
         self._logger.debug(
             "auto_eval",
@@ -216,6 +230,11 @@ class AutoEvalStep(SampleStep):
     def _determine_worker_count(self) -> int:
         if not self._instances:
             return 0
+        if self._execution_controller is not None:
+            lane_workers = self._execution_controller.metric_workers
+            if lane_workers <= 1:
+                return 1
+            return max(1, min(lane_workers, len(self._instances)))
         if self._worker_hint is not None and self._worker_hint > 0:
             return max(1, min(self._worker_hint, len(self._instances)))
         cpu = os.cpu_count() or 1

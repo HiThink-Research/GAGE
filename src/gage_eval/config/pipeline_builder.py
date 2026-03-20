@@ -283,6 +283,9 @@ class PipelineConfigBuilder:
                         concurrency=item.get("concurrency"),
                         prefetch_factor=item.get("prefetch_factor"),
                         max_inflight=item.get("max_inflight"),
+                        failure_policy=item.get("failure_policy"),
+                        metric_concurrency=item.get("metric_concurrency"),
+                        report_partial_on_failure=item.get("report_partial_on_failure"),
                     )
                 )
             except Exception as exc:

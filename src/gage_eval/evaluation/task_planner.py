@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 from gage_eval.config.pipeline_config import MetricSpec
+from gage_eval.evaluation.execution_controller import TaskExecutionController
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
@@ -84,6 +85,7 @@ class TaskPlanner:
         self._metric_specs: Sequence[MetricSpec] = metric_specs or ()
         self._metric_registry = metric_registry or MetricRegistry()
         self._auto_eval_step: Optional[AutoEvalStep] = None
+        self._execution_controller: Optional[TaskExecutionController] = None
         self._cached_support_steps: Sequence[dict] = ()
         self._cached_inference_role: Optional[str] = None
         self._cached_arena_role: Optional[str] = None
@@ -142,6 +144,7 @@ class TaskPlanner:
             metric_specs=self._metric_specs,
             metric_registry=self._metric_registry,
             cache_store=cache_store,
+            execution_controller=self._execution_controller,
         )
         if self._cached_step_sequence:
             self._cached_step_bundle = self._step_factory.build_bundle(
@@ -156,6 +159,13 @@ class TaskPlanner:
             len(metric_specs),
             cache_store is not None,
         )
+
+    def attach_execution_controller(
+        self, controller: Optional[TaskExecutionController]
+    ) -> None:
+        self._execution_controller = controller
+        if self._auto_eval_step is not None:
+            self._auto_eval_step.attach_execution_controller(controller)
 
     def prepare_plan(
         self,

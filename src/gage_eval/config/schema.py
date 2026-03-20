@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Sequence
 
 from gage_eval.pipeline.step_contracts import collect_step_sequence_issues
 
+_VALID_FAILURE_POLICIES = {"fail_fast", "graceful", "best_effort"}
+
 
 class SchemaValidationError(ValueError):
     """Raised when the config payload fails structural validation."""
@@ -275,6 +277,11 @@ def _validate_tasks(
                 errors.append(
                     f"task '{task_id}' overrides metric '{metric_id}' which is not defined globally"
                 )
+        failure_policy = task.get("failure_policy")
+        if failure_policy is not None and str(failure_policy).strip().lower() not in _VALID_FAILURE_POLICIES:
+            errors.append(
+                f"task '{task_id}' declares unsupported failure_policy '{failure_policy}'"
+            )
 
 
 def _validate_step_sequence(
