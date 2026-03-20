@@ -7,11 +7,15 @@ import json
 import threading
 import time
 from queue import Queue
-from typing import Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple
 
 from loguru import logger
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.human_input_protocol import (
+    build_action_payload,
+    dump_action_payload,
+)
 from gage_eval.role.arena.visualizers.renderer_base import BoardRenderer
 
 _BOARD_CONTAINER_ID = "gomoku-board-container"
@@ -42,6 +46,8 @@ class GradioVisualizer:
         show_parsed_move: bool = True,
         show_chat: bool = False,
         chat_max_entries: int = 60,
+        allow_status_html: bool = False,
+        demo_mode: bool = False,
         title: Optional[str] = None,
     ) -> None:
         """Initialize the visualizer settings.
@@ -54,6 +60,8 @@ class GradioVisualizer:
             refresh_s: Refresh interval in seconds for polling updates.
             show_chat: Whether to render the chat panel.
             chat_max_entries: Max chat messages to render in the panel.
+            allow_status_html: Whether status_text may be rendered as trusted HTML.
+            demo_mode: Whether to suppress frontend error noise for demos.
         """
 
         self._board_size = int(board_size)
@@ -63,7 +71,9 @@ class GradioVisualizer:
         self._refresh_s = float(refresh_s)
         self._auto_close = bool(auto_close)
         self._wait_for_finish = bool(wait_for_finish)
-        self._action_queue: Queue[str] = Queue()
+        self._fallback_action_queue: Queue[str] = Queue()
+        self._bound_action_queue: Any = self._fallback_action_queue
+        self._bound_sample_id: Optional[str] = None
         self._lock = threading.Lock()
         self._board_text = ""
         self._renderer_impl = str(renderer_impl or "gomoku_board_v1")
@@ -102,14 +112,33 @@ class GradioVisualizer:
         self._show_parsed_move = bool(show_parsed_move)
         self._show_chat = bool(show_chat)
         self._chat_max_entries = max(0, int(chat_max_entries))
+        self._allow_status_html = bool(allow_status_html)
+        self._demo_mode = bool(demo_mode)
         self._last_chat_html = self._render_chat_panel()
         self._title = str(title) if title else "GAGE Gomoku Arena"
 
     @property
-    def action_queue(self) -> Queue[str]:
+    def action_queue(self) -> Any:
         """Return the action queue used for human input."""
 
-        return self._action_queue
+        with self._lock:
+            return self._bound_action_queue
+
+    def bind_action_queue(self, action_queue: Any, *, sample_id: str) -> None:
+        """Bind a sample-scoped action route for the current session."""
+
+        with self._lock:
+            self._bound_action_queue = action_queue
+            self._bound_sample_id = str(sample_id)
+
+    def clear_action_queue(self, *, sample_id: Optional[str] = None) -> None:
+        """Clear the bound sample-scoped action route."""
+
+        with self._lock:
+            if sample_id is not None and self._bound_sample_id != str(sample_id):
+                return
+            self._bound_action_queue = self._fallback_action_queue
+            self._bound_sample_id = None
 
     def start(self) -> None:
         """Start the Gradio server in a background thread."""
@@ -192,7 +221,7 @@ class GradioVisualizer:
                     self._renderer.set_coord_scheme(self._coord_scheme)
             self._board_text = board_text
             self._renderer.update(board_text, last_move=last_move, winning_line=winning_line)
-            self._status_text = status_text
+            self._status_text = str(status_text or "")
             if final_state and self._wait_for_finish:
                 suffix = f"Click Finish to continue. Auto-confirm in {_FINISH_TIMEOUT_S:.0f}s."
                 if suffix not in self._status_text:
@@ -201,7 +230,7 @@ class GradioVisualizer:
                 interactive=self._mode == "interactive"
             )
             self._last_raw_text = self._renderer.raw_text()
-            self._last_status = f'<div class="status-line">{self._status_text}</div>' if self._status_text else ""
+            self._last_status = self._render_status_html(self._status_text)
             
             if last_action_player:
                 self._last_action_player = last_action_player
@@ -269,12 +298,7 @@ class GradioVisualizer:
         chat_js = self._build_chat_scroll_js()
         js = "\n".join(block for block in (js, error_js, chat_js) if block)
 
-        launch_kwargs = {
-            "server_port": self._port,
-            "inbrowser": self._launch_browser,
-            "share": False,
-            "show_error": False,
-        }
+        launch_kwargs = self._build_launch_kwargs()
         blocks_kwargs = {"title": self._title}
         if self._renderer_css:
             blocks_kwargs["css"] = self._renderer_css
@@ -324,7 +348,7 @@ class GradioVisualizer:
                                 logger.info(f"[_submit_move] Triggered with text: '{text}'")
                                 move = (text or "").strip().upper()
                                 if move:
-                                    self._action_queue.put(move)
+                                    self._enqueue_action(move)
                                     return "", self._last_status
                                 return "", self._last_status
 
@@ -336,7 +360,9 @@ class GradioVisualizer:
                                     time.sleep(0.5)
                                     self._finish_event.set()
                                 threading.Thread(target=_delayed_signal, daemon=True).start()
-                                return '<div class="status-line">Finish requested. Closing when pipeline resumes.</div>'
+                                return self._render_status_html(
+                                    "Finish requested. Closing when pipeline resumes."
+                                )
 
                             finish_button.click(_finish, outputs=[status_display])
 
@@ -388,7 +414,7 @@ class GradioVisualizer:
                 if not self._running or self._finalized:
                     return (
                         gr.update(value=self._last_board_html),
-                        self._status_text if "class" in self._status_text else self._last_status,
+                        self._last_status,
                         self._last_raw_text,
                         self._player_bar_html,
                         self._last_output_label,
@@ -456,7 +482,7 @@ class GradioVisualizer:
             with self._lock:
                 raw_text = self._renderer.raw_text()
                 board = self._renderer.render_html(interactive=self._mode == "interactive")
-                status = f'<div class="status-line">{self._status_text}</div>' if self._status_text else ""
+                status = self._render_status_html(self._status_text)
         except Exception:
             return self._last_board_html, self._last_status, self._last_raw_text
         if not board:
@@ -502,6 +528,28 @@ class GradioVisualizer:
                 active_player=self._current_active_player,
                 elapsed=0.0,
             )
+
+    def _enqueue_action(self, move: str) -> None:
+        queue = self.action_queue
+        if queue is None:
+            return
+        with self._lock:
+            player_id = self._current_active_player
+            if player_id is None and len(self._player_ids) == 1:
+                player_id = self._player_ids[0]
+            sample_id = self._bound_sample_id
+        payload = build_action_payload(
+            action=move,
+            player_id=player_id,
+            sample_id=sample_id,
+            raw=move,
+            source="gradio_visualizer",
+        )
+        serialized = dump_action_payload(payload)
+        if hasattr(queue, "put_nowait"):
+            queue.put_nowait(serialized)
+            return
+        queue.put(serialized)
 
     def set_players(
         self,
@@ -656,8 +704,21 @@ class GradioVisualizer:
   }
 """
 
-    @staticmethod
-    def _build_error_suppression_js() -> str:
+    def _build_launch_kwargs(self) -> dict[str, Any]:
+        """Build Gradio launch kwargs for the current visualizer mode."""
+
+        return {
+            "server_port": self._port,
+            "inbrowser": self._launch_browser,
+            "share": False,
+            "show_error": not self._demo_mode,
+        }
+
+    def _build_error_suppression_js(self) -> str:
+        """Build optional frontend error suppression script for demo mode."""
+
+        if not self._demo_mode:
+            return ""
         return """
   if (!window.__gage_hide_errors__) {
     window.__gage_hide_errors__ = true;
@@ -722,6 +783,16 @@ class GradioVisualizer:
     setInterval(suppressErrors, 800);
   }
 """
+
+    def _render_status_html(self, status_text: str) -> str:
+        """Render one status line as HTML using safe text by default."""
+
+        text = str(status_text or "")
+        if not text:
+            return ""
+        if self._allow_status_html:
+            return f'<div class="status-line">{text}</div>'
+        return f'<div class="status-line">{html.escape(text)}</div>'
 
     def _format_output_text(self, raw_text: str) -> str:
         stripped = raw_text.strip()

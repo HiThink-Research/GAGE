@@ -72,6 +72,37 @@ def test_ws_rgb_hub_register_list_broadcast_and_route_input() -> None:
         hub.stop()
 
 
+def test_ws_rgb_hub_routes_sample_id_into_queued_payload() -> None:
+    queue: Queue[str] = Queue()
+    hub = WsRgbHubServer(host="127.0.0.1", port=0)
+    hub.start()
+    try:
+        hub.register_display(
+            DisplayRegistration(
+                display_id="display-sample",
+                label="retro",
+                human_player_id="player_0",
+                frame_source=lambda: {"frame_id": 1},
+                input_mapper=_Mapper(),
+                action_queue=queue,
+                default_context={"sample_id": "sample_ws"},
+            )
+        )
+
+        response = hub.handle_input(
+            display_id="display-sample",
+            payload={"type": "keydown", "key": "j"},
+        )
+
+        assert response["ok"] is True
+        queued_payload = json.loads(queue.get_nowait())
+        assert queued_payload["sample_id"] == "sample_ws"
+        assert queued_payload["player_id"] == "player_0"
+        assert queued_payload["move"] == "MOVE:j"
+    finally:
+        hub.stop()
+
+
 def test_ws_rgb_hub_reports_missing_display() -> None:
     hub = WsRgbHubServer(port=0)
     hub.start()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import base64
 import importlib
@@ -50,6 +51,7 @@ class ViZDoomEnvConfig:
     frame_stride: int = 1
     time_source: str = "wall_clock"
     obs_image: bool = False
+    obs_image_history_len: int = 1
     replay_in_env: bool = True
     action_labels: Optional[Sequence[str]] = None
     allow_partial_actions: bool = False
@@ -96,6 +98,7 @@ class ViZDoomArenaEnvironment:
         frame_stride: int = 1,
         time_source: str = "wall_clock",
         obs_image: bool = False,
+        obs_image_history_len: int = 1,
         replay_in_env: bool = True,
         action_labels: Optional[Sequence[str]] = None,
         allow_partial_actions: bool = False,
@@ -132,6 +135,7 @@ class ViZDoomArenaEnvironment:
             frame_stride: Frame sampling stride for replays.
             time_source: Timestamp source label.
             obs_image: Whether to include image frames in observations.
+            obs_image_history_len: Number of recent POV frames to expose in observations.
             replay_in_env: Whether the environment writes replays directly.
             action_labels: Optional action label list for legal actions.
         """
@@ -161,6 +165,7 @@ class ViZDoomArenaEnvironment:
             frame_stride=int(frame_stride),
             time_source=str(time_source),
             obs_image=bool(obs_image),
+            obs_image_history_len=max(1, int(obs_image_history_len)),
             replay_in_env=bool(replay_in_env),
             action_labels=tuple(action_labels) if action_labels else None,
             allow_partial_actions=bool(allow_partial_actions),
@@ -190,6 +195,10 @@ class ViZDoomArenaEnvironment:
         self._active_idx = 0
         self._last_frame_payload: Dict[str, Any] = {}
         self._display_pov_view = self._normalize_pov_view(self._cfg.pov_view)
+        self._obs_image_history: Dict[int, deque[Dict[str, Any]]] = {
+            idx: deque(maxlen=max(1, int(self._cfg.obs_image_history_len)))
+            for idx in self._player_index.values()
+        }
         self._prompt_builder = ViZDoomPromptBuilder()
 
     def reset(self) -> None:
@@ -207,6 +216,10 @@ class ViZDoomArenaEnvironment:
         self._active_idx = 0
         self._last_frame_payload = {}
         self._display_pov_view = self._normalize_pov_view(self._cfg.pov_view)
+        self._obs_image_history = {
+            idx: deque(maxlen=max(1, int(self._cfg.obs_image_history_len)))
+            for idx in self._player_index.values()
+        }
 
         # STEP 2: Initialize replay if enabled.
         if self._cfg.replay_in_env:
@@ -219,6 +232,7 @@ class ViZDoomArenaEnvironment:
                 time_source=self._cfg.time_source,
             )
             self._replay.start(meta)
+        self._refresh_observation_image_history()
         self._refresh_last_frame_payload()
 
     def get_active_player(self) -> str:
@@ -248,6 +262,9 @@ class ViZDoomArenaEnvironment:
             frame = self._get_frame_from_env(observer_player_id=player_id)
             if frame is not None:
                 view["image"] = frame
+            image_history = self._get_observation_image_history(observer_player_id=player_id)
+            if image_history:
+                view["image_history"] = image_history
         legal_actions: Dict[str, Any] = {"items": legal_items}
         context = {
             "mode": "tick",
@@ -479,6 +496,7 @@ class ViZDoomArenaEnvironment:
         self._last_rewards = rewards
         self._last_info = info
         self._done = bool(done)
+        self._refresh_observation_image_history()
         self._refresh_last_frame_payload()
         self._tick += 1
 
@@ -518,6 +536,43 @@ class ViZDoomArenaEnvironment:
         if raw is not None:
             return _encode_frame(raw)
         return None
+
+    def _get_observation_image_history(
+        self,
+        *,
+        observer_player_id: Optional[str] = None,
+    ) -> list[Dict[str, Any]]:
+        """Return encoded POV frame history for one observer in chronological order."""
+
+        if self._cfg.obs_image_history_len <= 0:
+            return []
+        player_index, _ = self._select_raw_pov_frame(observer_player_id=observer_player_id)
+        if player_index is None:
+            return []
+        history = self._obs_image_history.get(int(player_index))
+        if not history:
+            return []
+        return [dict(frame) for frame in list(history)]
+
+    def _refresh_observation_image_history(self) -> None:
+        """Capture one encoded POV snapshot per player for future observations."""
+
+        if not self._cfg.obs_image:
+            return
+
+        raw_frames = self._get_raw_pov_frames()
+        if not raw_frames:
+            return
+
+        for player_index, raw_frame in raw_frames.items():
+            encoded = _encode_frame(raw_frame)
+            if encoded is None:
+                continue
+            history = self._obs_image_history.setdefault(
+                int(player_index),
+                deque(maxlen=max(1, int(self._cfg.obs_image_history_len))),
+            )
+            history.append(encoded)
 
     def _refresh_last_frame_payload(self) -> None:
         player_index, raw_frame = self._select_raw_pov_frame(use_display_view=True)

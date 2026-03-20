@@ -13,6 +13,10 @@ from typing import Any, Callable, Mapping, Optional
 from urllib.parse import parse_qs, urlparse
 
 from gage_eval.role.arena.input_mapping import GameInputMapper, HumanActionEvent
+from gage_eval.role.arena.human_input_protocol import (
+    build_action_payload,
+    dump_action_payload,
+)
 
 try:
     import numpy as np
@@ -453,7 +457,11 @@ class WsRgbHubServer:
         if context:
             merged_context.update(dict(context))
         actions = mapper.handle_browser_event(payload, context=merged_context)
-        queued = self._enqueue_actions(registration.action_queue, actions)
+        queued = self._enqueue_actions(
+            registration.action_queue,
+            actions,
+            merged_context,
+        )
         return {
             "ok": True,
             "display_id": registration.display_id,
@@ -538,19 +546,31 @@ class WsRgbHubServer:
         return payload
 
     @staticmethod
-    def _enqueue_actions(action_queue: Any, actions: list[HumanActionEvent]) -> int:
+    def _enqueue_actions(
+        action_queue: Any,
+        actions: list[HumanActionEvent],
+        context: Optional[Mapping[str, Any]] = None,
+    ) -> int:
         if action_queue is None:
             return 0
         queued = 0
+        sample_id = None if context is None else context.get("sample_id")
+        run_id = None if context is None else context.get("run_id")
+        task_id = None if context is None else context.get("task_id")
+        display_id = None if context is None else context.get("display_id")
         for action in actions:
-            payload = json.dumps(
-                {
-                    "player_id": str(action.player_id or ""),
-                    "move": str(action.move or ""),
-                    "raw": str(action.raw or action.move or ""),
-                    "metadata": dict(action.metadata or {}),
-                },
-                ensure_ascii=False,
+            payload = dump_action_payload(
+                build_action_payload(
+                    action=str(action.move or ""),
+                    player_id=str(action.player_id or ""),
+                    sample_id=None if sample_id is None else str(sample_id),
+                    raw=str(action.raw or action.move or ""),
+                    source="ws_rgb_server",
+                    run_id=None if run_id is None else str(run_id),
+                    task_id=None if task_id is None else str(task_id),
+                    display_id=None if display_id is None else str(display_id),
+                    metadata=dict(action.metadata or {}),
+                )
             )
             if hasattr(action_queue, "put_nowait"):
                 action_queue.put_nowait(payload)

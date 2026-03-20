@@ -376,6 +376,44 @@ def test_llm_player_turn_messages_avoid_duplicate_image_fragment() -> None:
     assert image_count == 1
 
 
+def test_llm_player_turn_messages_attach_ordered_image_fragments() -> None:
+    sample = {"messages": [], "metadata": {"game_type": "vizdoom"}}
+    parser = MagicMock()
+    role_manager = MagicMock()
+    renderer = _CaptureRenderer()
+    player = LLMPlayer(
+        name="player_0",
+        adapter_id="dummy",
+        role_manager=role_manager,
+        sample=sample,
+        parser=parser,
+        prompt_renderer=renderer,
+    )
+    image_fragments = [
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,frame_{index}"}}
+        for index in range(4)
+    ]
+    rendered_messages = [
+        {"role": "system", "content": "arena-system"},
+        {"role": "user", "content": [{"type": "text", "text": "Choose one move."}]},
+    ]
+
+    messages = player._append_image_fragments(  # noqa: SLF001
+        rendered_messages,
+        image_fragments=image_fragments,
+        fallback_text="Choose one move.",
+    )
+
+    user_content = messages[1]["content"]
+    attached_images = [
+        part for part in user_content if isinstance(part, dict) and part.get("type") == "image_url"
+    ]
+    assert len(attached_images) == 4
+    assert [part["image_url"]["url"] for part in attached_images] == [
+        fragment["image_url"]["url"] for fragment in image_fragments
+    ]
+
+
 def test_llm_player_turn_messages_fallback_to_backward_prompt() -> None:
     sample = {"messages": [{"role": "system", "content": "legacy"}], "metadata": {}}
     parser = MagicMock()
@@ -515,6 +553,74 @@ def test_llm_player_scheme_s1_suppresses_image_payload() -> None:
     assert image_fragment is None
 
 
+def test_llm_player_scheme_s4_builds_four_image_fragments() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S4_text_image_4f_action_hist",
+        scheme_params={"image_history_len": 4},
+    )
+    observation = _build_vizdoom_observation(
+        step=6,
+        health=94,
+        reward=1.0,
+        image_history=[
+            _build_image_payload(marker=11),
+            _build_image_payload(marker=12),
+            _build_image_payload(marker=13),
+            _build_image_payload(marker=14),
+        ],
+    )
+
+    image_fragments = player._build_image_fragments(observation)  # noqa: SLF001
+
+    assert len(image_fragments) == 4
+    assert all(fragment.get("type") == "image_url" for fragment in image_fragments)
+
+
+def test_llm_player_scheme_s4_prompt_mentions_ordered_image_history() -> None:
+    player = LLMPlayer(
+        name="p0",
+        adapter_id="dummy",
+        role_manager=MagicMock(),
+        sample={"messages": [], "metadata": {"game_type": "vizdoom"}},
+        parser=MagicMock(),
+        scheme_id="S4_text_image_4f_action_hist",
+        scheme_params={"image_history_len": 4},
+    )
+    observation = _build_vizdoom_observation(
+        step=6,
+        health=94,
+        reward=1.0,
+        image_history=[
+            _build_image_payload(marker=21),
+            _build_image_payload(marker=22),
+            _build_image_payload(marker=23),
+            _build_image_payload(marker=24),
+        ],
+    )
+
+    prompt = player._format_observation(observation)
+    payload = player._build_prompt_payload(  # noqa: SLF001
+        observation=observation,
+        prompt_text="placeholder",
+        retry_reason=None,
+        last_output=None,
+        legacy_messages=[],
+        has_image=True,
+        image_count=4,
+    )
+
+    assert "Attached images:" in prompt
+    assert "4 ordered POV frames" in prompt
+    assert payload["image_count"] == 4
+    assert payload["vizdoom_strategy"]["has_image_history_block"] is True
+    assert payload["vizdoom_strategy"]["image_history_count"] == 4
+
+
 def test_llm_player_scheme_s6_v2_includes_action_outcome_history() -> None:
     player = LLMPlayer(
         name="p0",
@@ -638,8 +744,8 @@ def test_llm_player_think_attaches_semantic_vizdoom_trace_action() -> None:
     assert action.metadata["trace_action_applied"] == "ATTACK"
 
 
-def _build_image_payload() -> dict[str, str | list[int]]:
-    raw = base64.b64encode(bytes([0, 0, 0])).decode("ascii")
+def _build_image_payload(marker: int = 0) -> dict[str, str | list[int]]:
+    raw = base64.b64encode(bytes([marker % 256, 0, 0])).decode("ascii")
     return {
         "encoding": "raw_base64",
         "data": raw,
@@ -648,7 +754,20 @@ def _build_image_payload() -> dict[str, str | list[int]]:
     }
 
 
-def _build_vizdoom_observation(*, step: int, health: int, reward: float) -> ArenaObservation:
+def _build_vizdoom_observation(
+    *,
+    step: int,
+    health: int,
+    reward: float,
+    image_history: list[dict[str, str | list[int]]] | None = None,
+) -> ArenaObservation:
+    view = {
+        "text": f"Tick {step}. Legal actions: 1, 2, 3",
+        "vector": {"HEALTH": health, "FRAGCOUNT": 1},
+        "image": _build_image_payload(marker=step),
+    }
+    if image_history:
+        view["image_history"] = image_history
     return ArenaObservation(
         board_text="",
         legal_moves=["1", "2", "3"],
@@ -659,11 +778,7 @@ def _build_vizdoom_observation(*, step: int, health: int, reward: float) -> Aren
             "t": step,
             "action_mapping": {"1": "ATTACK", "2": "TURN_LEFT", "3": "TURN_RIGHT"},
         },
-        view={
-            "text": f"Tick {step}. Legal actions: 1, 2, 3",
-            "vector": {"HEALTH": health, "FRAGCOUNT": 1},
-            "image": _build_image_payload(),
-        },
+        view=view,
         legal_actions={"items": ["1", "2", "3"]},
         context={"step": step, "mode": "tick"},
     )
