@@ -269,13 +269,13 @@ class Role:
             )
         execution_context = self._invocation_binding.execution_context
         if execution_context is not None:
-            prepared_payload.setdefault(
-                "execution_context",
-                {
-                    "run_id": execution_context.run_id,
-                    "task_id": execution_context.task_id,
-                    "sample_id": execution_context.sample_id,
-                    "step_type": execution_context.step_type,
-                    "adapter_id": execution_context.adapter_id,
-                },
-            )
+            payload = {
+                "run_id": execution_context.run_id,
+                "task_id": execution_context.task_id,
+                "sample_id": execution_context.sample_id,
+                "step_type": execution_context.step_type,
+                "adapter_id": execution_context.adapter_id,
+            }
+            if execution_context.step_slot_id is not None:
+                payload["step_slot_id"] = execution_context.step_slot_id
+            prepared_payload.setdefault("execution_context", payload)

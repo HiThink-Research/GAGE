@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Sequence
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.support_artifacts import build_support_slot_id, record_support_output
+from gage_eval.pipeline.step_contracts import get_step_adapter_id
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
@@ -80,13 +81,17 @@ class SupportStep(SampleStep):
         execution_context: Optional[SampleExecutionContext] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ) -> None:
-        adapter_id = step.get("adapter_id")
+        adapter_id = get_step_adapter_id(step)
         slot_id = _resolve_support_slot_id(step, self._steps)
         logger.debug("Support step start adapter_id={}", adapter_id)
         trace.emit("support_start", payload={"step": _serialize_step(step), "slot_id": slot_id})
         if adapter_id:
             invocation_context = (
-                execution_context.for_invocation(step_type="support", adapter_id=str(adapter_id))
+                execution_context.for_invocation(
+                    step_type="support",
+                    adapter_id=str(adapter_id),
+                    step_slot_id=slot_id,
+                )
                 if execution_context is not None
                 else None
             )

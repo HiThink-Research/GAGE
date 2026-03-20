@@ -72,6 +72,8 @@ class SandboxSessionRouter:
                 "source": binding.source,
                 "route_key": route_key,
             }
+            if binding.step_slot_id:
+                payload["step_slot_id"] = binding.step_slot_id
             sandbox_id = (
                 binding.config.get("sandbox_id")
                 or binding.config.get("template_name")

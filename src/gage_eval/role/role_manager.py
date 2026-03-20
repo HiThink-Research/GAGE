@@ -396,6 +396,7 @@ class RoleManager:
             session_mode=session_mode,
             route_source=sandbox_binding.source,
             sandbox_binding=sandbox_binding,
+            step_slot_id=invocation_context.step_slot_id if invocation_context is not None else None,
             observability_tags={
                 "runtime_mode": template.runtime_mode,
                 "session_mode": session_mode,
@@ -426,6 +427,7 @@ class RoleManager:
             sample,
             step_type=invocation_context.step_type,
             adapter_id=invocation_context.adapter_id,
+            step_slot_id=invocation_context.step_slot_id,
         )
         if disabled:
             return SandboxBinding(
@@ -433,6 +435,7 @@ class RoleManager:
                 source=route_source,
                 step_type=invocation_context.step_type,
                 adapter_id=invocation_context.adapter_id,
+                step_slot_id=invocation_context.step_slot_id,
             )
         default_override = _resolve_default_sandbox_override(sample)
         sandbox_router = invocation_context.sandbox_router
@@ -461,6 +464,7 @@ class RoleManager:
                 source="disabled",
                 step_type=invocation_context.step_type,
                 adapter_id=invocation_context.adapter_id,
+                step_slot_id=invocation_context.step_slot_id,
             )
         source = route_source
         if source == "disabled":
@@ -481,6 +485,7 @@ class RoleManager:
             ),
             step_type=invocation_context.step_type,
             adapter_id=invocation_context.adapter_id,
+            step_slot_id=invocation_context.step_slot_id,
         )
 
     def _shutdown_phase(
@@ -628,14 +633,27 @@ def _resolve_sample_route_override(
     *,
     step_type: str,
     adapter_id: str,
+    step_slot_id: Optional[str] = None,
 ) -> tuple[Optional[Dict[str, Any]], str, bool]:
     sandbox_routes = sample.get("sandbox_routes")
     if not isinstance(sandbox_routes, dict):
         return None, "disabled", False
-    candidate_keys = (
-        f"{step_type}.{adapter_id}",
-        adapter_id,
-        step_type,
+    candidate_keys = []
+    if step_slot_id:
+        candidate_keys.extend(
+            (
+                f"{step_type}.{step_slot_id}.{adapter_id}",
+                f"{step_type}.{step_slot_id}",
+                f"{step_slot_id}.{adapter_id}",
+                step_slot_id,
+            )
+        )
+    candidate_keys.extend(
+        (
+            f"{step_type}.{adapter_id}",
+            adapter_id,
+            step_type,
+        )
     )
     for key in candidate_keys:
         value = sandbox_routes.get(key)

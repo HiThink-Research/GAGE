@@ -50,6 +50,7 @@ class SandboxBinding:
     route_key: Optional[str] = None
     step_type: Optional[str] = None
     adapter_id: Optional[str] = None
+    step_slot_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class RuntimeRouteDecision:
     session_mode: str
     route_source: str
     sandbox_binding: SandboxBinding = field(default_factory=SandboxBinding)
+    step_slot_id: Optional[str] = None
     observability_tags: Dict[str, str] = field(default_factory=dict)
 
     def to_payload(self) -> Dict[str, Any]:
@@ -92,6 +94,8 @@ class RuntimeRouteDecision:
             "route_source": self.route_source,
             "sandbox_enabled": self.sandbox_binding.enabled,
         }
+        if self.step_slot_id:
+            payload["step_slot_id"] = self.step_slot_id
         if self.sandbox_binding.source:
             payload["sandbox_source"] = self.sandbox_binding.source
         if self.sandbox_binding.config:
@@ -120,7 +124,13 @@ class SampleExecutionContext:
     sandbox_router: Optional["SandboxSessionRouter"] = None
     route_cache: Dict[str, RuntimeRouteDecision] = field(default_factory=dict)
 
-    def for_invocation(self, *, step_type: str, adapter_id: str) -> "RoleInvocationContext":
+    def for_invocation(
+        self,
+        *,
+        step_type: str,
+        adapter_id: str,
+        step_slot_id: Optional[str] = None,
+    ) -> "RoleInvocationContext":
         """Derive an invocation-scoped view for one step and adapter."""
 
         return RoleInvocationContext(
@@ -134,6 +144,7 @@ class SampleExecutionContext:
             route_cache=self.route_cache,
             step_type=step_type,
             adapter_id=adapter_id,
+            step_slot_id=step_slot_id,
         )
 
     def close(self) -> None:
@@ -157,11 +168,19 @@ class RoleInvocationContext:
     route_cache: Dict[str, RuntimeRouteDecision]
     step_type: str
     adapter_id: str
+    step_slot_id: Optional[str] = None
 
     def cache_key(self, route_source: str) -> str:
         """Build a stable cache key for the resolved route."""
 
-        return f"{self.step_type}:{self.adapter_id}:{route_source}"
+        return "|".join(
+            (
+                self.step_type,
+                self.adapter_id,
+                self.step_slot_id or "-",
+                route_source,
+            )
+        )
 
 
 class LegacyContextBridge:

@@ -208,25 +208,28 @@ def _resolve_dynamic_filters(sample: Dict[str, Any]) -> _DynamicToolFilters:
 
 
 def _merge_tools(default_tools: List[Dict[str, Any]], sample_tools: Any) -> List[Dict[str, Any]]:
-    merged = []
-    merged = _dedupe_tools(merged, default_tools)
-    merged = _dedupe_tools(merged, sample_tools)
-    return merged
+    merged: List[Optional[Dict[str, Any]]] = []
+    named_positions: Dict[str, int] = {}
 
+    def _append_tools(tools: Any) -> None:
+        nonlocal merged
+        if isinstance(tools, dict):
+            tools = [tools]
+        for tool in tools or []:
+            normalized = _normalize_tool_entry(tool)
+            if not normalized:
+                continue
+            name = _extract_tool_name(normalized)
+            if name is not None:
+                previous_index = named_positions.get(name)
+                if previous_index is not None:
+                    merged[previous_index] = None
+                named_positions[name] = len(merged)
+            merged.append(normalized)
 
-def _dedupe_tools(existing: List[Dict[str, Any]], tools: Any) -> List[Dict[str, Any]]:
-    merged = list(existing)
-    if isinstance(tools, dict):
-        tools = [tools]
-    for tool in tools or []:
-        normalized = _normalize_tool_entry(tool)
-        if not normalized:
-            continue
-        name = normalized.get("function", {}).get("name") if normalized.get("type") == "function" else None
-        if name:
-            merged = [item for item in merged if item.get("function", {}).get("name") != name]
-        merged.append(normalized)
-    return merged
+    _append_tools(default_tools)
+    _append_tools(sample_tools)
+    return [tool for tool in merged if tool is not None]
 
 
 def _normalize_tool_entry(tool: Any) -> Optional[Dict[str, Any]]:
