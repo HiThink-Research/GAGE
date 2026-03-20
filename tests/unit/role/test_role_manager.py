@@ -115,6 +115,7 @@ def test_role_manager_preserves_multi_shard_capacity_without_explicit_pool_size(
         resource_requirement={
             "gpus": 1,
             "endpoint_list": ["http://judge-a", "http://judge-b"],
+            "shard_selection_policy": "round_robin",
         },
     )
 
@@ -127,6 +128,11 @@ def test_role_manager_preserves_multi_shard_capacity_without_explicit_pool_size(
     assert snapshot["effective_capacity"] == 4
     assert snapshot["capacity_total"] == 4
     assert snapshot["available_total"] == 4
+    assert snapshot["extensions"]["selection_policy"] == "round_robin"
+    assert snapshot["extensions"]["fallback_policy"] == "least_in_use"
+    assert snapshot["extensions"]["waiting_threads"] == 0
+    assert snapshot["extensions"]["policy_fallback_total"] == 0
+    assert snapshot["extensions"]["notify_total"] == 0
     assert {shard["metadata"]["endpoint"] for shard in snapshot["shards"]} == {
         "http://judge-a",
         "http://judge-b",

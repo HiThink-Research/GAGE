@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import hashlib
+import json
 import time
 from typing import Any, Dict, Iterator, Optional, Sequence
 
@@ -14,7 +16,22 @@ from gage_eval.role.role_instance import ConversationHistory, Role
 from gage_eval.role.role_pool import RolePool
 from gage_eval.role.resource_profile import ResourceProfile
 from gage_eval.role.runtime.base_pool import BasePool
+from gage_eval.role.runtime.invocation import (
+    LegacyContextBridge,
+    RoleInvocationContext,
+    RuntimeRouteDecision,
+    RuntimeRouteTemplate,
+    SampleExecutionContext,
+    SandboxBinding,
+)
 from gage_eval.role.runtime.rate_limiter import RateLimiter
+from gage_eval.role.runtime.shard_selection import (
+    ShardSchedulingConfig,
+    ShardSelectionPolicy,
+    build_shard_selection_policies,
+    normalize_shard_scheduling_config,
+)
+from gage_eval.role.runtime.strategy import RuntimeStrategyFactory
 from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
 
 
@@ -59,7 +76,9 @@ class RoleManager:
         self._adapters: Dict[str, Any] = {}
         self._role_pools: Dict[str, BasePool] = {}
         self._pool_plans: Dict[str, PoolAssemblyPlan] = {}
-        self._session_ctx: ContextVar[Optional["_SampleSessionContext"]] = ContextVar(
+        self._route_templates: Dict[str, RuntimeRouteTemplate] = {}
+        self._runtime_factory = RuntimeStrategyFactory()
+        self._session_ctx: ContextVar[Optional[SampleExecutionContext]] = ContextVar(
             "role_manager_session", default=None
         )
         self._concurrency_hint = concurrency_hint if concurrency_hint and concurrency_hint > 0 else None
@@ -72,6 +91,8 @@ class RoleManager:
         total_planned = sum(plan.size for plan in shard_plans) or 1
         hint_adjusted = False
         requirement = getattr(adapter, "resource_requirement", {}) or {}
+        scheduling_config = normalize_shard_scheduling_config(requirement)
+        selection_policy, fallback_policy = build_shard_selection_policies(scheduling_config)
         if not requirement.get("pool_size") and self._concurrency_hint:
             if self._concurrency_hint > total_planned and shard_plans:
                 deficit = self._concurrency_hint - total_planned
@@ -86,27 +107,41 @@ class RoleManager:
                 )
                 total_planned = adjusted
 
-        # STEP 2: Preserve the current role runtime logging while keeping runtime selection unchanged.
-        runtime: Optional[object] = None
-        if adapter.role_type in {"dut_model", "judge_model", "helper_model"}:
-            backend = getattr(adapter, "backend", None)
-            exec_mode = getattr(backend, "execution_mode", "native")
-            if exec_mode == "native":
-                logger.info(
-                    "Registering adapter '{}' in native fast-path (no external runtime, backend invokes directly)",
-                    adapter_id,
-                )
-            else:
-                # NOTE: HTTP/remote backends rely on RoleAdapter + Backend internal
-                # concurrency and rate-limiting. We do not build an
-                # InferenceRuntime/BatchingScheduler for this path.
-                logger.info(
-                    "Registering adapter '{}' in http/remote path (no InferenceRuntime, lightweight concurrency)",
-                    adapter_id,
-                )
+        # STEP 2: Build a concrete runtime strategy instead of leaving an empty branch.
+        runtime, runtime_mode, strategy_id = self._runtime_factory.build(adapter)
+        self._route_templates[adapter_id] = RuntimeRouteTemplate(
+            adapter_id=adapter_id,
+            role_type=getattr(adapter, "role_type", "unknown"),
+            runtime_mode=runtime_mode,
+            strategy_id=strategy_id,
+            session_mode="explicit_context",
+            default_sandbox_config=dict(getattr(adapter, "sandbox_config", {}) or {}),
+            supports_sandbox=bool(getattr(adapter, "sandbox_config", {}) or {}),
+        )
+        if runtime_mode == "native":
+            logger.info(
+                "Registering adapter '{}' with native runtime strategy '{}'",
+                adapter_id,
+                strategy_id,
+            )
+        else:
+            logger.info(
+                "Registering adapter '{}' with runtime mode={} strategy={}",
+                adapter_id,
+                runtime_mode,
+                strategy_id,
+            )
 
         # STEP 3: Always expose a composite pool to keep capacity, shutdown, and snapshot semantics aligned.
-        composite_pool = _build_composite_pool(adapter_id, adapter, runtime, shard_plans)
+        composite_pool = _build_composite_pool(
+            adapter_id,
+            adapter,
+            runtime,
+            shard_plans,
+            scheduling_config=scheduling_config,
+            selection_policy=selection_policy,
+            fallback_policy=fallback_policy,
+        )
         effective_capacity = sum(max(1, int(plan.size)) for plan in shard_plans) or 1
         self._role_pools[adapter_id] = composite_pool
         self._pool_plans[adapter_id] = PoolAssemblyPlan(
@@ -136,7 +171,12 @@ class RoleManager:
         self._concurrency_hint = hint
         logger.info("Updated RoleManager concurrency hint to {}", hint)
 
-    def borrow_role(self, adapter_id: Optional[str]):
+    def borrow_role(
+        self,
+        adapter_id: Optional[str],
+        *,
+        execution_context: Optional[RoleInvocationContext] = None,
+    ):
         if not adapter_id:
             return nullcontext(None)
         pool = self._role_pools.get(adapter_id)
@@ -144,22 +184,71 @@ class RoleManager:
             raise KeyError(f"Role '{adapter_id}' is not registered")
         logger.trace("Borrowing role for adapter '{}'", adapter_id)
         lease = pool.acquire()
-
-        history = self._history_for(adapter_id)
+        invocation_context = execution_context
+        if invocation_context is None:
+            invocation_context = LegacyContextBridge.from_sample_context(
+                self._current_session(),
+                adapter_id=adapter_id,
+            )
+        session_mode = (
+            "explicit_context"
+            if execution_context is not None
+            else ("legacy_contextvar" if invocation_context is not None else "detached")
+        )
+        route_decision = self._resolve_route_decision(
+            adapter_id,
+            invocation_context,
+            session_mode=session_mode,
+        )
+        sandbox_provider = None
+        if (
+            invocation_context is not None
+            and invocation_context.sandbox_router is not None
+        ):
+            sandbox_provider = invocation_context.sandbox_router.get_provider(
+                route_decision.sandbox_binding
+            )
+        history = self._history_for(adapter_id, invocation_context)
 
         class _HistoryLease:
-            def __init__(self, lease):
+            def __init__(
+                self,
+                lease,
+                history: ConversationHistory,
+                route_decision: RuntimeRouteDecision,
+                sandbox_provider: Optional[Any],
+                invocation_context: Optional[RoleInvocationContext],
+            ) -> None:
                 self._lease = lease
+                self._history = history
+                self._route_decision = route_decision
+                self._sandbox_provider = sandbox_provider
+                self._invocation_context = invocation_context
+                self._role: Optional[Role] = None
 
             def __enter__(self):
                 role = self._lease.__enter__()
-                role.attach_history(history)
+                role.attach_history(self._history)
+                role.attach_invocation_binding(
+                    self._route_decision,
+                    sandbox_provider=self._sandbox_provider,
+                    execution_context=self._invocation_context,
+                )
+                self._role = role
                 return role
 
             def __exit__(self, exc_type, exc, tb):
+                if self._role is not None:
+                    self._role.clear_invocation_binding()
                 return self._lease.__exit__(exc_type, exc, tb)
 
-        return _HistoryLease(lease)
+        return _HistoryLease(
+            lease,
+            history,
+            route_decision,
+            sandbox_provider,
+            invocation_context,
+        )
 
     def get_adapter(self, adapter_id: str):
         """Return a registered adapter by id if available."""
@@ -194,12 +283,19 @@ class RoleManager:
         for adapter_id in sorted(self._role_pools):
             pool = self._role_pools[adapter_id]
             adapter = self._adapters.get(adapter_id)
+            route_template = self._route_templates.get(adapter_id)
             pool_snapshot = pool.snapshot()
             assembly_plan = self._pool_plans.get(adapter_id)
             adapters.append(
                 {
                     "adapter_id": adapter_id,
                     "role_type": getattr(adapter, "role_type", "unknown"),
+                    "runtime_mode": route_template.runtime_mode if route_template is not None else "native",
+                    "runtime_strategy": route_template.strategy_id if route_template is not None else "native_runtime",
+                    "session_mode": route_template.session_mode if route_template is not None else "legacy_contextvar",
+                    "sandbox_enabled_default": bool(
+                        route_template.default_sandbox_config
+                    ) if route_template is not None else False,
                     "pool_type": pool_snapshot.get("pool_type", "unknown"),
                     "planned_capacity": (
                         assembly_plan.planned_capacity
@@ -238,20 +334,154 @@ class RoleManager:
     # ------------------------------------------------------------------
     # Session & history helpers
     # ------------------------------------------------------------------
-    def _activate_session(self, sample: dict) -> Token:
-        return self._session_ctx.set(_SampleSessionContext(sample=sample))
+    def _activate_session(self, context: SampleExecutionContext) -> Token:
+        return self._session_ctx.set(context)
 
     def _deactivate_session(self, token: Token) -> None:
         self._session_ctx.reset(token)
 
-    def _current_session(self) -> Optional["_SampleSessionContext"]:
+    def _current_session(self) -> Optional[SampleExecutionContext]:
         return self._session_ctx.get()
 
-    def _history_for(self, adapter_id: str) -> ConversationHistory:
+    def _history_for(
+        self,
+        adapter_id: str,
+        invocation_context: Optional[RoleInvocationContext] = None,
+    ) -> ConversationHistory:
+        if invocation_context is not None:
+            return invocation_context.session_store.get_history(adapter_id)
         session = self._current_session()
         if session is None:
             return ConversationHistory()
-        return session.get_history(adapter_id)
+        return session.session_store.get_history(adapter_id)
+
+    def _resolve_route_decision(
+        self,
+        adapter_id: str,
+        invocation_context: Optional[RoleInvocationContext],
+        *,
+        session_mode: str,
+    ) -> RuntimeRouteDecision:
+        template = self._route_templates.get(adapter_id)
+        adapter = self._adapters.get(adapter_id)
+        if template is None:
+            _, runtime_mode, strategy_id = self._runtime_factory.build(adapter)
+            template = RuntimeRouteTemplate(
+                adapter_id=adapter_id,
+                role_type=getattr(adapter, "role_type", "unknown"),
+                runtime_mode=runtime_mode,
+                strategy_id=strategy_id,
+                session_mode="legacy_contextvar",
+                default_sandbox_config=dict(getattr(adapter, "sandbox_config", {}) or {}),
+                supports_sandbox=bool(getattr(adapter, "sandbox_config", {}) or {}),
+            )
+            self._route_templates[adapter_id] = template
+        step_type = invocation_context.step_type if invocation_context is not None else "detached"
+        sandbox_binding = self._resolve_sandbox_binding(template, invocation_context)
+        route_source_marker = sandbox_binding.route_key or sandbox_binding.source
+        cache_key = None
+        if invocation_context is not None:
+            cache_key = invocation_context.cache_key(
+                f"{template.runtime_mode}:{session_mode}:{route_source_marker}"
+            )
+            cached = invocation_context.route_cache.get(cache_key)
+            if cached is not None:
+                return cached
+        decision = RuntimeRouteDecision(
+            adapter_id=adapter_id,
+            role_type=template.role_type,
+            step_type=step_type,
+            runtime_mode=template.runtime_mode,
+            strategy_id=template.strategy_id,
+            session_mode=session_mode,
+            route_source=sandbox_binding.source,
+            sandbox_binding=sandbox_binding,
+            observability_tags={
+                "runtime_mode": template.runtime_mode,
+                "session_mode": session_mode,
+            },
+        )
+        if cache_key is not None:
+            invocation_context.route_cache[cache_key] = decision
+        if invocation_context is not None and invocation_context.trace is not None:
+            invocation_context.trace.emit(
+                "runtime_route_selected",
+                decision.to_payload(),
+                sample_id=invocation_context.sample_id,
+            )
+        return decision
+
+    def _resolve_sandbox_binding(
+        self,
+        template: RuntimeRouteTemplate,
+        invocation_context: Optional[RoleInvocationContext],
+    ) -> SandboxBinding:
+        if invocation_context is None:
+            return SandboxBinding(enabled=False, source="detached")
+        sample = invocation_context.sample
+        sample_default = sample.get("sandbox")
+        if not isinstance(sample_default, dict):
+            sample_default = None
+        route_override, route_source, disabled = _resolve_sample_route_override(
+            sample,
+            step_type=invocation_context.step_type,
+            adapter_id=invocation_context.adapter_id,
+        )
+        if disabled:
+            return SandboxBinding(
+                enabled=False,
+                source=route_source,
+                step_type=invocation_context.step_type,
+                adapter_id=invocation_context.adapter_id,
+            )
+        default_override = _resolve_default_sandbox_override(sample)
+        sandbox_router = invocation_context.sandbox_router
+        effective: Dict[str, Any] = dict(template.default_sandbox_config or {})
+        if sandbox_router is not None and sample_default:
+            effective = dict(
+                sandbox_router.resolve_config(effective, dict(sample_default))
+            )
+        elif sample_default:
+            effective = _merge_dicts(effective, dict(sample_default))
+        if sandbox_router is not None and default_override:
+            effective = dict(
+                sandbox_router.resolve_config(effective, dict(default_override))
+            )
+        elif default_override:
+            effective = _merge_dicts(effective, dict(default_override))
+        if sandbox_router is not None and route_override:
+            effective = dict(
+                sandbox_router.resolve_config(effective, dict(route_override))
+            )
+        elif route_override:
+            effective = _merge_dicts(effective, dict(route_override))
+        if not effective:
+            return SandboxBinding(
+                enabled=False,
+                source="disabled",
+                step_type=invocation_context.step_type,
+                adapter_id=invocation_context.adapter_id,
+            )
+        source = route_source
+        if source == "disabled":
+            if route_override:
+                source = "sample_route_override"
+            elif default_override or sample_default:
+                source = "sample_default"
+            else:
+                source = "adapter_default"
+        return SandboxBinding(
+            enabled=True,
+            config=effective,
+            source=source,
+            route_key=_build_binding_route_key(
+                effective,
+                step_type=invocation_context.step_type,
+                adapter_id=invocation_context.adapter_id,
+            ),
+            step_type=invocation_context.step_type,
+            adapter_id=invocation_context.adapter_id,
+        )
 
     def _shutdown_phase(
         self,
@@ -315,6 +545,10 @@ def _build_composite_pool(
     adapter: Any,
     runtime: Optional[object],
     shard_plans: Sequence[PoolShardPlan],
+    *,
+    scheduling_config: ShardSchedulingConfig,
+    selection_policy: ShardSelectionPolicy,
+    fallback_policy: ShardSelectionPolicy,
 ) -> ShardedRolePool:
     shards: list[PoolShard] = []
     for plan in shard_plans:
@@ -331,7 +565,13 @@ def _build_composite_pool(
                 metadata=dict(plan.metadata),
             )
         )
-    return ShardedRolePool(adapter_id, shards)
+    return ShardedRolePool(
+        adapter_id,
+        shards,
+        scheduling_config=scheduling_config,
+        selection_policy=selection_policy,
+        fallback_policy=fallback_policy,
+    )
 
 
 class PerSampleSession:
@@ -343,7 +583,9 @@ class PerSampleSession:
         self._session_token: Optional[Token] = None
 
     def __enter__(self):
-        self._session_token = self.role_manager._activate_session(self.context.sample)
+        self._session_token = self.role_manager._activate_session(
+            self.context.execution_context
+        )
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -371,23 +613,62 @@ class PerSampleSession:
         self.context.execute_auto_eval(sample_id)
 
 
-@dataclass
-class _SampleSessionContext:
-    sample: dict
-    histories: Dict[str, ConversationHistory] = field(default_factory=dict)
-
-    def get_history(self, adapter_id: str) -> ConversationHistory:
-        if adapter_id not in self.histories:
-            self.histories[adapter_id] = ConversationHistory(self._initial_messages(adapter_id))
-        return self.histories[adapter_id]
-
-    def _initial_messages(self, adapter_id: str):
-        role_histories = self.sample.get("role_histories")
-        if isinstance(role_histories, dict):
-            candidate = role_histories.get(adapter_id)
-            if isinstance(candidate, list):
-                return candidate
-        messages = self.sample.get("messages")
-        if isinstance(messages, list):
-            return messages
+def _resolve_default_sandbox_override(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    sandbox_routes = sample.get("sandbox_routes")
+    if not isinstance(sandbox_routes, dict):
         return None
+    default_value = sandbox_routes.get("default")
+    if isinstance(default_value, dict):
+        return dict(default_value)
+    return None
+
+
+def _resolve_sample_route_override(
+    sample: Dict[str, Any],
+    *,
+    step_type: str,
+    adapter_id: str,
+) -> tuple[Optional[Dict[str, Any]], str, bool]:
+    sandbox_routes = sample.get("sandbox_routes")
+    if not isinstance(sandbox_routes, dict):
+        return None, "disabled", False
+    candidate_keys = (
+        f"{step_type}.{adapter_id}",
+        adapter_id,
+        step_type,
+    )
+    for key in candidate_keys:
+        value = sandbox_routes.get(key)
+        if not isinstance(value, dict):
+            continue
+        if value.get("disabled") is True:
+            return None, f"sandbox_routes:{key}", True
+        return dict(value), f"sandbox_routes:{key}", False
+    return None, "disabled", False
+
+
+def _build_binding_route_key(
+    config: Dict[str, Any],
+    *,
+    step_type: str,
+    adapter_id: str,
+) -> str:
+    payload = json.dumps(config, sort_keys=True, default=str).encode("utf-8")
+    digest = hashlib.sha1(payload).hexdigest()[:12]
+    lifecycle = str(config.get("lifecycle") or "per_sample")
+    if lifecycle == "per_arena":
+        return f"{digest}:{step_type}:{adapter_id}"
+    return digest
+
+
+def _merge_dicts(
+    base: Dict[str, Any],
+    override: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged = dict(base or {})
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged

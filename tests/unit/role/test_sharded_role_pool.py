@@ -4,6 +4,7 @@ import pytest
 
 from gage_eval.role.role_instance import Role
 from gage_eval.role.role_pool import RolePool
+from gage_eval.role.runtime.shard_selection import LeastInUsePolicy, ShardSelectionContext, ShardSelectionDecision
 from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
 
 
@@ -51,6 +52,11 @@ def test_sharded_role_pool_snapshot_aggregates_leaf_state() -> None:
     assert initial["created_total"] == 0
     assert initial["healthy"] is True
     assert initial["shard_count"] == 2
+    assert initial["extensions"]["selection_policy"] == "least_in_use"
+    assert initial["extensions"]["fallback_policy"] == "least_in_use"
+    assert initial["extensions"]["waiting_threads"] == 0
+    assert initial["extensions"]["policy_fallback_total"] == 0
+    assert initial["extensions"]["notify_total"] == 0
     assert len(initial["shards"]) == 2
     assert {shard["metadata"]["endpoint"] for shard in initial["shards"]} == {
         "http://a",
@@ -71,6 +77,7 @@ def test_sharded_role_pool_snapshot_aggregates_leaf_state() -> None:
     assert released["in_use_total"] == 0
     assert released["available_total"] == 4
     assert released["created_total"] == 1
+    assert released["extensions"]["notify_total"] >= 1
     assert sum(shard["in_use"] for shard in released["shards"]) == 0
 
 
@@ -85,3 +92,40 @@ def test_sharded_role_pool_snapshot_marks_shutdown_as_unhealthy() -> None:
     assert snapshot["available_total"] == 0
     assert all(shard["healthy"] is False for shard in snapshot["shards"])
     assert all(shard["closed"] is True for shard in snapshot["shards"])
+
+
+class _BrokenPolicy:
+    name = "broken"
+
+    def select(self, shards, context):  # noqa: ANN001, ANN201
+        del shards, context
+        raise RuntimeError("boom")
+
+
+@pytest.mark.fast
+def test_sharded_role_pool_falls_back_to_default_policy_on_runtime_error() -> None:
+    pool = _make_sharded_pool()
+    broken_pool = ShardedRolePool(
+        pool.adapter_id,
+        [
+            PoolShard(
+                shard_id=shard["shard_id"],
+                pool=RolePool(
+                    adapter_id=shard["shard_id"],
+                    builder=lambda: _build_role("demo"),
+                    max_size=2,
+                ),
+                metadata=shard["metadata"],
+            )
+            for shard in pool.snapshot()["shards"]
+        ],
+        selection_policy=_BrokenPolicy(),
+        fallback_policy=LeastInUsePolicy(),
+    )
+
+    with broken_pool.acquire():
+        snapshot = broken_pool.snapshot()
+
+    assert snapshot["extensions"]["selection_policy"] == "broken"
+    assert snapshot["extensions"]["fallback_policy"] == "least_in_use"
+    assert snapshot["extensions"]["policy_fallback_total"] == 1

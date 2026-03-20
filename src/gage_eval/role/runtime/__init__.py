@@ -12,9 +12,26 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gage_eval.role.runtime.base_pool import BasePool
     from gage_eval.role.runtime.rate_limiter import RateLimiter
+    from gage_eval.role.runtime.shard_selection import (
+        ShardSchedulingConfig,
+        ShardSelectionContext,
+        ShardSelectionDecision,
+        ShardSelectionPolicy,
+        ShardSnapshot,
+    )
     from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
 
-__all__ = ["BasePool", "PoolShard", "ShardedRolePool", "RateLimiter"]
+__all__ = [
+    "BasePool",
+    "PoolShard",
+    "RateLimiter",
+    "ShardSchedulingConfig",
+    "ShardSelectionContext",
+    "ShardSelectionDecision",
+    "ShardSelectionPolicy",
+    "ShardSnapshot",
+    "ShardedRolePool",
+]
 
 
 def __getattr__(name: str) -> Any:
@@ -34,4 +51,14 @@ def __getattr__(name: str) -> Any:
         from gage_eval.role.runtime.rate_limiter import RateLimiter
 
         return RateLimiter
+    if name in {
+        "ShardSchedulingConfig",
+        "ShardSelectionContext",
+        "ShardSelectionDecision",
+        "ShardSelectionPolicy",
+        "ShardSnapshot",
+    }:
+        from gage_eval.role.runtime import shard_selection
+
+        return getattr(shard_selection, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
