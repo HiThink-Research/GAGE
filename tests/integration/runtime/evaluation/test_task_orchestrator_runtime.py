@@ -7,6 +7,7 @@ from loguru import logger
 from gage_eval.config.pipeline_config import (
     CustomPipelineStep,
     DatasetSpec,
+    MetricSpec,
     PipelineConfig,
     RoleAdapterSpec,
     TaskSpec,
@@ -216,6 +217,91 @@ def test_auto_eval_writes_samples_without_metrics(tmp_path: Path):
     assert samples_jsonl.read_text(encoding="utf-8").strip()
 
 
+def test_task_orchestrator_reports_identity_cache_ref_and_shuffle_summary(tmp_path: Path):
+    dataset = DataSource(
+        dataset_id="ds",
+        records=[
+            {
+                "id": f"s{idx}",
+                "label": f"echo-s{idx}",
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+                "choices": [],
+            }
+            for idx in range(4)
+        ],
+        metadata={"path": str(tmp_path / "ds.jsonl")},
+    )
+    dm = DataManager()
+    dm.register_source(dataset)
+
+    config = PipelineConfig(
+        datasets=(DatasetSpec(dataset_id="ds", loader="jsonl"),),
+        role_adapters=(
+            RoleAdapterSpec(
+                adapter_id="dut",
+                role_type="dut_model",
+                class_path="tests.integration.runtime.evaluation.test_task_orchestrator_runtime._EchoRole",
+            ),
+        ),
+        metrics=(
+            MetricSpec(
+                metric_id="identity_debug",
+                implementation="gage_eval.metrics.builtin.text:ExactMatchMetric",
+                aggregation="identity",
+                params={"preview_items": 1},
+            ),
+        ),
+        tasks=(
+            TaskSpec(
+                task_id="t1",
+                dataset_id="ds",
+                steps=(
+                    CustomPipelineStep(step_type="inference", adapter_id="dut"),
+                    CustomPipelineStep(step_type="auto_eval"),
+                ),
+                shuffle=True,
+                max_samples=2,
+                shuffle_strategy="auto",
+            ),
+        ),
+    )
+    plans = build_task_plan_specs(config)
+    trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="runtime-identity-shuffle"),
+        run_id="runtime-identity-shuffle",
+    )
+    cache = EvalCache(base_dir=tmp_path, run_id=trace.run_id)
+    report_step = ReportStep(auto_eval_step=None, cache_store=cache)
+    entries = _prepare_task_entries(
+        task_plans=plans,
+        config=config,
+        data_manager=dm,
+        datasets={"ds": dataset},
+        trace=trace,
+        cache_store=cache,
+        resource_profile=ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]),
+        sandbox_profiles={},
+    )
+
+    rm = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)]))
+    rm.register_role_adapter("dut", _EchoRole("dut", "dut_model"))
+
+    runtime = TaskOrchestratorRuntime(entries, rm, trace, report_step)
+    _record_config_metadata(config, cache, trace=trace)
+
+    runtime.run()
+
+    summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
+    task_payload = summary["tasks"][0]
+    metric_payload = task_payload["metrics"][0]
+
+    assert task_payload["shuffle"]["resolved"] == "reservoir"
+    assert summary["run"]["metadata"]["shuffle_summaries"]["t1"]["resolved"] == "reservoir"
+    assert metric_payload["metadata"]["storage_mode"] == "cache_ref"
+    assert metric_payload["metadata"]["details_namespace"] == "task/t1"
+    assert metric_payload["metadata"]["details_metric_id"] == "identity_debug"
+
+
 def test_task_orchestrator_survives_trace_flush_failure(tmp_path: Path):
     fallback = InMemoryRecorder(run_id="runtime-trace-fallback")
     trace = ObservabilityTrace(
@@ -253,18 +339,6 @@ def test_task_orchestrator_routes_worker_logs_into_trace(tmp_path: Path):
 
     assert log_events
     assert any(event["payload"]["stage"] == "runtime_test_log" for event in log_events)
-
-
-def test_task_orchestrator_writes_task_execution_summary_on_abort(tmp_path: Path):
-    runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=3, role_cls=_FailingRole)
-
-    with pytest.raises(Exception, match="boom"):
-        runtime.run()
-
-    summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
-
-    assert summary["tasks"][0]["execution"]["status"] == "aborted"
-    assert summary["tasks"][0]["execution"]["failed_sample_id"] == "s0"
 
 
 def test_task_orchestrator_writes_task_execution_summary_on_abort(tmp_path: Path):

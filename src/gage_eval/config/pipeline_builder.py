@@ -280,6 +280,11 @@ class PipelineConfigBuilder:
                         max_samples=item.get("max_samples"),
                         shuffle=item.get("shuffle"),
                         shuffle_seed=item.get("shuffle_seed"),
+                        shuffle_strategy=item.get("shuffle_strategy"),
+                        shuffle_small_dataset_threshold=item.get(
+                            "shuffle_small_dataset_threshold"
+                        ),
+                        keep_shuffle_artifacts=item.get("keep_shuffle_artifacts"),
                         concurrency=item.get("concurrency"),
                         prefetch_factor=item.get("prefetch_factor"),
                         max_inflight=item.get("max_inflight"),

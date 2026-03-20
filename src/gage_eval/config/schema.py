@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Sequence
 from gage_eval.pipeline.step_contracts import collect_step_sequence_issues
 
 _VALID_FAILURE_POLICIES = {"fail_fast", "graceful", "best_effort"}
+_VALID_SHUFFLE_STRATEGIES = {"auto", "in_memory", "reservoir", "external_index"}
 
 
 class SchemaValidationError(ValueError):
@@ -277,15 +278,20 @@ def _validate_tasks(
                 errors.append(
                     f"task '{task_id}' overrides metric '{metric_id}' which is not defined globally"
                 )
-        support_payload_policy = task.get("support_payload_policy")
-        if support_payload_policy is not None and not isinstance(support_payload_policy, dict):
-            errors.append(
-                f"task '{task_id}' field 'support_payload_policy' must be a mapping"
-            )
         failure_policy = task.get("failure_policy")
         if failure_policy is not None and str(failure_policy).strip().lower() not in _VALID_FAILURE_POLICIES:
             errors.append(
                 f"task '{task_id}' declares unsupported failure_policy '{failure_policy}'"
+            )
+        shuffle_strategy = task.get("shuffle_strategy")
+        if shuffle_strategy is not None and str(shuffle_strategy).strip().lower() not in _VALID_SHUFFLE_STRATEGIES:
+            errors.append(
+                f"task '{task_id}' declares unsupported shuffle_strategy '{shuffle_strategy}'"
+            )
+        support_payload_policy = task.get("support_payload_policy")
+        if support_payload_policy is not None and not isinstance(support_payload_policy, dict):
+            errors.append(
+                f"task '{task_id}' field 'support_payload_policy' must be a mapping"
             )
 
 

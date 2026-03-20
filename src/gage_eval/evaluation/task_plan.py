@@ -24,6 +24,9 @@ class TaskRuntimePolicy:
     max_samples: Optional[int]
     shuffle: Optional[bool]
     shuffle_seed: Optional[int]
+    shuffle_strategy: Optional[str]
+    shuffle_small_dataset_threshold: Optional[int]
+    keep_shuffle_artifacts: Optional[bool]
     concurrency: Optional[int]
     prefetch_factor: Optional[int]
     max_inflight: Optional[int]
@@ -101,6 +104,9 @@ def _build_task_plan(
         max_samples=task.max_samples,
         shuffle=task.shuffle,
         shuffle_seed=task.shuffle_seed,
+        shuffle_strategy=task.shuffle_strategy,
+        shuffle_small_dataset_threshold=task.shuffle_small_dataset_threshold,
+        keep_shuffle_artifacts=task.keep_shuffle_artifacts,
         concurrency=task.concurrency,
         prefetch_factor=task.prefetch_factor,
         max_inflight=task.max_inflight,

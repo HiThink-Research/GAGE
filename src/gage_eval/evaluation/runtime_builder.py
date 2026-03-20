@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
@@ -21,7 +22,7 @@ from gage_eval.evaluation.execution_controller import (
     SampleLoopExecutionError,
     TaskExecutionController,
 )
-from gage_eval.metrics import MetricRegistry
+from gage_eval.metrics import AggregationRuntimeContext, MetricRegistry
 from gage_eval.evaluation.pipeline import PipelineFactory, PipelineRuntime
 from gage_eval.evaluation.sample_ingress import (
     SampleIngressCoordinator,
@@ -40,6 +41,7 @@ from gage_eval.evaluation.task_plan import TaskPlanSpec, build_task_plan_specs
 from gage_eval.evaluation.task_planner import TaskPlanner
 from gage_eval.observability.config import configure_observability, get_observability_config
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.pipeline.step_contracts import get_step_type
 from gage_eval.role.resource_profile import ResourceProfile
 from gage_eval.role.role_manager import RoleManager
 
@@ -189,6 +191,7 @@ def _build_single_runtime(
         samples,
         streaming=selected_source.streaming,
         concurrency=concurrency,
+        shuffle_artifact_root=cache_store.run_dir / "shuffle" / selected_dataset_id,
         sandbox_profiles=sandbox_profiles,
     )
     task_planner = TaskPlanner()
@@ -209,6 +212,13 @@ def _build_single_runtime(
     )
     sample_loop.attach_execution_controller(controller)
     task_planner.attach_execution_controller(controller)
+    _bind_single_runtime_aggregation_context(
+        task_planner=task_planner,
+        trace=trace,
+        cache_store=cache_store,
+        config=config,
+        shuffle_artifact_root=cache_store.run_dir / "shuffle" / selected_dataset_id,
+    )
     runtime.attach_shutdown_callback(shutdown_callback)
     trace.emit("runtime_ready", {"selected_dataset": selected_dataset_id})
     return runtime
@@ -432,6 +442,7 @@ class TaskOrchestratorRuntime:
                         "dataset_metadata": entry.dataset_metadata,
                         "metrics": metrics,
                         "sample_count": entry.sample_loop.processed_count,
+                        "shuffle": entry.sample_loop.shuffle_summary,
                         "reporting": entry.reporting,
                     }
                     if task_outcome is not None:
@@ -458,6 +469,13 @@ class TaskOrchestratorRuntime:
                 def pre_write_hook() -> None:
                     nonlocal eval_elapsed
                     eval_elapsed = time.perf_counter() - report_start
+                    self._report_step.cache_store.set_metadata(
+                        "shuffle_summaries",
+                        {
+                            summary["task_id"]: summary.get("shuffle")
+                            for summary in summaries
+                        },
+                    )
                     execution_total = time.perf_counter() - total_start
                     self._report_step.record_timing("inference_s", inference_total)
                     self._report_step.record_timing("evaluation_s", eval_elapsed)
@@ -629,6 +647,11 @@ def _prepare_task_entries(
             samples,
             shuffle=plan.runtime_policy.shuffle,
             shuffle_seed=plan.runtime_policy.shuffle_seed,
+            shuffle_strategy=plan.runtime_policy.shuffle_strategy,
+            shuffle_small_dataset_threshold=(
+                plan.runtime_policy.shuffle_small_dataset_threshold
+            ),
+            keep_shuffle_artifacts=plan.runtime_policy.keep_shuffle_artifacts,
             max_samples=plan.runtime_policy.max_samples,
             concurrency=concurrency,
             prefetch_factor=plan.runtime_policy.prefetch_factor,
@@ -637,6 +660,7 @@ def _prepare_task_entries(
             report_partial_on_failure=plan.runtime_policy.report_partial_on_failure,
             streaming=source.streaming,
             task_id=plan.task_id,
+            shuffle_artifact_root=cache_store.run_dir / "shuffle" / plan.task_id,
             sandbox_profiles=sandbox_profiles,
         )
         metric_specs = plan.metrics or config.metrics
@@ -664,6 +688,13 @@ def _prepare_task_entries(
         task_planner.attach_execution_controller(controller)
         sample_loop.configure_custom_steps(plan.steps)
         task_planner.attach_task_plan_spec(plan)
+        _bind_task_aggregation_context(
+            task_planner=task_planner,
+            trace=trace,
+            cache_store=cache_store,
+            plan=plan,
+            shuffle_artifact_root=cache_store.run_dir / "shuffle" / plan.task_id,
+        )
         entries.append(
             _TaskRuntimeEntry(
                 task_id=plan.task_id,
@@ -867,6 +898,69 @@ def _max_concurrency_from_tasks(
     for plan in task_plans:
         hint = max(hint, _resolve_concurrency(plan.runtime_policy.concurrency, resource_profile))
     return hint or None
+
+
+def _bind_task_aggregation_context(
+    *,
+    task_planner: TaskPlanner,
+    trace: ObservabilityTrace,
+    cache_store: EvalCache,
+    plan: TaskPlanSpec,
+    shuffle_artifact_root: Path,
+) -> None:
+    auto_eval_step = task_planner.get_auto_eval_step()
+    if auto_eval_step is None:
+        return
+    auto_eval_step.bind_aggregation_runtime_context(
+        AggregationRuntimeContext(
+            run_id=trace.run_id,
+            task_id=plan.task_id,
+            run_dir=cache_store.run_dir,
+            cache_store=cache_store,
+            details_namespace=_resolve_details_namespace(
+                task_id=plan.task_id,
+                steps=plan.steps,
+            ),
+            shuffle_artifact_root=shuffle_artifact_root,
+        )
+    )
+
+
+def _bind_single_runtime_aggregation_context(
+    *,
+    task_planner: TaskPlanner,
+    trace: ObservabilityTrace,
+    cache_store: EvalCache,
+    config: PipelineConfig,
+    shuffle_artifact_root: Path,
+) -> None:
+    auto_eval_step = task_planner.get_auto_eval_step()
+    if auto_eval_step is None:
+        return
+    custom_steps = config.custom.steps if config.custom else ()
+    auto_eval_step.bind_aggregation_runtime_context(
+        AggregationRuntimeContext(
+            run_id=trace.run_id,
+            task_id=None,
+            run_dir=cache_store.run_dir,
+            cache_store=cache_store,
+            details_namespace=_resolve_details_namespace(
+                task_id=None,
+                steps=custom_steps,
+            ),
+            shuffle_artifact_root=shuffle_artifact_root,
+        )
+    )
+
+
+def _resolve_details_namespace(
+    *,
+    task_id: Optional[str],
+    steps: Sequence[Any],
+) -> str:
+    prefix = "judge" if any(get_step_type(step) == "judge" for step in steps) else "task"
+    suffix = task_id or "global"
+    return f"{prefix}/{suffix}"
 
 
 def _close_cache_store(cache_store: EvalCache | None, *, active_error: BaseException | None) -> Exception | None:

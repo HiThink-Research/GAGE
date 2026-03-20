@@ -201,6 +201,9 @@ class TaskSpec:
     max_samples: Optional[int] = None
     shuffle: Optional[bool] = None
     shuffle_seed: Optional[int] = None
+    shuffle_strategy: Optional[str] = None
+    shuffle_small_dataset_threshold: Optional[int] = None
+    keep_shuffle_artifacts: Optional[bool] = None
     concurrency: Optional[int] = None
     prefetch_factor: Optional[int] = None
     max_inflight: Optional[int] = None

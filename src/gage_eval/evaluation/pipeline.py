@@ -79,6 +79,10 @@ class PipelineRuntime:
                     def pre_write_hook() -> None:
                         nonlocal eval_elapsed
                         eval_elapsed = time.perf_counter() - report_start
+                        self.report_step.cache_store.set_metadata(
+                            "shuffle_summary",
+                            self.sample_loop.shuffle_summary,
+                        )
                         self.report_step.record_timing("inference_s", inference_elapsed)
                         self.report_step.record_timing("evaluation_s", eval_elapsed)
                         execution_total = time.perf_counter() - total_start

@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.metrics.base import AggregatedMetric, MetricResult
+from gage_eval.metrics.runtime_context import AggregationRuntimeContext
+
+
+_DEFAULT_PREVIEW_ITEMS = 16
+_DEFAULT_MAX_INLINE_ITEMS = 128
 
 
 class MetricAggregator:
     """Base class for all aggregators."""
 
-    def __init__(self, spec: MetricSpec) -> None:
+    def __init__(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
         self.spec = spec
+        self.runtime_context = runtime_context
 
     def add(self, result: MetricResult) -> None:  # pragma: no cover
         raise NotImplementedError
@@ -26,8 +36,12 @@ class MetricAggregator:
 class MeanAggregator(MetricAggregator):
     """Computes the mean for each metric value key."""
 
-    def __init__(self, spec: MetricSpec) -> None:
-        super().__init__(spec)
+    def __init__(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
+        super().__init__(spec, runtime_context=runtime_context)
         self._sums: Dict[str, float] = defaultdict(float)
         self._counts: Dict[str, int] = defaultdict(int)
         self._total_results = 0
@@ -62,8 +76,12 @@ class WeightedMeanAggregator(MetricAggregator):
     The weight is read from `MetricResult.metadata["weight"]` (defaults to 1.0).
     """
 
-    def __init__(self, spec: MetricSpec) -> None:
-        super().__init__(spec)
+    def __init__(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
+        super().__init__(spec, runtime_context=runtime_context)
         self._weighted_sums: Dict[str, float] = defaultdict(float)
         self._weight_totals: Dict[str, float] = defaultdict(float)
         self._total_samples = 0
@@ -99,30 +117,141 @@ class IdentityAggregator(MetricAggregator):
     This is mostly useful for debugging or custom aggregations at higher layers.
     """
 
-    def __init__(self, spec: MetricSpec) -> None:
-        super().__init__(spec)
-        self._results: List[MetricResult] = []
+    def __init__(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
+        super().__init__(spec, runtime_context=runtime_context)
+        self._detail_mode = _normalize_detail_mode(spec.params.get("detail_mode"))
+        self._preview_limit = _coerce_non_negative_int(
+            spec.params.get("preview_items"),
+            default=_DEFAULT_PREVIEW_ITEMS,
+        )
+        self._max_inline_items = _coerce_positive_int(
+            spec.params.get("max_inline_items"),
+            default=_DEFAULT_MAX_INLINE_ITEMS,
+        )
+        self._sample_count = 0
+        self._preview_items: List[Dict[str, Any]] = []
+        self._inline_items: Optional[List[Dict[str, Any]]] = (
+            [] if self._should_track_inline_items() else None
+        )
+        self._inline_overflowed = False
 
     def add(self, result: MetricResult) -> None:
-        self._results.append(result)
+        result_dict = result.to_dict()
+        self._sample_count += 1
+        if len(self._preview_items) < self._preview_limit:
+            self._preview_items.append(result_dict)
+        if self._inline_items is not None:
+            if len(self._inline_items) < self._max_inline_items:
+                self._inline_items.append(result_dict)
+            else:
+                self._inline_overflowed = True
 
     def finalize(self) -> AggregatedMetric:
-        values = {str(idx): res.values for idx, res in enumerate(self._results)}
-        logger.debug("IdentityAggregator captured {} samples for metric={}", len(self._results), self.spec.metric_id)
+        preview_payload = list(self._preview_items)
+        metadata = {
+            "preview_count": len(preview_payload),
+            "preview_truncated": self._sample_count > len(preview_payload),
+        }
+        if preview_payload:
+            metadata["samples_preview"] = preview_payload
+
+        storage_mode = "preview_only"
+        values: Dict[str, Any] = {}
+
+        if self._detail_mode == "spill":
+            metadata["switch_reason"] = "spill_mode_not_implemented"
+            metadata["error"] = {
+                "code": "aggregation_detail_sink_unavailable",
+                "message": "detail_mode='spill' is not available; falling back to preview_only",
+            }
+        elif self._should_use_cache_ref():
+            storage_mode = "cache_ref"
+            metadata.update(self._build_cache_ref_metadata())
+        elif self._inline_items is not None and not self._inline_overflowed:
+            storage_mode = "inline"
+            values = {
+                str(idx): item["values"]
+                for idx, item in enumerate(self._inline_items)
+            }
+            metadata["samples"] = list(self._inline_items)
+        else:
+            metadata["switch_reason"] = self._resolve_preview_only_reason()
+
+        metadata["storage_mode"] = storage_mode
+        logger.debug(
+            "IdentityAggregator finalized metric={} samples={} storage_mode={}",
+            self.spec.metric_id,
+            self._sample_count,
+            storage_mode,
+        )
         return AggregatedMetric(
             metric_id=self.spec.metric_id,
             aggregation=self.spec.aggregation or "identity",
             values=values,
-            count=len(self._results),
-            metadata={"samples": [res.to_dict() for res in self._results]},
+            count=self._sample_count,
+            metadata=metadata,
         )
+
+    def _should_track_inline_items(self) -> bool:
+        if self._detail_mode == "spill":
+            return False
+        if self._detail_mode == "cache_ref":
+            return False
+        if self._detail_mode == "auto" and self._has_cache_store():
+            return False
+        return True
+
+    def _should_use_cache_ref(self) -> bool:
+        if self._detail_mode == "inline_preview":
+            return False
+        if self._detail_mode == "spill":
+            return False
+        if self._detail_mode == "cache_ref":
+            return self._has_cache_store()
+        return self._has_cache_store()
+
+    def _has_cache_store(self) -> bool:
+        return (
+            self.runtime_context is not None
+            and self.runtime_context.cache_store is not None
+        )
+
+    def _build_cache_ref_metadata(self) -> Dict[str, Any]:
+        if self.runtime_context is None or self.runtime_context.cache_store is None:
+            return {}
+        metadata: Dict[str, Any] = {
+            "details_source": "eval_cache",
+            "details_file": str(self.runtime_context.cache_store.samples_jsonl),
+            "details_metric_id": self.spec.metric_id,
+            "switch_reason": "cache_store_available",
+        }
+        if self.runtime_context.details_namespace:
+            metadata["details_namespace"] = self.runtime_context.details_namespace
+        return metadata
+
+    def _resolve_preview_only_reason(self) -> str:
+        if self._detail_mode == "cache_ref":
+            return "cache_store_unavailable"
+        if self._inline_overflowed:
+            return "max_inline_items_exceeded"
+        if self._detail_mode == "spill":
+            return "spill_mode_not_implemented"
+        return "detail_mode_requires_preview_only"
 
 
 class CategoricalCountAggregator(MetricAggregator):
     """Counts occurrences of a categorical field in per-sample metadata."""
 
-    def __init__(self, spec: MetricSpec) -> None:
-        super().__init__(spec)
+    def __init__(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
+        super().__init__(spec, runtime_context=runtime_context)
         self._counts: Dict[str, int] = defaultdict(int)
         self._total = 0
         self._category_field = str(spec.params.get("category_field", "failure_reason"))
@@ -151,3 +280,26 @@ class CategoricalCountAggregator(MetricAggregator):
             values=dict(self._counts),
             count=self._total,
         )
+
+
+def _normalize_detail_mode(value: Any) -> str:
+    normalized = str(value or "auto").strip().lower()
+    if normalized in {"auto", "cache_ref", "inline_preview", "spill"}:
+        return normalized
+    return "auto"
+
+
+def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, parsed)
+
+
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)

@@ -15,6 +15,7 @@ from gage_eval.observability.logger import ObservableLogger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.metrics import MetricRegistry, MetricInstance, MetricContext
+from gage_eval.metrics.runtime_context import AggregationRuntimeContext
 from gage_eval.evaluation.sample_envelope import (
     resolve_arena_trace,
     resolve_judge_output,
@@ -52,7 +53,9 @@ class AutoEvalStep(SampleStep):
     ) -> None:
         super().__init__("AutoEvalStep")
         self._registry = metric_registry or MetricRegistry()
-        self._instances: List[MetricInstance] = [self._registry.build_metric(spec) for spec in metric_specs]
+        self._metric_specs: Tuple[MetricSpec, ...] = tuple(metric_specs)
+        self._aggregation_runtime_context: Optional[AggregationRuntimeContext] = None
+        self._instances: List[MetricInstance] = self._build_metric_instances()
         self._cache = cache_store
         self._aggregate_lock = threading.Lock()
         self._logger = ObservableLogger()
@@ -69,6 +72,15 @@ class AutoEvalStep(SampleStep):
         self, controller: Optional[TaskExecutionController]
     ) -> None:
         self._execution_controller = controller
+
+    def bind_aggregation_runtime_context(
+        self,
+        runtime_context: Optional[AggregationRuntimeContext],
+    ) -> None:
+        self._aggregation_runtime_context = runtime_context
+        self._registry.set_runtime_context(runtime_context)
+        with self._aggregate_lock:
+            self._instances = self._build_metric_instances(runtime_context)
 
     @observable_stage(
         "auto_eval",
@@ -126,7 +138,7 @@ class AutoEvalStep(SampleStep):
         }
         cache_id = self._compose_cache_id(task_id, sample_id)
         if self._cache:
-            namespace = self._compose_cache_namespace(task_id, resolved_judge_output)
+            namespace = self._resolve_cache_namespace(task_id, resolved_judge_output)
             self._cache.write_sample(cache_id, record, namespace=namespace)
             logger.debug(
                 "auto_eval",
@@ -154,6 +166,15 @@ class AutoEvalStep(SampleStep):
             results = [instance.finalize() for instance in self._instances]
         self._logger.info("auto_eval", "Aggregated {} metrics", len(results))
         return results
+
+    def _build_metric_instances(
+        self,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> List[MetricInstance]:
+        return [
+            self._registry.build_metric(spec, runtime_context=runtime_context)
+            for spec in self._metric_specs
+        ]
 
     def _evaluate_metric(
         self,
@@ -252,6 +273,16 @@ class AutoEvalStep(SampleStep):
         prefix = "judge" if judge_output else "task"
         suffix = task_id or "global"
         return f"{prefix}/{suffix}"
+
+    def _resolve_cache_namespace(
+        self,
+        task_id: Optional[str],
+        judge_output: Dict,
+    ) -> str:
+        runtime_context = self._aggregation_runtime_context
+        if runtime_context is not None and runtime_context.details_namespace:
+            return runtime_context.details_namespace
+        return self._compose_cache_namespace(task_id, judge_output)
 
 
 def _env_int(name: str) -> Optional[int]:
