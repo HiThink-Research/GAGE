@@ -46,9 +46,17 @@ def test_report_summary_includes_observability_health(tmp_path) -> None:
     assert payload["observability_degraded"] is True
     assert payload["observability_mode"] == "noop"
     assert payload["backlog_events"] == 1
+    assert payload["events_emitted_total"] == 1
+    assert payload["events_retained_in_memory"] == 1
+    assert payload["events_dropped_by_ring_buffer"] == 0
+    assert payload["events_flushed_total"] == 0
     assert summary["observability_degraded"] is True
     assert summary["observability_mode"] == "noop"
     assert summary["backlog_events"] == 1
+    assert summary["events_emitted_total"] == 1
+    assert summary["events_retained_in_memory"] == 1
+    assert summary["events_dropped_by_ring_buffer"] == 0
+    assert summary["events_flushed_total"] == 0
 
 
 @pytest.mark.fast

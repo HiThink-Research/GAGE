@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 from typing import TYPE_CHECKING
@@ -498,7 +499,15 @@ class TaskOrchestratorRuntime:
                 try:
                     self.shutdown()
                 finally:
-                    self._trace.close(cache_store=self._report_step.cache_store)
+                    cache_close_error = _close_cache_store(
+                        self._report_step.cache_store,
+                        active_error=sys.exc_info()[1],
+                    )
+                    try:
+                        self._trace.close(cache_store=self._report_step.cache_store)
+                    finally:
+                        if cache_close_error is not None:
+                            raise cache_close_error
 
     def attach_report_step(self, step: ReportStep) -> None:
         self._report_step = step
@@ -858,3 +867,19 @@ def _max_concurrency_from_tasks(
     for plan in task_plans:
         hint = max(hint, _resolve_concurrency(plan.runtime_policy.concurrency, resource_profile))
     return hint or None
+
+
+def _close_cache_store(cache_store: EvalCache | None, *, active_error: BaseException | None) -> Exception | None:
+    if cache_store is None:
+        return None
+    try:
+        cache_store.close()
+    except Exception as exc:
+        logger.exception("EvalCache close failed")
+        if active_error is not None:
+            add_note = getattr(active_error, "add_note", None)
+            if callable(add_note):
+                add_note(f"secondary cache close failure: {type(exc).__name__}: {exc}")
+            return None
+        return exc
+    return None

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Condition, Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 from loguru import logger
 from gage_eval.reporting.recorders import (
@@ -65,7 +66,10 @@ class ObservabilityTrace:
     def __init__(self, recorder: Optional[RecorderBase | ResilientRecorder] = None, run_id: Optional[str] = None) -> None:
         self.run_identity: RunIdentity = build_run_identity(run_id)
         self.run_id = self.run_identity.run_id
-        self._events: List[Dict[str, Any]] = []
+        self._trace_buffer_max_events = max(0, _env_int("GAGE_EVAL_TRACE_BUFFER_MAX_EVENTS", 2048))
+        self._events: Deque[Dict[str, Any]] = deque(maxlen=self._trace_buffer_max_events or None)
+        self._events_emitted_total = 0
+        self._events_dropped_by_ring_buffer = 0
         self._lock = Lock()
         self._lifecycle_cv = Condition(Lock())
         self._next_event_id = 0
@@ -100,7 +104,11 @@ class ObservabilityTrace:
             return
         trace_event = self._create_trace_event(event, payload, sample_id=sample_id)
         with self._lock:
-            self._events.append(trace_event.to_dict())
+            self._events_emitted_total += 1
+            if self._trace_buffer_max_events > 0:
+                if len(self._events) >= self._trace_buffer_max_events:
+                    self._events_dropped_by_ring_buffer += 1
+                self._events.append(trace_event.to_dict())
         logger.trace("Trace[{}] event={} sample={}", self.run_id, event, sample_id)
         self._recorder.record_trace_event(trace_event)
 
@@ -141,7 +149,9 @@ class ObservabilityTrace:
                 result = self._close_result
                 if cache_store is not None:
                     try:
-                        cache_store.merge_summary_fields(result.to_dict())
+                        payload = self.health_snapshot()
+                        payload.update(result.to_dict())
+                        cache_store.merge_summary_fields(payload)
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.bind(skip_observability=True).warning(
                             "Trace[{}] failed to patch summary with cached close result: {}",
@@ -211,7 +221,9 @@ class ObservabilityTrace:
         )
         if cache_store is not None:
             try:
-                cache_store.merge_summary_fields(result.to_dict())
+                payload = self.health_snapshot()
+                payload.update(result.to_dict())
+                cache_store.merge_summary_fields(payload)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.bind(skip_observability=True).warning(
                     "Trace[{}] failed to patch summary with close result: {}",
@@ -243,7 +255,19 @@ class ObservabilityTrace:
 
     def health_snapshot(self) -> Dict[str, Any]:
         snapshot: ObservabilityHealth = self._recorder.health_snapshot()
-        return snapshot.to_dict()
+        with self._lock:
+            retained_events = len(self._events)
+            emitted_total = self._events_emitted_total
+            dropped_events = self._events_dropped_by_ring_buffer
+        payload = snapshot.to_dict()
+        payload.update(
+            {
+                "events_emitted_total": emitted_total,
+                "events_retained_in_memory": retained_events,
+                "events_dropped_by_ring_buffer": dropped_events,
+            }
+        )
+        return payload
 
     def force_log(self, sample_id: Optional[str]) -> None:
         """Ensure future stages sample the provided sample_id regardless of rate."""
@@ -329,6 +353,22 @@ def _env_float(name: str, default: float) -> float:
     except ValueError:
         logger.bind(skip_observability=True).warning(
             "Invalid float for {}={}; using default {}",
+            name,
+            value,
+            default,
+        )
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.bind(skip_observability=True).warning(
+            "Invalid int for {}={}; using default {}",
             name,
             value,
             default,

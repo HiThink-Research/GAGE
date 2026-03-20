@@ -53,6 +53,9 @@ class ObservabilityHealth:
     last_error_type: Optional[str] = None
     last_error_message: Optional[str] = None
     degraded_since: Optional[float] = None
+    events_flushed_total: int = 0
+    recorder_compactions_total: int = 0
+    recorder_retained_events: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -66,6 +69,9 @@ class ObservabilityHealth:
             "last_error_type": self.last_error_type,
             "last_error_message": self.last_error_message,
             "degraded_since": self.degraded_since,
+            "events_flushed_total": self.events_flushed_total,
+            "recorder_compactions_total": self.recorder_compactions_total,
+            "recorder_retained_events": self.recorder_retained_events,
         }
 
 
@@ -91,6 +97,15 @@ class RecorderCloseError(RuntimeError):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RecorderBufferStats:
+    """Aggregated recorder buffer statistics for observability reporting."""
+
+    events_flushed_total: int = 0
+    recorder_compactions_total: int = 0
+    recorder_retained_events: int = 0
+
+
 class RecorderBase:
     """Base recorder that batches events and flushes them on demand."""
 
@@ -113,6 +128,8 @@ class RecorderBase:
         self._min_flush_events = max(1, min_flush_events)
         self._min_flush_seconds = max(0.1, min_flush_seconds)
         self._last_flush_ts = time.time()
+        self._events_flushed_total = 0
+        self._compactions_total = 0
 
     @contextlib.contextmanager
     def use_sample(self, sample_id: Optional[str]):
@@ -177,16 +194,23 @@ class RecorderBase:
                 if self._written >= len(self._events):
                     return
                 start_idx = self._written
-                events_to_write = tuple(self._events[start_idx:])
+                snapshot_len = len(self._events)
+                events_to_write = tuple(self._events[start_idx:snapshot_len])
             self.write_events(events_to_write)
             with self._lock:
-                self._written = max(self._written, start_idx + len(events_to_write))
+                committed_end = min(snapshot_len, len(self._events))
+                if committed_end > 0:
+                    del self._events[:committed_end]
+                    self._compactions_total += 1
+                self._written = 0
+                self._events_flushed_total += len(events_to_write)
                 self._last_flush_ts = time.time()
+                retained_count = len(self._events)
         logger.debug(
-            "Recorder '{}' flushed {} events (written={})",
+            "Recorder '{}' flushed {} events (retained={})",
             self.__class__.__name__,
             len(events_to_write),
-            self._written,
+            retained_count,
         )
 
     def close(self) -> None:
@@ -195,6 +219,14 @@ class RecorderBase:
     def _observe_event_id_locked(self, event_id: int) -> None:
         if event_id >= self._next_event_id:
             self._next_event_id = event_id + 1
+
+    def buffer_stats(self) -> RecorderBufferStats:
+        with self._lock:
+            return RecorderBufferStats(
+                events_flushed_total=self._events_flushed_total,
+                recorder_compactions_total=self._compactions_total,
+                recorder_retained_events=len(self._events),
+            )
 
     def _flush_events_internal(self, events: Sequence[TraceEvent]) -> None:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -494,6 +526,7 @@ class ResilientRecorder:
             raise RecorderCloseError(tuple(close_failures))
 
     def health_snapshot(self) -> ObservabilityHealth:
+        buffer_stats = self._aggregate_buffer_stats()
         with self._state_lock:
             return ObservabilityHealth(
                 degraded=self._mode != "primary",
@@ -506,6 +539,9 @@ class ResilientRecorder:
                 last_error_type=self._last_error_type,
                 last_error_message=self._last_error_message,
                 degraded_since=self._degraded_since,
+                events_flushed_total=buffer_stats.events_flushed_total,
+                recorder_compactions_total=buffer_stats.recorder_compactions_total,
+                recorder_retained_events=buffer_stats.recorder_retained_events,
             )
 
     def _handle_failure(
@@ -567,6 +603,17 @@ class ResilientRecorder:
         if self._fallback is not None:
             recorders.append(self._fallback)
         return tuple(recorders)
+
+    def _aggregate_buffer_stats(self) -> RecorderBufferStats:
+        totals = RecorderBufferStats()
+        for recorder in self._iter_recorders():
+            stats = recorder.buffer_stats()
+            totals = RecorderBufferStats(
+                events_flushed_total=totals.events_flushed_total + stats.events_flushed_total,
+                recorder_compactions_total=totals.recorder_compactions_total + stats.recorder_compactions_total,
+                recorder_retained_events=totals.recorder_retained_events + stats.recorder_retained_events,
+            )
+        return totals
 
     def _sync_backlog(self, recorder: RecorderBase) -> None:
         backlog_events = self._pending_count(recorder)

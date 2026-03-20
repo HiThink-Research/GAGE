@@ -265,3 +265,24 @@ def test_task_orchestrator_writes_task_execution_summary_on_abort(tmp_path: Path
 
     assert summary["tasks"][0]["execution"]["status"] == "aborted"
     assert summary["tasks"][0]["execution"]["failed_sample_id"] == "s0"
+
+
+@pytest.mark.fast
+def test_task_orchestrator_interval_writer_close_patches_final_fsync(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("GAGE_EVAL_ENABLE_BUFFERED_WRITER", "1")
+    monkeypatch.setenv("GAGE_EVAL_BUFFER_DURABILITY_POLICY", "interval")
+    monkeypatch.setenv("GAGE_EVAL_BUFFER_FSYNC_EVERY_FLUSHES", "99")
+    monkeypatch.setenv("GAGE_EVAL_BUFFER_FSYNC_EVERY_S", "999")
+    steps = (
+        CustomPipelineStep(step_type="inference", adapter_id="dut"),
+        CustomPipelineStep(step_type="auto_eval"),
+    )
+    runtime, cache = _make_runtime_with_steps(tmp_path, steps, sample_count=2)
+
+    runtime.run()
+
+    summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert summary["buffered_writer_durability_policy"] == "interval"
+    assert summary["buffered_writer_flush_count"] > 0
+    assert summary["buffered_writer_fsync_count"] > 0

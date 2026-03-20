@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Callable, Dict, Iterable, List, Optional
 import os
 import time
@@ -127,7 +128,12 @@ class PipelineRuntime:
                 try:
                     self.shutdown()
                 finally:
-                    self.trace.close(cache_store=cache_store)
+                    cache_close_error = _close_cache_store(cache_store, active_error=sys.exc_info()[1])
+                    try:
+                        self.trace.close(cache_store=cache_store)
+                    finally:
+                        if cache_close_error is not None:
+                            raise cache_close_error
 
     def attach_report_step(self, step: ReportStep) -> None:
         self.report_step = step
@@ -208,6 +214,22 @@ class PipelineRuntime:
         # Auto-eval stage throughput.
         if evaluation_s > 0:
             self.report_step.record_timing("throughput_auto_eval_samples_per_s", sample_count / evaluation_s)
+
+
+def _close_cache_store(cache_store: EvalCache | None, *, active_error: BaseException | None) -> Exception | None:
+    if cache_store is None:
+        return None
+    try:
+        cache_store.close()
+    except Exception as exc:
+        logger.exception("EvalCache close failed")
+        if active_error is not None:
+            add_note = getattr(active_error, "add_note", None)
+            if callable(add_note):
+                add_note(f"secondary cache close failure: {type(exc).__name__}: {exc}")
+            return None
+        return exc
+    return None
 
 
 class BuiltinPipeline:
