@@ -27,15 +27,9 @@
 --><img src="docs/assets/mahjong.gif" width="33.4524%" alt="Mahjong demo"></p>
 
 <p align="center">
-  <img src="docs/assets/space-invaders.gif" width="100%" alt="Space Invaders demo">
-</p>
-
-<p align="center">
-  <img src="docs/assets/mario.gif" width="100%" alt="Mario demo">
-</p>
-
-<p align="center">
-  <img src="docs/assets/vizdoom.gif" width="100%" alt="VizDoom demo">
+  <img src="docs/assets/space-invaders-game.gif" width="33.3333%" alt="Space Invaders demo">
+  <img src="docs/assets/mario-game.gif" width="33.3333%" alt="Mario demo">
+  <img src="docs/assets/vizdoom-game.gif" width="32.55%" alt="VizDoom demo">
 </p>
 
 ## ✨ 为什么选择 GAGE？
