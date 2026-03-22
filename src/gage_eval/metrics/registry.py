@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib
+from functools import lru_cache
+from pathlib import Path
+import re
 import threading
 from typing import Callable, Dict, Optional, Type, TYPE_CHECKING
 
@@ -39,6 +42,10 @@ if TYPE_CHECKING:
 
 MetricFactory = Callable[[MetricSpec], "BaseMetric"]
 AggregatorFactory = Callable[..., "MetricAggregator"]
+_METRIC_ASSET_PATTERN = re.compile(
+    r'registry\.asset\(\s*["\']metrics["\']\s*,\s*["\']([^"\']+)["\']',
+    re.S,
+)
 
 
 class MetricRegistry:
@@ -121,7 +128,7 @@ class MetricRegistry:
         runtime_context: Optional[AggregationRuntimeContext] = None,
     ) -> "MetricInstance":
         metric = self._build_metric_impl(spec)
-        aggregation_id = spec.aggregation or "mean"
+        aggregation_id = self._resolve_aggregation_id(spec)
         if aggregation_id not in self._aggregators:
             raise KeyError(f"Aggregator '{aggregation_id}' not registered")
         aggregator = self._build_aggregator(
@@ -153,8 +160,33 @@ class MetricRegistry:
             metric_cls = registry.get("metrics", impl_key)
             return metric_cls(spec)
         except KeyError:
+            _import_metric_asset_module(impl_key)
+        try:
+            metric_cls = registry.get("metrics", impl_key)
+            return metric_cls(spec)
+        except KeyError:
             cls = self._import_metric_class(impl_key)
             return cls(spec)
+
+    @staticmethod
+    def _resolve_aggregation_id(spec: MetricSpec) -> str:
+        if spec.aggregation:
+            return spec.aggregation
+        impl_key = spec.implementation or spec.metric_id
+        if impl_key:
+            try:
+                entry = registry.entry("metrics", impl_key)
+            except KeyError:
+                _import_metric_asset_module(impl_key)
+                try:
+                    entry = registry.entry("metrics", impl_key)
+                except KeyError:
+                    entry = None
+            if entry is not None:
+                default_aggregation = entry.extra.get("default_aggregation")
+                if default_aggregation:
+                    return str(default_aggregation)
+        return "mean"
 
     @staticmethod
     def _import_metric_class(implementation: str) -> Type[BaseMetric]:
@@ -177,6 +209,38 @@ class MetricRegistry:
                 f"Metric class '{implementation}' must inherit from BaseMetric (found {candidate})"
             )
         return candidate
+
+
+def _import_metric_asset_module(metric_id: str) -> None:
+    module_name = _metric_asset_modules().get(str(metric_id))
+    if module_name:
+        importlib.import_module(module_name)
+
+
+@lru_cache(maxsize=1)
+def _metric_asset_modules() -> Dict[str, str]:
+    root = Path(__file__).resolve().parent / "builtin"
+    module_prefix = "gage_eval.metrics.builtin"
+    mapping: Dict[str, str] = {}
+    for path in root.rglob("*.py"):
+        if path.name in {"__init__.py"}:
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        module_name = _module_name_for_path(path, root=root, module_prefix=module_prefix)
+        for asset_name in _METRIC_ASSET_PATTERN.findall(source):
+            mapping.setdefault(str(asset_name), module_name)
+    return mapping
+
+
+def _module_name_for_path(path: Path, *, root: Path, module_prefix: str) -> str:
+    relative = path.relative_to(root).with_suffix("")
+    parts = relative.parts
+    if not parts:
+        return module_prefix
+    return ".".join((module_prefix, *parts))
 
 
 class MetricInstance:

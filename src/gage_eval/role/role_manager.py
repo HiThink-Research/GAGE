@@ -200,14 +200,10 @@ class RoleManager:
             invocation_context,
             session_mode=session_mode,
         )
-        sandbox_provider = None
-        if (
-            invocation_context is not None
-            and invocation_context.sandbox_router is not None
-        ):
-            sandbox_provider = invocation_context.sandbox_router.get_provider(
-                route_decision.sandbox_binding
-            )
+        sandbox_provider = self._resolve_invocation_sandbox_provider(
+            invocation_context,
+            route_decision.sandbox_binding,
+        )
         history = self._history_for(adapter_id, invocation_context)
 
         class _HistoryLease:
@@ -249,6 +245,52 @@ class RoleManager:
             sandbox_provider,
             invocation_context,
         )
+
+    def _resolve_invocation_sandbox_provider(
+        self,
+        invocation_context: Optional[RoleInvocationContext],
+        binding: SandboxBinding,
+    ) -> Optional[Any]:
+        if invocation_context is None:
+            return None
+        default_provider = invocation_context.default_sandbox_provider
+        default_config = (
+            dict(getattr(default_provider, "sandbox_config", {}) or {})
+            if default_provider is not None
+            else {}
+        )
+        if not binding.enabled or not binding.config:
+            return default_provider
+        effective_config = dict(binding.config)
+        if default_config:
+            if invocation_context.sandbox_router is not None:
+                effective_config = dict(
+                    invocation_context.sandbox_router.resolve_config(
+                        default_config,
+                        effective_config,
+                    )
+                )
+            else:
+                effective_config = _merge_dicts(default_config, effective_config)
+        if default_provider is not None and effective_config == default_config:
+            return default_provider
+        if invocation_context.sandbox_router is None:
+            return default_provider
+        if effective_config != binding.config:
+            binding = SandboxBinding(
+                enabled=binding.enabled,
+                config=effective_config,
+                source=binding.source,
+                route_key=_build_binding_route_key(
+                    effective_config,
+                    step_type=binding.step_type or invocation_context.step_type,
+                    adapter_id=binding.adapter_id or invocation_context.adapter_id,
+                ),
+                step_type=binding.step_type,
+                adapter_id=binding.adapter_id,
+                step_slot_id=binding.step_slot_id,
+            )
+        return invocation_context.sandbox_router.get_provider(binding)
 
     def get_adapter(self, adapter_id: str):
         """Return a registered adapter by id if available."""

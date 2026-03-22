@@ -47,6 +47,23 @@ class JudgeStep(SampleStep):
             execution_context=invocation_context,
         ) as role:
             result = role.invoke(payload, trace) if role else {}
+        if isinstance(result, dict) and result.get("error"):
+            error_text = str(result.get("error"))
+            trace.emit(
+                "judge_error",
+                payload={
+                    "adapter_id": self._adapter_id,
+                    "error_type": "backend_error",
+                    "failure_reason": "backend_returned_error",
+                    "error": error_text,
+                },
+            )
+            logger.error(
+                "Judge step failed adapter_id={} error_type=backend_error error={}",
+                self._adapter_id,
+                error_text,
+            )
+            raise RuntimeError(f"judge backend returned error: {error_text}")
         trace.emit("judge_end", payload={"adapter_id": self._adapter_id})
         logger.debug("Judge step finished adapter_id={}", self._adapter_id)
         return result

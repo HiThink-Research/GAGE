@@ -1,4 +1,4 @@
-"""Load registry assets on package import."""
+"""Load lightweight registry assets on package import."""
 
 from __future__ import annotations
 
@@ -11,21 +11,12 @@ from gage_eval.registry import registry
 ensure_loguru()
 
 _AUTO_DISCOVERY_PACKAGES = {
-    "backends": ("gage_eval.role.model.backends",),
-    "roles": ("gage_eval.role.adapters", "gage_eval.role.model", "gage_eval.role.toolchain"),
+    "roles": ("gage_eval.role.adapters", "gage_eval.role.toolchain"),
     "context_impls": ("gage_eval.role.context",),
     "judge_impls": ("gage_eval.role.judge",),
     "helper_impls": ("gage_eval.role.helper",),
-    "arena_impls": ("gage_eval.role.arena.games",),
-    "parser_impls": ("gage_eval.role.arena.parsers",),
-    "renderer_impls": ("gage_eval.role.arena.games",),
     "dataset_hubs": ("gage_eval.assets.datasets.hubs",),
-    "dataset_loaders": ("gage_eval.assets.datasets.loaders",),
-    "bundles": ("gage_eval.assets.datasets.bundles.builtin",),
-    "dataset_preprocessors": ("gage_eval.assets.datasets.preprocessors.builtin",),
-    "metrics": ("gage_eval.metrics.builtin",),
     "prompts": ("gage_eval.assets.prompts.catalog",),
-    "model_hubs": ("gage_eval.assets.models.hubs",),
     "observability_plugins": ("gage_eval.observability.plugins",),
     "pipeline_steps": ("gage_eval.pipeline.steps",),
 }

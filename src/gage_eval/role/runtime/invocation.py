@@ -122,6 +122,8 @@ class SampleExecutionContext:
     trace: Optional["ObservabilityTrace"] = None
     session_store: RoleSessionStore = field(default_factory=lambda: RoleSessionStore(sample={}))
     sandbox_router: Optional["SandboxSessionRouter"] = None
+    sandbox_provider: Optional[Any] = None
+    owns_sandbox_provider: bool = False
     route_cache: Dict[str, RuntimeRouteDecision] = field(default_factory=dict)
 
     def for_invocation(
@@ -141,6 +143,7 @@ class SampleExecutionContext:
             trace=self.trace,
             session_store=self.session_store,
             sandbox_router=self.sandbox_router,
+            default_sandbox_provider=self.sandbox_provider,
             route_cache=self.route_cache,
             step_type=step_type,
             adapter_id=adapter_id,
@@ -152,6 +155,10 @@ class SampleExecutionContext:
 
         if self.sandbox_router is not None:
             self.sandbox_router.release_all()
+        if self.owns_sandbox_provider and self.sandbox_provider is not None:
+            release = getattr(self.sandbox_provider, "release", None)
+            if callable(release):
+                release()
 
 
 @dataclass(frozen=True)
@@ -165,6 +172,7 @@ class RoleInvocationContext:
     trace: Optional["ObservabilityTrace"]
     session_store: RoleSessionStore
     sandbox_router: Optional["SandboxSessionRouter"]
+    default_sandbox_provider: Optional[Any]
     route_cache: Dict[str, RuntimeRouteDecision]
     step_type: str
     adapter_id: str

@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 from loguru import logger
 
+from gage_eval.assets.datasets.registry_loader import import_dataset_asset_module
 from gage_eval.config.pipeline_config import (
     BackendSpec,
     DatasetSpec,
@@ -71,6 +72,8 @@ class ConfigRegistry:
         from gage_eval.assets.prompts.assets import PromptTemplateAsset
         from gage_eval.registry import DiscoveryPolicy, RegistryOverlayAsset
 
+        _prime_runtime_dataset_assets(config)
+        _prime_runtime_model_assets(config)
         overlays = [
             RegistryOverlayAsset(
                 kind="prompts",
@@ -121,10 +124,18 @@ class ConfigRegistry:
         lookup = self._registry_lookup()
 
         hub_params = dict(spec.hub_params or spec.params.get("hub_params", {}))
-        hub_cls = lookup.get("dataset_hubs", hub_name)
+        try:
+            hub_cls = lookup.get("dataset_hubs", hub_name)
+        except KeyError:
+            import_dataset_asset_module("dataset_hubs", hub_name)
+            hub_cls = lookup.get("dataset_hubs", hub_name)
         hub = hub_cls(spec, hub_args=hub_params)
         hub_handle = hub.resolve()
-        loader_cls = lookup.get("dataset_loaders", loader_name)
+        try:
+            loader_cls = lookup.get("dataset_loaders", loader_name)
+        except KeyError:
+            import_dataset_asset_module("dataset_loaders", loader_name)
+            loader_cls = lookup.get("dataset_loaders", loader_name)
         loader = loader_cls(spec)
         return loader.load(hub_handle, trace=trace)
 
@@ -424,3 +435,48 @@ def _collect_runtime_registry_packages(config: PipelineConfig) -> Dict[str, Iter
     ):
         packages["judge_impls"] = ("gage_eval.role.judge",)
     return packages
+
+
+def _prime_runtime_dataset_assets(config: PipelineConfig) -> None:
+    for spec in config.datasets:
+        loader_name = str(spec.loader or spec.params.get("loader") or "").strip()
+        if loader_name:
+            import_dataset_asset_module("dataset_loaders", loader_name)
+        hub_name = spec.hub or spec.params.get("hub")
+        if not hub_name and loader_name not in {"hf_hub", "modelscope"}:
+            hub_name = "inline"
+        if hub_name:
+            import_dataset_asset_module("dataset_hubs", str(hub_name))
+        bundle_name = spec.params.get("bundle")
+        if isinstance(bundle_name, str) and bundle_name.strip():
+            import_dataset_asset_module("bundles", bundle_name.strip())
+        preprocess_name = spec.params.get("preprocess")
+        if isinstance(preprocess_name, str) and preprocess_name.strip():
+            import_dataset_asset_module(
+                "dataset_preprocessors",
+                preprocess_name.strip(),
+            )
+
+
+def _prime_runtime_model_assets(config: PipelineConfig) -> None:
+    importlib.import_module("gage_eval.assets.models.manager")
+
+    backend_types = {
+        str(spec.type).strip()
+        for spec in config.backends
+        if str(spec.type or "").strip()
+    }
+    for adapter in config.role_adapters:
+        inline_backend = adapter.backend
+        if not isinstance(inline_backend, dict):
+            continue
+        backend_type = str(inline_backend.get("type") or "").strip()
+        if backend_type:
+            backend_types.add(backend_type)
+    if not backend_types:
+        return
+
+    from gage_eval.role.model.backends.builder import _import_backend_asset_module
+
+    for backend_type in sorted(backend_types):
+        _import_backend_asset_module(backend_type)

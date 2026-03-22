@@ -23,6 +23,7 @@ from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.players.agent_player import AgentPlayer
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
+from gage_eval.role.arena.registry_loader import import_arena_asset_module
 from gage_eval.role.arena.schedulers.multi_timeline_scheduler import (
     MultiTimelineScheduler,
 )
@@ -733,7 +734,11 @@ class ArenaRoleAdapter(RoleAdapter):
                         env_cfg.get("arena_rpc_timeout_s"), default=30
                     ),
                 )
-        env_cls = registry.get("arena_impls", impl)
+        try:
+            env_cls = registry.get("arena_impls", impl)
+        except KeyError:
+            import_arena_asset_module("arena_impls", impl)
+            env_cls = registry.get("arena_impls", impl)
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
@@ -742,7 +747,11 @@ class ArenaRoleAdapter(RoleAdapter):
         impl = cfg.get("impl") or cfg.get("implementation") or "grid_parser_v1"
         board_size = int(metadata.get("board_size", cfg.get("board_size", 15)))
         coord_scheme = cfg.get("coord_scheme", metadata.get("coord_scheme", "A1"))
-        parser_cls = registry.get("parser_impls", impl)
+        try:
+            parser_cls = registry.get("parser_impls", impl)
+        except KeyError:
+            import_arena_asset_module("parser_impls", impl)
+            parser_cls = registry.get("parser_impls", impl)
         try:
             return parser_cls(board_size=board_size, coord_scheme=coord_scheme)
         except TypeError:

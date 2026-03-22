@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import pytest
 
+from gage_eval.evaluation.support_artifacts import build_support_slot_id
 from gage_eval.evaluation.task_planner import TaskPlanner
 
 
 @pytest.mark.fast
 def test_task_planner_preserves_ordered_steps() -> None:
     planner = TaskPlanner()
-    steps = (
+    raw_steps = (
         {"step": "support", "adapter_id": "helper-a"},
         {"step": "support", "adapter_id": "helper-b"},
         {"step": "inference", "adapter_id": "dut"},
     )
+    expected_steps = (
+        {
+            "step": "support",
+            "adapter_id": "helper-a",
+            "params": {"support_slot_id": build_support_slot_id(raw_steps[0], 0)},
+        },
+        {
+            "step": "support",
+            "adapter_id": "helper-b",
+            "params": {"support_slot_id": build_support_slot_id(raw_steps[1], 1)},
+        },
+        raw_steps[2],
+    )
 
-    planner.configure_custom_steps(steps)
+    planner.configure_custom_steps(raw_steps)
     plan = planner.prepare_plan({"id": "sample-1"})
 
-    assert tuple(plan.steps) == steps
-    assert tuple(plan.support_steps) == steps[:2]
+    assert tuple(plan.steps) == expected_steps
+    assert tuple(plan.support_steps) == expected_steps[:2]
     assert plan.inference_role == "dut"
 
 
@@ -59,13 +73,18 @@ def test_task_planner_requires_prerequisite_step() -> None:
 @pytest.mark.fast
 def test_task_planner_accepts_role_ref_binding_for_sample_steps() -> None:
     planner = TaskPlanner()
-    steps = (
+    raw_steps = (
         {"step": "support", "role_ref": "helper"},
         {"step": "inference", "role_ref": "dut"},
     )
+    expected_support = {
+        "step": "support",
+        "role_ref": "helper",
+        "params": {"support_slot_id": build_support_slot_id(raw_steps[0], 0)},
+    }
 
-    planner.configure_custom_steps(steps)
+    planner.configure_custom_steps(raw_steps)
     plan = planner.prepare_plan({"id": "sample-1"})
 
-    assert tuple(plan.support_steps) == steps[:1]
+    assert tuple(plan.support_steps) == (expected_support,)
     assert plan.inference_role == "dut"

@@ -212,6 +212,7 @@ scripts/oneclick/.env.example
 /models/
 
 .gage_cache/
+.scannerwork/
 
 # python artifacts
 __pycache__/

@@ -120,9 +120,9 @@ def _build_runtime(
     borrow_calls: list[str | None] = []
     original_borrow = role_manager.borrow_role
 
-    def counting_borrow(adapter_id):
+    def counting_borrow(adapter_id, *, execution_context=None):
         borrow_calls.append(adapter_id)
-        return original_borrow(adapter_id)
+        return original_borrow(adapter_id, execution_context=execution_context)
 
     role_manager.borrow_role = counting_borrow  # type: ignore[assignment]
     trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id=f"sample-loop-{failure_policy}"))

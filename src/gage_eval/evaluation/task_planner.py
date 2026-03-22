@@ -331,7 +331,7 @@ class StepExecutionContext:
             self.trace,
             support_payload_policy=self.support_payload_policy,
             execution_context=self.execution_context,
-            sandbox_provider=self.sandbox_provider,
+            sandbox_provider=self._role_payload_sandbox_provider(),
         )
 
     def execute_support_step(self, step) -> None:
@@ -344,7 +344,7 @@ class StepExecutionContext:
                 self.trace,
                 support_payload_policy=self.support_payload_policy,
                 execution_context=self.execution_context,
-                sandbox_provider=self.sandbox_provider,
+                sandbox_provider=self._role_payload_sandbox_provider(),
             )
         else:
             self.support.execute(
@@ -353,7 +353,7 @@ class StepExecutionContext:
                 self.trace,
                 support_payload_policy=self.support_payload_policy,
                 execution_context=self.execution_context,
-                sandbox_provider=self.sandbox_provider,
+                sandbox_provider=self._role_payload_sandbox_provider(),
             )
 
     def execute_inference(self) -> None:
@@ -363,7 +363,7 @@ class StepExecutionContext:
             self.role_manager,
             self.trace,
             execution_context=self.execution_context,
-            sandbox_provider=self.sandbox_provider,
+            sandbox_provider=self._role_payload_sandbox_provider(),
         )
         append_predict_result(self.sample, self._model_output)
 
@@ -376,7 +376,7 @@ class StepExecutionContext:
             self.role_manager,
             self.trace,
             execution_context=self.execution_context,
-            sandbox_provider=self.sandbox_provider,
+            sandbox_provider=self._role_payload_sandbox_provider(),
         )
         append_arena_contract(
             self.sample,
@@ -390,8 +390,10 @@ class StepExecutionContext:
             "sample": self.sample,
             "model_output": self._model_output or {},
             "trace": self.trace,
-            "sandbox_provider": self.sandbox_provider,
         }
+        role_payload_sandbox_provider = self._role_payload_sandbox_provider()
+        if role_payload_sandbox_provider is not None:
+            payload["sandbox_provider"] = role_payload_sandbox_provider
         self._judge_output = self.judge.execute(
             payload,
             self.role_manager,
@@ -414,6 +416,11 @@ class StepExecutionContext:
             trace=self.trace,
             task_id=self.metadata.get("task_id"),
         )
+
+    def _role_payload_sandbox_provider(self) -> Optional[SandboxProvider]:
+        if self.execution_context is not None:
+            return None
+        return self.sandbox_provider
 
 
 def _annotate_support_steps(steps: Sequence[Any]) -> Sequence[Any]:

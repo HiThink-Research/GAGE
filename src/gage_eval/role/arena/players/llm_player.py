@@ -486,12 +486,15 @@ class LLMPlayer:
 
         current = backend
         seen: set[int] = set()
-        while current is not None and hasattr(current, "_backend"):
+        while current is not None:
             current_id = id(current)
             if current_id in seen:
                 break
             seen.add(current_id)
-            current = getattr(current, "_backend", None)
+            state = getattr(current, "__dict__", None)
+            if not isinstance(state, dict) or "_backend" not in state:
+                break
+            current = state.get("_backend")
         return current
 
     @staticmethod

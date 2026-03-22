@@ -230,6 +230,7 @@ class SampleLoop:
         producer.start()
 
         futures: Set[Future[Any]] = set()
+        submit_window = self._submission_window(controller)
         try:
             while True:
                 if controller.should_stop_submitting():
@@ -256,7 +257,7 @@ class SampleLoop:
                 )
                 futures.add(future)
                 self._emit_buffer_state(trace, sample_queue, len(futures))
-                if len(futures) >= self._max_inflight:
+                if len(futures) >= submit_window:
                     self._drain_futures(futures, sample_queue, trace)
             if controller.should_stop_submitting():
                 if controller.failure_policy is not FailurePolicy.BEST_EFFORT:
@@ -299,20 +300,30 @@ class SampleLoop:
         trace: ObservabilityTrace,
         sample_identifier: str,
     ) -> None:
-        # STEP 1: Build sample-scoped execution context.
+        # STEP 1: Build sample-scoped sandbox/runtime state.
+        sandbox_provider = self._build_sandbox_provider(
+            plan,
+            sample,
+            role_manager,
+            trace,
+            sample_identifier,
+        )
+        # STEP 2: Build sample-scoped execution context.
         execution_context = self._build_execution_context(
             plan,
             sample,
             trace,
             sample_identifier,
+            sandbox_provider=sandbox_provider,
         )
-        # STEP 2: Execute plan within a per-sample session.
+        # STEP 3: Execute plan within a per-sample session.
         try:
             per_sample_ctx = plan.create_context(
                 sample,
                 trace,
                 role_manager,
                 execution_context=execution_context,
+                sandbox_provider=sandbox_provider,
             )
             with (
                 trace.use_sample(sample_identifier),
@@ -340,7 +351,7 @@ class SampleLoop:
                     if plan.auto_eval_enabled:
                         session.execute_auto_eval(sample_identifier)
         finally:
-            # STEP 3: Release all sample-scoped runtime resources.
+            # STEP 4: Release all sample-scoped runtime resources.
             execution_context.close()
 
     def _build_execution_context(
@@ -349,6 +360,8 @@ class SampleLoop:
         sample: dict,
         trace: ObservabilityTrace,
         sample_identifier: str,
+        *,
+        sandbox_provider: Optional[SandboxProvider] = None,
     ) -> SampleExecutionContext:
         return SampleExecutionContext(
             sample=sample,
@@ -364,6 +377,8 @@ class SampleLoop:
                 sample_id=sample_identifier,
                 trace=trace,
             ),
+            sandbox_provider=sandbox_provider,
+            owns_sandbox_provider=sandbox_provider is not None,
         )
 
     def _dispatch_step(
@@ -790,6 +805,11 @@ class SampleLoop:
                 "task_id": self._task_id,
             },
         )
+
+    def _submission_window(self, controller: TaskExecutionController) -> int:
+        if controller.failure_policy is FailurePolicy.FAIL_FAST:
+            return min(self._max_inflight, controller.sample_workers)
+        return self._max_inflight
 
     def _should_run_sequentially(self) -> bool:
         return self._sequential_override or self._concurrency <= 1
