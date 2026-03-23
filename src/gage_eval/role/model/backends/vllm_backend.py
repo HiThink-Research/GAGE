@@ -87,9 +87,12 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         self._engine_mm_support: Optional[bool] = None
         self._engine_runtime = None
         self._shutdown_lock = threading.Lock()
+        self._loop_start_lock = threading.Lock()
         self._shutdown_started = False
         self._shutdown_completed = False
         self._cleanup_unregister = lambda: None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
         if config.get("gpu_groups") is not None or config.get("auto_gpu_groups") is not None:
             raise ValueError(
                 "vllm_backend no longer supports gpu_groups/auto_gpu_groups router mode. "
@@ -109,12 +112,6 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         )
         self._mm_supported, self._mm_strategy, self._strict_mm = resolve_vllm_mm_support(config, self._vllm_version)
 
-        # Initialize a dedicated event loop thread to avoid deadlocks when vLLM spins loops internally.
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(target=self._run_loop, name="VLLMBackendLoop", daemon=True)
-        self._loop_thread.start()
-        self._cleanup_unregister = install_signal_cleanup(self.shutdown)
-
         try:
             super().__init__(cfg)
         except Exception:
@@ -122,8 +119,37 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             raise
 
     def _run_loop(self) -> None:
+        if self._loop is None:  # pragma: no cover - defensive guard
+            return
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
+
+    def _ensure_background_loop(self) -> asyncio.AbstractEventLoop:
+        """Start the background loop lazily so idle backends avoid extra threads."""
+
+        loop = self._loop
+        loop_thread = self._loop_thread
+        if loop is not None and loop_thread is not None and loop_thread.is_alive():
+            return loop
+        with self._loop_start_lock:
+            loop = self._loop
+            loop_thread = self._loop_thread
+            if loop is not None and loop_thread is not None and loop_thread.is_alive():
+                return loop
+            with self._shutdown_lock:
+                if self._shutdown_started or self._shutdown_completed:
+                    raise RuntimeError("vllm_backend background loop is unavailable after shutdown")
+            loop = asyncio.new_event_loop()
+            loop_thread = threading.Thread(
+                target=self._run_loop,
+                name="VLLMBackendLoop",
+                daemon=True,
+            )
+            self._loop = loop
+            self._loop_thread = loop_thread
+            loop_thread.start()
+            self._cleanup_unregister = install_signal_cleanup(self.shutdown)
+            return loop
 
     def shutdown(self) -> None:
         with self._shutdown_lock:
@@ -432,8 +458,9 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         # Submit to the background event loop thread and wait for completion.
         try:
             abort_fn = getattr(self.model, "abort", None)
+            loop = self._ensure_background_loop()
             return run_coroutine_threadsafe_with_timeout(
-                self._loop,
+                loop,
                 _async_generate(),
                 timeout=self._request_timeout,
                 request_id=request_id,
@@ -702,7 +729,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         return False
 
     def _resolve_mm_limits(self, config: Dict[str, Any], args: SimpleNamespace) -> Optional[Dict[str, int]]:
-        """Resolve explicit multi-modal limits or defer to the runtime defaults."""
+        """Resolve explicit multi-modal limits with a conservative backend default."""
 
         # STEP 1: Prefer explicit limits from backend config or normalized args.
         limit_cfg = config.get("limit_mm_per_prompt") or getattr(args, "limit_mm_per_prompt", None)
@@ -731,12 +758,14 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             logger.info("vllm_backend using multimodal limits source=env value={}", limits)
             return limits
 
-        # STEP 3: Defer to vLLM defaults when no explicit boundary is configured.
+        # STEP 3: Fall back to a conservative backend default instead of vLLM runtime defaults.
+        default_limits = {"image": 1}
         logger.info(
-            "vllm_backend using multimodal limits source=runtime_default value=<unset>; "
-            "set config.limit_mm_per_prompt to make the boundary explicit"
+            "vllm_backend using multimodal limits source=backend_default value={}; "
+            "set config.limit_mm_per_prompt to make the boundary explicit",
+            default_limits,
         )
-        return None
+        return default_limits
 
     def _init_tokenizer(self, config: Dict[str, Any]):
         return load_hf_tokenizer(config)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 
 DEFAULT_CHOICE_PATTERNS: tuple[str, ...] = (
@@ -21,7 +21,7 @@ CASE_SENSITIVE_CHOICE_PATTERNS: tuple[str, ...] = (
 
 
 def extract_single_choice_letter(
-    prediction: str,
+    prediction: Any,
     ignore_case: bool = True,
     patterns: Iterable[str] | None = None,
 ) -> str | None:
@@ -35,6 +35,11 @@ def extract_single_choice_letter(
     Returns:
         The last matched token, or ``None`` when no match is found.
     """
+
+    if prediction is None:
+        return None
+    if not isinstance(prediction, str):
+        prediction = str(prediction)
 
     if patterns is None:
         active_patterns = list(

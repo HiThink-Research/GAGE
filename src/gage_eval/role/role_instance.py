@@ -150,6 +150,8 @@ class Role:
         self._runtime = runtime
         self._history = history or ConversationHistory()
         self._invocation_binding: Optional[RoleInvocationBinding] = None
+        self._cached_history_policy: Optional[HistorySnapshotPolicy] = None
+        self._cached_invocation_overlay: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Conversation history helpers
@@ -186,11 +188,13 @@ class Role:
             sandbox_provider=sandbox_provider,
             execution_context=execution_context,
         )
+        self._cached_invocation_overlay = None
 
     def clear_invocation_binding(self) -> None:
         """Clear the transient invocation binding when the lease is released."""
 
         self._invocation_binding = None
+        self._cached_invocation_overlay = None
 
     def history_snapshot(
         self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
@@ -259,22 +263,45 @@ class Role:
             self._history.extend(delta)  # type: ignore[arg-type]
 
     def _resolve_history_policy(self) -> HistorySnapshotPolicy:
+        if self._cached_history_policy is not None:
+            return self._cached_history_policy
         params = getattr(self._adapter, "params", None)
         if isinstance(params, Mapping):
-            return HistorySnapshotPolicy.parse(params.get("history_policy"))
-        return HistorySnapshotPolicy()
+            self._cached_history_policy = HistorySnapshotPolicy.parse(
+                params.get("history_policy")
+            )
+        else:
+            self._cached_history_policy = HistorySnapshotPolicy()
+        return self._cached_history_policy
 
     def _apply_invocation_binding(self, prepared_payload: Dict[str, Any]) -> None:
-        if self._invocation_binding is None:
+        overlay = self._cached_binding_overlay()
+        if overlay is None:
             return
+        route_defaults = overlay.get("runtime_route")
         route_payload = dict(prepared_payload.get("runtime_route") or {})
-        for key, value in self._invocation_binding.route_decision.to_payload().items():
-            route_payload.setdefault(key, value)
-        prepared_payload["runtime_route"] = route_payload
+        if isinstance(route_defaults, Mapping):
+            for key, value in route_defaults.items():
+                route_payload.setdefault(key, value)
+            prepared_payload["runtime_route"] = route_payload
         if self._invocation_binding.sandbox_provider is not None:
             prepared_payload.setdefault(
                 "sandbox_provider", self._invocation_binding.sandbox_provider
             )
+        execution_context_payload = overlay.get("execution_context")
+        if isinstance(execution_context_payload, Mapping):
+            prepared_payload.setdefault(
+                "execution_context", dict(execution_context_payload)
+            )
+
+    def _cached_binding_overlay(self) -> Optional[Dict[str, Any]]:
+        if self._invocation_binding is None:
+            return None
+        if self._cached_invocation_overlay is not None:
+            return self._cached_invocation_overlay
+        overlay: Dict[str, Any] = {
+            "runtime_route": dict(self._invocation_binding.route_decision.to_payload())
+        }
         execution_context = self._invocation_binding.execution_context
         if execution_context is not None:
             payload = {
@@ -286,7 +313,9 @@ class Role:
             }
             if execution_context.step_slot_id is not None:
                 payload["step_slot_id"] = execution_context.step_slot_id
-            prepared_payload.setdefault("execution_context", payload)
+            overlay["execution_context"] = payload
+        self._cached_invocation_overlay = overlay
+        return overlay
 
     def _build_invoke_payload(
         self,

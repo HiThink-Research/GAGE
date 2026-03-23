@@ -4,7 +4,11 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from gage_eval.role.role_instance import ConversationHistory, Role
+from gage_eval.role.role_instance import (
+    ConversationHistory,
+    HistorySnapshotPolicy,
+    Role,
+)
 
 
 class RecordingAdapter:
@@ -141,3 +145,60 @@ def test_conversation_history_snapshot_clones_nested_message_content() -> None:
     snapshot[0]["content"][0]["text"] = "changed"
 
     assert history.snapshot()[0]["content"][0]["text"] == "hello"
+
+
+@pytest.mark.fast
+def test_role_caches_resolved_history_policy() -> None:
+    adapter = RecordingAdapter()
+    adapter.params = {  # type: ignore[attr-defined]
+        "history_policy": {
+            "copy_mode": "deep",
+            "window_messages": 2,
+        }
+    }
+    role = Role("adapter", adapter)
+
+    first = role._resolve_history_policy()
+    second = role._resolve_history_policy()
+
+    assert isinstance(first, HistorySnapshotPolicy)
+    assert first is second
+
+
+@pytest.mark.fast
+def test_role_invoke_caches_binding_overlay_but_copies_per_payload() -> None:
+    class _RouteDecision:
+        def __init__(self) -> None:
+            self.runtime_mode = "native"
+            self.calls = 0
+
+        def to_payload(self) -> Dict[str, Any]:
+            self.calls += 1
+            return {"runtime_mode": "native", "route_key": "route-1"}
+
+    class _ExecutionContext:
+        run_id = "run-1"
+        task_id = "task-1"
+        sample_id = "sample-1"
+        step_type = "inference"
+        adapter_id = "adapter"
+        step_slot_id = "slot-1"
+
+    adapter = RecordingAdapter()
+    role = Role("adapter", adapter)
+    route_decision = _RouteDecision()
+    role.attach_invocation_binding(route_decision, execution_context=_ExecutionContext())
+
+    role.invoke({}, trace=None)
+    first_payload = adapter.received_payload
+    assert first_payload is not None
+    first_payload["runtime_route"]["route_key"] = "mutated"
+    first_payload["execution_context"]["run_id"] = "changed"
+
+    role.invoke({}, trace=None)
+    second_payload = adapter.received_payload
+
+    assert second_payload is not None
+    assert route_decision.calls == 1
+    assert second_payload["runtime_route"]["route_key"] == "route-1"
+    assert second_payload["execution_context"]["run_id"] == "run-1"

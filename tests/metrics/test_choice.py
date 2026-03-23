@@ -34,5 +34,9 @@ class ChoiceTests(unittest.TestCase):
         ch = extract_single_choice_letter("answer: a", ignore_case=False)
         self.assertIsNone(ch)
 
+    def test_choice_returns_none_for_missing_prediction(self):
+        ch = extract_single_choice_letter(None)
+        self.assertIsNone(ch)
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,7 +27,10 @@ class _FakeLitellm(types.SimpleNamespace):
         self.headers = None
 
     def completion(self, **kwargs):
-        self.calls.append(kwargs)
+        payload = dict(kwargs)
+        payload["_drop_params"] = self.drop_params
+        payload["_verbose"] = self.verbose
+        self.calls.append(payload)
         if self.raise_error:
             raise RuntimeError("litellm failure")
         return self.response
@@ -71,6 +74,29 @@ class LiteLLMBackendTests(unittest.TestCase):
         self.assertEqual(fake_litellm.calls[1]["api_key"], "key-b")
         self.assertEqual(fake_litellm.calls[1]["api_base"], "https://api-b.example/v1")
         self.assertEqual(fake_litellm.calls[1]["headers"]["Authorization"], "Bearer beta")
+
+    def test_litellm_backend_does_not_mutate_module_flags_during_init(self):
+        fake_litellm = _FakeLitellm()
+        fake_litellm.drop_params = "keep-drop"
+        fake_litellm.verbose = "keep-verbose"
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            LiteLLMBackend({"model": "gpt-4o-mini"})
+
+        self.assertEqual(fake_litellm.drop_params, "keep-drop")
+        self.assertEqual(fake_litellm.verbose, "keep-verbose")
+
+    def test_litellm_backend_restores_module_flags_after_request(self):
+        fake_litellm = _FakeLitellm()
+        fake_litellm.drop_params = "persist-drop"
+        fake_litellm.verbose = "persist-verbose"
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend({"model": "gpt-4o-mini", "verbose": True})
+            backend.generate({"messages": [{"role": "user", "content": "ping"}]})
+
+        self.assertEqual(fake_litellm.calls[0]["_drop_params"], True)
+        self.assertEqual(fake_litellm.calls[0]["_verbose"], True)
+        self.assertEqual(fake_litellm.drop_params, "persist-drop")
+        self.assertEqual(fake_litellm.verbose, "persist-verbose")
 
     def test_litellm_backend_merges_sampling_and_headers(self):
         fake_litellm = _FakeLitellm()

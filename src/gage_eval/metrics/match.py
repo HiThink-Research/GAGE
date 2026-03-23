@@ -1,3 +1,6 @@
+import re
+from typing import Any, Literal
+
 from gage_eval.metrics.utils import (
     strip_numeric_punctuation,
     strip_punctuation,
@@ -8,19 +11,22 @@ from gage_eval.metrics.numeric import (
 from gage_eval.metrics.unicode import (
     unicode_number_to_float  
 )
-from typing import Any, Dict, Optional, Literal
+
+
+def _coerce_text(value: Any) -> str:
+    return "" if value is None else str(value)
 
 def match_str(
-    value: str,
-    target: str,
+    value: Any,
+    target: Any,
     location: Literal["begin", "end", "any", "exact"] = "end",
     ignore_case: bool = True,
     ignore_punctuation: bool = True,
     numeric: bool = False,
 ) -> tuple[str, bool]:
     # strip ws
-    v = value.strip()
-    t = target.strip()
+    v = _coerce_text(value).strip()
+    t = _coerce_text(target).strip()
 
     # baseline answer (will only change for numeric)
     answer = v

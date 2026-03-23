@@ -40,12 +40,16 @@ class JudgeModelAdapter(ModelRoleAdapter):
         model_output = resolve_model_output(sample, payload.get("model_output"))
         rendered = self.render_prompt(payload)
         question = rendered.prompt or sample.get("question") or sample.get("prompt") or sample.get("text") or ""
+        messages = rendered.messages
+        if messages is None and rendered.prompt:
+            messages = [{"role": "user", "content": rendered.prompt}]
         request = {
             "sample": sample,
             "question": question,
+            "prompt": question,
             "answer": model_output.get("answer"),
             "model_output": model_output,
-            "messages": rendered.messages,
+            "messages": messages,
         }
         if rendered.metadata:
             request["prompt_meta"] = rendered.metadata
