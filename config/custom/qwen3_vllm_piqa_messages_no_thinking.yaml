@@ -1,0 +1,60 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: qwen3_vllm_piqa_messages_no_thinking
+  description: Validate Qwen3 no-thinking mode with raw messages on the local vllm backend.
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: piqa_vllm_messages
+    loader: jsonl
+    params:
+      path: ./tests/fixtures/piqa_10_vllm_messages.jsonl
+
+backends:
+  - backend_id: qwen3_vllm_no_thinking_backend
+    type: vllm
+    config:
+      model_path: /Users/shuo/models/Qwen3-0.6B
+      tokenizer_path: /Users/shuo/models/Qwen3-0.6B
+      tensor_parallel_size: 1
+      max_tokens: 256
+      sampling_params:
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+      max_batch_size: 1
+      max_model_len: 2048
+      async_max_concurrency: 1
+      output_type: text
+      chat_template_kwargs:
+        enable_thinking: false
+
+role_adapters:
+  - adapter_id: dut_qwen3_vllm_no_thinking_messages
+    role_type: dut_model
+    backend_id: qwen3_vllm_no_thinking_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: piqa_acc
+    implementation: multi_choice_accuracy
+  - metric_id: latency
+    implementation: latency
+
+tasks:
+  - task_id: piqa_messages_eval
+    dataset_id: piqa_vllm_messages
+    max_samples: 10
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/qwen3_vllm_piqa_messages_no_thinking_events.jsonl

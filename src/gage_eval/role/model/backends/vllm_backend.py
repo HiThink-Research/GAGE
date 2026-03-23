@@ -164,6 +164,8 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         """Normalize inbound payloads and attach chat/multimodal metadata."""
 
         ctx = normalize_request_payload(payload, request_prefix="vllm")
+        chat_template_kwargs = dict(getattr(self, "_resolved_thinking_kwargs", {}) or {})
+        chat_template_kwargs.update(ctx.chat_template_kwargs or {})
         prepared: Dict[str, Any] = {
             "sample": ctx.sample,
             "messages": ctx.messages or [],
@@ -171,7 +173,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             "prompt": ctx.prompt or (ctx.inputs.get("prompt") if isinstance(ctx.inputs, dict) else "") or "",
             "prompt_meta": ctx.prompt_meta or {},
             "cache_namespace": ctx.cache_namespace,
-            "chat_template_kwargs": ctx.chat_template_kwargs or {},
+            "chat_template_kwargs": chat_template_kwargs,
             "output_type": ctx.output_type or "text",
             "sampling_params": ctx.sampling_params or {},
             "sample_n": max(int(ctx.sample_n or 1), 1),

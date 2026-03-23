@@ -74,6 +74,47 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
         self.assertEqual(out["prompt"], "templated_backend")
         self.assertEqual(out.get("cache_suffix"), "-chat_template")
 
+    def test_backend_default_chat_template_kwargs_are_applied(self):
+        backend = make_backend(
+            {
+                "model_path": "repo",
+                "use_chat_template": "auto",
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+        )
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                return str(kwargs.get("enable_thinking"))
+
+        backend._tokenizer = FakeTokenizer()
+        out = backend.prepare_inputs({"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(out["prompt"], "False")
+        self.assertEqual(out["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_payload_chat_template_kwargs_override_backend_defaults(self):
+        backend = make_backend(
+            {
+                "model_path": "repo",
+                "use_chat_template": "auto",
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+        )
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                return str(kwargs.get("enable_thinking"))
+
+        backend._tokenizer = FakeTokenizer()
+        out = backend.prepare_inputs(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "chat_template_kwargs": {"enable_thinking": True},
+            }
+        )
+        self.assertEqual(out["prompt"], "True")
+        self.assertEqual(out["chat_template_kwargs"], {"enable_thinking": True})
+
     def test_init_tokenizer_falls_back_to_model_path(self):
         backend = make_backend({"model_path": "repo"})
         # Patch transformers.AutoTokenizer

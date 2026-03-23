@@ -65,17 +65,28 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
     def _filter_fields(data: Dict[str, Any], allowed_keys) -> Dict[str, Any]:
         return {k: v for k, v in data.items() if k in allowed_keys}
 
-    def build_message(msg: Dict[str, Any]) -> Message:
-        raw_content = msg.get("content") or []
+    def _normalize_message_content(raw_content: Any) -> List[MessageContent]:
+        if raw_content is None:
+            return []
         if isinstance(raw_content, dict):
-            raw_content = [raw_content]
+            raw_fragments = [raw_content]
+        elif isinstance(raw_content, list):
+            raw_fragments = raw_content
+        else:
+            raw_fragments = [raw_content]
+
         normalized_content: List[MessageContent] = []
-        for frag in raw_content:
+        for frag in raw_fragments:
             if isinstance(frag, dict):
                 safe = _filter_fields(frag, MessageContent.__dataclass_fields__.keys())
                 normalized_content.append(MessageContent(**safe))
             else:
                 normalized_content.append(MessageContent(type="text", text=str(frag)))
+        return normalized_content
+
+    def build_message(msg: Dict[str, Any]) -> Message:
+        raw_content = msg.get("content")
+        normalized_content = _normalize_message_content(raw_content)
         extras = {k: msg.get(k) for k in ("tool_calls", "tool_use", "model_output", "path", "name") if k in msg}
         return Message(role=msg.get("role", "user"), content=normalized_content, **extras)
 
