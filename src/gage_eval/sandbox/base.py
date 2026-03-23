@@ -44,6 +44,24 @@ class BaseSandbox:
 
         raise NotImplementedError
 
+    @classmethod
+    def cleanup_stale_runtime(
+        cls,
+        config: Dict[str, Any],
+        runtime_handle: Dict[str, Any],
+    ) -> bool:  # pragma: no cover - optional
+        """Clean up stale runtime resources from a previous crashed process.
+
+        Args:
+            config: Persisted sandbox configuration snapshot.
+            runtime_handle: Persisted runtime handle snapshot.
+
+        Returns:
+            True when no further retry is needed for this lease.
+        """
+
+        return True
+
 
 class SandboxOptionalMixin:
     """Optional sandbox capabilities (health checks, renewals, file I/O)."""

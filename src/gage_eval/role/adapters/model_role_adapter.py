@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
 from gage_eval.role.model.backends import build_backend, wrap_backend
+from gage_eval.role.model.backends.base_backend import Backend as ModelBackendBase
 from gage_eval.registry import ensure_async, run_sync
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 
@@ -36,12 +37,14 @@ class ModelRoleAdapter(RoleAdapter):
     def _resolve_backend(self, backend: Any):
         if backend is None:
             raise ValueError(f"RoleAdapter '{self.adapter_id}' requires a backend configuration or instance")
+        if isinstance(backend, ModelBackendBase):
+            return wrap_backend(backend)
+        if isinstance(backend, dict):
+            return wrap_backend(build_backend(backend))
         if hasattr(backend, "__call__"):
             return backend
         if hasattr(backend, "generate") or hasattr(backend, "generate_batch"):
             return backend
-        if isinstance(backend, dict):
-            return wrap_backend(build_backend(backend))
         raise TypeError(f"Unsupported backend specification for adapter '{self.adapter_id}': {backend!r}")
 
     # ------------------------------------------------------------------

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import os
 from pathlib import Path
 import time
@@ -26,6 +27,7 @@ _DEFAULT_DEBUG_IMAGE_DUMP_STRIDE = 1
 _ENV_DEBUG_IMAGE_DUMP_DIR = "GAGE_ARENA_DEBUG_IMAGE_DUMP_DIR"
 _ENV_DEBUG_IMAGE_DUMP_MAX = "GAGE_ARENA_DEBUG_IMAGE_DUMP_MAX"
 _ENV_DEBUG_IMAGE_DUMP_STRIDE = "GAGE_ARENA_DEBUG_IMAGE_DUMP_STRIDE"
+_MISSING = object()
 
 
 class LLMPlayer:
@@ -124,12 +126,12 @@ class LLMPlayer:
         """Produce an action using the LLM adapter."""
 
         prompt_text = self._format_observation(observation)
-        image_fragment = self._build_image_fragment(observation)
+        image_fragments = self._build_image_fragments(observation)
         logger.debug("LLMPlayer {} observation prompt seed (text-only):\n{}", self.name, prompt_text)
         messages = self._build_turn_messages(
             observation=observation,
             prompt_text=prompt_text,
-            image_fragment=image_fragment,
+            image_fragments=image_fragments,
         )
         self._log_request_media_summary(
             observation=observation,
@@ -157,7 +159,7 @@ class LLMPlayer:
             retry_messages = self._build_turn_messages(
                 observation=observation,
                 prompt_text=rethink_prompt,
-                image_fragment=image_fragment,
+                image_fragments=image_fragments,
                 retry_reason=parse_result.error,
                 last_output=raw_text,
             )
@@ -468,7 +470,9 @@ class LLMPlayer:
         if not callable(adapter_getter):
             return True
         adapter = adapter_getter(self._adapter_id)
-        backend = self._unwrap_backend_proxy(getattr(adapter, "backend", None))
+        backend = self._unwrap_backend_proxy(
+            self._get_static_attr(adapter, "backend", default=None)
+        )
         if backend is None:
             return True
         backend_cls = backend.__class__
@@ -491,11 +495,30 @@ class LLMPlayer:
             if current_id in seen:
                 break
             seen.add(current_id)
-            state = getattr(current, "__dict__", None)
-            if not isinstance(state, dict) or "_backend" not in state:
+            next_backend = LLMPlayer._get_static_attr(
+                current,
+                "_backend",
+                default=_MISSING,
+            )
+            if next_backend is _MISSING or next_backend is current:
                 break
-            current = state.get("_backend")
+            current = next_backend
         return current
+
+    @staticmethod
+    def _get_static_attr(target: Any, attr_name: str, *, default: Any) -> Any:
+        """Read one attribute without triggering dynamic mock expansion."""
+
+        try:
+            marker = inspect.getattr_static(target, attr_name, _MISSING)
+        except Exception:
+            return default
+        if marker is _MISSING:
+            return default
+        try:
+            return getattr(target, attr_name)
+        except Exception:
+            return default
 
     @staticmethod
     def _serialize_messages_for_trace(messages: Sequence[Dict[str, Any]]) -> list[Dict[str, Any]]:
@@ -625,7 +648,8 @@ class LLMPlayer:
         *,
         observation: ArenaObservation,
         prompt_text: str,
-        image_fragment: Optional[Dict[str, Any]],
+        image_fragments: Optional[Sequence[Dict[str, Any]]] = None,
+        image_fragment: Optional[Dict[str, Any]] = None,
         retry_reason: Optional[str] = None,
         last_output: Optional[str] = None,
     ) -> list[Dict[str, Any]]:
@@ -635,6 +659,7 @@ class LLMPlayer:
             base_messages=self._base_messages,
             observation=observation,
             prompt_text=prompt_text,
+            image_fragments=image_fragments,
             image_fragment=image_fragment,
             retry_reason=retry_reason,
             last_output=last_output,
@@ -658,6 +683,7 @@ class LLMPlayer:
         last_output: Optional[str],
         legacy_messages: Sequence[Dict[str, Any]],
         has_image: bool,
+        image_count: int = 0,
     ) -> Dict[str, Any]:
         return self._prompt_composer.build_prompt_payload(
             player_id=self.name,
@@ -668,6 +694,7 @@ class LLMPlayer:
             last_output=last_output,
             legacy_messages=legacy_messages,
             has_image=has_image,
+            image_count=image_count,
         )
 
     @staticmethod
@@ -710,6 +737,19 @@ class LLMPlayer:
         )
 
     @staticmethod
+    def _append_image_fragments(
+        messages: Sequence[Dict[str, Any]],
+        *,
+        image_fragments: Optional[Sequence[Dict[str, Any]]],
+        fallback_text: str,
+    ) -> list[Dict[str, Any]]:
+        return ArenaPromptComposer.append_image_fragments(
+            messages,
+            image_fragments=image_fragments,
+            fallback_text=fallback_text,
+        )
+
+    @staticmethod
     def _has_user_message(messages: Sequence[Dict[str, Any]]) -> bool:
         return ArenaPromptComposer.has_user_message(messages)
 
@@ -718,18 +758,31 @@ class LLMPlayer:
         return ArenaPromptComposer.has_image_content(content)
 
     @staticmethod
-    def _build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        return ArenaPromptComposer.build_user_message(text, image_fragment)
+    def _build_user_message(
+        text: str,
+        image_fragment: Optional[Dict[str, Any]] = None,
+        image_fragments: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        return ArenaPromptComposer.build_user_message(
+            text,
+            image_fragment=image_fragment,
+            image_fragments=image_fragments,
+        )
+
+    def _build_image_fragments(self, observation: ArenaObservation) -> list[Dict[str, Any]]:
+        image_fragments = self._prompt_composer.build_image_fragments(observation)
+        for fragment in image_fragments:
+            image_url = fragment.get("image_url")
+            data_url = image_url.get("url") if isinstance(image_url, dict) else None
+            if isinstance(data_url, str):
+                self._maybe_dump_request_image(observation=observation, data_url=data_url)
+        return image_fragments
 
     def _build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
-        image_fragment = self._prompt_composer.build_image_fragment(observation)
-        if not image_fragment:
+        image_fragments = self._build_image_fragments(observation)
+        if not image_fragments:
             return None
-        image_url = image_fragment.get("image_url")
-        data_url = image_url.get("url") if isinstance(image_url, dict) else None
-        if isinstance(data_url, str):
-            self._maybe_dump_request_image(observation=observation, data_url=data_url)
-        return image_fragment
+        return image_fragments[-1]
 
     def _resolve_image_data_url(self, image: Any) -> Optional[str]:
         return self._prompt_composer.resolve_image_data_url(image)

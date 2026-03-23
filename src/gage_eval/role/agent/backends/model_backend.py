@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 from typing import Any, Dict, List, Optional
 
-from gage_eval.registry.utils import run_sync
+from gage_eval.registry.utils import ensure_async, run_sync
 from gage_eval.role.agent.backends.base import AgentBackend, normalize_agent_output
 from gage_eval.role.model.backends import build_backend, wrap_backend
 from gage_eval.role.model.backends.base_backend import Backend as ModelBackendBase
@@ -29,12 +28,13 @@ class ModelBackend(AgentBackend):
 
     def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
-        response = _call_backend(self._backend, request)
-        result = normalize_agent_output(response)
-        tool_calls = _extract_tool_calls(response)
-        if tool_calls:
-            result["tool_calls"] = tool_calls
-        return result
+        response = _call_backend_sync(self._backend, request)
+        return _normalize_backend_response(response)
+
+    async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
+        response = await _call_backend_async(self._backend, request)
+        return _normalize_backend_response(response)
 
 
 def _build_backend_request(
@@ -66,16 +66,45 @@ def _build_backend_request(
     return request
 
 
-def _call_backend(backend: Any, request: Dict[str, Any]) -> Any:
+def _call_backend_sync(backend: Any, request: Dict[str, Any]) -> Any:
     async_backend_call = getattr(backend, "ainvoke", None)
-    if async_backend_call:
-        return _run_async(async_backend_call(request))
+    if callable(async_backend_call):
+        _raise_if_active_event_loop()
+        return run_sync(async_backend_call(request))
     backend_call = getattr(backend, "invoke", None)
     if callable(backend_call):
         return backend_call(request)
     if callable(backend):
         return backend(request)
     raise RuntimeError("model_backend_missing_invoke")
+
+
+async def _call_backend_async(backend: Any, request: Dict[str, Any]) -> Any:
+    async_backend_call = getattr(backend, "ainvoke", None)
+    if callable(async_backend_call):
+        return await async_backend_call(request)
+    backend_call = getattr(backend, "invoke", None)
+    if callable(backend_call):
+        return await ensure_async(backend_call)(request)
+    if callable(backend):
+        return await ensure_async(backend)(request)
+    raise RuntimeError("model_backend_missing_invoke")
+
+
+def _normalize_backend_response(response: Any) -> Dict[str, Any]:
+    result = normalize_agent_output(response)
+    tool_calls = _extract_tool_calls(response)
+    if tool_calls:
+        result["tool_calls"] = tool_calls
+    return result
+
+
+def _raise_if_active_event_loop() -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError("run_sync() cannot be used inside an active event loop")
 
 
 def _extract_tool_calls(response: Any) -> List[Dict[str, Any]]:
@@ -86,32 +115,6 @@ def _extract_tool_calls(response: Any) -> List[Dict[str, Any]]:
         return tool_calls
     raw = response.get("raw_response") or response.get("response") or response.get("data")
     return _extract_from_raw(raw)
-
-
-def _run_async(awaitable):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return run_sync(awaitable)
-    return _run_async_in_thread(awaitable)
-
-
-def _run_async_in_thread(awaitable):
-    result: Dict[str, Any] = {}
-    error: Dict[str, BaseException] = {}
-
-    def runner() -> None:
-        try:
-            result["value"] = asyncio.run(awaitable)
-        except BaseException as exc:
-            error["value"] = exc
-
-    thread = threading.Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join()
-    if error:
-        raise error["value"]
-    return result.get("value")
 
 
 def _extract_from_raw(raw: Any) -> List[Dict[str, Any]]:

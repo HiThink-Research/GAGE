@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Dict, Sequence, Optional, List
 
@@ -62,6 +63,7 @@ class RoleAdapter:
     def invoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
         """Synchronous facade retained while the runtime is refactored to asyncio."""
 
+        _raise_if_active_event_loop()
         return run_sync(self.ainvoke(payload, state))
 
     # ------------------------------------------------------------------
@@ -99,3 +101,11 @@ class RoleAdapter:
         """
 
         return response
+
+
+def _raise_if_active_event_loop() -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError("run_sync() cannot be used inside an active event loop")

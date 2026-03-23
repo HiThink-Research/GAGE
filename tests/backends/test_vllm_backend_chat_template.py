@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(ROOT) not in sys.path:
@@ -10,14 +11,15 @@ from gage_eval.role.model.backends.vllm_backend import VLLMBackend
 
 
 class DummyModel:
-    pass
+    def generate(self, *args, **kwargs):
+        return "ok"
 
 
-def make_backend(config):
+def make_backend(config, model=None):
     """Create backend without loading real vLLM."""
 
     orig_load = VLLMBackend.load_model
-    VLLMBackend.load_model = lambda self, cfg: DummyModel()
+    VLLMBackend.load_model = lambda self, cfg: model or DummyModel()
     try:
         backend = VLLMBackend(config)
     finally:
@@ -72,6 +74,47 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
         self.assertEqual(out["prompt"], "templated_backend")
         self.assertEqual(out.get("cache_suffix"), "-chat_template")
 
+    def test_backend_default_chat_template_kwargs_are_applied(self):
+        backend = make_backend(
+            {
+                "model_path": "repo",
+                "use_chat_template": "auto",
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+        )
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                return str(kwargs.get("enable_thinking"))
+
+        backend._tokenizer = FakeTokenizer()
+        out = backend.prepare_inputs({"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(out["prompt"], "False")
+        self.assertEqual(out["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_payload_chat_template_kwargs_override_backend_defaults(self):
+        backend = make_backend(
+            {
+                "model_path": "repo",
+                "use_chat_template": "auto",
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+        )
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                return str(kwargs.get("enable_thinking"))
+
+        backend._tokenizer = FakeTokenizer()
+        out = backend.prepare_inputs(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "chat_template_kwargs": {"enable_thinking": True},
+            }
+        )
+        self.assertEqual(out["prompt"], "True")
+        self.assertEqual(out["chat_template_kwargs"], {"enable_thinking": True})
+
     def test_init_tokenizer_falls_back_to_model_path(self):
         backend = make_backend({"model_path": "repo"})
         # Patch transformers.AutoTokenizer
@@ -93,6 +136,71 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
             sys.modules.pop("transformers", None)
         self.assertIsInstance(tok, DummyTokenizer)
         self.assertEqual(called.get("name"), "repo")
+
+    def test_force_tokenize_normalizes_dict_prompt_token_ids(self):
+        backend = make_backend({"model_path": "repo", "force_tokenize_prompt": True})
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                if kwargs.get("tokenize"):
+                    return {"input_ids": [101, 102, 103]}
+                return "templated_with_ids"
+
+        backend._tokenizer = FakeTokenizer()
+        payload = {"messages": [{"role": "user", "content": "hi"}]}
+        out = backend.prepare_inputs(payload)
+        self.assertEqual(out["prompt"], "templated_with_ids")
+        self.assertEqual(out["inputs"]["prompt_token_ids"], [101, 102, 103])
+
+    def test_generate_normalizes_dict_prompt_token_ids_from_inputs(self):
+        class RecordingModel(DummyModel):
+            def __init__(self):
+                self.last_args = None
+                self.last_kwargs = None
+
+            def generate(self, *args, **kwargs):
+                self.last_args = args
+                self.last_kwargs = kwargs
+                return "ok"
+
+        model = RecordingModel()
+        backend = make_backend({"model_path": "repo"}, model=model)
+        prepared = {
+            "prompt": "hello",
+            "messages": [{"role": "user", "content": "hello"}],
+            "inputs": {
+                "prompt": "hello",
+                "prompt_token_ids": {"input_ids": [11, 12, 13]},
+            },
+        }
+
+        backend._generate_one(prepared, sampling_params={"temperature": 0.0}, request_id="req_1")
+
+        self.assertIsNotNone(model.last_kwargs)
+        self.assertTrue(model.last_args)
+        prompt_input = model.last_args[0]
+        self.assertEqual(prompt_input["prompt_token_ids"], [11, 12, 13])
+        self.assertNotIn("input_ids", prompt_input)
+        self.assertEqual(model.last_kwargs["sampling_params"], {"temperature": 0.0})
+        self.assertEqual(model.last_kwargs["request_id"], "req_1")
+
+    def test_refresh_engine_mm_support_accepts_engine_before_model_assignment(self):
+        backend = object.__new__(VLLMBackend)
+        backend._engine_mm_support = None
+        backend._model_supports_mm = True
+
+        engine = object()
+        with patch("gage_eval.role.model.backends.vllm_backend._prime_vllm_engine_renderer_state") as prime, patch(
+            "gage_eval.role.model.backends.vllm_backend._detect_vllm_engine_multimodal_support",
+            return_value=True,
+        ) as detect:
+            result = VLLMBackend._refresh_engine_mm_support(backend, require_mm_processor=False, engine=engine)
+
+        prime.assert_called_once_with(engine, require_mm_processor=False)
+        detect.assert_called_once_with(engine)
+        self.assertTrue(result)
+        self.assertTrue(backend._engine_mm_support)
+        self.assertTrue(backend._model_supports_mm)
 
 
 if __name__ == "__main__":

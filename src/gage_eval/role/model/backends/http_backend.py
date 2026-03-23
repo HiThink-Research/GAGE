@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 import requests
 from threading import Lock
 from typing import Any, Dict
@@ -21,8 +23,9 @@ class HTTPGenerationBackend(EngineBackend):
     """Backend that proxies prompts to an HTTP generation endpoint."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        self._session = requests.Session()
-        self._lock = Lock()
+        self._session_local = threading.local()
+        self._session_registry: list[requests.Session] = []
+        self._session_registry_lock = Lock()
         super().__init__(config)
 
     def load_model(self, config: Dict[str, Any]):
@@ -39,15 +42,29 @@ class HTTPGenerationBackend(EngineBackend):
     def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         payload = self._build_request(inputs)
         url = f"{self.base_url}{self.endpoint}"
-        with self._lock:
-            response = self._session.post(url, json=payload, headers=self.headers, timeout=self.timeout)
+        response = self._get_session().post(url, json=payload, headers=self.headers, timeout=self.timeout)
         response.raise_for_status()
         data = response.json()
         text = self._extract_text(data)
         return {"answer": text, "raw_response": data}
 
     def close(self) -> None:
-        self._session.close()
+        with self._session_registry_lock:
+            sessions = list(self._session_registry)
+            self._session_registry.clear()
+        for session in sessions:
+            session.close()
+
+    def _get_session(self) -> requests.Session:
+        session = getattr(self._session_local, "session", None)
+        if session is not None:
+            return session
+
+        session = requests.Session()
+        self._session_local.session = session
+        with self._session_registry_lock:
+            self._session_registry.append(session)
+        return session
 
     def _build_request(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         prompt = inputs.get("prompt") or ""

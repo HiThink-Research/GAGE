@@ -27,5 +27,8 @@ class MultiProviderHTTPBackendConfig(BackendConfigBase):
     org_to_bill: Optional[str] = None
     token: Optional[str] = Field(default=None, description="HF API token (fallback to HF_API_TOKEN env)")
     parallel_calls_count: int = Field(default=4, ge=1)
-    http_retry_params: Dict[str, Any] = Field(default_factory=dict)
+    http_retry_params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Native HTTP retry config for inference providers, supports max_retries/base_sleep/multiplier",
+    )
     generation_parameters: GenerationParameters = Field(default_factory=GenerationParameters)

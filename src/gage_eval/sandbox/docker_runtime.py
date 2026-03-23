@@ -49,6 +49,9 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
         self._config = dict(config or {})
         merged_runtime = dict(self._runtime_configs)
         merged_runtime.update(self._config.get("runtime_configs", {}) or {})
+        managed_labels = _build_managed_labels(self._config)
+        if managed_labels:
+            merged_runtime["labels"] = _merge_labels(merged_runtime.get("labels"), managed_labels)
         self._runtime_configs = normalize_runtime_configs(merged_runtime)
 
         image = self._resolve_image()
@@ -94,6 +97,25 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
             self.teardown()
             raise
         return runtime_handle
+
+    @classmethod
+    def cleanup_stale_runtime(
+        cls,
+        config: Dict[str, Any],
+        runtime_handle: Dict[str, Any],
+    ) -> bool:
+        """Clean up a stale Docker container recorded in a persisted lease."""
+
+        runtime_configs = normalize_runtime_configs(dict(config.get("runtime_configs", {}) or {}))
+        docker_bin = str(runtime_configs.get("docker_bin") or "docker")
+        if not _docker_available(docker_bin):
+            return False
+        target = _resolve_cleanup_target(config, runtime_handle)
+        if not target:
+            return True
+        stop_timeout = int(runtime_configs.get("stop_timeout_s", _DEFAULT_STOP_TIMEOUT_S))
+        _cleanup_container(docker_bin, target, stop_timeout_s=stop_timeout)
+        return True
 
     def exec(self, command: str, timeout: int = 30) -> ExecResult:
         start = time.perf_counter()
@@ -367,6 +389,8 @@ def build_docker_run_command(
         args.append("--rm")
     if container_name:
         args.extend(["--name", container_name])
+    for label in _normalize_labels(runtime_configs.get("labels")):
+        args.extend(["--label", label])
     platform = runtime_configs.get("platform")
     if platform:
         args.extend(["--platform", str(platform)])
@@ -504,6 +528,22 @@ def _normalize_extra_hosts(raw: Any) -> List[str]:
     return [str(raw)]
 
 
+def _normalize_labels(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    labels: List[str] = []
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if value is None:
+                labels.append(str(key))
+            else:
+                labels.append(f"{key}={value}")
+        return labels
+    if isinstance(raw, (list, tuple)):
+        return [str(entry) for entry in raw]
+    return [str(raw)]
+
+
 def _normalize_list(raw: Any) -> List[str]:
     if raw is None:
         return []
@@ -520,6 +560,74 @@ def _normalize_command(raw: Any) -> List[str]:
     if isinstance(raw, (list, tuple)):
         return [str(item) for item in raw if item is not None]
     return [str(raw)]
+
+
+def _merge_labels(raw: Any, extra: Dict[str, str]) -> Dict[str, Optional[str]]:
+    merged: Dict[str, Optional[str]] = {}
+    for label in _normalize_labels(raw):
+        if "=" in label:
+            key, value = label.split("=", 1)
+            merged[key] = value
+        else:
+            merged[label] = None
+    for key, value in extra.items():
+        merged[str(key)] = str(value)
+    return merged
+
+
+def _build_managed_labels(config: Dict[str, Any]) -> Dict[str, str]:
+    metadata = config.get("_gage_managed_metadata")
+    if not isinstance(metadata, dict) or not metadata.get("managed"):
+        return {}
+    labels = {"gage_eval.managed": "true"}
+    for source_key, label_key in (
+        ("runtime", "gage_eval.runtime"),
+        ("sandbox_id", "gage_eval.sandbox_id"),
+        ("pool_key", "gage_eval.pool_key"),
+        ("run_id", "gage_eval.run_id"),
+        ("task_id", "gage_eval.task_id"),
+        ("sample_id", "gage_eval.sample_id"),
+        ("owner_pid", "gage_eval.owner_pid"),
+        ("created_at", "gage_eval.created_at"),
+    ):
+        value = metadata.get(source_key)
+        if value is not None and value != "":
+            labels[label_key] = str(value)
+    return labels
+
+
+def _resolve_cleanup_target(config: Dict[str, Any], runtime_handle: Dict[str, Any]) -> Optional[str]:
+    for key in ("container_id", "container_name"):
+        value = runtime_handle.get(key) or config.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _cleanup_container(
+    docker_bin: str,
+    target: str,
+    *,
+    stop_timeout_s: int,
+) -> None:
+    subprocess.run(
+        [docker_bin, "stop", "-t", str(stop_timeout_s), target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    completed = subprocess.run(
+        [docker_bin, "rm", "-f", target],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return
+    error = (completed.stderr or completed.stdout).strip()
+    if "No such container" in error:
+        return
+    raise RuntimeError(f"docker_rm_failed: {error}")
 
 
 def _resolve_wait_endpoints(

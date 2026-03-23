@@ -7,6 +7,8 @@ import time
 from queue import Queue
 from typing import Any, Optional
 
+from loguru import logger
+
 from gage_eval.role.arena.action_trace import (
     resolve_trace_action_applied,
     sanitize_trace_action_metadata,
@@ -317,7 +319,12 @@ def think_with_timeout(
     if timeout_ms is None:
         try:
             return player.think(observation), False, None
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Scheduler think failed for player {} without timeout: {}",
+                getattr(player, "name", "<unknown>"),
+                exc,
+            )
             return None, False, "think_exception"
 
     timeout_s = max(0.0, float(timeout_ms) / 1000.0)
@@ -345,6 +352,11 @@ def think_with_timeout(
     tag, payload = result_queue.get_nowait()
     if tag == "ok":
         return payload, False, None
+    logger.warning(
+        "Scheduler think failed for player {} under timeout control: {}",
+        getattr(player, "name", "<unknown>"),
+        payload,
+    )
     return None, False, "think_exception"
 
 
@@ -378,7 +390,12 @@ def _think_with_async_action_api(
 
     try:
         start_thinking(observation, deadline_ms=timeout_ms)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Scheduler async think start failed for player {}: {}",
+            getattr(player, "name", "<unknown>"),
+            exc,
+        )
         return None, False, "think_exception"
 
     deadline_monotonic: Optional[float] = None
@@ -392,7 +409,12 @@ def _think_with_async_action_api(
         try:
             if has_action():
                 return pop_action(), False, None
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Scheduler async action polling failed for player {}: {}",
+                getattr(player, "name", "<unknown>"),
+                exc,
+            )
             return None, False, "think_exception"
 
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -413,8 +435,12 @@ def apply_action_map(environment: Any, action_map: dict[str, ArenaAction]) -> Op
 
     try:
         return environment.apply(action_map)  # type: ignore[arg-type]
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as exc:
+        logger.debug(
+            "Scheduler batch apply unsupported by {}: {}; falling back to sequential apply.",
+            type(environment).__name__,
+            exc,
+        )
 
     for action in action_map.values():
         outcome = environment.apply(action)

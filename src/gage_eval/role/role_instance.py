@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.utils.messages import clone_json_like
 
 if TYPE_CHECKING:  # pragma: no cover
     from gage_eval.role.runtime.invocation import (
@@ -70,7 +70,11 @@ class ConversationHistory:
     def snapshot(
         self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        resolved_policy = HistorySnapshotPolicy.parse(policy)
+        resolved_policy = (
+            HistorySnapshotPolicy(copy_mode="deep")
+            if policy is None
+            else HistorySnapshotPolicy.parse(policy)
+        )
         selected = self._select_messages(resolved_policy)
         if resolved_policy.copy_mode == "deep":
             return [self._clone(msg) for msg in selected]
@@ -92,7 +96,7 @@ class ConversationHistory:
 
     @staticmethod
     def _clone(message: Dict[str, Any]) -> Dict[str, Any]:
-        return copy.deepcopy(message)
+        return clone_json_like(message)
 
     def _select_messages(self, policy: HistorySnapshotPolicy) -> List[Dict[str, Any]]:
         if policy.window_messages is None:
@@ -191,23 +195,27 @@ class Role:
     def history_snapshot(
         self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        return self._history.snapshot(policy)
+        try:
+            return self._history.snapshot(policy)
+        except TypeError:
+            return self._history.snapshot()
 
     # ------------------------------------------------------------------
     # Invocation
     # ------------------------------------------------------------------
-    def invoke(self, payload: Dict[str, Any], trace: ObservabilityTrace) -> Dict[str, Any]:
-        prepared_payload = dict(payload or {})
-        self._apply_history_override(prepared_payload.pop("history_override", None))
-        self._ingest_history_delta(prepared_payload.pop("history_delta", None))
-
+    def invoke(self, payload: Optional[Dict[str, Any]], trace: ObservabilityTrace) -> Dict[str, Any]:
+        base_payload = payload or {}
+        history_override = base_payload.get("history_override")
+        history_delta = base_payload.get("history_delta")
+        self._apply_history_override(history_override)
+        self._ingest_history_delta(history_delta)
         history_policy = self._resolve_history_policy()
-        history_view = self.history_snapshot(policy=history_policy)
-        if history_view:
-            # NOTE: Adapters/backends must treat these views as read-only. Use
-            # copy_mode=deep when a role needs to mutate nested message content.
-            prepared_payload.setdefault("history", history_view)
-            prepared_payload.setdefault("messages", history_view)
+        prepared_payload, history_tokens = self._build_invoke_payload(
+            base_payload,
+            has_history_override=history_override is not None,
+            has_history_delta=history_delta is not None,
+            history_policy=history_policy,
+        )
         self._apply_invocation_binding(prepared_payload)
         route_mode = self._invocation_binding.route_decision.runtime_mode if self._invocation_binding else "direct"
 
@@ -216,7 +224,7 @@ class Role:
             self.adapter_id,
             bool(self._runtime),
             route_mode,
-            len(history_view),
+            history_tokens,
             history_policy.copy_mode,
             history_policy.window_messages,
         )
@@ -279,3 +287,58 @@ class Role:
             if execution_context.step_slot_id is not None:
                 payload["step_slot_id"] = execution_context.step_slot_id
             prepared_payload.setdefault("execution_context", payload)
+
+    def _build_invoke_payload(
+        self,
+        base_payload: Dict[str, Any],
+        *,
+        has_history_override: bool,
+        has_history_delta: bool,
+        history_policy: HistorySnapshotPolicy,
+    ) -> tuple[Dict[str, Any], int]:
+        has_history = "history" in base_payload
+        has_messages = "messages" in base_payload
+        history_view = base_payload.get("history") if has_history else None
+        messages_view = base_payload.get("messages") if has_messages else None
+        inject_history = False
+        inject_messages = False
+
+        if not has_history and not has_messages:
+            if not self._history.is_empty():
+                history_view = self.history_snapshot(policy=history_policy)
+                messages_view = history_view
+                inject_history = True
+                inject_messages = True
+        elif not has_history and messages_view is not None:
+            history_view = messages_view
+            inject_history = True
+        elif not has_messages and history_view is not None:
+            messages_view = history_view
+            inject_messages = True
+
+        needs_copy = (
+            has_history_override
+            or has_history_delta
+            or inject_history
+            or inject_messages
+            or self._invocation_binding is not None
+        )
+        prepared_payload = dict(base_payload) if needs_copy else base_payload
+        if needs_copy:
+            prepared_payload.pop("history_override", None)
+            prepared_payload.pop("history_delta", None)
+            if inject_history:
+                prepared_payload["history"] = history_view
+            if inject_messages:
+                prepared_payload["messages"] = messages_view
+
+        history_tokens = self._history_length(prepared_payload.get("messages"))
+        if history_tokens == 0:
+            history_tokens = self._history_length(prepared_payload.get("history"))
+        return prepared_payload, history_tokens
+
+    @staticmethod
+    def _history_length(messages: Any) -> int:
+        if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes, bytearray)):
+            return len(messages)
+        return 0

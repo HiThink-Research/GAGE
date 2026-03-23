@@ -145,5 +145,109 @@ class MMMUAccuracyMetricTests(unittest.TestCase):
         )
         result = self.metric.compute(context)
         self.assertEqual(result.values["acc"], 0.0)
+
+    def test_code_mode_falls_back_to_raw_prediction(self):
+        context = MetricContext(
+            sample_id="demo",
+            sample={
+                'predict_result': [{
+                    'message': {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': 'print(36)'
+                            }
+                        ]
+                    }
+                }],
+                'references': ['36'],
+                'metadata': {
+                    'question_type': 'free_form',
+                    'answer_type': 'integer',
+                    'shot_type': 'code',
+                    'use_caption': True,
+                    'use_ocr': True
+                }
+            },
+            model_output={},
+            judge_output={},
+            args={},
+            trace=None,
+        )
+        result = self.metric.compute(context)
+        self.assertEqual(result.values["acc"], 1.0)
+        self.assertEqual(result.metadata["prediction_source"], "predict_result.text")
+        self.assertEqual(result.metadata["warning"], "missing_code_execution_result")
+
+    def test_code_mode_prefers_judge_output_answer(self):
+        context = MetricContext(
+            sample_id="demo",
+            sample={
+                'predict_result': [{
+                    'message': {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': 'print(1)'
+                            }
+                        ]
+                    }
+                }],
+                'references': ['36'],
+                'metadata': {
+                    'question_type': 'free_form',
+                    'answer_type': 'integer',
+                    'shot_type': 'code',
+                    'use_caption': True,
+                    'use_ocr': True
+                }
+            },
+            model_output={},
+            judge_output={"answer": "36"},
+            args={},
+            trace=None,
+        )
+        result = self.metric.compute(context)
+        self.assertEqual(result.values["acc"], 1.0)
+        self.assertEqual(result.metadata["prediction_source"], "judge_output.answer")
+
+    def test_code_mode_reads_execution_stdout(self):
+        context = MetricContext(
+            sample_id="demo",
+            sample={
+                'predict_result': [{
+                    'message': {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': 'print(1)'
+                            }
+                        ]
+                    },
+                    'execution': {
+                        'stdout': 'temporary output\n36\n'
+                    }
+                }],
+                'references': ['36'],
+                'metadata': {
+                    'question_type': 'free_form',
+                    'answer_type': 'integer',
+                    'shot_type': 'code',
+                    'use_caption': True,
+                    'use_ocr': True
+                }
+            },
+            model_output={},
+            judge_output={},
+            args={},
+            trace=None,
+        )
+        result = self.metric.compute(context)
+        self.assertEqual(result.values["acc"], 1.0)
+        self.assertEqual(result.metadata["prediction_source"], "sample.predict_result.0.execution.stdout")
+
 if __name__ == "__main__":
     unittest.main()

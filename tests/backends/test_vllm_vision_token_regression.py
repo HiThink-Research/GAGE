@@ -5,7 +5,7 @@ inserted once, not twice (which would cause IndexError in vLLM's rotary_embeddin
 """
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import sys
 sys.path.insert(0, "src")
 
@@ -16,47 +16,46 @@ class TestMultimodalVisionTokenDuplication(unittest.TestCase):
     def test_prepare_inputs_skips_rendering_for_multimodal(self):
         """Verify prepare_inputs doesn't render for multimodal requests."""
         from gage_eval.role.model.backends.vllm_backend import VLLMBackend
-        from gage_eval.role.common.backend_utils import has_multimodal_inputs
-        
-        # Create a mock backend
-        with patch.object(VLLMBackend, '__init__', lambda self, **kwargs: None):
-            backend = VLLMBackend()
-            backend._tokenizer = MagicMock()
-            backend._processor = MagicMock()
-            backend._mm_supported = True
-            backend._mm_strategy = "inputs"
-            backend._chat_template_mode = "auto"
-            backend._chat_template_policy = MagicMock()
-            backend._cfg_tokenizer_path = None
-            backend._fallback_template = None
-            backend._force_tokenize_prompt = False
-            backend._default_sampling = {}
-            backend._max_tokens = 512
 
-            # Create multimodal payload
-            payload = {
-                "sample": {
-                    "messages": [
-                        {"role": "user", "content": [
-                            {"type": "text", "text": "What is this?"},
-                            {"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}}
-                        ]}
-                    ],
-                    "metadata": {}
-                }
+        backend = object.__new__(VLLMBackend)
+        backend._tokenizer = MagicMock()
+        backend._processor = MagicMock()
+        backend._mm_supported = True
+        backend._model_supports_mm = True
+        backend._engine_mm_support = None
+        backend._mm_strategy = "inputs"
+        backend._chat_template_mode = "auto"
+        backend._chat_template_policy = MagicMock()
+        backend._cfg_tokenizer_path = None
+        backend._fallback_template = None
+        backend._force_tokenize_prompt = False
+        backend._default_sampling = {}
+        backend._max_tokens = 512
+
+        # Create multimodal payload
+        payload = {
+            "sample": {
+                "messages": [
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "What is this?"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}}
+                    ]}
+                ],
+                "metadata": {}
             }
+        }
 
-            prepared = backend.prepare_inputs(payload)
-            
-            # For multimodal, prompt should be empty or just raw text (no chat template applied)
-            # The actual rendering happens in _async_generate
-            prompt = prepared.get("prompt", "")
-            
-            # Should NOT contain Qwen vision tokens yet - those are added in _async_generate
-            self.assertNotIn("<|vision_start|>", prompt, 
-                "prepare_inputs should NOT render with processor for multimodal")
-            self.assertNotIn("<|image_pad|>", prompt,
-                "prepare_inputs should NOT render with processor for multimodal")
+        prepared = backend.prepare_inputs(payload)
+
+        # For multimodal, prompt should be empty or just raw text (no chat template applied)
+        # The actual rendering happens in _async_generate
+        prompt = prepared.get("prompt", "")
+
+        # Should NOT contain Qwen vision tokens yet - those are added in _async_generate
+        self.assertNotIn("<|vision_start|>", prompt,
+            "prepare_inputs should NOT render with processor for multimodal")
+        self.assertNotIn("<|image_pad|>", prompt,
+            "prepare_inputs should NOT render with processor for multimodal")
 
     def test_multimodal_detection(self):
         """Verify has_multimodal_inputs correctly detects image_url in messages."""

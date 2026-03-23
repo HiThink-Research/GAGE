@@ -61,6 +61,8 @@ prompts:
       - Prioritize the current frame image for aiming and alignment decisions.
       {% elif payload.scheme_id == "S3_text_image_current" %}
       - Combine image cues with current telemetry to decide actions.
+      {% elif payload.scheme_id == "S4_text_image_4f_action_hist" %}
+      - Use the ordered four-frame image sequence together with recent action history to infer motion and aim corrections.
       {% elif payload.scheme_id == "S5_image_compact_state" %}
       - Use compact state summaries with image cues and ignore low-value noise.
       {% elif payload.scheme_id == "S6_text_image_action_hist" %}
@@ -77,6 +79,9 @@ prompts:
       Observation includes recent action-outcome history.
       {% elif payload.vizdoom_strategy.has_action_history_block %}
       Observation includes recent action history.
+      {% endif %}
+      {% if payload.vizdoom_strategy.has_image_history_block %}
+      Observation includes {{ payload.vizdoom_strategy.image_history_count }} ordered POV frames from oldest to newest.
       {% endif %}
       {% if payload.vizdoom_strategy.has_delta_summary_block %}
       Observation includes delta summary from the previous observation.
@@ -141,6 +146,7 @@ role_adapters:
         action_repeat: 2
         sleep_s: 0.02
         obs_image: true
+        obs_image_history_len: 4
         no_attack_seconds: 0
         allow_partial_actions: true
         replay_in_env: false
@@ -183,6 +189,7 @@ role_adapters:
           scheme_id: ${VIZDOOM_P1_SCHEME_ID:-S3_text_image_current}
           scheme_params:
             action_history_len: 4
+            image_history_len: 4
             delta_key_limit: 6
             telemetry_limit: 12
 

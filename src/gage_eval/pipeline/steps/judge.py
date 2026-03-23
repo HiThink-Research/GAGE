@@ -7,6 +7,7 @@ from typing import Optional
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.pipeline.steps._backend_error import raise_for_backend_error
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
@@ -47,23 +48,13 @@ class JudgeStep(SampleStep):
             execution_context=invocation_context,
         ) as role:
             result = role.invoke(payload, trace) if role else {}
-        if isinstance(result, dict) and result.get("error"):
-            error_text = str(result.get("error"))
-            trace.emit(
-                "judge_error",
-                payload={
-                    "adapter_id": self._adapter_id,
-                    "error_type": "backend_error",
-                    "failure_reason": "backend_returned_error",
-                    "error": error_text,
-                },
-            )
-            logger.error(
-                "Judge step failed adapter_id={} error_type=backend_error error={}",
-                self._adapter_id,
-                error_text,
-            )
-            raise RuntimeError(f"judge backend returned error: {error_text}")
+        raise_for_backend_error(
+            event_prefix="judge",
+            step_label="Judge step",
+            adapter_id=self._adapter_id,
+            output=result,
+            trace=trace,
+        )
         trace.emit("judge_end", payload={"adapter_id": self._adapter_id})
         logger.debug("Judge step finished adapter_id={}", self._adapter_id)
         return result

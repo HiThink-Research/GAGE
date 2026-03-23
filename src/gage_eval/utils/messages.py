@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, List, Optional
+
+
+def clone_json_like(value: Any) -> Any:
+    """Clone JSON-like containers while preserving scalar references."""
+
+    if isinstance(value, dict):
+        return {key: clone_json_like(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [clone_json_like(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(clone_json_like(item) for item in value)
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    return copy.deepcopy(value)
 
 
 def stringify_message_content(

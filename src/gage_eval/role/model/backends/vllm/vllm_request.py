@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -221,6 +222,7 @@ def build_engine_args(config: Dict[str, Any], *, output_type: str, trust_remote_
 
     args = SimpleNamespace()
     args.model = config.get("model_path") or config.get("model")
+    args.tokenizer = config.get("tokenizer_path") or config.get("tokenizer_name")
     args.output_type = output_type
     args.trust_remote_code = trust_remote_code
     args.max_length = config.get("max_model_len") or config.get("max_length")
@@ -242,11 +244,21 @@ def build_engine_args(config: Dict[str, Any], *, output_type: str, trust_remote_
     args.num_cpu_blocks = config.get("num_cpu_blocks")
     args.forced_num_gpu_blocks = config.get("forced_num_gpu_blocks")
     args.num_gpu_blocks_override = config.get("num_gpu_blocks_override")
+    args.limit_mm_per_prompt = config.get("limit_mm_per_prompt")
     return args
 
 
 def ensure_spawn_start_method() -> None:
     """Force multiprocessing start method to spawn to avoid CUDA re-init issues."""
+
+    src_root = Path(__file__).resolve().parents[5]
+    current_pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath_entries = [entry for entry in current_pythonpath.split(os.pathsep) if entry]
+    resolved_src_root = str(src_root)
+    if resolved_src_root not in pythonpath_entries:
+        os.environ["PYTHONPATH"] = (
+            os.pathsep.join([resolved_src_root, *pythonpath_entries]) if pythonpath_entries else resolved_src_root
+        )
 
     try:
         import torch.multiprocessing as mp  # type: ignore
