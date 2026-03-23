@@ -88,3 +88,51 @@ def test_runtime_package_selection_preloads_step_contracts_and_report_generators
 
     assert packages["pipeline_steps"] == ("gage_eval.pipeline.steps",)
     assert packages["summary_generators"] == ("gage_eval.reporting.summary_generators",)
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_primes_metric_assets_before_runtime_freeze() -> None:
+    metric_name = "global_piqa_accuracy_local"
+    config = _build_minimal_config(
+        metrics=[{"metric_id": metric_name, "implementation": metric_name}],
+    )
+    config_registry = ConfigRegistry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        entry = registry.entry("metrics", metric_name)
+        assert entry.name == metric_name
+        metrics = config_registry.with_runtime_registry_context(context).materialize_metrics(config)
+        assert metric_name in metrics
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_primes_arena_assets_before_runtime_freeze() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "params": {
+                    "environment": {"impl": "gomoku_local_v1"},
+                    "parser": {"impl": "grid_parser_v1"},
+                    "visualizer": {
+                        "enabled": True,
+                        "renderer": {"impl": "gomoku_board_v1"},
+                    },
+                },
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = ConfigRegistry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert registry.entry("arena_impls", "gomoku_local_v1").name == "gomoku_local_v1"
+        assert registry.entry("parser_impls", "grid_parser_v1").name == "grid_parser_v1"
+        assert registry.entry("renderer_impls", "gomoku_board_v1").name == "gomoku_board_v1"
+    finally:
+        context.close()

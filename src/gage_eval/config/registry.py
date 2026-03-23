@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 from loguru import logger
 
 from gage_eval.assets.datasets.registry_loader import import_dataset_asset_module
+from gage_eval.role.arena.registry_loader import import_arena_asset_module
 from gage_eval.config.pipeline_config import (
     BackendSpec,
     DatasetSpec,
@@ -74,6 +75,8 @@ class ConfigRegistry:
 
         _prime_runtime_dataset_assets(config)
         _prime_runtime_model_assets(config)
+        _prime_runtime_arena_assets(config)
+        _prime_runtime_metric_assets(config)
         overlays = [
             RegistryOverlayAsset(
                 kind="prompts",
@@ -480,3 +483,44 @@ def _prime_runtime_model_assets(config: PipelineConfig) -> None:
 
     for backend_type in sorted(backend_types):
         _import_backend_asset_module(backend_type)
+
+
+def _prime_runtime_arena_assets(config: PipelineConfig) -> None:
+    for spec in config.role_adapters:
+        if str(spec.role_type or "").strip() != "arena":
+            continue
+        params = dict(spec.params or {})
+
+        env_cfg = params.get("environment") or {}
+        env_impl = str(env_cfg.get("impl") or env_cfg.get("implementation") or "").strip()
+        if env_impl:
+            import_arena_asset_module("arena_impls", env_impl)
+
+        parser_cfg = params.get("parser") or {}
+        parser_impl = str(
+            parser_cfg.get("impl")
+            or parser_cfg.get("implementation")
+            or "grid_parser_v1"
+        ).strip()
+        if parser_impl:
+            import_arena_asset_module("parser_impls", parser_impl)
+
+        visualizer_cfg = params.get("visualizer") or {}
+        if not bool(visualizer_cfg.get("enabled")):
+            continue
+        renderer_cfg = visualizer_cfg.get("renderer") or {}
+        renderer_impl = str(
+            renderer_cfg.get("impl") or renderer_cfg.get("implementation") or ""
+        ).strip()
+        if renderer_impl:
+            import_arena_asset_module("renderer_impls", renderer_impl)
+
+
+def _prime_runtime_metric_assets(config: PipelineConfig) -> None:
+    from gage_eval.metrics.registry import _import_metric_asset_module
+
+    for spec in config.metrics:
+        impl_key = str(spec.implementation or spec.metric_id or "").strip()
+        if not impl_key:
+            continue
+        _import_metric_asset_module(impl_key)

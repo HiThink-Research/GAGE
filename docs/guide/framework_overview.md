@@ -68,7 +68,7 @@ Common step and role combinations:
 
 A basic evaluation includes only **inference and metrics** (`inference -> auto_eval`). `preprocess` and `report` are fixed stages.
 
-Example config: `gage-eval-main/config/custom/piqa_qwen3.yaml`
+Example config: `gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`
 
 ```mermaid
 flowchart LR
@@ -286,7 +286,7 @@ from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
-payload = yaml.safe_load(Path("gage-eval-main/config/custom/piqa_qwen3.yaml").read_text(encoding="utf-8"))
+payload = yaml.safe_load(Path("gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml").read_text(encoding="utf-8"))
 config = PipelineConfig.from_dict(payload)
 
 registry = build_default_registry()
@@ -905,9 +905,9 @@ distill: generate a BuiltinTemplate from PipelineConfig:
 
 ```bash
 python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/piqa_qwen3.yaml \
+  --config gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml \
   --distill \
-  --builtin-name piqa_qwen3
+  --builtin-name global_piqa_chat
 ```
 
 init: generate RunConfig or PipelineConfig from a BuiltinTemplate:
@@ -924,7 +924,7 @@ Scenario navigation table (run from repo root):
 | Scenario | Level | Highlights | Config | Typical steps | Key roles |
 | --- | --- | --- | --- | --- | --- |
 | Minimal smoke | Starter | RunConfig compile, dummy backend | [`gage-eval-main/config/run_configs/demo_echo_run_1.yaml`](../../config/run_configs/demo_echo_run_1.yaml) | `inference -> auto_eval` | `dut_model` |
-| Text multiple-choice | Starter | structured choices, auto metrics | [`gage-eval-main/config/custom/piqa_qwen3.yaml`](../../config/custom/piqa_qwen3.yaml) | `inference -> auto_eval` | `dut_model` |
+| Text multiple-choice | Starter | structured choices, auto metrics | [`gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`](../../config/custom/global_piqa/global_piqa_chat.yaml) | `inference -> auto_eval` | `dut_model` |
 | GPQA | Advanced | expert MCQ, few-shot | [`gage-eval-main/config/custom/gpqa_diamond_vllm_async_chat.yaml`](../../config/custom/gpqa_diamond_vllm_async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
 | LLM judge | Advanced | post-inference judge | [`gage-eval-main/config/custom/single_task_local_judge_qwen.yaml`](../../config/custom/single_task_local_judge_qwen.yaml) | `inference -> judge -> auto_eval` | `dut_model`, `judge_model` |
 | Multi-task | Advanced | TaskOrchestrator, overrides | [`gage-eval-main/config/custom/multi_task_openai_http_demo.yaml`](../../config/custom/multi_task_openai_http_demo.yaml) | per-task | `dut_model` |
@@ -944,15 +944,15 @@ Scenario navigation table (run from repo root):
 
 ### 5.2 Text examples
 
-#### 5.2.1 PIQA multiple-choice
+#### 5.2.1 Global PIQA multiple-choice
 
-Config: `gage-eval-main/config/custom/piqa_qwen3.yaml`
+Config: `gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`
 
 Run:
 
 ```bash
 python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/piqa_qwen3.yaml \
+  --config gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml \
   --output-dir runs \
   --run-id piqa_smoke \
   --max-samples 50
@@ -1295,7 +1295,7 @@ PYTHONPATH=gage-eval-main/src python -m gage_eval.support implement <slug>
 - Config validation:
   ```bash
   PYTHONPATH=gage-eval-main/src python -m gage_eval.tools.config_checker \
-    --config gage-eval-main/config/custom/piqa_qwen3.yaml
+    --config gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml
   ```
 - See `gage-eval-main/TESTING.md` for test guidance.
 
