@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/run/common/env.sh"
-CFG="${CFG:-${ROOT}/config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml}"
+CFG="${CFG:-${ROOT}/config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
 RUN_ID="${RUN_ID:-vizdoom_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)}"
 WS_RGB_HOST="${WS_RGB_HOST:-127.0.0.1}"

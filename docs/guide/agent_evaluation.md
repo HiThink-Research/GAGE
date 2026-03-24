@@ -10,8 +10,8 @@ This guide covers the agent evaluation workflows supported in gage-eval: AppWorl
 
 - Project overview: [`README.md`](../../README.md)
 - Sample contract: [`sample.md`](sample.md)
-- AppWorld config: [`config/custom/appworld_official_jsonl.yaml`](../../config/custom/appworld_official_jsonl.yaml)
-- SWE-bench config: [`config/custom/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro_smoke_agent.yaml)
+- AppWorld config: [`config/custom/appworld/appworld_official_jsonl.yaml`](../../config/custom/appworld/appworld_official_jsonl.yaml)
+- SWE-bench config: [`config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro/swebench_pro_smoke_agent.yaml)
 - Tau2 configs: [`config/custom/tau2/`](../../config/custom/tau2/)
 
 ## 1. Common Evaluation Chain
@@ -73,7 +73,7 @@ The output directory contains `train.jsonl`, `dev.jsonl`, `test_normal.jsonl`, `
 cd gage-eval-main
 export OPENAI_API_KEY=your_key
 python run.py \
-  --config config/custom/appworld_official_jsonl.yaml \
+  --config config/custom/appworld/appworld_official_jsonl.yaml \
   --run-id appworld_official_jsonl_run_$(date +%H%M%S) \
   --output-dir runs/appworld_official_jsonl
 ```
@@ -139,7 +139,7 @@ The default config `swebench_pro_smoke_agent.yaml` is a smoke-only evaluation:
 cd gage-eval-main
 export OPENAI_API_KEY=your_key
 python run.py \
-  --config config/custom/swebench_pro_smoke_agent.yaml \
+  --config config/custom/swebench_pro/swebench_pro_smoke_agent.yaml \
   --run-id swebench_pro_smoke_run_$(date +%H%M%S) \
   --output-dir runs/swebench_pro_smoke
 ```

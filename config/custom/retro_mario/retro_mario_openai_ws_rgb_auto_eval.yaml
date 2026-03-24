@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_openai_headless_auto_eval
-  description: Stable-retro Mario OpenAI demo in pure headless mode with auto-eval.
+  name: retro_mario_openai_ws_rgb_headless_auto_eval
+  description: Stable-retro Mario OpenAI demo with ws_rgb visualization (headless runtime) and auto-eval.
 
 custom:
   steps:
@@ -15,7 +15,7 @@ datasets:
   - dataset_id: retro_mario_demo
     loader: jsonl
     params:
-      path: config/custom/retro_mario_phase1.jsonl
+      path: config/custom/retro_mario/retro_mario_phase1.jsonl
       streaming: false
 
 backends:
@@ -62,12 +62,19 @@ role_adapters:
     role_type: arena
     prompt_id: retro_mario_turn_prompt_v1
     params:
+      human_input:
+        enabled: true
+        ws_host: ${RETRO_WS_RGB_HOST:-0.0.0.0}
+        ws_port: ${RETRO_WS_RGB_PORT:-5800}
+        ws_allow_origin: "*"
       environment:
         impl: retro_env_v1
         game: SuperMarioBros3-Nes-v0
         state: Start
-        display_mode: headless
-        obs_image: false
+        # display_mode=websocket is rendered via ws_rgb, with headless env runtime.
+        display_mode: websocket
+        # Keep obs_image enabled so the latest frame can be attached in-memory to LLM messages.
+        obs_image: true
         record_bk2: false
         legal_moves:
           - noop
@@ -81,10 +88,20 @@ role_adapters:
           hold_ticks_default: 6
         info_feeder:
           impl: info_none_v1
+        replay:
+          enabled: true
+          primary_mode: true
+          mode: both
+          frame:
+            enabled: true
+            stride: 3
+            max_frames: 5000
+            encoding: jpeg
+            quality: 75
       scheduler:
         type: tick
-        tick_ms: 1200
-        max_ticks: 120
+        tick_ms: 1500
+        max_ticks: 60
       parser:
         impl: retro_action_v1
         hold_ticks_min: 1
@@ -113,7 +130,7 @@ metrics:
     aggregation: categorical_count
 
 tasks:
-  - task_id: retro_mario_openai_headless_auto_eval
+  - task_id: retro_mario_openai_ws_rgb_headless_auto_eval
     dataset_id: retro_mario_demo
     max_samples: 1
     concurrency: 1
@@ -122,4 +139,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_headless_auto_eval_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_ws_rgb_headless_auto_eval_events.jsonl

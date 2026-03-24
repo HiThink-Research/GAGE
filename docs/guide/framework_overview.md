@@ -11,7 +11,6 @@ gage-eval is an extensible evaluation framework for large language models. It is
 - Project home: [`README.md`](../../README.md) / [`README_zh.md`](../../README_zh.md)
 - Testing: [`TESTING.md`](../../TESTING.md)
 - Example configs: [`config/custom/`](../../config/custom/), [`config/builtin_templates/`](../../config/builtin_templates/), [`config/run_configs/`](../../config/run_configs/)
-- Support module (experimental, will be replaced by gage-client): [`support_cli.md`](support_cli.md)
 - Sample schema: [`sample.md`](sample.md)
 - Agent evaluation: [`agent_evaluation.md`](agent_evaluation.md)
 - Game Arena: [`game_arena.md`](game_arena.md)
@@ -98,7 +97,7 @@ Execution highlights:
 
 LLM judge evaluation adds a judge step: `inference -> judge -> auto_eval`.
 
-Example config: `gage-eval-main/config/custom/single_task_local_judge_qwen.yaml`
+Example config: `gage-eval-main/config/custom/examples/single_task_local_judge_qwen.yaml`
 
 ```mermaid
 flowchart LR
@@ -129,7 +128,7 @@ Execution highlights:
 
 SWE-bench is a representative static evaluation: `support -> inference -> judge -> auto_eval`.
 
-Example config: `gage-eval-main/config/custom/swebench_pro_smoke.yaml`
+Example config: `gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`
 
 ```mermaid
 flowchart LR
@@ -162,7 +161,7 @@ Execution highlights:
 
 Game Arena runs turn-based matches via `support -> arena -> auto_eval`, with Human vs LLM or LLM vs LLM.
 
-Example config: `gage-eval-main/config/custom/gomoku_human_vs_llm.yaml`
+Example config: `gage-eval-main/config/custom/gomoku/gomoku_human_vs_llm.yaml`
 
 ```mermaid
 flowchart LR
@@ -196,7 +195,7 @@ Execution highlights:
 
 Agent evaluation runs `support -> inference -> judge -> auto_eval`, where `dut_agent` executes AgentLoop, Toolchain injects tools, and Sandbox isolates side effects.
 
-Example config: `gage-eval-main/config/custom/appworld_official_jsonl.yaml`
+Example config: `gage-eval-main/config/custom/appworld/appworld_official_jsonl.yaml`
 
 ```mermaid
 flowchart LR
@@ -409,7 +408,7 @@ When `tasks` is not empty:
 - Tasks run sequentially, sharing the same `run_id` and `RoleManager`
 - `summary.json` records the `tasks` list
 
-Config example (from `gage-eval-main/config/custom/multi_task_openai_http_demo.yaml`):
+Config example (from `gage-eval-main/config/custom/examples/multi_task_openai_http_demo.yaml`):
 
 ```yaml
 metrics:
@@ -574,8 +573,8 @@ Key wiring points:
 
 Common configs to start with:
 
-- `config/custom/gomoku_human_vs_llm.yaml`
-- `config/custom/tictactoe_human_vs_llm.yaml`
+- `config/custom/gomoku/gomoku_human_vs_llm.yaml`
+- `config/custom/tictactoe/tictactoe_human_vs_llm.yaml`
 
 For the full spec and UI wiring, see `docs/guide/game_arena.md`.
 
@@ -645,7 +644,7 @@ flowchart TD
 
 #### 4.2.1 HuggingFace Hub
 
-Example: `gage-eval-main/config/custom/mmmu_qwen_vl.yaml`
+Example: `gage-eval-main/config/custom/mmmu/mmmu_qwen_vl.yaml`
 
 Key fields:
 
@@ -657,7 +656,7 @@ Key fields:
 
 #### 4.2.2 Local JSONL
 
-Example: `gage-eval-main/config/custom/docvqa_qwen_vl.yaml`
+Example: `gage-eval-main/config/custom/docvqa/docvqa_qwen_vl.yaml`
 
 Key fields:
 
@@ -925,13 +924,13 @@ Scenario navigation table (run from repo root):
 | --- | --- | --- | --- | --- | --- |
 | Minimal smoke | Starter | RunConfig compile, dummy backend | [`gage-eval-main/config/run_configs/demo_echo_run_1.yaml`](../../config/run_configs/demo_echo_run_1.yaml) | `inference -> auto_eval` | `dut_model` |
 | Text multiple-choice | Starter | structured choices, auto metrics | [`gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`](../../config/custom/global_piqa/global_piqa_chat.yaml) | `inference -> auto_eval` | `dut_model` |
-| GPQA | Advanced | expert MCQ, few-shot | [`gage-eval-main/config/custom/gpqa_diamond_vllm_async_chat.yaml`](../../config/custom/gpqa_diamond_vllm_async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
-| LLM judge | Advanced | post-inference judge | [`gage-eval-main/config/custom/single_task_local_judge_qwen.yaml`](../../config/custom/single_task_local_judge_qwen.yaml) | `inference -> judge -> auto_eval` | `dut_model`, `judge_model` |
-| Multi-task | Advanced | TaskOrchestrator, overrides | [`gage-eval-main/config/custom/multi_task_openai_http_demo.yaml`](../../config/custom/multi_task_openai_http_demo.yaml) | per-task | `dut_model` |
-| DocVQA | Advanced | doc_to_visual, image_url | [`gage-eval-main/config/custom/docvqa_qwen_vl.yaml`](../../config/custom/docvqa_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
-| MathVista | Advanced | multimodal, answer extraction | [`gage-eval-main/config/custom/mathvista_vllm_async_chat.yaml`](../../config/custom/mathvista_vllm_async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
-| MMMU | Advanced | HF Hub, multimodal preprocess | [`gage-eval-main/config/custom/mmmu_qwen_vl.yaml`](../../config/custom/mmmu_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
-| SWE-bench Pro | Expert | context_provider, judge_extend, Docker | [`gage-eval-main/config/custom/swebench_pro_smoke.yaml`](../../config/custom/swebench_pro_smoke.yaml) | `support -> inference -> judge -> auto_eval` | `context_provider`, `dut_model`, `judge_extend` |
+| GPQA | Advanced | expert MCQ, few-shot | [`gage-eval-main/config/custom/gpqa_diamond/async_chat.yaml`](../../config/custom/gpqa_diamond/async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
+| LLM judge | Advanced | post-inference judge | [`gage-eval-main/config/custom/examples/single_task_local_judge_qwen.yaml`](../../config/custom/examples/single_task_local_judge_qwen.yaml) | `inference -> judge -> auto_eval` | `dut_model`, `judge_model` |
+| Multi-task | Advanced | TaskOrchestrator, overrides | [`gage-eval-main/config/custom/examples/multi_task_openai_http_demo.yaml`](../../config/custom/examples/multi_task_openai_http_demo.yaml) | per-task | `dut_model` |
+| DocVQA | Advanced | doc_to_visual, image_url | [`gage-eval-main/config/custom/docvqa/docvqa_qwen_vl.yaml`](../../config/custom/docvqa/docvqa_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
+| MathVista | Advanced | multimodal, answer extraction | [`gage-eval-main/config/custom/mathvista/chat.yaml`](../../config/custom/mathvista/chat.yaml) | `inference -> auto_eval` | `dut_model` |
+| MMMU | Advanced | HF Hub, multimodal preprocess | [`gage-eval-main/config/custom/mmmu/mmmu_qwen_vl.yaml`](../../config/custom/mmmu/mmmu_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
+| SWE-bench Pro | Expert | context_provider, judge_extend, Docker | [`gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro/swebench_pro_smoke_agent.yaml) | `support -> inference -> judge -> auto_eval` | `context_provider`, `dut_model`, `judge_extend` |
 
 ### 5.1 Step and Role patterns
 
@@ -960,7 +959,7 @@ python gage-eval-main/run.py \
 
 #### 5.2.2 Multi-task example
 
-Config: `gage-eval-main/config/custom/multi_task_openai_http_demo.yaml`
+Config: `gage-eval-main/config/custom/examples/multi_task_openai_http_demo.yaml`
 
 Notes:
 
@@ -971,7 +970,7 @@ Notes:
 
 #### 5.3.1 DocVQA
 
-Config: `gage-eval-main/config/custom/docvqa_qwen_vl.yaml`
+Config: `gage-eval-main/config/custom/docvqa/docvqa_qwen_vl.yaml`
 
 Notes:
 
@@ -980,7 +979,7 @@ Notes:
 
 #### 5.3.2 MMMU
 
-Config: `gage-eval-main/config/custom/mmmu_qwen_vl.yaml`
+Config: `gage-eval-main/config/custom/mmmu/mmmu_qwen_vl.yaml`
 
 Notes:
 
@@ -998,7 +997,7 @@ SWE-bench is a representative step and role composition:
 
 #### 5.4.1 Dock config notes
 
-Config: `gage-eval-main/config/custom/swebench_pro_smoke.yaml`
+Config: `gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`
 
 Key snippet:
 
@@ -1038,7 +1037,7 @@ role_adapters:
 
 ```bash
 python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/swebench_pro_smoke.yaml \
+  --config gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml \
   --output-dir runs \
   --run-id swebench_smoke \
   --concurrency 1
@@ -1264,31 +1263,25 @@ datasets:
 
 ### 6.6 Quick dataset onboarding
 
-`src/gage_eval/support/` is a developer helper module for benchmark authors. It turns onboarding into a pipeline: `inspect -> design -> implement`.
-
-> Note: evaluation entrypoint remains `gage-eval-main/run.py`. The support module focuses on asset generation and wiring validation.
-
-See [`support_cli.md`](support_cli.md).
-
 ```mermaid
 flowchart LR
-  I[Inspect] --> D[Design] --> M[Implement] --> R[Run]
+  I[Inspect sample] --> P[Add loader or preprocessor] --> C[Create config] --> R[Validate and run]
 ```
 
 Common workflow (from repo root):
 
 ```bash
-# 1) Inspect dataset
-PYTHONPATH=gage-eval-main/src python -m gage_eval.support inspect <dataset_or_path> --max-samples 5
+# 1) Validate the new config
+PYTHONPATH=gage-eval-main/src python -m gage_eval.tools.config_checker \
+  --config gage-eval-main/config/custom/<topic>/<config>.yaml
 
-# 2) Generate design.md
-PYTHONPATH=gage-eval-main/src python -m gage_eval.support design <slug>
-
-# 3) Preview and generate assets
-PYTHONPATH=gage-eval-main/src python -m gage_eval.support implement <slug>
+# 2) Smoke-run a few samples
+PYTHONPATH=gage-eval-main/src python gage-eval-main/run.py \
+  --config gage-eval-main/config/custom/<topic>/<config>.yaml \
+  --max-samples 5
 ```
 
-> Tip: implement defaults to dry-run; add `--force` to write.
+Before these commands, inspect a few raw records from the target dataset and add the required loader or preprocessor assets under `src/gage_eval/assets/datasets/`. Keep task-specific tests close to the changed implementation under `tests/`.
 
 ## 7. Testing and validation
 

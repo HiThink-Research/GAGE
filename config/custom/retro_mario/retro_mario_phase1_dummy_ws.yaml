@@ -2,8 +2,8 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: retro_mario_openai_ws_rgb_headless_auto_eval
-  description: Stable-retro Mario OpenAI demo with ws_rgb visualization (headless runtime) and auto-eval.
+  name: retro_mario_dummy_ws_rgb_headless_auto_eval
+  description: Stable-retro Mario dummy demo with ws_rgb visualization (headless runtime) and auto-eval.
 
 custom:
   steps:
@@ -15,19 +15,34 @@ datasets:
   - dataset_id: retro_mario_demo
     loader: jsonl
     params:
-      path: config/custom/retro_mario_phase1.jsonl
+      path: config/custom/retro_mario/retro_mario_phase1.jsonl
       streaming: false
 
 backends:
-  - backend_id: retro_openai_http_player
-    type: openai_http
+  - backend_id: retro_dummy
+    type: dummy
     config:
-      base_url: https://api.openai.com/v1
-      model: ${RETRO_OPENAI_MODEL:-gpt-4o-mini}
-      require_api_key: true
-      default_params:
-        temperature: 0.2
-        max_tokens: 96
+      cycle: true
+      responses:
+        - '{"move":"noop","hold_ticks":6}'
+
+        - '{"move":"right_run","hold_ticks":8}'
+        - '{"move":"right_run_jump","hold_ticks":6}'
+        - '{"move":"right_jump","hold_ticks":12}'
+        - '{"move":"right","hold_ticks":8}'
+        - '{"move":"jump","hold_ticks":12}'
+        - '{"move":"right","hold_ticks":8}'
+        - '{"move":"run","hold_ticks":5}'
+        - '{"move":"noop","hold_ticks":8}'
+
+
+        - '{"move":"up","hold_ticks":2}'
+        - '{"move":"down","hold_ticks":2}'
+        - '{"move":"noop","hold_ticks":12}'
+        - '{"move":"noop","hold_ticks":6}'
+
+        - '{"move":"start","hold_ticks":1}'
+        - '{"move":"select","hold_ticks":1}'
 
 prompts:
   - prompt_id: retro_mario_turn_prompt_v1
@@ -52,9 +67,9 @@ prompts:
       {% endif %}
 
 role_adapters:
-  - adapter_id: retro_openai_player_0
+  - adapter_id: retro_dummy_player
     role_type: dut_model
-    backend_id: retro_openai_http_player
+    backend_id: retro_dummy
     capabilities:
       - chat_completion
 
@@ -73,35 +88,44 @@ role_adapters:
         state: Start
         # display_mode=websocket is rendered via ws_rgb, with headless env runtime.
         display_mode: websocket
-        # Keep obs_image enabled so the latest frame can be attached in-memory to LLM messages.
         obs_image: true
         record_bk2: false
         legal_moves:
+          # NOTE: Keep this list aligned with RetroActionCodec._build_default_macro_map().
           - noop
+          - left
           - right
-          - right_run
+          - up
+          - down
+          - jump
+          - run
+          - left_jump
           - right_jump
+          - left_run
+          - right_run
+          - left_run_jump
           - right_run_jump
+          - start
+          - select
         action_schema:
           hold_ticks_min: 1
           hold_ticks_max: 12
           hold_ticks_default: 6
         info_feeder:
-          impl: info_none_v1
+          impl: info_mario_v1
         replay:
           enabled: true
-          primary_mode: true
           mode: both
-          frame:
+          frame_capture:
             enabled: true
-            stride: 3
-            max_frames: 5000
-            encoding: jpeg
+            frame_stride: 3
+            max_frames: 900
+            format: jpeg
             quality: 75
       scheduler:
         type: tick
-        tick_ms: 1500
-        max_ticks: 60
+        tick_ms: 66
+        max_ticks: 3600
       parser:
         impl: retro_action_v1
         hold_ticks_min: 1
@@ -110,8 +134,8 @@ role_adapters:
       players:
         - name: player_0
           type: backend
-          ref: retro_openai_player_0
-          max_retries: 1
+          ref: retro_dummy_player
+          max_retries: 0
           fallback_policy: first_legal
 
 metrics:
@@ -130,7 +154,7 @@ metrics:
     aggregation: categorical_count
 
 tasks:
-  - task_id: retro_mario_openai_ws_rgb_headless_auto_eval
+  - task_id: retro_mario_dummy_ws_rgb_headless_auto_eval
     dataset_id: retro_mario_demo
     max_samples: 1
     concurrency: 1
@@ -139,4 +163,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_ws_rgb_headless_auto_eval_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_dummy_ws_rgb_headless_auto_eval_events.jsonl

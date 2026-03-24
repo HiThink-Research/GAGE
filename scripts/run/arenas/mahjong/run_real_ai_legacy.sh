@@ -126,7 +126,7 @@ fi
 # Note: unlike the demo loop, this runs once and finishes. 
 # We run it in the background so the script stays alive for the server.
 "${PYTHON_BIN}" "${ROOT}/run.py" \
-  --config "${ROOT}/config/custom/mahjong_4_ai.yaml" \
+  --config "${ROOT}/config/custom/mahjong/mahjong_4_ai.yaml" \
   --output-dir "${OUTPUT_DIR}" &
 GAME_PID=$!
 

@@ -140,7 +140,7 @@ Core abstractions and canonical implementations:
 
 ## Project Structure & Module Organization
 
-- `src/gage_eval/`: framework code (pipeline/runtime, registry, role adapters, observability, support CLI).
+- `src/gage_eval/`: framework code (pipeline/runtime, registry, role adapters, observability).
 - `src/gage_eval/assets/`: built-in datasets, preprocessors, and metrics.
 - `config/`: runnable YAML configs.
   - `config/run_configs/`: stable “run” entrypoints.
@@ -149,14 +149,13 @@ Core abstractions and canonical implementations:
 - `tests/`: pytest suites (unit/integration/e2e) and fixtures.
 - `docs/`: user/developer guides and schemas.
 - `scripts/`: offline, idempotent toolchain scripts (validation/maintenance); do not put one-off scripts here.
-- Generated (don’t commit): `runs/`, `.gage_cache/`, `.pytest_cache/`, `dev_docs/` (support workspace).
+- Generated (don’t commit): `runs/`, `.gage_cache/`, `.pytest_cache/`.
 - `third_party/`: upstream snapshots (read-only). Do not edit; adapt/patch behavior in `src/` and document why.
 
 ## Build, Test, and Development Commands
 
 - Install: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 - Run a demo pipeline: `python run.py --config config/run_configs/demo_echo_run_1.yaml --output-dir runs --run-id demo_echo`
-- Support CLI: `PYTHONPATH=src python -m gage_eval.support --help`
 - Validate configs: `bash scripts/check_config.sh` (or `python -m gage_eval.tools.config_checker --config <yaml>`)
 - Registry manifest:
   - Regenerate: `python scripts/build_registry_manifest.py`
@@ -204,7 +203,7 @@ runs/<run_id>/
 
 - Prefer versioned identifiers (e.g., `dataset_id: foo_v1`) and keep schema validation enabled when possible.
 - Use registry-driven preprocessors (`dataset_preprocessors`) to normalize raw rows into the standardized Sample envelope.
-- For dataset onboarding, prefer the Support CLI workflow (`python -m gage_eval.support inspect/design/implement`) over ad-hoc scripts.
+- For dataset onboarding, prefer a registry-first workflow: add or extend preprocessors/loaders, create a runnable config under `config/custom/<topic>/`, and validate it with `config_checker` instead of relying on one-off scripts.
 - Pin remote model revisions when applicable (e.g., HuggingFace `revision`) and never commit model weights or private paths.
 
 ## Testing Guidelines
@@ -230,7 +229,7 @@ runs/<run_id>/
 | `main` | `main` | Stable trunk | N/A |
 | `feat/<topic>` | `feat/swebench_timeout` | New features or large changes requiring collaboration | `main` |
 | `fix/<topic>` | `fix/cache_buffer_deadlock` | Bug fixes or regressions | `main` |
-| `docs/<topic>` | `docs/support_cli_update` | Documentation-only changes | `main` |
+| `docs/<topic>` | `docs/config-refresh` | Documentation-only changes | `main` |
 | `chore/<topic>` | `chore/registry_manifest_tooling` | Tooling and maintenance scripts | `main` |
 | `user/<name>/<topic>` | `user/alice/swebench_trace` | Personal branches (not guaranteed to persist) | `feat/<topic>` |
 

@@ -18,8 +18,8 @@ ViZDoom 目前有两类主要启动方式：
 | 类型 | 路径 | 用途 |
 | --- | --- | --- |
 | websocketRGB helper | `scripts/run/arenas/vizdoom/viewer.sh` | 通用 websocketRGB helper，会等待 viewer 可访问后再继续 |
-| Human vs LLM websocketRGB 配置 | `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` | 推荐的浏览器版 human vs LLM 示例，使用 tick 调度 |
-| Dummy websocketRGB 配置 | `config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | 可选的 dummy-only websocket 环境检查配置 |
+| Human vs LLM websocketRGB 配置 | `config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` | 推荐的浏览器版 human vs LLM 示例，使用 tick 调度 |
+| Dummy websocketRGB 配置 | `config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | 可选的 dummy-only websocket 环境检查配置 |
 | Human vs Dummy 脚本 | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-dummy` | 本地 pygame 环境验证脚本 |
 | Human Solo 脚本 | `scripts/run/arenas/vizdoom/run.sh --mode human-solo` | 单人练习模式 |
 | Human vs LLM 脚本 | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm` | 本地人类输入对战 LLM |
@@ -28,8 +28,8 @@ ViZDoom 目前有两类主要启动方式：
 | AI vs AI 脚本 | `scripts/run/arenas/vizdoom/run.sh --mode ai-vs-ai` | AI-vs-AI 流程的统一入口 |
 | Agent vs LLM 脚本 | `scripts/run/arenas/vizdoom/run.sh --mode agent-vs-llm` | 增量式 human/agent 变体 |
 | 回放脚本 | `scripts/run/arenas/vizdoom/replay.sh` | 通过 `run_id` 回放一局已完成对局 |
-| Websocket Human 配置 | `config/custom/vizdoom_human_vs_llm_record_ws_rgb.yaml` | 通过 websocketRGB 做浏览器输入 |
-| 主配置集合 | `config/custom/vizdoom_*.yaml` | 所有 ViZDoom 运行配置 |
+| Websocket Human 配置 | `config/custom/vizdoom/vizdoom_human_vs_llm_record_ws_rgb.yaml` | 通过 websocketRGB 做浏览器输入 |
+| 主配置集合 | `config/custom/vizdoom/*.yaml` | 所有 ViZDoom 运行配置 |
 
 ## 3. 前置准备
 
@@ -78,7 +78,7 @@ bash scripts/run/arenas/vizdoom/viewer.sh
 这个示例里最常用的变量：
 
 - `PYTHON_BIN`：Python 解释器
-- `CFG`：默认 `config/custom/vizdoom_dummy_vs_dummy_ws_rgb.yaml`
+- `CFG`：默认 `config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml`
 - `RUN_ID`：写入 `runs/` 的运行编号
 - `OUTPUT_DIR`：默认 `runs`
 - `WS_RGB_HOST`：默认 `127.0.0.1`
@@ -93,7 +93,7 @@ bash scripts/run/arenas/vizdoom/run.sh --mode human-vs-dummy
 本地脚本默认变量：
 
 - `PYTHON_BIN`：Python 解释器
-- `CFG`：默认 `config/custom/vizdoom_human_vs_dummy.yaml`
+- `CFG`：默认 `config/custom/vizdoom/vizdoom_human_vs_dummy.yaml`
 - `RUN_ID`：默认 `vizdoom_human_vs_dummy_<timestamp>`
 - `OUTPUT_DIR`：默认 `runs/`
 
@@ -109,7 +109,7 @@ pygame 脚本打印出来的本地键位：
 OPENAI_API_KEY="<YOUR_KEY>" \
 VIZDOOM_P1_SCHEME_ID=S3_text_image_current \
 RUN_ID="vizdoom_human_vs_llm_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
-CFG=config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml \
+CFG=config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml \
 bash scripts/run/arenas/vizdoom/viewer.sh
 ```
 
@@ -118,7 +118,7 @@ bash scripts/run/arenas/vizdoom/viewer.sh
 这个示例里最常用的变量：
 
 - `PYTHON_BIN`：Python 解释器
-- `CFG`：文档里的 human-vs-LLM 路径使用 `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml`
+- `CFG`：文档里的 human-vs-LLM 路径使用 `config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml`
 - `VIZDOOM_P1_SCHEME_ID`：用于选择 LLM 策略，例如 `S3_text_image_current`
 - `RUN_ID`：写入 `runs/` 的运行编号
 - `OUTPUT_DIR`：默认 `runs`
@@ -128,8 +128,8 @@ bash scripts/run/arenas/vizdoom/viewer.sh
 这个命令里如果要切换模型或 API，请改这里：
 
 - API Key：启动前先在 shell 里设置 `OPENAI_API_KEY`。脚本也接受 `LITELLM_API_KEY`，并会自动同步到 `OPENAI_API_KEY`。即使你接的是本地 OpenAI 兼容服务，也要保证这两个变量里至少有一个非空，因为启动脚本会先检查。
-- 推荐 websocketRGB 示例：编辑 `config/custom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` 里的 `backends[0].config`。切换远程 API 或本地服务时改 `api_base`；如果是 OpenAI 兼容接口，`provider` 继续保持 `openai`；切模型时改 `model`，或者直接设置环境变量 `VIZDOOM_P1_MODEL`。
-- 其他模型命令也是改各自 YAML 里的同一组字段：`human-vs-llm` 对应 `config/custom/vizdoom_human_vs_llm.yaml`，`human-vs-llm-record` 对应 `config/custom/vizdoom_human_vs_llm_record.yaml`，`llm-vs-llm` 对应 `config/custom/vizdoom_llm_vs_llm.yaml`。
+- 推荐 websocketRGB 示例：编辑 `config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` 里的 `backends[0].config`。切换远程 API 或本地服务时改 `api_base`；如果是 OpenAI 兼容接口，`provider` 继续保持 `openai`；切模型时改 `model`，或者直接设置环境变量 `VIZDOOM_P1_MODEL`。
+- 其他模型命令也是改各自 YAML 里的同一组字段：`human-vs-llm` 对应 `config/custom/vizdoom/vizdoom_human_vs_llm.yaml`，`human-vs-llm-record` 对应 `config/custom/vizdoom/vizdoom_human_vs_llm_record.yaml`，`llm-vs-llm` 对应 `config/custom/vizdoom/vizdoom_llm_vs_llm.yaml`。
 
 ### 4.3 Human vs LLM
 
@@ -161,7 +161,7 @@ bash scripts/run/arenas/vizdoom/run.sh --mode llm-vs-llm
 ```bash
 export OPENAI_API_KEY="<YOUR_KEY>"
 PYTHONPATH=src python run.py \
-  --config config/custom/vizdoom_human_vs_llm_record_ws_rgb.yaml \
+  --config config/custom/vizdoom/vizdoom_human_vs_llm_record_ws_rgb.yaml \
   --output-dir runs \
   --run-id vizdoom_human_vs_llm_record_ws
 ```
@@ -196,7 +196,7 @@ viewer 交互要点：
 | --- | --- | --- |
 | API Key | Shell 环境变量 `OPENAI_API_KEY` 或 `LITELLM_API_KEY` | LLM 模式必需 |
 | 脚本配置路径 | 脚本变量 `CFG` | 替换统一运行入口默认使用的 YAML |
-| 后端地址 | 当前所选 `config/custom/vizdoom_*.yaml` 里的 `backends[].config.api_base` | 在托管 API 和本地 OpenAI 兼容服务之间切换 |
+| 后端地址 | 当前所选 `config/custom/vizdoom/*.yaml` 里的 `backends[].config.api_base` | 在托管 API 和本地 OpenAI 兼容服务之间切换 |
 | 模型名 | `backends[].config.model`，以及策略版 websocketRGB 配置里的环境变量 `VIZDOOM_P1_MODEL` | 选择 LLM 使用的模型 |
 | 输出目录 | 脚本变量 `OUTPUT_DIR` | 运行产物写出位置 |
 | 调度节奏 | `scheduler.tick_ms` | 调度器毫秒级 tick 间隔 |

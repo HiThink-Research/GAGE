@@ -10,7 +10,7 @@ class ConfigFieldMappingTests(unittest.TestCase):
         return yaml.safe_load((ROOT / relative).read_text())
 
     def test_docvqa_preprocess_kwargs(self):
-        cfg = self._load("config/custom/docvqa_qwen_vl.yaml")
+        cfg = self._load("config/custom/docvqa/docvqa_qwen_vl.yaml")
         kw = cfg["datasets"][0]["params"]["preprocess_kwargs"]
         self.assertIn("content_field", kw)
         self.assertNotIn("content_root", kw)
@@ -19,9 +19,9 @@ class ConfigFieldMappingTests(unittest.TestCase):
 
     def test_mmmu_doc_to_visual_kwargs(self):
         paths = [
-            "config/custom/mmmu_qwen_vl.yaml",
-            "config/custom/mmmu_local_vlm.yaml",
-            "config/custom/mmmu_vllm.yaml",
+            "config/custom/mmmu/mmmu_qwen_vl.yaml",
+            "config/custom/mmmu/mmmu_local_vlm.yaml",
+            "config/custom/mmmu/mmmu_vllm.yaml",
         ]
         for rel in paths:
             cfg = self._load(rel)

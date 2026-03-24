@@ -15,7 +15,7 @@ datasets:
   - dataset_id: retro_mario_demo
     loader: jsonl
     params:
-      path: config/custom/retro_mario_phase1.jsonl
+      path: config/custom/retro_mario/retro_mario_phase1.jsonl
       streaming: false
 
 role_adapters:
