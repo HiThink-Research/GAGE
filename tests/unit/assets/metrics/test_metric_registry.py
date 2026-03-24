@@ -144,7 +144,7 @@ def test_build_metric_prefers_explicit_aggregation(mock_trace) -> None:
         ("tau2_pass_hat", "gage_eval.metrics.builtin.tau2_aggregator"),
     ],
 )
-def test_metric_registry_logs_optional_aggregator_import_failures(
+def test_metric_registry_defers_optional_aggregator_imports_until_needed(
     monkeypatch: pytest.MonkeyPatch,
     aggregation_id: str,
     module_name: str,
@@ -160,16 +160,10 @@ def test_metric_registry_logs_optional_aggregator_import_failures(
     )
 
     registry_instance = MetricRegistry()
-    target_warnings = [call for call in warnings if call[1][0] == aggregation_id]
 
     assert aggregation_id not in registry_instance._aggregators
-    assert len(target_warnings) == 1
-    assert target_warnings[0][0] == (
-        "Optional metric aggregator '{}' is unavailable because '{}' failed to import: {}"
-    )
-    assert target_warnings[0][1][0] == aggregation_id
-    assert target_warnings[0][1][1] == module_name
-    assert str(target_warnings[0][1][2]) == error_message
+    assert aggregation_id not in registry_instance._optional_aggregator_errors
+    assert warnings == []
 
 
 @pytest.mark.parametrize(
@@ -208,8 +202,32 @@ def test_build_metric_reports_optional_aggregator_import_failures(
     ) as exc_info:
         registry_instance.build_metric(spec)
 
+    target_warnings = [call for call in warnings if call[1][0] == aggregation_id]
+
     assert isinstance(exc_info.value.__cause__, ImportError)
     assert error_message in str(exc_info.value)
+    assert aggregation_id in registry_instance._optional_aggregator_errors
+    assert len(target_warnings) == 1
+    assert target_warnings[0][0] == (
+        "Optional metric aggregator '{}' is unavailable because '{}' failed to import: {}"
+    )
+    assert target_warnings[0][1][0] == aggregation_id
+    assert target_warnings[0][1][1] == module_name
+    assert str(target_warnings[0][1][2]) == error_message
+
+
+def test_build_metric_lazy_loads_mme_optional_aggregator() -> None:
+    spec = MetricSpec(
+        metric_id="test_mme_acc_plus",
+        implementation="_test_registry_default_aggregation_metric",
+        aggregation="mme_acc_plus",
+        params={},
+    )
+
+    instance = MetricRegistry().build_metric(spec)
+
+    assert instance.spec.aggregation == "mme_acc_plus"
+    assert instance.aggregator.__class__.__name__ == "MMEAccPlusAggregator"
 
 
 def test_metric_instance_serializes_stateful_compute() -> None:

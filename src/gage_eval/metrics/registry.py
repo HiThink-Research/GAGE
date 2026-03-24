@@ -29,6 +29,10 @@ _OPTIONAL_BUILTIN_AGGREGATORS: tuple[tuple[str, str, str], ...] = (
     ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator", "MMEAccPlusAggregator"),
     ("tau2_pass_hat", "gage_eval.metrics.builtin.tau2_aggregator", "Tau2PassHatAggregator"),
 )
+_OPTIONAL_BUILTIN_AGGREGATORS_BY_ID: dict[str, tuple[str, str]] = {
+    aggregation_id: (module_name, class_name)
+    for aggregation_id, module_name, class_name in _OPTIONAL_BUILTIN_AGGREGATORS
+}
 
 
 @lru_cache(maxsize=None)
@@ -102,7 +106,6 @@ class MetricRegistry:
                 runtime_context=context,
             ),
         )
-        self._register_optional_builtin_aggregators()
 
     # ------------------------------------------------------------------ #
     # Registration API
@@ -116,26 +119,30 @@ class MetricRegistry:
     ) -> None:
         self._runtime_context = runtime_context
 
-    def _register_optional_builtin_aggregators(self) -> None:
-        for aggregation_id, module_name, class_name in _OPTIONAL_BUILTIN_AGGREGATORS:
-            aggregator_cls, import_error = _resolve_optional_builtin_aggregator(
-                aggregation_id,
-                module_name,
-                class_name,
-            )
-            if import_error is not None:
-                self._optional_aggregator_errors[aggregation_id] = import_error
-                continue
-
-            if aggregator_cls is None:
-                continue
-            self.register_aggregator(
-                aggregation_id,
-                lambda spec, context=None, aggregator_cls=aggregator_cls: aggregator_cls(
-                    spec,
-                    runtime_context=context,
-                ),
-            )
+    def _ensure_optional_builtin_aggregator(self, aggregation_id: str) -> None:
+        if aggregation_id in self._aggregators or aggregation_id in self._optional_aggregator_errors:
+            return
+        optional_spec = _OPTIONAL_BUILTIN_AGGREGATORS_BY_ID.get(aggregation_id)
+        if optional_spec is None:
+            return
+        module_name, class_name = optional_spec
+        aggregator_cls, import_error = _resolve_optional_builtin_aggregator(
+            aggregation_id,
+            module_name,
+            class_name,
+        )
+        if import_error is not None:
+            self._optional_aggregator_errors[aggregation_id] = import_error
+            return
+        if aggregator_cls is None:
+            return
+        self.register_aggregator(
+            aggregation_id,
+            lambda spec, context=None, aggregator_cls=aggregator_cls: aggregator_cls(
+                spec,
+                runtime_context=context,
+            ),
+        )
 
     # ------------------------------------------------------------------ #
     # Build API
@@ -149,6 +156,7 @@ class MetricRegistry:
         runtime_spec = self._resolve_runtime_spec(spec, entry)
         metric = self._build_metric_impl(runtime_spec, impl_key=impl_key, entry=entry)
         aggregation_id = runtime_spec.aggregation or "mean"
+        self._ensure_optional_builtin_aggregator(aggregation_id)
         if aggregation_id not in self._aggregators:
             import_error = self._optional_aggregator_errors.get(aggregation_id)
             if import_error is not None:
