@@ -219,3 +219,64 @@ def test_build_runtime_with_empty_metrics_task_config_is_runtime_guard_safe() ->
     finally:
         runtime.shutdown()
         trace.close(cache_store=None)
+
+
+@pytest.mark.fast
+def test_build_runtime_enables_inline_sample_execution_for_single_worker_tasks() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [
+                {
+                    "dataset_id": "demo_echo_dataset",
+                    "loader": "jsonl",
+                    "params": {
+                        "path": "config/builtin_templates/demo_echo/data/demo_echo.jsonl",
+                        "streaming": False,
+                    },
+                }
+            ],
+            "backends": [
+                {
+                    "backend_id": "demo_echo_dummy",
+                    "type": "dummy",
+                    "config": {"responses": [], "echo_prompt": True, "cycle": True},
+                }
+            ],
+            "role_adapters": [
+                {
+                    "adapter_id": "demo_echo_dut",
+                    "role_type": "dut_model",
+                    "backend_id": "demo_echo_dummy",
+                    "capabilities": ["chat_completion"],
+                }
+            ],
+            "tasks": [
+                {
+                    "task_id": "t1",
+                    "dataset_id": "demo_echo_dataset",
+                    "steps": [{"step": "inference", "adapter_id": "demo_echo_dut"}],
+                    "max_samples": 1,
+                    "concurrency": 1,
+                }
+            ],
+        }
+    )
+    trace = ObservabilityTrace(run_id=f"run-{uuid4().hex}")
+    runtime = build_runtime(
+        config=config,
+        registry=ConfigRegistry(),
+        resource_profile=ResourceProfile(
+            nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+        ),
+        trace=trace,
+    )
+
+    try:
+        entry = runtime._tasks[0]
+        controller = entry.sample_loop._execution_controller
+        assert controller is not None
+        assert controller.sample_workers == 1
+        assert getattr(controller, "_inline_sample_execution") is True
+    finally:
+        runtime.shutdown()
+        trace.close(cache_store=None)

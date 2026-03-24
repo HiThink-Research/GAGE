@@ -94,12 +94,14 @@ class TaskExecutionController:
         failure_policy: FailurePolicy | str | None = None,
         legacy_ff_mode: bool = False,
         report_partial_on_failure: bool = True,
+        inline_sample_execution: bool = False,
     ) -> None:
         self._sample_workers = max(1, int(sample_workers))
         self._metric_workers = max(0, int(metric_workers))
         self._failure_policy = FailurePolicy.parse(failure_policy)
         self._legacy_ff_mode = bool(legacy_ff_mode)
         self._report_partial_on_failure = bool(report_partial_on_failure)
+        self._inline_sample_execution = bool(inline_sample_execution)
         self._sample_executor = ThreadPoolExecutor(
             max_workers=self._sample_workers,
             thread_name_prefix="gage-sample",
@@ -155,6 +157,14 @@ class TaskExecutionController:
         **kwargs: Any,
     ) -> Future[Any]:
         """Submit one sample task to the shared sample lane."""
+
+        if self._inline_sample_execution:
+            return self._run_sample_inline(
+                fn,
+                *args,
+                sample_id=sample_id,
+                **kwargs,
+            )
 
         started = threading.Event()
 
@@ -323,6 +333,26 @@ class TaskExecutionController:
         try:
             future.set_result(fn(*args, **kwargs))
         except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+    def _run_sample_inline(
+        self,
+        fn: Callable[..., Any],
+        *args: Any,
+        sample_id: str,
+        **kwargs: Any,
+    ) -> Future[Any]:
+        future: Future[Any] = Future()
+        started = threading.Event()
+        with self._lock:
+            self._pending_samples[future] = (sample_id, started)
+        future.add_done_callback(self._sample_done_callback)
+        started.set()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except BaseException as exc:
+            self.record_failure(sample_id, exc)
             future.set_exception(exc)
         return future
 

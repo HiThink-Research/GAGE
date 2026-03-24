@@ -699,6 +699,7 @@ class SampleLoop:
             failure_policy=self._failure_policy,
             legacy_ff_mode=self._legacy_ff_mode,
             report_partial_on_failure=self._report_partial_on_failure,
+            inline_sample_execution=self._should_run_sequentially(),
         )
         planner.attach_execution_controller(self._execution_controller)
         return self._execution_controller
