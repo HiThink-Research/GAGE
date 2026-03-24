@@ -209,6 +209,9 @@ def _build_single_runtime(
         metric_workers=_resolve_metric_concurrency(None, config.metrics),
         failure_policy=resolved_failure_policy,
         legacy_ff_mode=legacy_ff_mode,
+        inline_sample_execution=(
+            _env_flag("GAGE_EVAL_SEQUENTIAL", default=False) or concurrency <= 1
+        ),
     )
     sample_loop.attach_execution_controller(controller)
     task_planner.attach_execution_controller(controller)
@@ -682,6 +685,9 @@ def _prepare_task_entries(
                 True
                 if plan.runtime_policy.report_partial_on_failure is None
                 else bool(plan.runtime_policy.report_partial_on_failure)
+            ),
+            inline_sample_execution=(
+                _env_flag("GAGE_EVAL_SEQUENTIAL", default=False) or concurrency <= 1
             ),
         )
         sample_loop.attach_execution_controller(controller)
