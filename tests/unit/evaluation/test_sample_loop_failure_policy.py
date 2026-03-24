@@ -86,6 +86,27 @@ class _FailingInferenceAdapter:
         }
 
 
+class _ThreadCapturingAdapter:
+    role_type = "dut_model"
+    resource_requirement = {}
+    backend = None
+
+    def __init__(self) -> None:
+        self.adapter_id = "dut"
+        self.thread_names: list[str] = []
+
+    def clone_for_sample(self):
+        return self
+
+    def invoke(self, payload, state=None):
+        del payload, state
+        self.thread_names.append(threading.current_thread().name)
+        return {
+            "answer": "ok",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+        }
+
+
 def _build_runtime(
     *,
     failure_policy: str,
@@ -228,3 +249,21 @@ def test_graceful_does_not_count_post_error_failed_samples_as_completed() -> Non
     assert outcome.cancelled_samples >= 1
     assert FakeSandbox.start_calls == 2
     assert len(borrow_calls) == 2
+
+
+@pytest.mark.fast
+def test_sequential_sample_loop_executes_samples_on_calling_thread() -> None:
+    adapter = _ThreadCapturingAdapter()
+    sample_loop, planner, role_manager, trace, _borrow_calls = _build_runtime(
+        failure_policy="fail_fast",
+        sample_count=1,
+        concurrency=1,
+        adapter=adapter,
+    )
+
+    outcome = sample_loop.run(planner, role_manager, trace)
+    sample_loop.shutdown()
+    role_manager.shutdown()
+
+    assert outcome.status == "completed"
+    assert adapter.thread_names == [threading.current_thread().name]
