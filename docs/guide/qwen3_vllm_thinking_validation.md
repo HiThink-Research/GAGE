@@ -8,8 +8,8 @@ This change adds a reproducible local validation path for Qwen3 `thinking` versu
 The validation uses:
 
 - Two dedicated pipeline configs:
-  - `config/custom/qwen3_vllm_piqa_messages_thinking.yaml`
-  - `config/custom/qwen3_vllm_piqa_messages_no_thinking.yaml`
+  - `config/custom/examples/qwen3_vllm_piqa_messages_thinking.yaml`
+  - `config/custom/examples/qwen3_vllm_piqa_messages_no_thinking.yaml`
 - One raw-message fixture:
   - `tests/fixtures/piqa_10_vllm_messages.jsonl`
 - One local model:
@@ -169,7 +169,7 @@ Thinking:
 
 ```bash
 VLLM_CPU_KVCACHE_SPACE=4 /Users/shuo/code/GAGE_workspace/env/.venv/bin/python run.py \
-  --config config/custom/qwen3_vllm_piqa_messages_thinking.yaml \
+  --config config/custom/examples/qwen3_vllm_piqa_messages_thinking.yaml \
   --output-dir runs/thinking_mode_validation_vllm \
   --run-id qwen3_vllm_piqa_messages_thinking_final_v2 \
   --concurrency 1 --gpus 0 --cpus 4
@@ -179,7 +179,7 @@ No-thinking:
 
 ```bash
 VLLM_CPU_KVCACHE_SPACE=4 /Users/shuo/code/GAGE_workspace/env/.venv/bin/python run.py \
-  --config config/custom/qwen3_vllm_piqa_messages_no_thinking.yaml \
+  --config config/custom/examples/qwen3_vllm_piqa_messages_no_thinking.yaml \
   --output-dir runs/thinking_mode_validation_vllm \
   --run-id qwen3_vllm_piqa_messages_no_thinking_final_v2 \
   --concurrency 1 --gpus 0 --cpus 4

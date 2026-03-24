@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 import importlib
-import threading
 from dataclasses import replace
 from functools import lru_cache
-from typing import Callable, Dict, Type
+from pathlib import Path
+import re
+import threading
+from typing import Callable, Dict, Optional, Type
 
 from loguru import logger
 
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.metrics.aggregators import MetricAggregator
+from gage_eval.metrics.runtime_context import AggregationRuntimeContext
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
 from gage_eval.registry import registry
 from gage_eval.registry.entry import RegistryEntry
 
-MetricFactory = Callable[[MetricSpec], "BaseMetric"]
-AggregatorFactory = Callable[[MetricSpec], "MetricAggregator"]
+AggregatorFactory = Callable[..., "MetricAggregator"]
+_METRIC_ASSET_PATTERN = re.compile(
+    r'registry\.asset\(\s*["\']metrics["\']\s*,\s*["\']([^"\']+)["\']',
+    re.S,
+)
 
 _OPTIONAL_BUILTIN_AGGREGATORS: tuple[tuple[str, str, str], ...] = (
     ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator", "MMEAccPlusAggregator"),
@@ -57,7 +63,10 @@ def _resolve_optional_builtin_aggregator(
 class MetricRegistry:
     """Holds all metric/aggregation registrations and creates runtime instances."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
         from gage_eval.metrics.aggregators import (
             IdentityAggregator,
             MeanAggregator,
@@ -67,10 +76,32 @@ class MetricRegistry:
 
         self._aggregators: Dict[str, AggregatorFactory] = {}
         self._optional_aggregator_errors: Dict[str, ImportError] = {}
-        self.register_aggregator("mean", lambda spec: MeanAggregator(spec))
-        self.register_aggregator("weighted_mean", lambda spec: WeightedMeanAggregator(spec))
-        self.register_aggregator("identity", lambda spec: IdentityAggregator(spec))
-        self.register_aggregator("categorical_count", lambda spec: CategoricalCountAggregator(spec))
+        self._runtime_context = runtime_context
+        self.register_aggregator(
+            "mean",
+            lambda spec, context=None: MeanAggregator(spec, runtime_context=context),
+        )
+        self.register_aggregator(
+            "weighted_mean",
+            lambda spec, context=None: WeightedMeanAggregator(
+                spec,
+                runtime_context=context,
+            ),
+        )
+        self.register_aggregator(
+            "identity",
+            lambda spec, context=None: IdentityAggregator(
+                spec,
+                runtime_context=context,
+            ),
+        )
+        self.register_aggregator(
+            "categorical_count",
+            lambda spec, context=None: CategoricalCountAggregator(
+                spec,
+                runtime_context=context,
+            ),
+        )
         self._register_optional_builtin_aggregators()
 
     # ------------------------------------------------------------------ #
@@ -78,6 +109,12 @@ class MetricRegistry:
     # ------------------------------------------------------------------ #
     def register_aggregator(self, agg_id: str, factory: AggregatorFactory) -> None:
         self._aggregators[agg_id] = factory
+
+    def set_runtime_context(
+        self,
+        runtime_context: Optional[AggregationRuntimeContext],
+    ) -> None:
+        self._runtime_context = runtime_context
 
     def _register_optional_builtin_aggregators(self) -> None:
         for aggregation_id, module_name, class_name in _OPTIONAL_BUILTIN_AGGREGATORS:
@@ -94,13 +131,20 @@ class MetricRegistry:
                 continue
             self.register_aggregator(
                 aggregation_id,
-                lambda spec, aggregator_cls=aggregator_cls: aggregator_cls(spec),
+                lambda spec, context=None, aggregator_cls=aggregator_cls: aggregator_cls(
+                    spec,
+                    runtime_context=context,
+                ),
             )
 
     # ------------------------------------------------------------------ #
     # Build API
     # ------------------------------------------------------------------ #
-    def build_metric(self, spec: MetricSpec) -> "MetricInstance":
+    def build_metric(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> "MetricInstance":
         impl_key, entry = self._resolve_metric_registration(spec)
         runtime_spec = self._resolve_runtime_spec(spec, entry)
         metric = self._build_metric_impl(runtime_spec, impl_key=impl_key, entry=entry)
@@ -113,8 +157,26 @@ class MetricRegistry:
                     f"failed: {import_error}"
                 ) from import_error
             raise KeyError(f"Aggregator '{aggregation_id}' not registered")
-        aggregator = self._aggregators[aggregation_id](runtime_spec)
+        aggregator = self._build_aggregator(
+            self._aggregators[aggregation_id],
+            runtime_spec,
+            runtime_context if runtime_context is not None else self._runtime_context,
+        )
         return MetricInstance(runtime_spec, metric, aggregator)
+
+    @staticmethod
+    def _build_aggregator(
+        factory: AggregatorFactory,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext],
+    ) -> "MetricAggregator":
+        try:
+            return factory(spec, runtime_context)
+        except TypeError as original_exc:
+            try:
+                return factory(spec)
+            except TypeError:
+                raise original_exc
 
     def _resolve_metric_registration(self, spec: MetricSpec) -> tuple[str, RegistryEntry | None]:
         impl_key = spec.implementation or spec.metric_id
@@ -123,7 +185,11 @@ class MetricRegistry:
         try:
             return impl_key, registry.entry("metrics", impl_key)
         except KeyError:
-            return impl_key, None
+            _import_metric_asset_module(impl_key)
+            try:
+                return impl_key, registry.entry("metrics", impl_key)
+            except KeyError:
+                return impl_key, None
 
     def _resolve_runtime_spec(self, spec: MetricSpec, entry: RegistryEntry | None) -> MetricSpec:
         if spec.aggregation:
@@ -146,8 +212,17 @@ class MetricRegistry:
         if entry is not None:
             metric_cls = registry.get("metrics", impl_key)
             return metric_cls(spec)
-        cls = self._import_metric_class(impl_key)
-        return cls(spec)
+        try:
+            metric_cls = registry.get("metrics", impl_key)
+            return metric_cls(spec)
+        except KeyError:
+            _import_metric_asset_module(impl_key)
+        try:
+            metric_cls = registry.get("metrics", impl_key)
+            return metric_cls(spec)
+        except KeyError:
+            cls = self._import_metric_class(impl_key)
+            return cls(spec)
 
     @staticmethod
     def _import_metric_class(implementation: str) -> Type[BaseMetric]:
@@ -163,13 +238,45 @@ class MetricRegistry:
             )
         module = importlib.import_module(module_name)
         candidate = getattr(module, class_name)
-
+        
         from gage_eval.metrics.base import BaseMetric
         if not issubclass(candidate, BaseMetric):
             raise TypeError(
                 f"Metric class '{implementation}' must inherit from BaseMetric (found {candidate})"
             )
         return candidate
+
+
+def _import_metric_asset_module(metric_id: str) -> None:
+    module_name = _metric_asset_modules().get(str(metric_id))
+    if module_name:
+        importlib.import_module(module_name)
+
+
+@lru_cache(maxsize=1)
+def _metric_asset_modules() -> Dict[str, str]:
+    root = Path(__file__).resolve().parent / "builtin"
+    module_prefix = "gage_eval.metrics.builtin"
+    mapping: Dict[str, str] = {}
+    for path in root.rglob("*.py"):
+        if path.name in {"__init__.py"}:
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        module_name = _module_name_for_path(path, root=root, module_prefix=module_prefix)
+        for asset_name in _METRIC_ASSET_PATTERN.findall(source):
+            mapping.setdefault(str(asset_name), module_name)
+    return mapping
+
+
+def _module_name_for_path(path: Path, *, root: Path, module_prefix: str) -> str:
+    relative = path.relative_to(root).with_suffix("")
+    parts = relative.parts
+    if not parts:
+        return module_prefix
+    return ".".join((module_prefix, *parts))
 
 
 class MetricInstance:

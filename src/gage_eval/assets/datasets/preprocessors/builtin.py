@@ -101,6 +101,37 @@ from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConv
 # benchmark MMSU (audio)
 from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConverter
 
+
+def _warn_deprecated_dataset_preprocessor(
+    asset_name: str,
+    *,
+    replacement: str,
+    replacement_config: str,
+) -> None:
+    warnings.warn(
+        (
+            f"Dataset preprocessor '{asset_name}' is deprecated and will be removed in a future release. "
+            f"Use '{replacement}' via '{replacement_config}' instead."
+        ),
+        FutureWarning,
+        stacklevel=3,
+    )
+
+
+class _DeprecatedDatasetPreprocessorMixin:
+    deprecated_asset_name: str = ""
+    replacement_asset_name: str = ""
+    replacement_config_path: str = ""
+
+    def __init__(self, *args, **kwargs):
+        _warn_deprecated_dataset_preprocessor(
+            self.deprecated_asset_name,
+            replacement=self.replacement_asset_name,
+            replacement_config=self.replacement_config_path,
+        )
+        super().__init__(*args, **kwargs)
+
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -158,31 +189,64 @@ class PiqaPreprocessor(NewPiqa):
 @registry.asset(
     "dataset_preprocessors",
     "piqa_struct_only",
-    desc="PIQA structured preprocessor (choices/metadata only; no prompt concatenation)",
-    tags=("piqa", "multiple-choice", "struct_only"),
+    desc=(
+        "DEPRECATED: legacy PIQA structured preprocessor "
+        "(choices/metadata only; no prompt concatenation). "
+        "Use 'global_piqa_chat_preprocessor' via "
+        "'config/custom/global_piqa/global_piqa_chat.yaml'."
+    ),
+    tags=("piqa", "multiple-choice", "struct_only", "deprecated"),
+    deprecated=True,
+    replacement="global_piqa_chat_preprocessor",
+    replacement_config="config/custom/global_piqa/global_piqa_chat.yaml",
 )
-class PiqaStructOnlyPreprocessor(NewPiqaStructOnly):
-    pass
+class PiqaStructOnlyPreprocessor(_DeprecatedDatasetPreprocessorMixin, NewPiqaStructOnly):
+    """Deprecated PIQA struct-only alias kept for legacy configs."""
+
+    deprecated_asset_name = "piqa_struct_only"
+    replacement_asset_name = "global_piqa_chat_preprocessor"
+    replacement_config_path = "config/custom/global_piqa/global_piqa_chat.yaml"
 
 
 @registry.asset(
     "dataset_preprocessors",
     "gpqa_multi_choice",
-    desc="GPQA multiple-choice prompt wrapper",
-    tags=("prompt", "gpqa", "multiple-choice"),
+    desc=(
+        "DEPRECATED: legacy GPQA multiple-choice prompt wrapper. "
+        "Use 'gpqa_diamond_multi_choice' via 'config/custom/gpqa_diamond/async_chat.yaml'."
+    ),
+    tags=("prompt", "gpqa", "multiple-choice", "deprecated"),
+    deprecated=True,
+    replacement="gpqa_diamond_multi_choice",
+    replacement_config="config/custom/gpqa_diamond/async_chat.yaml",
 )
-class GpqaPreprocessor(NewGpqa):
-    pass
+class GpqaPreprocessor(_DeprecatedDatasetPreprocessorMixin, NewGpqa):
+    """Deprecated GPQA multiple-choice alias kept for legacy configs."""
+
+    deprecated_asset_name = "gpqa_multi_choice"
+    replacement_asset_name = "gpqa_diamond_multi_choice"
+    replacement_config_path = "config/custom/gpqa_diamond/async_chat.yaml"
 
 
 @registry.asset(
     "dataset_preprocessors",
     "gpqa_struct_only",
-    desc="GPQA structured preprocessor (choices/metadata only; no prompt concatenation)",
-    tags=("gpqa", "multiple-choice", "struct_only"),
+    desc=(
+        "DEPRECATED: legacy GPQA structured preprocessor "
+        "(choices/metadata only; no prompt concatenation). "
+        "Use 'gpqa_diamond_multi_choice' via 'config/custom/gpqa_diamond/async_chat.yaml'."
+    ),
+    tags=("gpqa", "multiple-choice", "struct_only", "deprecated"),
+    deprecated=True,
+    replacement="gpqa_diamond_multi_choice",
+    replacement_config="config/custom/gpqa_diamond/async_chat.yaml",
 )
-class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
-    pass
+class GpqaStructOnlyPreprocessor(_DeprecatedDatasetPreprocessorMixin, NewGpqaStructOnly):
+    """Deprecated GPQA struct-only alias kept for legacy configs."""
+
+    deprecated_asset_name = "gpqa_struct_only"
+    replacement_asset_name = "gpqa_diamond_multi_choice"
+    replacement_config_path = "config/custom/gpqa_diamond/async_chat.yaml"
 
 
 @registry.asset(
@@ -231,43 +295,46 @@ class MMMUMultimodalPreprocessor(NewMMMU):
     pass
 
 
-@registry.asset(
-    "dataset_preprocessors",
-    "gpqa_multi_choice",
-    desc="GPQA commonsense multiple-choice prompt wrapper",
-    tags=("prompt", "gpqa", "multiple-choice"),
-)
-class GpqaPreprocessor(NewGpqa):
-    pass
-
-@registry.asset(
-    "dataset_preprocessors",
-    "gpqa_struct_only",
-    desc="GPQA commonsense structured preprocessor (choices/metadata only; no prompt concatenation)",
-    tags=("gpqa", "multiple-choice", "struct_only"),
-)
-class GpqaStructOnlyPreprocessor(NewGpqaStructOnly):
-    pass
-
-
 if NewMathVista is not None:
     @registry.asset(
         "dataset_preprocessors",
         "mathvista_preprocessor",
-        desc="MathVista multimodal preprocessor (prompt + image + optional choices)",
-        tags=("prompt", "vision", "mathvista"),
+        desc=(
+            "DEPRECATED: legacy MathVista multimodal preprocessor "
+            "(prompt + image + optional choices). "
+            "Use 'mathvista_chat_preprocessor' via 'config/custom/mathvista/chat.yaml'."
+        ),
+        tags=("prompt", "vision", "mathvista", "deprecated"),
+        deprecated=True,
+        replacement="mathvista_chat_preprocessor",
+        replacement_config="config/custom/mathvista/chat.yaml",
     )
-    class MathVistaPreprocessor(NewMathVista):
-        pass
+    class MathVistaPreprocessor(_DeprecatedDatasetPreprocessorMixin, NewMathVista):
+        """Deprecated MathVista multimodal alias kept for legacy configs."""
+
+        deprecated_asset_name = "mathvista_preprocessor"
+        replacement_asset_name = "mathvista_chat_preprocessor"
+        replacement_config_path = "config/custom/mathvista/chat.yaml"
 
     @registry.asset(
         "dataset_preprocessors",
         "mathvista_struct_only",
-        desc="MathVista structured multimodal preprocessor (multimodal/choices/metadata only; no prompt concatenation)",
-        tags=("mathvista", "vision", "struct_only"),
+        desc=(
+            "DEPRECATED: legacy MathVista structured multimodal preprocessor "
+            "(multimodal/choices/metadata only; no prompt concatenation). "
+            "Use 'mathvista_chat_preprocessor' via 'config/custom/mathvista/chat.yaml'."
+        ),
+        tags=("mathvista", "vision", "struct_only", "deprecated"),
+        deprecated=True,
+        replacement="mathvista_chat_preprocessor",
+        replacement_config="config/custom/mathvista/chat.yaml",
     )
-    class MathVistaStructOnlyPreprocessor(NewMathVistaStructOnly):
-        pass
+    class MathVistaStructOnlyPreprocessor(_DeprecatedDatasetPreprocessorMixin, NewMathVistaStructOnly):
+        """Deprecated MathVista struct-only alias kept for legacy configs."""
+
+        deprecated_asset_name = "mathvista_struct_only"
+        replacement_asset_name = "mathvista_chat_preprocessor"
+        replacement_config_path = "config/custom/mathvista/chat.yaml"
 
 
 # benchmark GPQA-diamond
@@ -465,5 +532,4 @@ class MRCRPreprocessor(MRCRConverter):
 )
 class MMSUPreprocessor(MMSUConverter):
     pass
-
 

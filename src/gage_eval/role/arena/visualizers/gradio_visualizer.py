@@ -12,6 +12,7 @@ from typing import Any, Optional, Sequence, Tuple
 from loguru import logger
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.registry_loader import import_arena_asset_module
 from gage_eval.role.arena.human_input_protocol import (
     build_action_payload,
     dump_action_payload,
@@ -169,7 +170,7 @@ class GradioVisualizer:
         try:
             renderer_cls = registry.get("renderer_impls", self._renderer_impl)
         except KeyError:
-            registry.auto_discover("renderer_impls", "gage_eval.role.arena.games")
+            import_arena_asset_module("renderer_impls", self._renderer_impl)
             renderer_cls = registry.get("renderer_impls", self._renderer_impl)
         params = dict(self._renderer_params)
         try:

@@ -6,6 +6,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, TYPE_CHECKING
 
+from gage_eval.assets.datasets.registry_loader import import_dataset_asset_module
 from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.assets.datasets.utils.reflection import resolve_callable as _resolve_callable, coerce_kwargs as _coerce_kwargs
 from gage_eval.assets.datasets.utils.tokenizers import (
@@ -121,7 +122,11 @@ def _resolve_registered_bundle(name: str, kwargs: Dict[str, Any]):
     try:
         bundle_cls = registry.get("bundles", name)
     except KeyError:
-        return None
+        import_dataset_asset_module("bundles", name)
+        try:
+            bundle_cls = registry.get("bundles", name)
+        except KeyError:
+            return None
     bundle = bundle_cls(**kwargs)
     return _BundleAdapter(bundle)
 
@@ -132,7 +137,11 @@ def _resolve_registered_preprocessor(name: str, kwargs: Dict[str, Any]):
     try:
         preprocessor_cls = registry.get("dataset_preprocessors", name)
     except KeyError:
-        return None
+        import_dataset_asset_module("dataset_preprocessors", name)
+        try:
+            preprocessor_cls = registry.get("dataset_preprocessors", name)
+        except KeyError:
+            return None
     preprocessor = preprocessor_cls(**kwargs)
     return _PreprocessorAdapter(preprocessor)
 

@@ -68,9 +68,10 @@ def _resolve_requested_generators(cache: EvalCache) -> Optional[Set[str]]:
     return None
 
 
-def _instantiate_summary_generator(name: str) -> Optional[Any]:
+def _instantiate_summary_generator(name: str, *, registry_view=None) -> Optional[Any]:
+    lookup = registry_view or registry
     try:
-        obj = registry.get("summary_generators", name)
+        obj = lookup.get("summary_generators", name)
     except KeyError:
         return None
     if inspect.isclass(obj):
@@ -82,9 +83,11 @@ def _instantiate_summary_generator(name: str) -> Optional[Any]:
     return None
 
 
-def _ensure_summary_generators_loaded() -> None:
+def _ensure_summary_generators_loaded(*, registry_view=None) -> None:
+    if registry_view is not None:
+        return
     try:
-        registry.auto_discover("summary_generators", "gage_eval.reporting.summary_generators")
+        registry.auto_discover("summary_generators", "gage_eval.reporting.summary_generators", mode="warn")
     except Exception as exc:
         _LOGGER.warning(
             "report",
@@ -93,9 +96,10 @@ def _ensure_summary_generators_loaded() -> None:
         )
 
 
-def _select_summary_entries(cache: EvalCache) -> List[Any]:
-    _ensure_summary_generators_loaded()
-    entries = registry.list("summary_generators")
+def _select_summary_entries(cache: EvalCache, *, registry_view=None) -> List[Any]:
+    lookup = registry_view or registry
+    _ensure_summary_generators_loaded(registry_view=registry_view)
+    entries = lookup.list("summary_generators")
     default_entries = [entry for entry in entries if entry.extra.get("default_enabled")]
     requested = _resolve_requested_generators(cache)
     if not requested:
@@ -123,10 +127,26 @@ def _select_summary_entries(cache: EvalCache) -> List[Any]:
     step_kind="global",
 )
 class ReportStep(GlobalStep):
-    def __init__(self, auto_eval_step: Optional["AutoEvalStep"], cache_store: EvalCache) -> None:
+    def __init__(
+        self,
+        auto_eval_step: Optional["AutoEvalStep"],
+        cache_store: EvalCache,
+        *,
+        registry_view=None,
+    ) -> None:
         super().__init__("ReportStep")
         self._auto_eval_step = auto_eval_step
         self._cache = cache_store
+        self._registry_view = registry_view
+
+    def get_sample_count(self) -> int:
+        """Return the number of persisted samples without leaking cache internals."""
+
+        return int(self._cache.sample_count)
+
+    @property
+    def cache_store(self) -> EvalCache:
+        return self._cache
 
     def record_timing(self, phase: str, seconds: float) -> None:
         self._cache.record_timing(phase, seconds)
@@ -134,11 +154,16 @@ class ReportStep(GlobalStep):
     def get_timing(self, phase: str) -> Optional[float]:
         return self._cache.get_timing(phase)
 
+    def record_execution_summary(self, payload: Dict[str, Any]) -> None:
+        """Persist runtime execution summary for later report merging."""
+
+        self._cache.set_metadata("execution_summary", dict(payload))
+
     def _collect_summary_payload(self) -> Dict[str, Any]:
-        entries = _select_summary_entries(self._cache)
+        entries = _select_summary_entries(self._cache, registry_view=self._registry_view)
         payload: Dict[str, Any] = {}
         for entry in entries:
-            generator = _instantiate_summary_generator(entry.name)
+            generator = _instantiate_summary_generator(entry.name, registry_view=self._registry_view)
             if generator is None:
                 _LOGGER.warning("report", "Summary generator '{}' could not be instantiated", entry.name)
                 continue
@@ -174,7 +199,7 @@ class ReportStep(GlobalStep):
 
     @observable_stage(
         "report",
-        payload_fn=lambda self, *args, **kwargs: {"sample_count": self._cache.sample_count},
+        payload_fn=lambda self, *args, **kwargs: {"sample_count": self.get_sample_count()},
     )
     def finalize(
         self,
@@ -202,17 +227,24 @@ class ReportStep(GlobalStep):
         payload = {
             "run": self._cache.snapshot(),
             "metrics": formatted_metrics,
-            "sample_count": self._cache.sample_count,
+            "sample_count": self.get_sample_count(),
         }
+        execution_summary = self._cache.get_metadata("execution_summary")
+        if isinstance(execution_summary, dict):
+            payload["execution"] = execution_summary
+        validation_summary = self._cache.get_metadata("validation_summary")
+        if isinstance(validation_summary, dict):
+            payload.update(validation_summary)
         if summary_payload:
             payload.update(summary_payload)
         if formatted_tasks:
             payload["tasks"] = formatted_tasks
+        payload.update(trace.health_snapshot())
         self._cache.write_summary(payload)
         _LOGGER.info(
             "report",
             "ReportStep finalized summary (samples={}, metrics={}, tasks={})",
-            self._cache.sample_count,
+            self.get_sample_count(),
             len(formatted_metrics),
             len(formatted_tasks or []),
             trace=trace,

@@ -79,7 +79,7 @@ class _RoleManagerStub:
         self._adapter = adapter
 
     @contextlib.contextmanager
-    def borrow_role(self, adapter_id: str) -> Iterator[_DummyRole]:
+    def borrow_role(self, adapter_id: str, **_kwargs) -> Iterator[_DummyRole]:
         _ = adapter_id
         yield _DummyRole(self._answer)
 

@@ -21,12 +21,12 @@ Retro Mario 现在已经统一到脚本入口，覆盖以下常见路径：
 | --- | --- | --- |
 | 标准启动脚本 | `scripts/run/arenas/retro_mario/run.sh` | Mario 常见模式的统一启动入口 |
 | 回放脚本 | `scripts/run/arenas/retro_mario/replay.sh` | 通过 `run_id` 回放一局已完成运行 |
-| Dummy websocketRGB 配置 | `config/custom/retro_mario_phase1_dummy_ws.yaml` | 最快的实时查看冒烟验证 |
-| Human websocketRGB 配置 | `config/custom/retro_mario_phase1_human_ws.yaml` | 人类手动控制 Mario |
-| OpenAI websocketRGB 配置 | `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml` | API 驱动的实时查看 Demo |
-| OpenAI headless 配置 | `config/custom/retro_mario_openai_headless_auto_eval.yaml` | API 驱动的无界面 Demo |
-| Dummy headless 配置 | `config/custom/retro_mario_phase1_dummy_headless_auto_eval.yaml` | 不依赖 viewer 的离线冒烟测试 |
-| 数据集 | `config/custom/retro_mario_phase1.jsonl` | 默认样本输入 |
+| Dummy websocketRGB 配置 | `config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml` | 最快的实时查看冒烟验证 |
+| Human websocketRGB 配置 | `config/custom/retro_mario/retro_mario_phase1_human_ws.yaml` | 人类手动控制 Mario |
+| OpenAI websocketRGB 配置 | `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml` | API 驱动的实时查看 Demo |
+| OpenAI headless 配置 | `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml` | API 驱动的无界面 Demo |
+| Dummy headless 配置 | `config/custom/retro_mario/retro_mario_phase1_dummy_headless_auto_eval.yaml` | 不依赖 viewer 的离线冒烟测试 |
+| 数据集 | `config/custom/retro_mario/retro_mario_phase1.jsonl` | 默认样本输入 |
 | 环境实现 | `src/gage_eval/role/arena/games/retro/retro_env.py` | 运行时行为和 replay 写出逻辑 |
 | 动作解析器 | `src/gage_eval/role/arena/parsers/retro_action_parser.py` | 解析 `{"move": "...", "hold_ticks": ...}` 动作 |
 
@@ -118,7 +118,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 这个命令里如果要切换模型或 API，请改这里：
 
 - API Key：启动前先设置 `OPENAI_API_KEY`。`scripts/run/arenas/retro_mario/run.sh` 也接受 `LITELLM_API_KEY`，并会自动同步到 `OPENAI_API_KEY`。
-- `openai_ws` 读取的是 `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml`；`openai_headless` 读取的是 `config/custom/retro_mario_openai_headless_auto_eval.yaml`。
+- `openai_ws` 读取的是 `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml`；`openai_headless` 读取的是 `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml`。
 - 托管 OpenAI 兼容 API：切换接口地址时改 `backends[0].config.base_url`；切换模型时改 `backends[0].config.model`，或者直接设置 `RETRO_OPENAI_MODEL`。
 - 本地 OpenAI 兼容服务：把 `backends[0].config.base_url` 改成本地服务地址，再把 `backends[0].config.model` 改成服务暴露的模型名。当前这两份配置里 `require_api_key: true`，所以要么保持 `OPENAI_API_KEY` 非空，要么在你确认本地服务不需要鉴权时把这个开关改成 `false`。
 
@@ -177,7 +177,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 
 ```bash
 bash scripts/run/arenas/retro_mario/run.sh \
-  --config config/custom/retro_mario_phase1_dummy_ws.yaml \
+  --config config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml \
   --run-id "retro_mario_custom_$(date +%Y%m%d_%H%M%S)"
 ```
 

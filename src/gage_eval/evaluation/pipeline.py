@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Callable, Dict, Iterable, List, Optional
 import os
 import time
@@ -14,10 +15,17 @@ from gage_eval.config.pipeline_config import (
     PipelineConfig,
 )
 from gage_eval.config.registry import ConfigRegistry
+from gage_eval.evaluation.execution_controller import SampleLoopExecutionError
 from gage_eval.evaluation.sample_loop import SampleLoop
 from gage_eval.evaluation.task_planner import TaskPlanner
 from gage_eval.metrics import MetricRegistry
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.runtime_metadata import (
+    build_run_metadata_snapshot,
+    build_runtime_metadata_snapshot,
+    record_run_metadata,
+    record_runtime_metadata,
+)
 from gage_eval.pipeline.steps.report import ReportStep
 from gage_eval.role.role_manager import RoleManager
 from gage_eval.observability.trace import ObservabilityTrace
@@ -33,69 +41,109 @@ class PipelineRuntime:
         role_manager: RoleManager,
         trace: ObservabilityTrace,
         report_step: Optional[ReportStep] = None,
+        shutdown_callback: Optional[Callable[[], None]] = None,
     ) -> None:
         self.sample_loop = sample_loop
         self.task_planner = task_planner
         self.role_manager = role_manager
         self.trace = trace
         self.report_step = report_step
+        self._shutdown_callback = shutdown_callback
         self.wall_clock_start: Optional[float] = None
         self._shutdown_called = False
 
     def run(self) -> None:
         """Kick off execution for every sample."""
 
-        try:
-            logger.info("PipelineRuntime started (report_step={})", bool(self.report_step))
-            total_start = time.perf_counter()
-            wall_start = self.wall_clock_start or total_start
-            inference_start = time.perf_counter()
-            self.sample_loop.run(
-                planner=self.task_planner,
-                role_manager=self.role_manager,
-                trace=self.trace,
-            )
-            inference_elapsed = time.perf_counter() - inference_start
-            if self.report_step:
-                eval_elapsed = 0.0
-
-                def pre_write_hook() -> None:
-                    nonlocal eval_elapsed
-                    eval_elapsed = time.perf_counter() - report_start
-                    self.report_step.record_timing("inference_s", inference_elapsed)
-                    self.report_step.record_timing("evaluation_s", eval_elapsed)
-                    execution_total = time.perf_counter() - total_start
-                    self.report_step.record_timing("execution_runtime_s", execution_total)
-                    dataset_time = self.report_step.get_timing("dataset_materialization_s") or 0.0
-                    self.report_step.record_timing("total_runtime_s", dataset_time + execution_total)
-                    wall_total = time.perf_counter() - wall_start
-                    self.report_step.record_timing("wall_runtime_s", wall_total)
-                    self._record_throughput_metrics(
-                        sample_count=self._resolve_sample_count(),
-                        wall_runtime_s=wall_total,
-                        inference_s=inference_elapsed,
-                        evaluation_s=eval_elapsed,
-                    )
-
-                report_start = time.perf_counter()
-                self.report_step.finalize(self.trace, pre_write_hook=pre_write_hook)
-            else:
-                eval_elapsed = 0.0
-            total_elapsed = time.perf_counter() - total_start
-            logger.info(
-                "PipelineRuntime finished successfully (inference={:.2f}s eval={:.2f}s total={:.2f}s)",
-                inference_elapsed,
-                eval_elapsed,
-                total_elapsed,
-            )
-        finally:
+        with self.trace.activate():
+            primary_error: SampleLoopExecutionError | None = None
+            loop_outcome = None
             try:
-                self.shutdown()
+                logger.info("PipelineRuntime started (report_step={})", bool(self.report_step))
+                total_start = time.perf_counter()
+                wall_start = self.wall_clock_start or total_start
+                inference_start = time.perf_counter()
+                try:
+                    loop_outcome = self.sample_loop.run(
+                        planner=self.task_planner,
+                        role_manager=self.role_manager,
+                        trace=self.trace,
+                    )
+                except SampleLoopExecutionError as exc:
+                    primary_error = exc
+                    loop_outcome = exc.outcome
+                inference_elapsed = time.perf_counter() - inference_start
+                if self.report_step:
+                    eval_elapsed = 0.0
+
+                    def pre_write_hook() -> None:
+                        nonlocal eval_elapsed
+                        eval_elapsed = time.perf_counter() - report_start
+                        self.report_step.cache_store.set_metadata(
+                            "shuffle_summary",
+                            self.sample_loop.shuffle_summary,
+                        )
+                        self.report_step.record_timing("inference_s", inference_elapsed)
+                        self.report_step.record_timing("evaluation_s", eval_elapsed)
+                        execution_total = time.perf_counter() - total_start
+                        self.report_step.record_timing("execution_runtime_s", execution_total)
+                        dataset_time = self.report_step.get_timing("dataset_materialization_s") or 0.0
+                        self.report_step.record_timing("total_runtime_s", dataset_time + execution_total)
+                        wall_total = time.perf_counter() - wall_start
+                        self.report_step.record_timing("wall_runtime_s", wall_total)
+                        self._record_throughput_metrics(
+                            sample_count=self._resolve_sample_count(),
+                            wall_runtime_s=wall_total,
+                            inference_s=inference_elapsed,
+                            evaluation_s=eval_elapsed,
+                        )
+
+                    if loop_outcome is not None:
+                        self.report_step.record_execution_summary(
+                            loop_outcome.to_summary_payload()
+                        )
+                    if primary_error is None or self.sample_loop.report_partial_on_failure:
+                        report_start = time.perf_counter()
+                        try:
+                            self.report_step.finalize(self.trace, pre_write_hook=pre_write_hook)
+                        except Exception as finalize_error:
+                            if primary_error is None:
+                                raise
+                            self._handle_finalize_failure(primary_error, finalize_error)
+                else:
+                    eval_elapsed = 0.0
+                total_elapsed = time.perf_counter() - total_start
+                if primary_error is not None:
+                    logger.warning(
+                        "PipelineRuntime aborted after partial execution (inference={:.2f}s eval={:.2f}s total={:.2f}s)",
+                        inference_elapsed,
+                        eval_elapsed,
+                        total_elapsed,
+                    )
+                    raise primary_error
+                logger.info(
+                    "PipelineRuntime finished successfully (inference={:.2f}s eval={:.2f}s total={:.2f}s)",
+                    inference_elapsed,
+                    eval_elapsed,
+                    total_elapsed,
+                )
             finally:
-                self.trace.flush()
+                cache_store = self.report_step.cache_store if self.report_step else None
+                try:
+                    self.shutdown()
+                finally:
+                    cache_close_error = _close_cache_store(cache_store, active_error=sys.exc_info()[1])
+                    try:
+                        self.trace.close(cache_store=cache_store)
+                    finally:
+                        if cache_close_error is not None:
+                            raise cache_close_error
 
     def attach_report_step(self, step: ReportStep) -> None:
         self.report_step = step
+
+    def attach_shutdown_callback(self, callback: Optional[Callable[[], None]]) -> None:
+        self._shutdown_callback = callback
 
     def shutdown(self) -> None:
         if self._shutdown_called:
@@ -104,15 +152,44 @@ class PipelineRuntime:
         try:
             self.sample_loop.shutdown()
         finally:
-            self.role_manager.shutdown()
+            try:
+                self.role_manager.shutdown()
+            finally:
+                if self._shutdown_callback is not None:
+                    self._shutdown_callback()
 
     def set_wall_clock_start(self, start_s: float) -> None:
         self.wall_clock_start = start_s
 
+    def _handle_finalize_failure(
+        self,
+        primary_error: SampleLoopExecutionError,
+        finalize_error: Exception,
+    ) -> None:
+        self.trace.emit(
+            "report_finalize_failed_after_abort",
+            {
+                "error_type": finalize_error.__class__.__name__,
+                "error": str(finalize_error),
+            },
+            sample_id=primary_error.outcome.failed_sample_id,
+        )
+        logger.exception(
+            "ReportStep finalize failed after sample-loop abort (run_id={}): {}",
+            self.trace.run_id,
+            finalize_error,
+        )
+        add_note = getattr(primary_error, "add_note", None)
+        if callable(add_note):
+            add_note(
+                "secondary finalize failure: "
+                f"{finalize_error.__class__.__name__}: {finalize_error}"
+            )
+
     def _resolve_sample_count(self) -> int:
-        if self.report_step and hasattr(self.report_step, "_cache"):
+        if self.report_step:
             try:
-                return int(self.report_step._cache.sample_count)  # type: ignore[attr-defined]
+                return self.report_step.get_sample_count()
             except Exception:
                 pass
         try:
@@ -141,6 +218,22 @@ class PipelineRuntime:
         # Auto-eval stage throughput.
         if evaluation_s > 0:
             self.report_step.record_timing("throughput_auto_eval_samples_per_s", sample_count / evaluation_s)
+
+
+def _close_cache_store(cache_store: EvalCache | None, *, active_error: BaseException | None) -> Exception | None:
+    if cache_store is None:
+        return None
+    try:
+        cache_store.close()
+    except Exception as exc:
+        logger.exception("EvalCache close failed")
+        if active_error is not None:
+            add_note = getattr(active_error, "add_note", None)
+            if callable(add_note):
+                add_note(f"secondary cache close failure: {type(exc).__name__}: {exc}")
+            return None
+        return exc
+    return None
 
 
 class BuiltinPipeline:
@@ -187,7 +280,12 @@ class PipelineFactory:
             run_id=trace.run_id,
         )
         task_planner.configure_metrics(config.metrics, metric_registry, cache_store=cache_store)
-        report_step = ReportStep(task_planner.get_auto_eval_step(), cache_store)
+        registry_view = getattr(self._registry, "registry_view", None)
+        report_step = ReportStep(
+            task_planner.get_auto_eval_step(),
+            cache_store,
+            registry_view=registry_view,
+        )
         backend_instances = self._registry.materialize_backends(config)
         agent_backend_instances = self._registry.materialize_agent_backends(
             config,
@@ -196,43 +294,14 @@ class PipelineFactory:
         sandbox_profiles = self._registry.materialize_sandbox_profiles(config)
         mcp_clients = self._registry.materialize_mcp_clients(config)
         prompt_assets = self._registry.materialize_prompts(config)
-        backend_specs = [
-            {
-                "backend_id": spec.backend_id,
-                "type": spec.type,
-                "config": spec.config,
-            }
-            for spec in config.backends
-        ]
-        if backend_specs:
-            cache_store.set_metadata("backends", backend_specs)
-        model_specs = [
-            {
-                "model_id": spec.model_id,
-                "source": spec.source,
-                "hub": spec.hub,
-                "hub_params": spec.hub_params,
-                "params": spec.params,
-            }
-            for spec in config.models
-        ]
-        if model_specs:
-            cache_store.set_metadata("models", model_specs)
-        role_specs = [
-            {
-                "adapter_id": spec.adapter_id,
-                "role_type": spec.role_type,
-                "backend_id": spec.backend_id,
-                "backend_inline": spec.backend,
-                "capabilities": list(spec.capabilities or ()),
-                "prompt_id": spec.prompt_id,
-            }
-            for spec in config.role_adapters
-        ]
-        if role_specs:
-            cache_store.set_metadata("role_adapters", role_specs)
-        if config.summary_generators:
-            cache_store.set_metadata("summary_generators", list(config.summary_generators))
+        record_runtime_metadata(
+            cache_store,
+            build_runtime_metadata_snapshot(config),
+        )
+        record_run_metadata(
+            cache_store,
+            build_run_metadata_snapshot(trace.run_identity),
+        )
         adapters = self._registry.materialize_role_adapters(
             config,
             backends=backend_instances,

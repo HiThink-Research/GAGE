@@ -43,6 +43,22 @@ class GlobalAccuracyMetricTests(unittest.TestCase):
         result = self.metric.compute(context)
         self.assertEqual(result.values["acc"], 1.0)
 
+    def test_missing_choice_scores_zero_instead_of_crashing(self):
+        context = MetricContext(
+            sample_id="demo",
+            sample={
+                "predict_result": [{"message": {"content": [{"text": "I am not sure."}]}}],
+                "references": ["A"],
+            },
+            model_output={},
+            judge_output={},
+            args={},
+            trace=None,
+        )
+        result = self.metric.compute(context)
+        self.assertEqual(result.values["acc"], 0.0)
+        self.assertEqual(result.metadata["prediction"], "")
+
    
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,7 @@ class ContextProviderAdapter(RoleAdapter):
         *,
         implementation: str,
         implementation_params: Optional[Dict[str, Any]] = None,
+        registry_view=None,
         capabilities=(),
         role_type: str = "context_provider",
         mcp_client_id: Optional[str] = None,
@@ -48,10 +49,13 @@ class ContextProviderAdapter(RoleAdapter):
             self._implementation_params.setdefault("mcp_client_id", mcp_client_id)
         if mcp_client is not None:
             self._implementation_params.setdefault("mcp_client", mcp_client)
+        lookup = registry_view or registry
         try:
-            impl_cls = registry.get("context_impls", implementation)
+            impl_cls = lookup.get("context_impls", implementation)
         except KeyError:
-            registry.auto_discover("context_impls", "gage_eval.role.context")
+            if registry_view is not None:
+                raise
+            registry.auto_discover("context_impls", "gage_eval.role.context", mode="warn")
             impl_cls = registry.get("context_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "aprovide", None) or getattr(self._impl, "provide", None)

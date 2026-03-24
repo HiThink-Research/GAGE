@@ -2,11 +2,47 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.utils.messages import clone_json_like
+
+if TYPE_CHECKING:  # pragma: no cover
+    from gage_eval.role.runtime.invocation import (
+        RoleInvocationContext,
+        RuntimeRouteDecision,
+    )
+
+
+@dataclass(frozen=True)
+class HistorySnapshotPolicy:
+    """Controls how runtime history is materialized for adapters."""
+
+    copy_mode: str = "shallow"
+    window_messages: Optional[int] = None
+    preserve_system_messages: bool = True
+    fallback_to_deep_on_error: bool = True
+
+    @classmethod
+    def parse(cls, value: Any) -> "HistorySnapshotPolicy":
+        if isinstance(value, HistorySnapshotPolicy):
+            return value
+        if not isinstance(value, Mapping):
+            return cls()
+        copy_mode = str(value.get("copy_mode") or "shallow").strip().lower()
+        if copy_mode not in {"shallow", "deep"}:
+            raise ValueError(f"Unsupported history copy_mode '{copy_mode}'")
+        window_messages = value.get("window_messages")
+        if window_messages is not None:
+            window_messages = max(0, int(window_messages))
+        return cls(
+            copy_mode=copy_mode,
+            window_messages=window_messages,
+            preserve_system_messages=bool(value.get("preserve_system_messages", True)),
+            fallback_to_deep_on_error=bool(value.get("fallback_to_deep_on_error", True)),
+        )
 
 
 class ConversationHistory:
@@ -31,8 +67,23 @@ class ConversationHistory:
         if isinstance(message, dict):
             self._messages.append(self._clone(message))
 
-    def snapshot(self) -> List[Dict[str, Any]]:
-        return [self._clone(msg) for msg in self._messages]
+    def snapshot(
+        self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        resolved_policy = (
+            HistorySnapshotPolicy(copy_mode="deep")
+            if policy is None
+            else HistorySnapshotPolicy.parse(policy)
+        )
+        selected = self._select_messages(resolved_policy)
+        if resolved_policy.copy_mode == "deep":
+            return [self._clone(msg) for msg in selected]
+        try:
+            return [dict(msg) for msg in selected]
+        except Exception:
+            if resolved_policy.fallback_to_deep_on_error:
+                return [self._clone(msg) for msg in selected]
+            raise
 
     def clear(self) -> None:
         self._messages.clear()
@@ -46,6 +97,41 @@ class ConversationHistory:
     @staticmethod
     def _clone(message: Dict[str, Any]) -> Dict[str, Any]:
         return clone_json_like(message)
+
+    def _select_messages(self, policy: HistorySnapshotPolicy) -> List[Dict[str, Any]]:
+        if policy.window_messages is None:
+            return list(self._messages)
+        if policy.window_messages <= 0:
+            if not policy.preserve_system_messages:
+                return []
+            return [
+                message
+                for message in self._messages
+                if str(message.get("role") or "").lower() == "system"
+            ]
+        if not policy.preserve_system_messages:
+            return list(self._messages[-policy.window_messages :])
+        non_system: List[Dict[str, Any]] = [
+            message
+            for message in self._messages
+            if str(message.get("role") or "").lower() != "system"
+        ]
+        retained_non_system = set(map(id, non_system[-policy.window_messages :]))
+        selected: List[Dict[str, Any]] = []
+        for message in self._messages:
+            role = str(message.get("role") or "").lower()
+            if role == "system" or id(message) in retained_non_system:
+                selected.append(message)
+        return selected
+
+
+@dataclass
+class RoleInvocationBinding:
+    """Transient invocation binding attached while a role lease is active."""
+
+    route_decision: "RuntimeRouteDecision"
+    sandbox_provider: Optional[Any] = None
+    execution_context: Optional["RoleInvocationContext"] = None
 
 
 class Role:
@@ -63,6 +149,9 @@ class Role:
         self._adapter = adapter
         self._runtime = runtime
         self._history = history or ConversationHistory()
+        self._invocation_binding: Optional[RoleInvocationBinding] = None
+        self._cached_history_policy: Optional[HistorySnapshotPolicy] = None
+        self._cached_invocation_overlay: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Conversation history helpers
@@ -85,45 +174,70 @@ class Role:
     def reset_history(self) -> None:
         self._history.clear()
 
-    def history_snapshot(self) -> List[Dict[str, Any]]:
-        return self._history.snapshot()
+    def attach_invocation_binding(
+        self,
+        route_decision: "RuntimeRouteDecision",
+        *,
+        sandbox_provider: Optional[Any] = None,
+        execution_context: Optional["RoleInvocationContext"] = None,
+    ) -> None:
+        """Attach route and sandbox metadata for the current lease."""
+
+        self._invocation_binding = RoleInvocationBinding(
+            route_decision=route_decision,
+            sandbox_provider=sandbox_provider,
+            execution_context=execution_context,
+        )
+        self._cached_invocation_overlay = None
+
+    def clear_invocation_binding(self) -> None:
+        """Clear the transient invocation binding when the lease is released."""
+
+        self._invocation_binding = None
+        self._cached_invocation_overlay = None
+
+    def history_snapshot(
+        self, policy: Optional[HistorySnapshotPolicy | Mapping[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        try:
+            return self._history.snapshot(policy)
+        except TypeError:
+            return self._history.snapshot()
 
     # ------------------------------------------------------------------
     # Invocation
     # ------------------------------------------------------------------
     def invoke(self, payload: Optional[Dict[str, Any]], trace: ObservabilityTrace) -> Dict[str, Any]:
-        """Invoke the role adapter with sample-scoped history wiring."""
-
         base_payload = payload or {}
-
-        # STEP 1: Apply request-scoped history mutations before building the adapter payload.
         history_override = base_payload.get("history_override")
         history_delta = base_payload.get("history_delta")
         self._apply_history_override(history_override)
         self._ingest_history_delta(history_delta)
-
-        # STEP 2: Materialize only the payload view required by downstream adapters.
+        history_policy = self._resolve_history_policy()
         prepared_payload, history_tokens = self._build_invoke_payload(
             base_payload,
             has_history_override=history_override is not None,
             has_history_delta=history_delta is not None,
+            history_policy=history_policy,
         )
+        self._apply_invocation_binding(prepared_payload)
+        route_mode = self._invocation_binding.route_decision.runtime_mode if self._invocation_binding else "direct"
 
         logger.debug(
-            "Role invoke adapter={} runtime={} history_tokens={}",
+            "Role invoke adapter={} runtime={} route_mode={} history_tokens={} history_copy_mode={} history_window={}",
             self.adapter_id,
             bool(self._runtime),
+            route_mode,
             history_tokens,
+            history_policy.copy_mode,
+            history_policy.window_messages,
         )
-
-        # STEP 3: Delegate execution to the runtime or adapter.
         if self._runtime:
             result = self._runtime.execute(prepared_payload, trace)
         else:
             state = self._adapter.clone_for_sample()
             result = self._adapter.invoke(prepared_payload, state)
 
-        # STEP 4: Persist any response-side history delta back into the session history.
         self._ingest_history_delta(result.get("history_delta"))
         logger.trace("Role invoke adapter={} produced keys={}", self.adapter_id, list(result.keys()))
         return result
@@ -148,12 +262,68 @@ class Role:
         if isinstance(delta, Sequence):
             self._history.extend(delta)  # type: ignore[arg-type]
 
+    def _resolve_history_policy(self) -> HistorySnapshotPolicy:
+        if self._cached_history_policy is not None:
+            return self._cached_history_policy
+        params = getattr(self._adapter, "params", None)
+        if isinstance(params, Mapping):
+            self._cached_history_policy = HistorySnapshotPolicy.parse(
+                params.get("history_policy")
+            )
+        else:
+            self._cached_history_policy = HistorySnapshotPolicy()
+        return self._cached_history_policy
+
+    def _apply_invocation_binding(self, prepared_payload: Dict[str, Any]) -> None:
+        overlay = self._cached_binding_overlay()
+        if overlay is None:
+            return
+        route_defaults = overlay.get("runtime_route")
+        route_payload = dict(prepared_payload.get("runtime_route") or {})
+        if isinstance(route_defaults, Mapping):
+            for key, value in route_defaults.items():
+                route_payload.setdefault(key, value)
+            prepared_payload["runtime_route"] = route_payload
+        if self._invocation_binding.sandbox_provider is not None:
+            prepared_payload.setdefault(
+                "sandbox_provider", self._invocation_binding.sandbox_provider
+            )
+        execution_context_payload = overlay.get("execution_context")
+        if isinstance(execution_context_payload, Mapping):
+            prepared_payload.setdefault(
+                "execution_context", dict(execution_context_payload)
+            )
+
+    def _cached_binding_overlay(self) -> Optional[Dict[str, Any]]:
+        if self._invocation_binding is None:
+            return None
+        if self._cached_invocation_overlay is not None:
+            return self._cached_invocation_overlay
+        overlay: Dict[str, Any] = {
+            "runtime_route": dict(self._invocation_binding.route_decision.to_payload())
+        }
+        execution_context = self._invocation_binding.execution_context
+        if execution_context is not None:
+            payload = {
+                "run_id": execution_context.run_id,
+                "task_id": execution_context.task_id,
+                "sample_id": execution_context.sample_id,
+                "step_type": execution_context.step_type,
+                "adapter_id": execution_context.adapter_id,
+            }
+            if execution_context.step_slot_id is not None:
+                payload["step_slot_id"] = execution_context.step_slot_id
+            overlay["execution_context"] = payload
+        self._cached_invocation_overlay = overlay
+        return overlay
+
     def _build_invoke_payload(
         self,
         base_payload: Dict[str, Any],
         *,
         has_history_override: bool,
         has_history_delta: bool,
+        history_policy: HistorySnapshotPolicy,
     ) -> tuple[Dict[str, Any], int]:
         has_history = "history" in base_payload
         has_messages = "messages" in base_payload
@@ -164,7 +334,7 @@ class Role:
 
         if not has_history and not has_messages:
             if not self._history.is_empty():
-                history_view = self.history_snapshot()
+                history_view = self.history_snapshot(policy=history_policy)
                 messages_view = history_view
                 inject_history = True
                 inject_messages = True
@@ -175,7 +345,13 @@ class Role:
             messages_view = history_view
             inject_messages = True
 
-        needs_copy = has_history_override or has_history_delta or inject_history or inject_messages
+        needs_copy = (
+            has_history_override
+            or has_history_delta
+            or inject_history
+            or inject_messages
+            or self._invocation_binding is not None
+        )
         prepared_payload = dict(base_payload) if needs_copy else base_payload
         if needs_copy:
             prepared_payload.pop("history_override", None)

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 一键启动五个 LiteLLM Mock（OpenAI/Anthropic/Google/Grok/Kimi），并运行 PIQA 配置，生成汇总 summary。
+# 一键启动五个 LiteLLM Mock（OpenAI/Anthropic/Google/Grok/Kimi），
+# 将请求转发到本地 OpenAI 兼容模型，并复用模板矩阵生成 PIQA demo。
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
 # shellcheck disable=SC1091
@@ -9,6 +10,7 @@ source "${ROOT}/scripts/run/common/env.sh"
 SCRIPT_DIR="${ROOT}/scripts/run/backends/providers/litellm"
 OUTPUT_ROOT="${OUTPUT_ROOT:-$(gage_default_runs_dir)/piqa_litellm_local}"
 PIQA_SAMPLES="${PIQA_LITELLM_MAX_SAMPLES:-1}"
+MODEL_MATRIX="${SCRIPT_DIR}/models.mock.yaml"
 LITELLM_API_KEY="${LITELLM_API_KEY:-mock-key}"
 QWEN_BASE="${QWEN_BASE:-http://127.0.0.1:1234/v1}"  # 本地 qwen OpenAI 兼容服务，用作统一底座
 QWEN_MODEL="${QWEN_MODEL:-qwen2.5-0.5b-instruct-mlx}"
@@ -43,12 +45,11 @@ start_mock "mocks/grok.py" "${MOCK_GROK_PORT}"
 start_mock "mocks/kimi.py" "${MOCK_KIMI_PORT}"
 
 export PIQA_LITELLM_MAX_SAMPLES="${PIQA_SAMPLES}"
+export MAX_SAMPLES="${PIQA_SAMPLES}"
+export CONCURRENCY="${CONCURRENCY:-4}"
 export LITELLM_API_KEY
+export MODEL_MATRIX
+export OUTPUT_ROOT
 
-echo "[piqa-litellm] running PIQA with max_samples=${PIQA_SAMPLES}, output=${OUTPUT_ROOT}"
-python "${ROOT}/run.py" \
-  --config "${ROOT}/config/custom/piqa_litellm.yaml" \
-  --output-dir "${OUTPUT_ROOT}"
-
-# python "${ROOT}/scripts/run/common/python/collect_run_summaries.py" --root "${OUTPUT_ROOT}" || true
-# echo "[piqa-litellm] done. summary 位于 ${OUTPUT_ROOT}/*/summary.json"
+echo "[piqa-litellm] running PIQA mock matrix with max_samples=${PIQA_SAMPLES}, output=${OUTPUT_ROOT}"
+bash "${SCRIPT_DIR}/run_matrix.sh"

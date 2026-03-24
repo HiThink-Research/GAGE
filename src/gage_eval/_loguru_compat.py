@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -20,15 +22,28 @@ def ensure_loguru() -> None:
         def __init__(self, record):
             self.record = record
 
+    _CONTEXT_EXTRA: ContextVar[dict] = ContextVar("stub_loguru_context_extra", default={})
+
     class _StubLogger:
         def __init__(self, sinks=None, extra=None):
             self._sinks = sinks if sinks is not None else []
             self._extra = extra or {}
 
         def bind(self, **kwargs):
-            merged = dict(self._extra)
+            merged = dict(_CONTEXT_EXTRA.get())
+            merged.update(self._extra)
             merged.update({k: v for k, v in kwargs.items() if v is not None})
             return _StubLogger(self._sinks, merged)
+
+        @contextmanager
+        def contextualize(self, **kwargs):
+            current = dict(_CONTEXT_EXTRA.get())
+            current.update({k: v for k, v in kwargs.items() if v is not None})
+            token = _CONTEXT_EXTRA.set(current)
+            try:
+                yield self
+            finally:
+                _CONTEXT_EXTRA.reset(token)
 
         def add(self, sink, **kwargs):
             self._sinks.append(sink)
@@ -36,10 +51,12 @@ def ensure_loguru() -> None:
 
         def log(self, level, message, *args, **kwargs):
             formatted = message.format(*args, **kwargs) if (args or kwargs) else message
+            extra = dict(_CONTEXT_EXTRA.get())
+            extra.update(self._extra)
             record = {
                 "level": {"name": level},
                 "message": formatted,
-                "extra": dict(self._extra),
+                "extra": extra,
                 "time": datetime.now(timezone.utc),
                 "file": {"name": ""},
                 "function": "",
@@ -63,6 +80,9 @@ def ensure_loguru() -> None:
             return self.log("WARNING", message, *args, **kwargs)
 
         def error(self, message, *args, **kwargs):
+            return self.log("ERROR", message, *args, **kwargs)
+
+        def exception(self, message, *args, **kwargs):
             return self.log("ERROR", message, *args, **kwargs)
 
         def __getattr__(self, name):  # pragma: no cover

@@ -145,13 +145,13 @@ class VLLMBackendMultimodalTests(unittest.TestCase):
 
         self.assertEqual(limits, {"image": 4, "audio": 2})
 
-    def test_resolve_mm_limits_returns_none_without_explicit_boundary(self):
+    def test_resolve_mm_limits_uses_backend_default_without_explicit_boundary(self):
         backend = make_backend()
 
         with patch.dict("os.environ", {}, clear=True):
             limits = backend._resolve_mm_limits(backend.config, SimpleNamespace())
 
-        self.assertIsNone(limits)
+        self.assertEqual(limits, {"image": 1})
 
     def test_build_engine_forwards_explicit_mm_limits(self):
         backend = make_backend({"model_path": "repo", "limit_mm_per_prompt": {"image": 8}})

@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import os
 import threading
-import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Mapping, Optional
 
 from loguru import logger
 from gage_eval.evaluation.buffered_writer import BufferedResultWriter
+from gage_eval.evaluation.sample_journal import LockedJsonlJournal, RunSampleJournal
+from gage_eval.utils.run_identity import RunIdentity, build_run_identity
 
 
 class EvalCache:
@@ -21,7 +21,8 @@ class EvalCache:
         env_base = os.environ.get("GAGE_EVAL_SAVE_DIR") or None
         default_base = env_base or "./runs"
         self._base_dir = Path(base_dir or default_base).expanduser()
-        self._run_id = run_id or self._generate_run_id()
+        self._run_identity = build_run_identity(run_id)
+        self._run_id = self._run_identity.run_id
         self._run_dir = self._base_dir / self._run_id
         self._samples_dir = self._run_dir / "samples"
         self._samples_jsonl = self._run_dir / "samples.jsonl"
@@ -36,7 +37,11 @@ class EvalCache:
         self._buffer_threshold = _env_int("GAGE_EVAL_BUFFER_THRESHOLD", default=1000)
         self._buffer_batch_size = _env_int("GAGE_EVAL_BUFFER_BATCH_SIZE", default=64)
         self._buffer_flush_interval = _env_float("GAGE_EVAL_BUFFER_FLUSH_S", default=2.0)
+        self._buffer_durability_policy = _resolve_buffer_durability_policy(
+            os.environ.get("GAGE_EVAL_BUFFER_DURABILITY_POLICY", "interval")
+        )
         self._buffer_auto_mode = False
+        self._closed = False
         if force_buffer and not disable_buffer:
             self._use_buffered_writes = True
         elif disable_buffer:
@@ -44,6 +49,10 @@ class EvalCache:
         else:
             self._use_buffered_writes = False
             self._buffer_auto_mode = self._buffer_threshold > 0
+        self._root_journal: RunSampleJournal = LockedJsonlJournal(
+            target=self._samples_jsonl,
+            serializer=_serialize_jsonl_entry,
+        )
         self._writers: Dict[str, BufferedResultWriter] = {}
         self._writer_lock = threading.Lock()
 
@@ -54,6 +63,10 @@ class EvalCache:
     @property
     def run_dir(self) -> Path:
         return self._run_dir
+
+    @property
+    def run_identity(self) -> RunIdentity:
+        return self._run_identity
 
     @property
     def samples_dir(self) -> Path:
@@ -105,7 +118,7 @@ class EvalCache:
                     self._buffer_threshold,
                 )
                 self._use_buffered_writes = True
-        self._append_jsonl(payload_with_meta)
+        self._root_journal.append(payload_with_meta)
         if self._use_buffered_writes:
             writer = self._get_writer(namespace)
             writer.record(payload_with_meta)
@@ -119,11 +132,38 @@ class EvalCache:
         """Persist the aggregated summary to disk."""
 
         target = self._run_dir / "summary.json"
+        self._root_journal.flush()
         self.flush_writers()
+        writer_summary = self.buffered_writer_summary()
         with self._lock:
+            pending_summary_fields = self._metadata.pop("_pending_summary_fields", None)
+            if isinstance(pending_summary_fields, dict):
+                payload = {**payload, **pending_summary_fields}
+            payload = {**payload, **writer_summary}
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default))
         logger.info("Wrote summary for run_id={} to {}", self._run_id, target)
+        return target
+
+    def merge_summary_fields(self, payload: Dict[str, Any]) -> Path | None:
+        """Merge additional observability fields into summary output."""
+
+        target = self._run_dir / "summary.json"
+        self._root_journal.flush()
+        self.flush_writers()
+        with self._lock:
+            if not target.exists():
+                pending = self._metadata.get("_pending_summary_fields")
+                merged = dict(pending) if isinstance(pending, dict) else {}
+                merged.update(payload)
+                self._metadata["_pending_summary_fields"] = merged
+                return None
+            existing = json.loads(target.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                raise ValueError("summary.json must contain a JSON object")
+            existing.update(payload)
+            target.write_text(json.dumps(existing, ensure_ascii=False, indent=2, default=_json_default))
+        logger.info("Patched summary for run_id={} at {}", self._run_id, target)
         return target
 
     def iter_samples(self) -> Iterator[Dict]:
@@ -151,6 +191,8 @@ class EvalCache:
                 continue
 
     def snapshot(self) -> Dict[str, str]:
+        with self._lock:
+            metadata = {key: value for key, value in self._metadata.items() if not str(key).startswith("_")}
         return {
             "run_id": self._run_id,
             "run_dir": str(self._run_dir),
@@ -158,7 +200,23 @@ class EvalCache:
             "samples_jsonl": str(self._samples_jsonl),
             "namespaces": dict(self._namespace_counts),
             "timings": dict(self._timings),
-            "metadata": dict(self._metadata),
+            "metadata": metadata,
+        }
+
+    def buffered_writer_summary(self) -> Dict[str, Any]:
+        with self._writer_lock:
+            stats = [writer.stats for writer in self._writers.values()]
+        flush_count = sum(item.flush_count for item in stats)
+        fsync_count = sum(item.fsync_count for item in stats)
+        if stats:
+            durability_policy = stats[0].durability_policy
+        else:
+            durability_policy = self._buffer_durability_policy
+        return {
+            "buffered_writer_flush_count": flush_count,
+            "buffered_writer_fsync_count": fsync_count,
+            "buffered_writer_durability_policy": durability_policy,
+            "buffered_writer_active_namespaces": len(stats),
         }
 
     def _ensure_dirs(self) -> None:
@@ -166,19 +224,11 @@ class EvalCache:
         self._samples_dir.mkdir(parents=True, exist_ok=True)
 
     def _generate_run_id(self) -> str:
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        suffix = uuid.uuid4().hex[:8]
-        return f"run-{timestamp}-{suffix}"
+        return build_run_identity().run_id
 
     @staticmethod
     def _sanitize_sample_id(sample_id: str) -> str:
         return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
-
-    def _append_jsonl(self, payload: Dict) -> None:
-        self._samples_jsonl.parent.mkdir(parents=True, exist_ok=True)
-        with self._samples_jsonl.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, default=_json_default))
-            handle.write("\n")
 
     def _get_writer(self, namespace: str) -> BufferedResultWriter:
         with self._writer_lock:
@@ -193,15 +243,36 @@ class EvalCache:
                 self._writers[namespace] = writer
             return writer
 
-    def flush_writers(self) -> None:
-        if not self._use_buffered_writes:
-            return
+    def flush_writers(self, *, final: bool = False) -> None:
         with self._writer_lock:
             for writer in self._writers.values():
-                writer.flush()
+                if final:
+                    writer.close()
+                else:
+                    writer.flush(final=False)
 
     def close(self) -> None:
-        self.flush_writers()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        close_error: Exception | None = None
+        try:
+            self.flush_writers(final=True)
+        except Exception as exc:
+            close_error = exc
+        try:
+            self._root_journal.close()
+        except Exception as exc:
+            if close_error is None:
+                close_error = exc
+        try:
+            self.merge_summary_fields(self.buffered_writer_summary())
+        except Exception as exc:
+            if close_error is None:
+                close_error = exc
+        if close_error is not None:
+            raise close_error
 
     def _write_sample_legacy(self, namespace: str, sample_id: str, payload: Dict) -> Path:
         target = self._samples_dir / namespace / f"{sample_id}.json"
@@ -240,6 +311,12 @@ def _json_default(obj: Any) -> Any:
     return str(obj)
 
 
+def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:
+    """Serializes one root journal payload into a single JSONL entry."""
+
+    return json.dumps(payload, ensure_ascii=False, default=_json_default)
+
+
 def _env_flag(name: str, *, default: bool = False) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -265,3 +342,10 @@ def _env_float(name: str, *, default: float) -> float:
         return float(value)
     except ValueError:
         return default
+
+
+def _resolve_buffer_durability_policy(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in {"always", "interval", "never"}:
+        return normalized
+    return "interval"

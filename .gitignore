@@ -166,6 +166,7 @@ cython_debug/
 .idea/
 
 # custom .gitignore
+DEVLOG.md
 user.config
 saves/
 cache/
@@ -211,6 +212,7 @@ scripts/oneclick/.env.example
 /models/
 
 .gage_cache/
+.scannerwork/
 
 # python artifacts
 __pycache__/

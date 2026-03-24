@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/run/common/env.sh"
 PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
-CFG="${CFG:-${ROOT}/config/custom/mahjong_human_vs_3_dummy.yaml}"
+CFG="${CFG:-${ROOT}/config/custom/mahjong/mahjong_human_vs_3_dummy.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
 RUN_ID="${RUN_ID:-mahjong_showdown_human_dummy_$(date +%Y%m%d_%H%M%S)}"
 REPLAY_PORT="${REPLAY_PORT:-8000}"

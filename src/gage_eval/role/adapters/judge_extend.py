@@ -23,6 +23,7 @@ class JudgeExtendAdapter(RoleAdapter):
         *,
         implementation: str,
         implementation_params: Optional[Dict[str, Any]] = None,
+        registry_view=None,
         capabilities=(),
         role_type: str = "judge_extend",
         resource_requirement: Optional[Dict[str, Any]] = None,
@@ -41,10 +42,13 @@ class JudgeExtendAdapter(RoleAdapter):
             raise ValueError("JudgeExtendAdapter requires non-empty implementation")
         self._implementation = implementation
         self._implementation_params = dict(implementation_params or {})
+        lookup = registry_view or registry
         try:
-            impl_cls = registry.get("judge_impls", implementation)
+            impl_cls = lookup.get("judge_impls", implementation)
         except KeyError:
-            registry.auto_discover("judge_impls", "gage_eval.role.judge")
+            if registry_view is not None:
+                raise
+            registry.auto_discover("judge_impls", "gage_eval.role.judge", mode="warn")
             impl_cls = registry.get("judge_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "ainvoke", None) or getattr(self._impl, "invoke", None)

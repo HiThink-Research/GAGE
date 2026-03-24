@@ -6,6 +6,18 @@ from typing import Dict
 
 from gage_eval.registry.entry import RegistryEntry
 from gage_eval.registry.manager import RegistryManager
+from gage_eval.registry.runtime import (
+    DiscoveryFailureRecord,
+    DiscoveryPolicy,
+    FrozenRegistryView,
+    RegistryBootstrapCoordinator,
+    RegistryDiscoveryError,
+    RegistryFacade,
+    RegistryOverlayAsset,
+    RegistryRuntimeMutationError,
+    RegistryViewLease,
+    RuntimeRegistryContext,
+)
 from gage_eval.registry.utils import ensure_async, run_sync
 
 registry = RegistryManager()
@@ -40,6 +52,16 @@ for _kind, _desc in DEFAULT_KINDS.items():
 __all__ = [
     "RegistryEntry",
     "RegistryManager",
+    "DiscoveryFailureRecord",
+    "DiscoveryPolicy",
+    "FrozenRegistryView",
+    "RegistryBootstrapCoordinator",
+    "RegistryDiscoveryError",
+    "RegistryFacade",
+    "RegistryOverlayAsset",
+    "RegistryRuntimeMutationError",
+    "RegistryViewLease",
+    "RuntimeRegistryContext",
     "registry",
     "ensure_async",
     "run_sync",

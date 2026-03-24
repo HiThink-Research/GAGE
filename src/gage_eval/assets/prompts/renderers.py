@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from gage_eval.evaluation.support_artifacts import iter_support_outputs, resolve_support_field
+
 
 @dataclass
 class PromptContext:
@@ -51,18 +53,21 @@ def _extract_tool_documentation(sample: Dict[str, Any], payload: Dict[str, Any])
             meta = source.get("tool_documentation_meta") if isinstance(source.get("tool_documentation_meta"), dict) else {}
             if isinstance(doc, str) and doc.strip():
                 return doc, dict(meta)
-    outputs = []
-    if isinstance(payload, dict):
-        outputs.extend(payload.get("support_outputs") or [])
-    if isinstance(sample, dict):
-        outputs.extend(sample.get("support_outputs") or [])
-    for output in outputs:
-        if not isinstance(output, dict):
+    for source in (payload, sample):
+        if not isinstance(source, dict):
             continue
-        doc = output.get("tool_documentation")
-        meta = output.get("tool_documentation_meta") if isinstance(output.get("tool_documentation_meta"), dict) else {}
+        doc = resolve_support_field(source, "tool_documentation")
+        meta = resolve_support_field(source, "tool_documentation_meta")
         if isinstance(doc, str) and doc.strip():
-            return doc, dict(meta)
+            return doc, dict(meta) if isinstance(meta, dict) else {}
+    for source in (payload, sample):
+        if not isinstance(source, dict):
+            continue
+        for output in iter_support_outputs(source):
+            doc = output.get("tool_documentation")
+            meta = output.get("tool_documentation_meta") if isinstance(output.get("tool_documentation_meta"), dict) else {}
+            if isinstance(doc, str) and doc.strip():
+                return doc, dict(meta)
     return "", {}
 
 

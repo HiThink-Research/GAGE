@@ -33,6 +33,7 @@ from gage_eval.metrics.utils import (
 from gage_eval.registry import registry
 
 from loguru import logger
+from gage_eval.evaluation.support_artifacts import resolve_support_field
 
 JUDGE_PROMPT = """Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
 
@@ -144,12 +145,7 @@ class HLEAccuracyOpenAIMetric(SimpleMetric):
         question = sample_dict["metadata"]["question"]
 
         # STEP 2: prefer cleaned answers from support outputs
-        support_outputs = sample_dict.get("support_outputs") or []
-        cleaned_prediction = None
-        if isinstance(support_outputs, list) and support_outputs:
-            last_output = support_outputs[-1]
-            if isinstance(last_output, dict):
-                cleaned_prediction = last_output.get("answer")
+        cleaned_prediction = resolve_support_field(sample_dict, "answer")
         prediction = cleaned_prediction or prediction_raw or ""
 
         # STEP 3: call openai judge

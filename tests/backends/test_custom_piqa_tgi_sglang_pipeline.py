@@ -7,6 +7,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from textwrap import dedent
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,9 +84,92 @@ def _start_server(handler_cls):
 
 # Note: _run_pipeline stays same
 
-def _run_pipeline(config_path: Path, extra_env: dict, output_dir: Path):
+def _write_piqa_backend_config(output_path: Path, *, backend_type: str, base_url: str) -> Path:
+    extra_backend = ""
+    if backend_type == "sglang":
+        extra_backend = "\n      presence_penalty: 0.0"
+    config_text = dedent(
+        f"""
+        api_version: gage/v1alpha1
+        kind: PipelineConfig
+
+        metadata:
+          name: piqa_{backend_type}_unit
+          description: "PIQA mini + {backend_type} backend test config"
+
+        custom:
+          steps:
+            - step: inference
+            - step: auto_eval
+
+        prompts:
+          - prompt_id: piqa_infer_prompt
+            renderer: jinja
+            params:
+              system_prompt: >
+                你是一位擅长常识推理的助手，请阅读题目并在最后只输出正确选项对应的大写字母（A 或 B）。
+              instruction: >
+                请判断哪个答案更合理，并在最后一行仅输出一个大写字母（A 或 B）。
+            template: |
+              {{{{ system_prompt }}}}
+
+              题目：
+              {{{{ sample.goal }}}}
+
+              选项：
+              {{% for label, text in (sample.metadata.option_map or {{}}).items() %}}
+              {{{{ label }}}}. {{{{ text }}}}
+              {{% endfor %}}
+
+              {{{{ instruction }}}}
+
+        datasets:
+          - dataset_id: piqa_validation_mini
+            loader: jsonl
+            params:
+              path: {FIXTURE}
+              preprocess: piqa_struct_only
+              streaming: false
+
+        backends:
+          - backend_id: {backend_type}_backend_unit
+            type: {backend_type}
+            config:
+              base_url: {base_url}
+              timeout: 30
+              max_new_tokens: 16
+              temperature: 0.0
+              top_p: 1.0{extra_backend}
+
+        role_adapters:
+          - adapter_id: dut_{backend_type}
+            role_type: dut_model
+            backend_id: {backend_type}_backend_unit
+            prompt_id: piqa_infer_prompt
+            capabilities:
+              - chat_completion
+
+        metrics:
+          - metric_id: piqa_acc
+            implementation: multi_choice_accuracy
+
+        tasks:
+          - task_id: piqa_validation_eval
+            dataset_id: piqa_validation_mini
+            max_samples: 1
+            concurrency: 1
+            reporting:
+              sinks:
+                - type: console
+        """
+    ).strip() + "\n"
+    output_path.write_text(config_text, encoding="utf-8")
+    return output_path
+
+
+def _run_pipeline(config_path: Path, extra_env: dict | None, output_dir: Path):
     env = os.environ.copy()
-    env.update(extra_env)
+    env.update(extra_env or {})
     cmd = [
         sys.executable,
         str(RUNPY),
@@ -121,12 +205,14 @@ class CustomPiqaPipelineTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 out_dir = Path(tmpdir) / "tgi_run"
+                config_path = _write_piqa_backend_config(
+                    Path(tmpdir) / "piqa_tgi_unit.yaml",
+                    backend_type="tgi",
+                    base_url=f"http://127.0.0.1:{port}",
+                )
                 summary = _run_pipeline(
-                    ROOT / "config" / "custom" / "piqa_tgi.yaml",
-                    {
-                        "PIQA_MINI_PATH": str(FIXTURE),
-                        "TGI_BASE_URL": f"http://127.0.0.1:{port}",
-                    },
+                    config_path,
+                    None,
                     out_dir,
                 )
                 self.assertIn("metrics", summary)
@@ -138,12 +224,14 @@ class CustomPiqaPipelineTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 out_dir = Path(tmpdir) / "sglang_run"
+                config_path = _write_piqa_backend_config(
+                    Path(tmpdir) / "piqa_sglang_unit.yaml",
+                    backend_type="sglang",
+                    base_url=f"http://127.0.0.1:{port}",
+                )
                 summary = _run_pipeline(
-                    ROOT / "config" / "custom" / "piqa_sglang.yaml",
-                    {
-                        "PIQA_MINI_PATH": str(FIXTURE),
-                        "SGLANG_BASE_URL": f"http://127.0.0.1:{port}",
-                    },
+                    config_path,
+                    None,
                     out_dir,
                 )
                 self.assertIn("metrics", summary)

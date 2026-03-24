@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +26,8 @@ from gage_eval.utils.messages import normalize_messages_for_template, stringify_
 )
 class LiteLLMBackend(EngineBackend):
     """LiteLLM backend with provider inference and sampling normalization."""
+
+    _litellm_module_state_lock = threading.RLock()
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.http_retry_mode = "native"
@@ -94,11 +98,9 @@ class LiteLLMBackend(EngineBackend):
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("liteLLM is not installed") from exc
 
-        # STEP 2: Initialize LiteLLM module behavior without mutating credential globals.
+        # STEP 2: Capture the imported module and defer mutable flag changes to request scope.
         self._litellm = litellm
         self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
-        litellm.drop_params = True
-        litellm.verbose = bool(self._cfg.verbose)
         return None
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -143,7 +145,8 @@ class LiteLLMBackend(EngineBackend):
         start = time.time()
 
         def _call():
-            return self._litellm.completion(stream=stream, **kwargs)
+            with self._temporary_litellm_module_state():
+                return self._litellm.completion(stream=stream, **kwargs)
 
         completion = self._call_with_retries(_call)
 
@@ -174,6 +177,32 @@ class LiteLLMBackend(EngineBackend):
             ),
         )
         return result
+
+    @contextmanager
+    def _temporary_litellm_module_state(self):
+        """Apply LiteLLM module flags for one request and restore previous values."""
+
+        if self._litellm is None:
+            yield
+            return
+        with self._litellm_module_state_lock:
+            previous_drop_params = getattr(self._litellm, "drop_params", None)
+            previous_verbose = getattr(self._litellm, "verbose", None)
+            had_drop_params = hasattr(self._litellm, "drop_params")
+            had_verbose = hasattr(self._litellm, "verbose")
+            self._litellm.drop_params = True
+            self._litellm.verbose = bool(self._cfg.verbose)
+            try:
+                yield
+            finally:
+                if had_drop_params:
+                    self._litellm.drop_params = previous_drop_params
+                else:
+                    delattr(self._litellm, "drop_params")
+                if had_verbose:
+                    self._litellm.verbose = previous_verbose
+                else:
+                    delattr(self._litellm, "verbose")
 
     def _build_litellm_kwargs(self, inputs: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         sampling_params = self._normalize_sampling_params(inputs.get("sampling_params") or {}, inputs.get("num_samples"))

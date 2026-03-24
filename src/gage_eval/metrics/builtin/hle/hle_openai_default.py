@@ -6,6 +6,7 @@ import os
 from typing import Any, Optional
 
 from loguru import logger
+from gage_eval.evaluation.support_artifacts import resolve_support_field
 from openai import OpenAI
 
 from gage_eval.metrics.base import MetricContext, MetricResult, SimpleMetric
@@ -105,12 +106,7 @@ class HLEAccuracyOpenAIDefaultMetric(OpenAIJudgePromptDefaults, SimpleMetric):
         question = sample_dict["metadata"]["question"]
 
         # STEP 2: prefer cleaned answers from support outputs
-        support_outputs = sample_dict.get("support_outputs") or []
-        cleaned_prediction = None
-        if isinstance(support_outputs, list) and support_outputs:
-            last_output = support_outputs[-1]
-            if isinstance(last_output, dict):
-                cleaned_prediction = last_output.get("answer")
+        cleaned_prediction = resolve_support_field(sample_dict, "answer")
         prediction = cleaned_prediction or prediction_raw or ""
 
         # STEP 3: call openai judge

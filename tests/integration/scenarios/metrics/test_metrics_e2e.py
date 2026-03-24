@@ -12,7 +12,19 @@ def test_e2e_metrics_pipeline():
             {"numeric_match": {"tolerance": 0.1}},  # KV shorthand
         ]
     }
-    pipeline_config = PipelineConfig.from_dict(config_dict | {"datasets": [{"dataset_id": "d1", "loader": "dummy"}], "role_adapters": [{"adapter_id": "r1", "role_type": "dut_model"}], "custom": {"steps": [{"step": "auto_eval"}]}})
+    pipeline_config = PipelineConfig.from_dict(
+        config_dict
+        | {
+            "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
+            "role_adapters": [{"adapter_id": "r1", "role_type": "dut_model"}],
+            "custom": {
+                "steps": [
+                    {"step": "inference", "adapter_id": "r1"},
+                    {"step": "auto_eval"},
+                ]
+            },
+        }
+    )
     assert len(pipeline_config.metrics) == 3
     registry = MetricRegistry()
     instances = [registry.build_metric(spec) for spec in pipeline_config.metrics]

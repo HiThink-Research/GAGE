@@ -9,6 +9,7 @@ from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
+from gage_eval.role.runtime.invocation import SampleExecutionContext
 from gage_eval.sandbox.provider import SandboxProvider
 
 
@@ -32,6 +33,7 @@ class ArenaStep(SampleStep):
         role_manager,
         trace: ObservabilityTrace,
         *,
+        execution_context: Optional[SampleExecutionContext] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ):
         trace.emit("arena_start", payload={"adapter_id": self._adapter_id})
@@ -39,7 +41,18 @@ class ArenaStep(SampleStep):
         payload = {"sample": sample, "role_manager": role_manager, "trace": trace}
         if sandbox_provider is not None:
             payload["sandbox_provider"] = sandbox_provider
-        with role_manager.borrow_role(self._adapter_id) as role:
+        invocation_context = (
+            execution_context.for_invocation(
+                step_type="arena",
+                adapter_id=str(self._adapter_id),
+            )
+            if execution_context is not None and self._adapter_id
+            else None
+        )
+        with role_manager.borrow_role(
+            self._adapter_id,
+            execution_context=invocation_context,
+        ) as role:
             output = role.invoke(payload, trace) if role else {}
         trace.emit("arena_end", payload={"adapter_id": self._adapter_id})
         logger.debug("Arena step finished adapter_id={}", self._adapter_id)
