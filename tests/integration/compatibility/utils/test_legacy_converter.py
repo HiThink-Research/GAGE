@@ -25,6 +25,7 @@ class LegacyConverterTests(unittest.TestCase):
         self.assertEqual(sample["metadata"]["correct_choice"], "B")
         self.assertEqual(sample["messages"][0]["content"][0]["text"], "Select correct option")
         self.assertEqual(sample["choices"][1]["message"]["content"][0]["text"], "B2")
+        self.assertEqual(sample["prompt"], "legacy prompt")
         self.assertEqual(sample["inputs"]["prompt"], "legacy prompt")
         self.assertEqual(sample["audit_info"]["task_id"], "piqa_eval")
         self.assertEqual(sample["cache_suffix"], "-converted")
@@ -55,6 +56,22 @@ class LegacyConverterTests(unittest.TestCase):
         self.assertEqual(sample["_media_meta"]["images"][0]["url"], "/root/img/a.png")
         self.assertEqual(sample["metadata"]["content_root"], "/root")
         self.assertEqual(sample["metadata"]["content_field"], "messages.0.content")
+
+    def test_prompt_only_record_synthesizes_user_message(self):
+        record = {
+            "id": "echo-1",
+            "prompt": "Hello, gage-eval!",
+        }
+
+        sample = convert_llmeval_record(record, dataset_id="demo_echo")
+
+        self.assertEqual(sample["prompt"], "Hello, gage-eval!")
+        self.assertEqual(sample["inputs"]["prompt"], "Hello, gage-eval!")
+        self.assertEqual(sample["messages"][0]["role"], "user")
+        self.assertEqual(
+            sample["messages"][0]["content"][0]["text"],
+            "Hello, gage-eval!",
+        )
 
 
 if __name__ == "__main__":

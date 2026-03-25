@@ -216,7 +216,7 @@ class ConfigRegistry:
             adapter_kwargs.setdefault("sandbox_profiles", sandbox_profiles)
         if spec.role_type == "dut_agent" and mcp_clients is not None:
             adapter_kwargs.setdefault("mcp_clients", mcp_clients)
-        if spec.role_type in {"helper_model", "context_provider", "judge_extend"}:
+        if spec.role_type in {"helper_model", "context_provider", "judge_extend", "arena"}:
             adapter_kwargs.setdefault("registry_view", lookup)
         adapter = adapter_cls(
             adapter_id=spec.adapter_id,

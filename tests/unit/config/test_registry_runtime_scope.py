@@ -6,11 +6,12 @@ from uuid import uuid4
 
 import pytest
 
-from gage_eval.config.pipeline_config import PipelineConfig
+from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.config.registry import ConfigRegistry, _collect_runtime_registry_packages
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import RegistryRuntimeMutationError, registry
+from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.model.backends.builder import build_backend
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
@@ -373,3 +374,20 @@ def test_build_backend_with_runtime_registry_view_skips_manifest_fallback(monkey
 
     with pytest.raises(KeyError, match=f"Backend '{backend_type}' is not registered"):
         build_backend({"type": backend_type, "config": {}}, registry_view=view)
+
+
+@pytest.mark.fast
+def test_resolve_arena_role_adapter_injects_runtime_registry_view() -> None:
+    clone = registry.clone()
+    view = clone.freeze(view_id=f"arena-view-{uuid4().hex}")
+    config_registry = ConfigRegistry(registry_view=view)
+    spec = RoleAdapterSpec(
+        adapter_id="arena",
+        role_type="arena",
+        params={"environment": {"impl": "gomoku_local_v1"}},
+    )
+
+    adapter = config_registry.resolve_role_adapter(spec)
+
+    assert isinstance(adapter, ArenaRoleAdapter)
+    assert adapter._registry_view is view

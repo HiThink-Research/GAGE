@@ -319,6 +319,7 @@ class StepExecutionContext:
         self.sandbox_provider = sandbox_provider
         self._model_output: Optional[dict] = None
         self._judge_output: Optional[dict] = None
+        self._sample_artifact_persisted = False
         self.sample.setdefault("predict_result", self.sample.get("predict_result") or [])
         self.sample.setdefault("eval_result", self.sample.get("eval_result") or {})
 
@@ -416,6 +417,22 @@ class StepExecutionContext:
             trace=self.trace,
             task_id=self.metadata.get("task_id"),
         )
+        self._sample_artifact_persisted = True
+
+    def persist_sample_artifact(self, sample_id: str) -> None:
+        """Persist a minimal sample artifact when no explicit auto-eval step runs."""
+
+        if self._sample_artifact_persisted or self.auto_eval_step is None:
+            return
+        self.auto_eval_step.persist_sample_artifact(
+            sample_id=sample_id,
+            sample=self.sample,
+            model_output=self._model_output or {},
+            judge_output=self._judge_output or {},
+            trace=self.trace,
+            task_id=self.metadata.get("task_id"),
+        )
+        self._sample_artifact_persisted = True
 
     def _role_payload_sandbox_provider(self) -> Optional[SandboxProvider]:
         if self.execution_context is not None:

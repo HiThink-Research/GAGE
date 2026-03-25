@@ -96,13 +96,11 @@ class AutoEvalStep(SampleStep):
         trace: ObservabilityTrace,
         task_id: Optional[str] = None,
     ) -> None:
-        resolved_model_output = resolve_model_output(sample, model_output)
-        resolved_judge_output = resolve_judge_output(sample, judge_output)
-        resolved_arena_trace = resolve_arena_trace(sample, resolved_model_output)
-        if resolved_arena_trace or "arena_trace" in resolved_model_output:
-            normalized_model_output = dict(resolved_model_output)
-            normalized_model_output["arena_trace"] = resolved_arena_trace
-            resolved_model_output = normalized_model_output
+        resolved_model_output, resolved_judge_output, _ = self._resolve_sample_outputs(
+            sample=sample,
+            model_output=model_output,
+            judge_output=judge_output,
+        )
         per_metric_results: Dict[str, Dict] = {}
         logger = self._logger
         worker_count = self._determine_worker_count()
@@ -128,26 +126,15 @@ class AutoEvalStep(SampleStep):
                         trace,
                     )
                 )
-        record = {
-            "task_id": task_id,
-            "sample": snapshot_sample(sample),
-            "model_output": resolved_model_output,
-            "arena_trace": resolved_arena_trace,
-            "judge_output": resolved_judge_output,
-            "metrics": per_metric_results,
-        }
-        cache_id = self._compose_cache_id(task_id, sample_id)
-        if self._cache:
-            namespace = self._resolve_cache_namespace(task_id, resolved_judge_output)
-            self._cache.write_sample(cache_id, record, namespace=namespace)
-            logger.debug(
-                "auto_eval",
-                "Cached auto-eval sample sample_id={} task_id={}",
-                sample_id,
-                task_id,
-                trace=trace,
-                sample_id=sample_id,
-            )
+        self.persist_sample_artifact(
+            sample_id=sample_id,
+            sample=sample,
+            model_output=resolved_model_output,
+            judge_output=resolved_judge_output,
+            trace=trace,
+            task_id=task_id,
+            metrics=per_metric_results,
+        )
         if per_metric_results:
             trace.emit(
                 "auto_eval_sample",
@@ -166,6 +153,46 @@ class AutoEvalStep(SampleStep):
             results = [instance.finalize() for instance in self._instances]
         self._logger.info("auto_eval", "Aggregated {} metrics", len(results))
         return results
+
+    def persist_sample_artifact(
+        self,
+        *,
+        sample_id: str,
+        sample: dict,
+        model_output: Dict,
+        judge_output: Dict,
+        trace: ObservabilityTrace,
+        task_id: Optional[str] = None,
+        metrics: Optional[Dict[str, Dict]] = None,
+    ) -> None:
+        """Persist the canonical per-sample artifact to the cache store."""
+
+        if self._cache is None:
+            return
+        resolved_model_output, resolved_judge_output, resolved_arena_trace = self._resolve_sample_outputs(
+            sample=sample,
+            model_output=model_output,
+            judge_output=judge_output,
+        )
+        record = {
+            "task_id": task_id,
+            "sample": snapshot_sample(sample),
+            "model_output": resolved_model_output,
+            "arena_trace": resolved_arena_trace,
+            "judge_output": resolved_judge_output,
+            "metrics": dict(metrics or {}),
+        }
+        cache_id = self._compose_cache_id(task_id, sample_id)
+        namespace = self._resolve_cache_namespace(task_id, resolved_judge_output)
+        self._cache.write_sample(cache_id, record, namespace=namespace)
+        self._logger.debug(
+            "auto_eval",
+            "Cached sample artifact sample_id={} task_id={}",
+            sample_id,
+            task_id,
+            trace=trace,
+            sample_id=sample_id,
+        )
 
     def _build_metric_instances(
         self,
@@ -283,6 +310,24 @@ class AutoEvalStep(SampleStep):
         if runtime_context is not None and runtime_context.details_namespace:
             return runtime_context.details_namespace
         return self._compose_cache_namespace(task_id, judge_output)
+
+    @staticmethod
+    def _resolve_sample_outputs(
+        *,
+        sample: dict,
+        model_output: Dict,
+        judge_output: Dict,
+    ) -> Tuple[Dict, Dict, Dict | list]:
+        """Normalize model/judge payloads before persistence and metric evaluation."""
+
+        resolved_model_output = resolve_model_output(sample, model_output)
+        resolved_judge_output = resolve_judge_output(sample, judge_output)
+        resolved_arena_trace = resolve_arena_trace(sample, resolved_model_output)
+        if resolved_arena_trace or "arena_trace" in resolved_model_output:
+            normalized_model_output = dict(resolved_model_output)
+            normalized_model_output["arena_trace"] = resolved_arena_trace
+            resolved_model_output = normalized_model_output
+        return resolved_model_output, resolved_judge_output, resolved_arena_trace
 
 
 def _env_int(name: str) -> Optional[int]:

@@ -622,17 +622,19 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
     return default
 
 
-def resolve_arena_game_provider(env_impl: str) -> ArenaGameProvider:
+def resolve_arena_game_provider(env_impl: str, *, registry_lookup=None) -> ArenaGameProvider:
     """Resolve one arena provider by env implementation family."""
 
+    lookup = registry_lookup or registry
     normalized_env_impl = str(env_impl or "").strip().lower()
     for provider_type in _BUILTIN_PROVIDER_TYPES:
         provider = provider_type()
         if provider.matches(normalized_env_impl):
             return provider
-    import_all_arena_asset_modules("arena_game_providers")
-    for entry in registry.list("arena_game_providers"):
-        target = registry.get("arena_game_providers", entry.name)
+    if registry_lookup is None:
+        import_all_arena_asset_modules("arena_game_providers", registry_lookup=lookup)
+    for entry in lookup.list("arena_game_providers"):
+        target = lookup.get("arena_game_providers", entry.name)
         if isinstance(target, ArenaGameProvider):
             provider = target
         elif isinstance(target, type) and issubclass(target, ArenaGameProvider):

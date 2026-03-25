@@ -57,8 +57,13 @@ def convert_llmeval_record(
 
     # prompt/token_ids → inputs
     inputs: Dict[str, Any] = {}
-    if prompt := sample.pop("prompt", None) or sample.get("query"):
+    raw_prompt = sample.pop("prompt", None)
+    if raw_prompt is None:
+        raw_prompt = sample.get("query")
+    if raw_prompt is not None:
+        prompt = str(raw_prompt)
         inputs["prompt"] = prompt
+        sample["prompt"] = prompt
     if token_ids := sample.pop("token_ids", None):
         inputs["input_ids"] = token_ids
     if inputs:
@@ -67,6 +72,13 @@ def convert_llmeval_record(
         sample["rendered_by"] = "converter"
         sample["template_source"] = "llm-eval"
         sample["cache_suffix"] = "-converted"
+        if not sample.get("messages") and inputs.get("prompt"):
+            sample["messages"] = [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": str(inputs["prompt"])}],
+                }
+            ]
 
     # Audit info aggregation.
     audit = {}

@@ -17,6 +17,7 @@ from gage_eval.assets.datasets.utils.tokenizers import (
 )
 from gage_eval.registry import registry
 from gage_eval.observability.config import get_observability_config
+from gage_eval.assets.datasets.sample import Sample
 
 if TYPE_CHECKING:  # pragma: no cover
     from gage_eval.observability.config import ObservabilityConfig
@@ -272,7 +273,7 @@ def _apply_default_preprocessor(
             new_record.setdefault("_dataset_id", spec.dataset_id)
             if data_path and "_dataset_metadata" not in new_record:
                 new_record["_dataset_metadata"] = {"path": data_path}
-            inputs_val = default_pre.transform(
+            transformed = default_pre.transform(
                 new_record,
                 dataset_id=spec.dataset_id,
                 dataset_metadata={"path": data_path} if data_path else None,
@@ -282,11 +283,14 @@ def _apply_default_preprocessor(
                 trace=trace,
                 observability_config=observability_config,
             )
-            if inputs_val is None:
+            if transformed is None:
                 continue
-            if tok_path and "_tokenizer_path" not in new_record:
-                new_record["_tokenizer_path"] = tok_path
-            yield new_record
+            if tok_path:
+                if isinstance(transformed, dict) and "_tokenizer_path" not in transformed:
+                    transformed["_tokenizer_path"] = tok_path
+                elif isinstance(transformed, Sample) and not getattr(transformed, "_tokenizer_path", None):
+                    transformed._tokenizer_path = tok_path
+            yield transformed
 
     return generator()
 
