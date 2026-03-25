@@ -1,0 +1,203 @@
+{
+  "manifest_version": 1,
+  "entries": [
+    {
+      "kind": "backends",
+      "name": "claude_http",
+      "module": "gage_eval.role.model.backends.vendor_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/vendor_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "custom_script",
+      "module": "gage_eval.role.model.backends.custom_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/custom_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "dummy",
+      "module": "gage_eval.role.model.backends.dummy_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/dummy_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "faiss",
+      "module": "gage_eval.role.model.backends.faiss_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/faiss_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "flag_embedding",
+      "module": "gage_eval.role.model.backends.flag_embedding_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/flag_embedding_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "gemini_http",
+      "module": "gage_eval.role.model.backends.vendor_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/vendor_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "hf",
+      "module": "gage_eval.role.model.backends.hf_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/hf_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "hf_delta",
+      "module": "gage_eval.role.model.backends.hf_delta_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/hf_delta_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "hf_inference_endpoint",
+      "module": "gage_eval.role.model.backends.hf_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/hf_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "hf_lora",
+      "module": "gage_eval.role.model.backends.hf_lora_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/hf_lora_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "hf_serverless",
+      "module": "gage_eval.role.model.backends.hf_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/hf_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "http",
+      "module": "gage_eval.role.model.backends.http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "litellm",
+      "module": "gage_eval.role.model.backends.litellm_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/litellm_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "multi_provider_http",
+      "module": "gage_eval.role.model.backends.multi_provider_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/multi_provider_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "nanotron",
+      "module": "gage_eval.role.model.backends.nanotron_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/nanotron_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "openai_batch",
+      "module": "gage_eval.role.model.backends.vendor_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/vendor_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "openai_http",
+      "module": "gage_eval.role.model.backends.openai_http_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/openai_http_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "sglang",
+      "module": "gage_eval.role.model.backends.sglang_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/sglang_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "tgi",
+      "module": "gage_eval.role.model.backends.tgi_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/tgi_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "vllm",
+      "module": "gage_eval.role.model.backends.vllm_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/vllm_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "vlm_transformers",
+      "module": "gage_eval.role.model.backends.vlm_transformers_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/vlm_transformers_backend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "backends",
+      "name": "whisper_asr",
+      "module": "gage_eval.role.model.backends.whisper_backend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/model/backends/whisper_backend.py",
+      "aliases": [],
+      "optional": false
+    }
+  ]
+}

@@ -76,3 +76,18 @@ def test_gradio_visualizer_demo_mode_can_suppress_frontend_errors(patch_renderer
 
     assert visualizer._build_launch_kwargs()["show_error"] is False  # noqa: SLF001
     assert ".gradio-error" in visualizer._build_error_suppression_js()  # noqa: SLF001
+
+
+def test_gradio_visualizer_bounds_output_history_and_keeps_monotonic_sequence(
+    patch_renderer,
+) -> None:
+    visualizer = GradioVisualizer(max_output_entries=2)
+
+    visualizer._record_output_history(player_id="p0", move="A1", raw_text="first")  # noqa: SLF001
+    visualizer._record_output_history(player_id="p0", move="B2", raw_text="second")  # noqa: SLF001
+    visualizer._record_output_history(player_id="p0", move="C3", raw_text="third")  # noqa: SLF001
+
+    assert len(visualizer._output_history) == 2  # noqa: SLF001
+    assert "[001]" not in visualizer._output_history_text  # noqa: SLF001
+    assert "[002]" in visualizer._output_history_text  # noqa: SLF001
+    assert "[003]" in visualizer._output_history_text  # noqa: SLF001

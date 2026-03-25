@@ -4,7 +4,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from textwrap import dedent
@@ -87,7 +86,7 @@ def _start_server(handler_cls):
 def _write_piqa_backend_config(output_path: Path, *, backend_type: str, base_url: str) -> Path:
     extra_backend = ""
     if backend_type == "sglang":
-        extra_backend = "\n      presence_penalty: 0.0"
+        extra_backend = "\n              presence_penalty: 0.0"
     config_text = dedent(
         f"""
         api_version: gage/v1alpha1

@@ -8,6 +8,7 @@ from loguru import logger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.support_artifacts import build_support_slot_id, record_support_output
 from gage_eval.pipeline.step_contracts import get_step_adapter_id
+from gage_eval.pipeline.steps._role_borrow import borrow_role_with_optional_context
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
@@ -95,7 +96,8 @@ class SupportStep(SampleStep):
                 if execution_context is not None
                 else None
             )
-            with role_manager.borrow_role(
+            with borrow_role_with_optional_context(
+                role_manager,
                 adapter_id,
                 execution_context=invocation_context,
             ) as role:

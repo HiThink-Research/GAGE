@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import sys
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Optional
 import os
 import time
 
 from loguru import logger
 
 from gage_eval.config.pipeline_config import (
-    BuiltinPipelineSpec,
     CustomPipelineSpec,
     PipelineConfig,
 )
@@ -274,7 +273,9 @@ class PipelineFactory:
         """Resolve either a built-in template or custom inline steps."""
 
         logger.info("Creating runtime for pipeline_id='{}'", config.pipeline_id)
-        metric_registry = MetricRegistry()
+        metric_registry = MetricRegistry(
+            registry_view=getattr(self._registry, "registry_view", None),
+        )
         cache_store = cache_store or EvalCache(
             base_dir=os.environ.get("GAGE_EVAL_SAVE_DIR"),
             run_id=trace.run_id,

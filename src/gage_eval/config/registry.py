@@ -8,8 +8,6 @@ from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 from loguru import logger
 
-from gage_eval.assets.datasets.registry_loader import import_dataset_asset_module
-from gage_eval.role.arena.registry_loader import import_arena_asset_module
 from gage_eval.config.pipeline_config import (
     BackendSpec,
     DatasetSpec,
@@ -18,6 +16,7 @@ from gage_eval.config.pipeline_config import (
     PipelineConfig,
     RoleAdapterSpec,
 )
+from gage_eval.registry import RuntimeAssetPlanner, import_asset_from_manifest, import_kind_from_manifest
 
 if TYPE_CHECKING:
     from gage_eval.assets.prompts.assets import PromptTemplateAsset
@@ -41,6 +40,7 @@ class ConfigRegistry:
         registry_view=None,
         runtime_registry_context: Optional["RuntimeRegistryContext"] = None,
         bootstrap_coordinator=None,
+        asset_planner: Optional[RuntimeAssetPlanner] = None,
     ) -> None:
         """ConfigRegistry no longer stores per-kind builders; registry handles extensibility."""
         from gage_eval.registry import RegistryBootstrapCoordinator, registry
@@ -48,6 +48,7 @@ class ConfigRegistry:
         self._registry_view = registry_view
         self._runtime_registry_context = runtime_registry_context
         self._bootstrap_coordinator = bootstrap_coordinator or RegistryBootstrapCoordinator(registry)
+        self._asset_planner = asset_planner or RuntimeAssetPlanner()
 
     @property
     def registry_view(self):
@@ -62,6 +63,7 @@ class ConfigRegistry:
             registry_view=context.view,
             runtime_registry_context=context,
             bootstrap_coordinator=self._bootstrap_coordinator,
+            asset_planner=self._asset_planner,
         )
 
     def prepare_runtime_registry_context(
@@ -73,10 +75,7 @@ class ConfigRegistry:
         from gage_eval.assets.prompts.assets import PromptTemplateAsset
         from gage_eval.registry import DiscoveryPolicy, RegistryOverlayAsset
 
-        _prime_runtime_dataset_assets(config)
-        _prime_runtime_model_assets(config)
-        _prime_runtime_arena_assets(config)
-        _prime_runtime_metric_assets(config)
+        discovery_plan = self._asset_planner.build_plan(config)
         overlays = [
             RegistryOverlayAsset(
                 kind="prompts",
@@ -97,11 +96,14 @@ class ConfigRegistry:
         ]
         return self._bootstrap_coordinator.prepare_runtime_context(
             run_id=run_id,
+            discovery_plan=discovery_plan,
             required_packages=_collect_runtime_registry_packages(config),
             overlay_assets=overlays,
             policy=DiscoveryPolicy(
                 mode=_resolve_discovery_mode(),
+                strategy=_resolve_discovery_strategy(),
                 freeze_strict=_resolve_freeze_strict(),
+                dev_auto_refresh=_resolve_dev_auto_refresh(),
             ),
         )
 
@@ -130,14 +132,28 @@ class ConfigRegistry:
         try:
             hub_cls = lookup.get("dataset_hubs", hub_name)
         except KeyError:
-            import_dataset_asset_module("dataset_hubs", hub_name)
+            if self._registry_view is not None:
+                raise
+            import_asset_from_manifest(
+                "dataset_hubs",
+                str(hub_name),
+                registry=lookup,
+                source=f"dataset:{spec.dataset_id}.hub",
+            )
             hub_cls = lookup.get("dataset_hubs", hub_name)
         hub = hub_cls(spec, hub_args=hub_params)
         hub_handle = hub.resolve()
         try:
             loader_cls = lookup.get("dataset_loaders", loader_name)
         except KeyError:
-            import_dataset_asset_module("dataset_loaders", loader_name)
+            if self._registry_view is not None:
+                raise
+            import_asset_from_manifest(
+                "dataset_loaders",
+                str(loader_name),
+                registry=lookup,
+                source=f"dataset:{spec.dataset_id}.loader",
+            )
             loader_cls = lookup.get("dataset_loaders", loader_name)
         loader = loader_cls(spec)
         return loader.load(hub_handle, trace=trace)
@@ -222,6 +238,17 @@ class ConfigRegistry:
         try:
             return lookup.get("roles", spec.role_type)
         except KeyError as exc:
+            if self._registry_view is None:
+                import_asset_from_manifest(
+                    "roles",
+                    spec.role_type,
+                    registry=lookup,
+                    source=f"role:{spec.adapter_id}",
+                )
+                try:
+                    return lookup.get("roles", spec.role_type)
+                except KeyError:
+                    pass
             raise KeyError(
                 f"RoleAdapter '{spec.adapter_id}' must declare class_path or reference a registered role_type"
             ) from exc
@@ -321,7 +348,7 @@ class ConfigRegistry:
         lookup = self._registry_lookup()
         prompts: Dict[str, PromptTemplateAsset] = {}
         if self._registry_view is None:
-            lookup.auto_discover("prompts", "gage_eval.assets.prompts.catalog", mode="warn")
+            import_kind_from_manifest("prompts", registry=lookup)
         for entry in lookup.list("prompts"):
             asset = lookup.get("prompts", entry.name)
             if isinstance(asset, PromptTemplateAsset):
@@ -343,6 +370,8 @@ class ConfigRegistry:
         return datasets
 
     def materialize_models(self, config: PipelineConfig) -> Dict[str, Any]:
+        if not config.models:
+            return {}
         from gage_eval.assets.models import clear_model_store
         from gage_eval.assets.models.manager import resolve_model
 
@@ -356,7 +385,7 @@ class ConfigRegistry:
     def materialize_metrics(self, config: PipelineConfig) -> Dict[str, Any]:
         from gage_eval.metrics.registry import MetricRegistry
 
-        metric_registry = MetricRegistry()
+        metric_registry = MetricRegistry(registry_view=self._registry_lookup())
         metrics: Dict[str, Any] = {}
         for spec in config.metrics:
             metrics[spec.metric_id] = metric_registry.build_metric(spec)
@@ -409,6 +438,17 @@ def _resolve_discovery_mode() -> str:
     return "strict" if _env_truthy(os.environ.get("CI")) else "warn"
 
 
+def _resolve_discovery_strategy() -> str:
+    strategy = str(os.environ.get("GAGE_EVAL_DISCOVERY_MODE") or "manifest").strip().lower()
+    if strategy in {"legacy", "hybrid", "manifest"}:
+        return strategy
+    return "manifest"
+
+
+def _resolve_dev_auto_refresh() -> bool:
+    return _env_truthy(os.environ.get("GAGE_EVAL_DISCOVERY_DEV_AUTO_REFRESH"))
+
+
 def _resolve_freeze_strict() -> bool:
     if "GAGE_EVAL_REGISTRY_FREEZE_STRICT" in os.environ:
         return _env_truthy(os.environ.get("GAGE_EVAL_REGISTRY_FREEZE_STRICT"))
@@ -420,6 +460,8 @@ def _collect_runtime_registry_packages(config: PipelineConfig) -> Dict[str, Iter
         "pipeline_steps": ("gage_eval.pipeline.steps",),
         "summary_generators": ("gage_eval.reporting.summary_generators",),
     }
+    if any(spec.role_type for spec in config.role_adapters):
+        packages["roles"] = ("gage_eval.role.adapters", "gage_eval.role.toolchain")
     if config.prompts or any(spec.prompt_id for spec in config.role_adapters):
         packages["prompts"] = ("gage_eval.assets.prompts.catalog",)
     if any(
@@ -438,89 +480,3 @@ def _collect_runtime_registry_packages(config: PipelineConfig) -> Dict[str, Iter
     ):
         packages["judge_impls"] = ("gage_eval.role.judge",)
     return packages
-
-
-def _prime_runtime_dataset_assets(config: PipelineConfig) -> None:
-    for spec in config.datasets:
-        loader_name = str(spec.loader or spec.params.get("loader") or "").strip()
-        if loader_name:
-            import_dataset_asset_module("dataset_loaders", loader_name)
-        hub_name = spec.hub or spec.params.get("hub")
-        if not hub_name and loader_name not in {"hf_hub", "modelscope"}:
-            hub_name = "inline"
-        if hub_name:
-            import_dataset_asset_module("dataset_hubs", str(hub_name))
-        bundle_name = spec.params.get("bundle")
-        if isinstance(bundle_name, str) and bundle_name.strip():
-            import_dataset_asset_module("bundles", bundle_name.strip())
-        preprocess_name = spec.params.get("preprocess")
-        if isinstance(preprocess_name, str) and preprocess_name.strip():
-            import_dataset_asset_module(
-                "dataset_preprocessors",
-                preprocess_name.strip(),
-            )
-
-
-def _prime_runtime_model_assets(config: PipelineConfig) -> None:
-    importlib.import_module("gage_eval.assets.models.manager")
-
-    backend_types = {
-        str(spec.type).strip()
-        for spec in config.backends
-        if str(spec.type or "").strip()
-    }
-    for adapter in config.role_adapters:
-        inline_backend = adapter.backend
-        if not isinstance(inline_backend, dict):
-            continue
-        backend_type = str(inline_backend.get("type") or "").strip()
-        if backend_type:
-            backend_types.add(backend_type)
-    if not backend_types:
-        return
-
-    from gage_eval.role.model.backends.builder import _import_backend_asset_module
-
-    for backend_type in sorted(backend_types):
-        _import_backend_asset_module(backend_type)
-
-
-def _prime_runtime_arena_assets(config: PipelineConfig) -> None:
-    for spec in config.role_adapters:
-        if str(spec.role_type or "").strip() != "arena":
-            continue
-        params = dict(spec.params or {})
-
-        env_cfg = params.get("environment") or {}
-        env_impl = str(env_cfg.get("impl") or env_cfg.get("implementation") or "").strip()
-        if env_impl:
-            import_arena_asset_module("arena_impls", env_impl)
-
-        parser_cfg = params.get("parser") or {}
-        parser_impl = str(
-            parser_cfg.get("impl")
-            or parser_cfg.get("implementation")
-            or "grid_parser_v1"
-        ).strip()
-        if parser_impl:
-            import_arena_asset_module("parser_impls", parser_impl)
-
-        visualizer_cfg = params.get("visualizer") or {}
-        if not bool(visualizer_cfg.get("enabled")):
-            continue
-        renderer_cfg = visualizer_cfg.get("renderer") or {}
-        renderer_impl = str(
-            renderer_cfg.get("impl") or renderer_cfg.get("implementation") or ""
-        ).strip()
-        if renderer_impl:
-            import_arena_asset_module("renderer_impls", renderer_impl)
-
-
-def _prime_runtime_metric_assets(config: PipelineConfig) -> None:
-    from gage_eval.metrics.registry import _import_metric_asset_module
-
-    for spec in config.metrics:
-        impl_key = str(spec.implementation or spec.metric_id or "").strip()
-        if not impl_key:
-            continue
-        _import_metric_asset_module(impl_key)

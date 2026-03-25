@@ -4,6 +4,7 @@ from typing import Optional
 
 import pytest
 
+from gage_eval.role.arena.schedulers import _scheduler_utils as scheduler_utils_module
 from gage_eval.role.arena.schedulers._scheduler_utils import (
     apply_action_map,
     make_trace_entry,
@@ -109,6 +110,29 @@ class _AsyncPlayerPollFails:
         raise AssertionError("pop_action() should not be called after polling failure")
 
 
+class _AsyncPlayerWaitable:
+    def __init__(self) -> None:
+        self.started = False
+        self.wait_calls: list[Optional[int]] = []
+        self._ready = False
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        self.started = True
+        return True
+
+    def has_action(self) -> bool:
+        return self._ready
+
+    def pop_action(self) -> ArenaAction:
+        return ArenaAction(player="p0", move="1", raw="1")
+
+    def wait_for_action(self, *, timeout_ms: Optional[int] = None) -> bool:
+        self.wait_calls.append(timeout_ms)
+        self._ready = True
+        return True
+
+
 def test_think_with_timeout_prefers_async_player_api() -> None:
     player = _AsyncPlayerReady()
 
@@ -136,6 +160,28 @@ def test_think_with_timeout_async_path_respects_timeout() -> None:
     assert action is None
     assert timed_out is True
     assert error_type == "timeout"
+
+
+def test_think_with_timeout_prefers_native_wait_when_available(monkeypatch) -> None:
+    player = _AsyncPlayerWaitable()
+    monkeypatch.setattr(
+        scheduler_utils_module.time,
+        "sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("native wait should avoid polling")),
+    )
+
+    action, timed_out, error_type = think_with_timeout(
+        player=player,
+        observation=_build_observation(),
+        timeout_ms=25,
+    )
+
+    assert action is not None
+    assert action.move == "1"
+    assert timed_out is False
+    assert error_type is None
+    assert player.started is True
+    assert player.wait_calls == [25]
 
 
 def test_think_with_timeout_sync_player_without_timeout() -> None:

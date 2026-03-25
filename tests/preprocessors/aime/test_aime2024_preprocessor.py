@@ -15,12 +15,12 @@ from dataclasses import is_dataclass, asdict
 class AIME2024PreprocessorTests(unittest.TestCase):
     def test_to_sample(self):
         ID = '2024-II-4'
-        Problem = """Let $x,y$ and $z$ be positive real numbers that satisfy the following system of equations:
+        Problem = r"""Let $x,y$ and $z$ be positive real numbers that satisfy the following system of equations:
 \[\log_2\left({x \over yz}\right) = {1 \over 2}\]
 \[\log_2\left({y \over xz}\right) = {1 \over 3}\]
 \[\log_2\left({z \over xy}\right) = {1 \over 4}\]
 Then the value of $\left|\log_2(x^4y^3z^2)\right|$ is $\tfrac{m}{n}$ where $m$ and $n$ are relatively prime positive integers. Find $m+n$."""
-        Solution = """Denote $\log_2(x) = a$, $\log_2(y) = b$, and $\log_2(z) = c$.
+        Solution = r"""Denote $\log_2(x) = a$, $\log_2(y) = b$, and $\log_2(z) = c$.
 
 Then, we have:
 $a-b-c = \frac{1}{2}$,

@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 from gage_eval.pipeline.steps.base import StepKind
-from gage_eval.registry import RegistryEntry, registry
+from gage_eval.registry import RegistryEntry, import_kind_from_manifest, registry
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +112,7 @@ def clear_step_contract_catalog_cache(registry_view=None) -> None:
 
 @lru_cache(maxsize=1)
 def _load_step_contract_catalog() -> StepContractCatalog:
-    registry.auto_discover("pipeline_steps", "gage_eval.pipeline.steps", mode="warn")
+    import_kind_from_manifest("pipeline_steps", registry=registry)
     return _build_catalog_from_entries(registry.list("pipeline_steps"))
 
 

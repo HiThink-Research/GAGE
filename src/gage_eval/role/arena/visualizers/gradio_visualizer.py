@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import html
 import json
 import threading
@@ -44,6 +45,7 @@ class GradioVisualizer:
         coord_scheme: str = "A1",
         sanitize_output: bool = True,
         max_output_chars: int = 2000,
+        max_output_entries: int = 200,
         show_parsed_move: bool = True,
         show_chat: bool = False,
         chat_max_entries: int = 60,
@@ -99,8 +101,10 @@ class GradioVisualizer:
         self._last_action_player: Optional[str] = None
         self._last_action_raw = ""
         self._last_action_move: Optional[str] = None
-        self._output_history: list[str] = []
+        output_window = None if int(max_output_entries) == 0 else max(1, int(max_output_entries))
+        self._output_history: deque[str] = deque(maxlen=output_window)
         self._output_history_text = ""
+        self._output_sequence = 0
         self._last_output_signature: Optional[tuple[str, str, str]] = None
         self._last_output_label = self._render_output_label()
         self._finalized = False
@@ -815,8 +819,12 @@ class GradioVisualizer:
         if signature == self._last_output_signature:
             return
         self._last_output_signature = signature
-        index = len(self._output_history) + 1
-        entry_header = self._format_output_header(player_id, move, index)
+        self._output_sequence += 1
+        entry_header = self._format_output_header(
+            player_id,
+            move,
+            self._output_sequence,
+        )
         if entry_header:
             entry = f"{entry_header}\n{raw_text}"
         else:

@@ -11,6 +11,7 @@ from gage_eval.config.registry import ConfigRegistry, _collect_runtime_registry_
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import RegistryRuntimeMutationError, registry
+from gage_eval.role.model.backends.builder import build_backend
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
 
@@ -105,12 +106,59 @@ def test_prepare_runtime_registry_context_primes_metric_assets_before_runtime_fr
 
     context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
     try:
-        entry = registry.entry("metrics", metric_name)
+        entry = context.view.entry("metrics", metric_name)
         assert entry.name == metric_name
         metrics = config_registry.with_runtime_registry_context(context).materialize_metrics(config)
         assert metric_name in metrics
     finally:
         context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_primes_appworld_roles_without_circular_imports() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "toolchain_main",
+                "role_type": "toolchain",
+            },
+            {
+                "adapter_id": "dut_agent_main",
+                "role_type": "dut_agent",
+            },
+        ],
+        custom={"steps": [{"step": "support", "adapter_id": "toolchain_main"}]},
+    )
+    config_registry = ConfigRegistry()
+    previous_modules = {
+        name: sys.modules.pop(name, None)
+        for name in (
+            "gage_eval.role.adapters",
+            "gage_eval.role.adapters.base",
+            "gage_eval.role.toolchain",
+            "gage_eval.role.toolchain.toolchain",
+        )
+    }
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert context.view.entry("roles", "toolchain").name == "toolchain"
+        assert context.view.entry("roles", "dut_agent").name == "dut_agent"
+        assert not any(
+            issue.kind == "roles" and issue.name == "toolchain" for issue in context.discovery_report.issues
+        )
+    finally:
+        context.close()
+        for name in (
+            "gage_eval.role.adapters",
+            "gage_eval.role.adapters.base",
+            "gage_eval.role.toolchain",
+            "gage_eval.role.toolchain.toolchain",
+        ):
+            sys.modules.pop(name, None)
+        for name, module in previous_modules.items():
+            if module is not None:
+                sys.modules[name] = module
 
 
 @pytest.mark.fast
@@ -136,9 +184,36 @@ def test_prepare_runtime_registry_context_primes_arena_assets_before_runtime_fre
 
     context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
     try:
-        assert registry.entry("arena_impls", "gomoku_local_v1").name == "gomoku_local_v1"
-        assert registry.entry("parser_impls", "grid_parser_v1").name == "grid_parser_v1"
-        assert registry.entry("renderer_impls", "gomoku_board_v1").name == "gomoku_board_v1"
+        assert context.view.entry("arena_impls", "gomoku_local_v1").name == "gomoku_local_v1"
+        assert context.view.entry("parser_impls", "grid_parser_v1").name == "grid_parser_v1"
+        assert context.view.entry("renderer_impls", "gomoku_board_v1").name == "gomoku_board_v1"
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_primes_provider_default_renderer_before_runtime_freeze() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "params": {
+                    "environment": {"impl": "tictactoe_v1"},
+                    "parser": {"impl": "grid_parser_v1"},
+                    "visualizer": {
+                        "enabled": True,
+                    },
+                },
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = ConfigRegistry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert context.view.entry("renderer_impls", "tictactoe_board_v1").name == "tictactoe_board_v1"
     finally:
         context.close()
 
@@ -280,3 +355,21 @@ def test_build_runtime_enables_inline_sample_execution_for_single_worker_tasks()
     finally:
         runtime.shutdown()
         trace.close(cache_store=None)
+
+
+@pytest.mark.fast
+def test_build_backend_with_runtime_registry_view_skips_manifest_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    clone = registry.clone()
+    view = clone.freeze(view_id=f"backend-view-{uuid4().hex}")
+    backend_type = f"missing_backend_{uuid4().hex}"
+
+    def _unexpected_import(*args, **kwargs):
+        raise AssertionError("runtime registry views must not trigger manifest fallback")
+
+    monkeypatch.setattr(
+        "gage_eval.role.model.backends.builder._import_backend_asset_module",
+        _unexpected_import,
+    )
+
+    with pytest.raises(KeyError, match=f"Backend '{backend_type}' is not registered"):
+        build_backend({"type": backend_type, "config": {}}, registry_view=view)

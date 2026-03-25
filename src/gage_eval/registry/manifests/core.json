@@ -1,0 +1,365 @@
+{
+  "manifest_version": 1,
+  "entries": [
+    {
+      "kind": "context_impls",
+      "name": "appworld_api_docs",
+      "module": "gage_eval.role.context.appworld_api_docs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/context/appworld_api_docs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "context_impls",
+      "name": "gomoku_context",
+      "module": "gage_eval.role.context.gomoku_context",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/context/gomoku_context.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "context_impls",
+      "name": "swebench_repo",
+      "module": "gage_eval.role.context.swebench_repo",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/context/swebench_repo.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "context_impls",
+      "name": "tau2_bootstrap",
+      "module": "gage_eval.role.context.tau2_bootstrap",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/context/tau2_bootstrap.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "context_impls",
+      "name": "tictactoe_context",
+      "module": "gage_eval.role.context.tictactoe_context",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/context/tictactoe_context.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "helper_impls",
+      "name": "appworld_api_predictor",
+      "module": "gage_eval.role.helper.appworld_api_predictor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/helper/appworld_api_predictor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "judge_impls",
+      "name": "appworld_evaluate",
+      "module": "gage_eval.role.judge.appworld_evaluate",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/judge/appworld_evaluate.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "judge_impls",
+      "name": "gomoku_referee",
+      "module": "gage_eval.role.judge.gomoku_referee",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/judge/gomoku_referee.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "judge_impls",
+      "name": "swebench_docker",
+      "module": "gage_eval.role.judge.swebench_docker",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/judge/swebench_docker.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "judge_impls",
+      "name": "tau2_eval",
+      "module": "gage_eval.role.judge.tau2_eval",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/judge/tau2_eval.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "model_hubs",
+      "name": "huggingface",
+      "module": "gage_eval.assets.models.hubs.huggingface",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/models/hubs/huggingface.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "model_hubs",
+      "name": "local",
+      "module": "gage_eval.assets.models.hubs.local",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/models/hubs/local.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "model_hubs",
+      "name": "modelscope",
+      "module": "gage_eval.assets.models.hubs.modelscope",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/models/hubs/modelscope.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "observability_plugins",
+      "name": "default",
+      "module": "gage_eval.observability.plugins.default",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/observability/plugins/default.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "arena",
+      "module": "gage_eval.pipeline.steps.arena",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "auto_eval",
+      "module": "gage_eval.pipeline.steps.auto_eval",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/auto_eval.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "inference",
+      "module": "gage_eval.pipeline.steps.inference",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/inference.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "judge",
+      "module": "gage_eval.pipeline.steps.judge",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/judge.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "report",
+      "module": "gage_eval.pipeline.steps.report",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/report.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "support",
+      "module": "gage_eval.pipeline.steps.support",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/support.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "prompts",
+      "name": "dut/appworld@v1",
+      "module": "gage_eval.assets.prompts.catalog.appworld",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/assets/prompts/catalog/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "prompts",
+      "name": "helper/appworld_api_predictor@v1",
+      "module": "gage_eval.assets.prompts.catalog.appworld",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/assets/prompts/catalog/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "reporting_sinks",
+      "name": "file",
+      "module": "gage_eval.reporting.recorders",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/recorders.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "reporting_sinks",
+      "name": "http",
+      "module": "gage_eval.reporting.recorders",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/recorders.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "reporting_sinks",
+      "name": "inmemory",
+      "module": "gage_eval.reporting.recorders",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/recorders.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "arena",
+      "module": "gage_eval.role.adapters.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "context_provider",
+      "module": "gage_eval.role.adapters.context_provider",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/context_provider.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "dut_agent",
+      "module": "gage_eval.role.adapters.dut_agent",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/dut_agent.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "dut_model",
+      "module": "gage_eval.role.adapters.dut_model",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/dut_model.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "helper_model",
+      "module": "gage_eval.role.adapters.helper_model",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/helper_model.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "human",
+      "module": "gage_eval.role.adapters.human",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/human.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "judge_extend",
+      "module": "gage_eval.role.adapters.judge_extend",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/judge_extend.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "judge_model",
+      "module": "gage_eval.role.adapters.judge_model",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/judge_model.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "modal_processor",
+      "module": "gage_eval.role.adapters.modal_processor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/adapters/modal_processor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "roles",
+      "name": "toolchain",
+      "module": "gage_eval.role.toolchain.toolchain",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/toolchain/toolchain.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "appworld_summary",
+      "module": "gage_eval.reporting.summary_generators.appworld",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "arena_summary",
+      "module": "gage_eval.reporting.summary_generators.arena",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "gomoku_summary",
+      "module": "gage_eval.reporting.summary_generators.gomoku",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "swebench_summary",
+      "module": "gage_eval.reporting.summary_generators.swebench",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/swebench.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "tau2_summary",
+      "module": "gage_eval.reporting.summary_generators.tau2",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/tau2.py",
+      "aliases": [],
+      "optional": false
+    }
+  ]
+}

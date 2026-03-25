@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional
@@ -67,13 +68,10 @@ def load_tokenizer(args: Dict[str, Any]):
     last_exc = None
     for backend_choice in backends:
         try:  # pragma: no cover - heavy dependency
-            if backend_choice == "auto_tokenizer":
-                from transformers import AutoTokenizer as Loader  # type: ignore
-            else:
-                from transformers import AutoProcessor as Loader  # type: ignore
-        except ImportError as exc:  # pragma: no cover
+            Loader = _resolve_transformers_loader(backend_choice)
+        except RuntimeError as exc:  # pragma: no cover
             raise RuntimeError(
-                "transformers must be installed to use tokenizer-backed preprocessors"
+                "transformers must already be loaded to use tokenizer-backed preprocessors"
             ) from exc
         try:
             tokenizer = Loader.from_pretrained(name, **kwargs)
@@ -89,6 +87,17 @@ def load_tokenizer(args: Dict[str, Any]):
     if last_exc:
         raise last_exc
     return None
+
+
+def _resolve_transformers_loader(backend_choice: str):
+    transformers_module = sys.modules.get("transformers")
+    if transformers_module is None:
+        raise RuntimeError("transformers is not loaded")
+    loader_name = "AutoTokenizer" if backend_choice == "auto_tokenizer" else "AutoProcessor"
+    loader = getattr(transformers_module, loader_name, None)
+    if loader is None:
+        raise RuntimeError(f"transformers missing required loader '{loader_name}'")
+    return loader
 
 
 def get_or_load_tokenizer(params: Dict[str, Any]):

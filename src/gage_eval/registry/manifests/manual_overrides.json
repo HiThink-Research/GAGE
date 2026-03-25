@@ -1,0 +1,41 @@
+{
+  "manifest_version": 1,
+  "entries": [
+    {
+      "kind": "prompts",
+      "name": "dut/general@v1",
+      "module": "gage_eval.assets.prompts.catalog",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/assets/prompts/catalog/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "prompts",
+      "name": "judge/general@v1",
+      "module": "gage_eval.assets.prompts.catalog",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/assets/prompts/catalog/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "prompts",
+      "name": "dut/appworld@v1",
+      "module": "gage_eval.assets.prompts.catalog",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/assets/prompts/catalog/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "prompts",
+      "name": "helper/appworld_api_predictor@v1",
+      "module": "gage_eval.assets.prompts.catalog",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/assets/prompts/catalog/__init__.py",
+      "aliases": [],
+      "optional": false
+    }
+  ]
+}

@@ -8,6 +8,7 @@ from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.steps._backend_error import raise_for_backend_error
+from gage_eval.pipeline.steps._role_borrow import borrow_role_with_optional_context
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
@@ -43,7 +44,8 @@ class JudgeStep(SampleStep):
             if execution_context is not None and self._adapter_id
             else None
         )
-        with role_manager.borrow_role(
+        with borrow_role_with_optional_context(
+            role_manager,
             self._adapter_id,
             execution_context=invocation_context,
         ) as role:

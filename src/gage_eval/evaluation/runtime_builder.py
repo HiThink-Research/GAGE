@@ -255,6 +255,7 @@ def _build_task_orchestrator_runtime(
     task_entries = _prepare_task_entries(
         task_plans=task_plan_specs,
         config=config,
+        registry=registry,
         data_manager=data_manager,
         datasets=datasets,
         trace=trace,
@@ -616,6 +617,7 @@ def _prepare_task_entries(
     *,
     task_plans: Sequence[TaskPlanSpec],
     config: PipelineConfig,
+    registry: "ConfigRegistry | None" = None,
     data_manager: DataManager,
     datasets: Dict[str, DataSource],
     trace: ObservabilityTrace,
@@ -667,7 +669,9 @@ def _prepare_task_entries(
             sandbox_profiles=sandbox_profiles,
         )
         metric_specs = plan.metrics or config.metrics
-        metric_registry = MetricRegistry()
+        metric_registry = MetricRegistry(
+            registry_view=getattr(registry, "registry_view", None) if registry is not None else None,
+        )
         task_planner = TaskPlanner()
         task_planner.configure_metrics(metric_specs, metric_registry, cache_store=cache_store)
         resolved_failure_policy, legacy_ff_mode = _resolve_failure_policy(
