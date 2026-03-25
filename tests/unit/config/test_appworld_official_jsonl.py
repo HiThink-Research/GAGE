@@ -8,7 +8,13 @@ from gage_eval.config.pipeline_config import PipelineConfig
 
 @pytest.mark.io
 def test_appworld_official_jsonl_config_parses() -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / "appworld_official_jsonl.yaml"
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "appworld"
+        / "appworld_official_jsonl.yaml"
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)
 

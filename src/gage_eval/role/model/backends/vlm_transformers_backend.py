@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import os
 import re
 from datetime import timedelta
+from functools import lru_cache
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,14 +20,6 @@ from gage_eval.role.model.runtime import BackendCapabilities, ChatTemplateMixin,
 from gage_eval.utils.multimodal import load_multimodal_data
 from gage_eval.utils.chat_templates import get_fallback_template
 from gage_eval.utils.cleanup import install_signal_cleanup, torch_gpu_cleanup
-
-try:  # pragma: no cover - optional dependency
-    from accelerate import Accelerator, InitProcessGroupKwargs
-    from accelerate.utils import get_max_memory
-except ImportError:  # pragma: no cover - accelerate optional
-    Accelerator = None
-    InitProcessGroupKwargs = None
-    get_max_memory = None
 
 
 @registry.asset(
@@ -319,11 +313,14 @@ class VLMTransformersBackend(EngineBackend):
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
     def _init_accelerator(self):
-        if Accelerator is None:
+        accelerator_cls, init_process_group_kwargs, _ = _load_accelerate_runtime()
+        if accelerator_cls is None or init_process_group_kwargs is None:
             return None
         timeout_seconds = max(60, int(self._parsed_config.distributed_timeout))
         try:
-            return Accelerator(kwargs_handlers=[InitProcessGroupKwargs(timeout=timedelta(seconds=timeout_seconds))])
+            return accelerator_cls(
+                kwargs_handlers=[init_process_group_kwargs(timeout=timedelta(seconds=timeout_seconds))]
+            )
         except Exception as exc:  # pragma: no cover - best effort logging
             logger.warning("Failed to initialize accelerate (fallback to single-device): {}", exc)
             return None
@@ -340,6 +337,7 @@ class VLMTransformersBackend(EngineBackend):
 
     def _init_model_parallel(self, requested: Optional[bool]) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
         torch = self._torch
+        _, _, get_max_memory = _load_accelerate_runtime()
         if not torch.cuda.is_available():
             return False, None, None
         if self.accelerator is None:
@@ -736,3 +734,18 @@ def _apply_stop_sequences(text: str, stop) -> str:
 
 def _drop_none(data: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in data.items() if v is not None}
+
+
+@lru_cache(maxsize=1)
+def _load_accelerate_runtime():
+    try:  # pragma: no cover - optional dependency
+        accelerate = importlib.import_module("accelerate")
+        accelerate_utils = importlib.import_module("accelerate.utils")
+    except ImportError:  # pragma: no cover - accelerate optional
+        return None, None, None
+
+    return (
+        getattr(accelerate, "Accelerator", None),
+        getattr(accelerate, "InitProcessGroupKwargs", None),
+        getattr(accelerate_utils, "get_max_memory", None),
+    )

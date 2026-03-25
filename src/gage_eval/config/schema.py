@@ -200,7 +200,7 @@ def _prompt_id_in_registry(prompt_id: str) -> bool:
     if not prompt_id:
         return False
     try:
-        from gage_eval.registry import registry
+        from gage_eval.registry import load_default_manifest_repository, registry
     except Exception:
         return False
     try:
@@ -212,13 +212,7 @@ def _prompt_id_in_registry(prompt_id: str) -> bool:
         return False
 
     try:
-        probe = registry.clone()
-        with registry.route_to(probe):
-            registry.auto_discover("prompts", "gage_eval.assets.prompts.catalog", mode="warn")
-        probe.get("prompts", prompt_id)
-        return True
-    except KeyError:
-        return False
+        return load_default_manifest_repository().resolve("prompts", prompt_id) is not None
     except Exception:
         return False
 

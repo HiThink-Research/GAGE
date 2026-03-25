@@ -46,7 +46,7 @@ class FinMultiRoundDescAccuracyMetric(SimpleMetric):
             predict_result_str = get_text_content_of_first_predict_result(sample_dict)  
             predicted_answer = None
             try:
-                predict_data = re.sub('[\s\S]*think>', '', predict_result_str).strip()
+                predict_data = re.sub(r"[\s\S]*think>", "", predict_result_str).strip()
             except json.JSONDecodeError:
                 print("JSONDecodeError")
             desc_key = 'description_id' if 'description_id' in correct_answer else '描述编号'
@@ -73,7 +73,7 @@ class FinMultiRoundDescAccuracyMetric(SimpleMetric):
             # print(predicted_answer_list)
             for predicted_item in predicted_answer_list:
                 desc_id = predicted_item[desc_key]
-                predicted_answer = sorted([int(re.search('\d+', str(ans)).group()) for ans in predicted_item['answer']])
+                predicted_answer = sorted([int(re.search(r"\d+", str(ans)).group()) for ans in predicted_item['answer']])
         
                 # check whether description_id in ground truth
                 if desc_id in correct_answer_dict:

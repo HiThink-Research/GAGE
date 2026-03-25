@@ -844,15 +844,12 @@ def ensure_save_dir(directory: Optional[str]) -> None:
 def _detect_gpu_count() -> Optional[int]:
     """Best-effort GPU count detection covering torch/nvidia-smi/env hints."""
 
-    try:
-        import torch
-
+    torch = sys.modules.get("torch")
+    if torch is not None:
         if torch.cuda.is_available():
             count = torch.cuda.device_count()
             if count:
                 return count
-    except Exception:  # pragma: no cover - soft fallback
-        pass
 
     env_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if env_visible:

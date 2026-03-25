@@ -6,6 +6,7 @@ import atexit
 import gc
 import logging
 import signal
+import sys
 import threading
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional
@@ -65,9 +66,8 @@ def install_signal_cleanup(
 
 def torch_gpu_cleanup() -> None:
     """Release CUDA memory to reduce the chance of leaked allocations after crashes."""
-    try:
-        import torch
-    except Exception:
+    torch = sys.modules.get("torch")
+    if torch is None:
         return
 
     try:

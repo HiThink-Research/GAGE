@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
-from functools import lru_cache
-from pathlib import Path
-import re
-from typing import Any, Dict, Iterable, Optional, Sequence, Type
+from typing import Any, Dict, Optional, Sequence, Type
 
 from loguru import logger
 from gage_eval.assets.models.store import resolve_model_handle
+from gage_eval.registry import import_asset_from_manifest, registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config import (
     BackendConfigBase,
@@ -65,12 +62,6 @@ _BACKEND_CONFIG_SCHEMAS: Dict[str, Type[BackendConfigBase]] = {
     "openai_batch_http": OpenAIBatchBackendConfig,
 }
 
-_BACKEND_ASSET_PATTERN = re.compile(
-    r'registry\.asset\(\s*["\']backends["\']\s*,\s*["\']([^"\']+)["\']',
-    re.S,
-)
-
-
 def register_backend(
     kind: str,
     backend_cls: Type[EngineBackend],
@@ -81,8 +72,6 @@ def register_backend(
     **extra: Any,
 ) -> None:
     """Compatibility helper for imperative backend registration."""
-
-    from gage_eval.registry import registry
 
     registry.register(
         "backends",
@@ -121,10 +110,12 @@ def build_backend(spec: Dict[str, Any], *, registry_view=None) -> EngineBackend:
     if not backend_type:
         raise ValueError("Backend spec must declare 'type'")
     
-    from gage_eval.registry import registry
-
     lookup = registry_view or registry
-    backend_cls = _resolve_backend_class(lookup, backend_type)
+    backend_cls = _resolve_backend_class(
+        lookup,
+        backend_type,
+        allow_runtime_fallback=registry_view is None,
+    )
 
     # STEP 2: Prepare config payload (including model-id resolution).
     config = dict(spec.get("config", {}))
@@ -157,10 +148,17 @@ def build_backend(spec: Dict[str, Any], *, registry_view=None) -> EngineBackend:
     return backend_cls(typed_config)
 
 
-def _resolve_backend_class(lookup, backend_type: str) -> Type[EngineBackend]:
+def _resolve_backend_class(
+    lookup,
+    backend_type: str,
+    *,
+    allow_runtime_fallback: bool = True,
+) -> Type[EngineBackend]:
     try:
         return lookup.get("backends", backend_type)
-    except KeyError:
+    except KeyError as exc:
+        if not allow_runtime_fallback:
+            raise KeyError(f"Backend '{backend_type}' is not registered") from exc
         _import_backend_asset_module(backend_type)
         try:
             return lookup.get("backends", backend_type)
@@ -169,32 +167,4 @@ def _resolve_backend_class(lookup, backend_type: str) -> Type[EngineBackend]:
 
 
 def _import_backend_asset_module(backend_type: str) -> None:
-    module_name = _backend_asset_modules().get(str(backend_type))
-    if module_name:
-        importlib.import_module(module_name)
-
-
-@lru_cache(maxsize=1)
-def _backend_asset_modules() -> Dict[str, str]:
-    root = Path(__file__).resolve().parent
-    module_prefix = "gage_eval.role.model.backends"
-    mapping: Dict[str, str] = {}
-    for path in root.rglob("*.py"):
-        if path.name in {"__init__.py", "builder.py", "base_backend.py"}:
-            continue
-        try:
-            source = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        module_name = _module_name_for_path(path, root=root, module_prefix=module_prefix)
-        for asset_name in _BACKEND_ASSET_PATTERN.findall(source):
-            mapping.setdefault(str(asset_name), module_name)
-    return mapping
-
-
-def _module_name_for_path(path: Path, *, root: Path, module_prefix: str) -> str:
-    relative = path.relative_to(root).with_suffix("")
-    parts = relative.parts
-    if not parts:
-        return module_prefix
-    return ".".join((module_prefix, *parts))
+    import_asset_from_manifest("backends", str(backend_type), registry=registry, source="backend_builder")

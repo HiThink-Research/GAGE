@@ -58,7 +58,7 @@ if __name__ == '__main__':
     ss = rf.apply(input_1)
     print("ss:", ss)
 
-    input_1 = 'ANSWER: 3\ANSWER: 4\nANSWER: 6'
+    input_1 = 'ANSWER: 3\\ANSWER: 4\nANSWER: 6'
     rf = RegexFilter(regex_pattern=pattern, group_select=-1)
     ss = rf.apply(input_1)
     print("ss:", ss)

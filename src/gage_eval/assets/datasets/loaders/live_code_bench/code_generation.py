@@ -6,9 +6,8 @@ import pickle
 import base64
 from enum import Enum
 from datetime import datetime
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import os
-from datasets import load_dataset
 
 
 class Platform(Enum):
@@ -69,7 +68,7 @@ class CodeGenerationProblem:
 
         try:
             self.private_test_cases = json.loads(self.private_test_cases)  # type: ignore
-        except:
+        except Exception:
             self.private_test_cases = json.loads(
                 pickle.loads(
                     zlib.decompress(
@@ -132,18 +131,23 @@ def get_path_list(local_dir, filename_list):
         ret.append(os.path.join(local_dir, filename))
     return ret
 
+
+def _load_json_dataset(local_dir, filename_list):
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError("`datasets` package is required to load Live Code Bench datasets") from exc
+
+    return load_dataset("json", data_files=get_path_list(local_dir, filename_list), split="train")
+
 def load_code_generation_dataset_not_fast(local_dir, filename_list) -> list[CodeGenerationProblem]:
-    dataset = load_dataset('json', 
-                           data_files = get_path_list(local_dir, filename_list),
-                           split='train')
+    dataset = _load_json_dataset(local_dir, filename_list)
     dataset = [CodeGenerationProblem(**p) for p in dataset]  # type: ignore
     print(f"Loaded {len(dataset)} problems")    
     return dataset
 
 def load_code_generation_dataset(local_dir, filename_list, start_date=None, end_date=None) -> list[CodeGenerationProblem]:
-    dataset = load_dataset('json', 
-                           data_files = get_path_list(local_dir, filename_list),
-                           split='train') 
+    dataset = _load_json_dataset(local_dir, filename_list)
     dataset = [CodeGenerationProblem(**p) for p in dataset]  # type: ignore
     if start_date is not None:
         p_start_date = datetime.strptime(start_date, "%Y-%m-%d")
@@ -155,4 +159,3 @@ def load_code_generation_dataset(local_dir, filename_list, start_date=None, end_
 
     print(f"Loaded {len(dataset)} problems")
     return dataset
-

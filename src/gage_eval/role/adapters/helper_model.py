@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from gage_eval.registry import registry
+from gage_eval.registry import import_asset_from_manifest, registry
 from gage_eval.role.adapters.model_role_adapter import ModelRoleAdapter
 
 
@@ -50,7 +50,12 @@ class HelperModelAdapter(ModelRoleAdapter):
             except KeyError:
                 if registry_view is not None:
                     raise
-                registry.auto_discover("helper_impls", "gage_eval.role.helper", mode="warn")
+                import_asset_from_manifest(
+                    "helper_impls",
+                    implementation,
+                    registry=lookup,
+                    source=f"helper_model:{adapter_id}",
+                )
                 impl_cls = registry.get("helper_impls", implementation)
             self._impl = impl_cls(**self._implementation_params)
 

@@ -10,7 +10,13 @@ from gage_eval.config.pipeline_config import PipelineConfig
 
 @pytest.mark.io
 def test_swebench_smoke_agent_config() -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / "swebench_pro_smoke_agent.yaml"
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "swebench_pro"
+        / "swebench_pro_smoke_agent.yaml"
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)
 

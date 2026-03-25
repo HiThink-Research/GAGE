@@ -8,9 +8,12 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Protocol, S
 from uuid import uuid4
 import weakref
 
+from gage_eval.registry.bootstrap_importer import BootstrapImporter, DiscoveryReport
+
 from gage_eval.registry.entry import RegistryEntry
 
 if TYPE_CHECKING:
+    from gage_eval.registry.asset_planner import DiscoveryPlan
     from gage_eval.registry.manager import RegistryManager
 
 
@@ -19,7 +22,9 @@ class DiscoveryPolicy:
     """Controls how discovery failures are handled during prepare."""
 
     mode: str = "warn"
+    strategy: str = "manifest"
     freeze_strict: bool = True
+    dev_auto_refresh: bool = False
 
     @property
     def is_strict(self) -> bool:
@@ -95,17 +100,33 @@ class FrozenRegistryView:
         entries: Mapping[str, Mapping[str, RegistryEntry]],
         objects: Mapping[str, Mapping[str, Any]],
     ) -> None:
-        self.view_id = view_id
-        self._kind_desc = MappingProxyType(dict(kind_desc))
-        self._entries = {
-            kind: MappingProxyType(dict(kind_entries))
-            for kind, kind_entries in entries.items()
-        }
-        self._objects = {
-            kind: MappingProxyType(dict(kind_objects))
-            for kind, kind_objects in objects.items()
-        }
-        self._scoped_caches: Dict[str, Dict[str, Any]] = {}
+        object.__setattr__(self, "view_id", view_id)
+        object.__setattr__(self, "_kind_desc", MappingProxyType(dict(kind_desc)))
+        object.__setattr__(
+            self,
+            "_entries",
+            {
+                kind: MappingProxyType(dict(kind_entries))
+                for kind, kind_entries in entries.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_objects",
+            {
+                kind: MappingProxyType(dict(kind_objects))
+                for kind, kind_objects in objects.items()
+            },
+        )
+        object.__setattr__(self, "_scoped_caches", {})
+        object.__setattr__(self, "_initialized", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_initialized", False):
+            raise RegistryRuntimeMutationError(
+                f"runtime_discovery_forbidden: cannot mutate FrozenRegistryView attribute '{name}'"
+            )
+        object.__setattr__(self, name, value)
 
     @classmethod
     def from_manager(cls, manager: "RegistryManager", *, view_id: Optional[str] = None) -> "FrozenRegistryView":
@@ -163,6 +184,15 @@ class FrozenRegistryView:
     def clear_scoped_cache(self) -> None:
         self._scoped_caches.clear()
 
+    def register(self, *args, **kwargs) -> None:  # pragma: no cover - defensive API guard
+        raise RegistryRuntimeMutationError("runtime_discovery_forbidden: FrozenRegistryView is read-only")
+
+    def auto_discover(self, *args, **kwargs) -> None:  # pragma: no cover - defensive API guard
+        raise RegistryRuntimeMutationError("runtime_discovery_forbidden: FrozenRegistryView is read-only")
+
+    def declare_kind(self, *args, **kwargs) -> None:  # pragma: no cover - defensive API guard
+        raise RegistryRuntimeMutationError("runtime_discovery_forbidden: FrozenRegistryView is read-only")
+
 
 class RegistryFacade:
     """Writable facade used only during prepare."""
@@ -209,6 +239,7 @@ class RuntimeRegistryContext:
 
     view: FrozenRegistryView
     lease: RegistryViewLease
+    discovery_report: DiscoveryReport = field(default_factory=DiscoveryReport)
 
     def close(self) -> None:
         self.lease.close()
@@ -217,13 +248,20 @@ class RuntimeRegistryContext:
 class RegistryBootstrapCoordinator:
     """Builds a run-local registry view from the global baseline."""
 
-    def __init__(self, registry: "RegistryManager") -> None:
+    def __init__(
+        self,
+        registry: "RegistryManager",
+        *,
+        importer_factory: Callable[[], BootstrapImporter] | None = None,
+    ) -> None:
         self._registry = registry
+        self._importer_factory = importer_factory or BootstrapImporter
 
     def prepare_runtime_context(
         self,
         *,
         run_id: str,
+        discovery_plan: Optional["DiscoveryPlan"] = None,
         required_packages: Optional[Mapping[str, Iterable[str]]] = None,
         overlay_assets: Sequence[RegistryOverlayAsset] = (),
         policy: Optional[DiscoveryPolicy] = None,
@@ -238,14 +276,32 @@ class RegistryBootstrapCoordinator:
         }
 
         with self._registry.route_to(working):
-            for kind, packages in package_map.items():
-                for package in packages:
-                    self._registry.auto_discover(
-                        kind,
-                        package,
-                        mode=resolved_policy.mode,
-                        force=True,
+            report = DiscoveryReport()
+            if discovery_plan is not None:
+                report = self._importer_factory().execute(discovery_plan, registry=working)
+                if report.issues and resolved_policy.is_strict:
+                    raise RegistryDiscoveryError(
+                        (
+                            DiscoveryFailureRecord(
+                                kind=issue.kind,
+                                package=issue.source or "<manifest>",
+                                module=issue.module or issue.name,
+                                exc_type=issue.code,
+                                exc_message=issue.detail,
+                                hint=f"source={issue.source}" if issue.source else "",
+                            )
+                            for issue in report.issues
+                        )
                     )
+            if resolved_policy.strategy in {"legacy", "hybrid"}:
+                for kind, packages in package_map.items():
+                    for package in packages:
+                        self._registry.auto_discover(
+                            kind,
+                            package,
+                            mode=resolved_policy.mode,
+                            force=True,
+                        )
             for overlay in overlay_assets:
                 self._registry.register(
                     overlay.kind,
@@ -268,4 +324,4 @@ class RegistryBootstrapCoordinator:
                 self._registry.release_runtime_guard(view_id)
 
         lease = RegistryViewLease(view, _release)
-        return RuntimeRegistryContext(view=view, lease=lease)
+        return RuntimeRegistryContext(view=view, lease=lease, discovery_report=report)

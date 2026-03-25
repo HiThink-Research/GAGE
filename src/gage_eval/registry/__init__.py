@@ -5,6 +5,26 @@ from __future__ import annotations
 from typing import Dict
 
 from gage_eval.registry.entry import RegistryEntry
+from gage_eval.registry.asset_planner import DiscoveryPlan, DiscoveryRequest, RuntimeAssetPlanner
+from gage_eval.registry.bootstrap_importer import (
+    BootstrapImporter,
+    DiscoveryImport,
+    DiscoveryIssue,
+    DiscoveryReport,
+    import_asset_from_manifest,
+    import_kind_from_manifest,
+)
+from gage_eval.registry.discovery_manifest import (
+    DiscoveryManifestEntry,
+    DiscoveryManifestRepository,
+    clear_manifest_repository_cache,
+    load_default_manifest_repository,
+)
+from gage_eval.registry.discovery_telemetry import (
+    DiscoveryTelemetry,
+    DiscoveryTelemetrySnapshot,
+    telemetry as discovery_telemetry,
+)
 from gage_eval.registry.manager import RegistryManager
 from gage_eval.registry.runtime import (
     DiscoveryFailureRecord,
@@ -52,9 +72,19 @@ for _kind, _desc in DEFAULT_KINDS.items():
 
 __all__ = [
     "RegistryEntry",
+    "BootstrapImporter",
+    "DiscoveryImport",
+    "DiscoveryIssue",
+    "DiscoveryManifestEntry",
+    "DiscoveryManifestRepository",
     "RegistryManager",
+    "DiscoveryPlan",
+    "DiscoveryReport",
+    "DiscoveryRequest",
     "DiscoveryFailureRecord",
     "DiscoveryPolicy",
+    "DiscoveryTelemetry",
+    "DiscoveryTelemetrySnapshot",
     "FrozenRegistryView",
     "RegistryBootstrapCoordinator",
     "RegistryDiscoveryError",
@@ -63,6 +93,12 @@ __all__ = [
     "RegistryRuntimeMutationError",
     "RegistryViewLease",
     "RuntimeRegistryContext",
+    "RuntimeAssetPlanner",
+    "clear_manifest_repository_cache",
+    "discovery_telemetry",
+    "import_asset_from_manifest",
+    "import_kind_from_manifest",
+    "load_default_manifest_repository",
     "registry",
     "ensure_async",
     "run_sync",

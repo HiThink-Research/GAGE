@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import random
 from typing import Any, Dict
-import transformers
 
 from loguru import logger
 

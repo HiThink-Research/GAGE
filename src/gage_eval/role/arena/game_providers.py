@@ -598,6 +598,16 @@ class _DefaultArenaGameProvider(ArenaGameProvider):
     pass
 
 
+_BUILTIN_PROVIDER_TYPES: tuple[type[ArenaGameProvider], ...] = (
+    GridBoardArenaGameProvider,
+    PettingZooArenaGameProvider,
+    ViZDoomArenaGameProvider,
+    RetroArenaGameProvider,
+    MahjongArenaGameProvider,
+    DoudizhuArenaGameProvider,
+)
+
+
 def _coerce_bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -615,8 +625,12 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
 def resolve_arena_game_provider(env_impl: str) -> ArenaGameProvider:
     """Resolve one arena provider by env implementation family."""
 
-    import_all_arena_asset_modules("arena_game_providers")
     normalized_env_impl = str(env_impl or "").strip().lower()
+    for provider_type in _BUILTIN_PROVIDER_TYPES:
+        provider = provider_type()
+        if provider.matches(normalized_env_impl):
+            return provider
+    import_all_arena_asset_modules("arena_game_providers")
     for entry in registry.list("arena_game_providers"):
         target = registry.get("arena_game_providers", entry.name)
         if isinstance(target, ArenaGameProvider):

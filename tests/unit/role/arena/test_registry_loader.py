@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import uuid4
 
-from gage_eval.registry import registry
+from gage_eval.registry import load_default_manifest_repository, registry
 from gage_eval.role.arena.game_providers import (
     ArenaGameProvider,
     resolve_arena_game_provider,
@@ -11,36 +10,25 @@ from gage_eval.role.arena.game_providers import (
 from gage_eval.role.arena import registry_loader
 
 
-def test_asset_search_roots_split_arena_domains() -> None:
-    root = Path(registry_loader.__file__).resolve().parent
+def test_manifest_repository_exposes_split_arena_domains() -> None:
+    repository = load_default_manifest_repository()
 
-    arena_roots = registry_loader._asset_search_roots(root=root, kind="arena_impls")  # noqa: SLF001
-    parser_roots = registry_loader._asset_search_roots(root=root, kind="parser_impls")  # noqa: SLF001
-    renderer_roots = registry_loader._asset_search_roots(root=root, kind="renderer_impls")  # noqa: SLF001
-    provider_roots = registry_loader._asset_search_roots(root=root, kind="arena_game_providers")  # noqa: SLF001
+    arena_entry = repository.require("arena_impls", "gomoku_local_v1")
+    parser_entry = repository.require("parser_impls", "grid_parser_v1")
+    renderer_entry = repository.require("renderer_impls", "gomoku_board_v1")
+    provider_entry = repository.require("arena_game_providers", "grid_board")
 
-    assert {path.relative_to(root).as_posix() for path in arena_roots} == {"games"}
-    assert {path.relative_to(root).as_posix() for path in parser_roots} == {"games", "parsers"}
-    assert {path.relative_to(root).as_posix() for path in renderer_roots} == {"games"}
-    assert {path.relative_to(root).as_posix() for path in provider_roots} == {"game_providers.py"}
+    assert arena_entry.module == "gage_eval.role.arena.games.gomoku.env"
+    assert parser_entry.module.startswith("gage_eval.role.arena.parsers.")
+    assert renderer_entry.module.startswith("gage_eval.role.arena.games.gomoku.")
+    assert provider_entry.module == "gage_eval.role.arena.game_providers"
 
 
-def test_iter_asset_source_paths_skips_test_directories(tmp_path: Path) -> None:
-    games_dir = tmp_path / "games"
-    games_dir.mkdir(parents=True, exist_ok=True)
-    (games_dir / "env.py").write_text("x = 1\n", encoding="utf-8")
-    (games_dir / "tests").mkdir(parents=True, exist_ok=True)
-    (games_dir / "tests" / "ignored.py").write_text("x = 2\n", encoding="utf-8")
+def test_import_all_arena_asset_modules_uses_manifest_entries() -> None:
+    registry_loader.import_all_arena_asset_modules("arena_game_providers")
 
-    paths = list(
-        registry_loader._iter_asset_source_paths(  # noqa: SLF001
-            root=tmp_path,
-            kind="arena_impls",
-        )
-    )
-
-    assert games_dir / "env.py" in paths
-    assert games_dir / "tests" / "ignored.py" not in paths
+    assert registry.entry("arena_game_providers", "grid_board").name == "grid_board"
+    assert registry.entry("arena_game_providers", "vizdoom").name == "vizdoom"
 
 
 def test_resolve_arena_game_provider_uses_registry_assets() -> None:
