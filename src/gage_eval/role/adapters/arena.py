@@ -207,6 +207,7 @@ class ArenaRoleAdapter(RoleAdapter):
         human_input: Optional[Dict[str, Any]] = None,
         players: Optional[Sequence[Dict[str, Any]]] = None,
         prompt_renderer: Optional[PromptRenderer] = None,
+        registry_view=None,
         capabilities=(),
         role_type: str = "arena",
         **_,
@@ -223,6 +224,7 @@ class ArenaRoleAdapter(RoleAdapter):
         self._human_input_cfg = dict(human_input or {})
         self._player_specs = list(players or [])
         self._prompt_renderer = prompt_renderer
+        self._registry_view = registry_view
         self._runtime_services = ArenaRuntimeServiceHub(adapter_id=self.adapter_id)
 
     def invoke(
@@ -604,11 +606,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         env_cfg.get("arena_rpc_timeout_s"), default=30
                     ),
                 )
-        try:
-            env_cls = registry.get("arena_impls", impl)
-        except KeyError:
-            import_arena_asset_module("arena_impls", impl)
-            env_cls = registry.get("arena_impls", impl)
+        env_cls = self._resolve_registry_asset("arena_impls", str(impl))
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
@@ -617,11 +615,7 @@ class ArenaRoleAdapter(RoleAdapter):
         impl = cfg.get("impl") or cfg.get("implementation") or "grid_parser_v1"
         board_size = int(metadata.get("board_size", cfg.get("board_size", 15)))
         coord_scheme = cfg.get("coord_scheme", metadata.get("coord_scheme", "A1"))
-        try:
-            parser_cls = registry.get("parser_impls", impl)
-        except KeyError:
-            import_arena_asset_module("parser_impls", impl)
-            parser_cls = registry.get("parser_impls", impl)
+        parser_cls = self._resolve_registry_asset("parser_impls", str(impl))
         try:
             return parser_cls(board_size=board_size, coord_scheme=coord_scheme)
         except TypeError:
@@ -1286,6 +1280,35 @@ class ArenaRoleAdapter(RoleAdapter):
         except (TypeError, ValueError):
             return int(default)
 
+    def _registry_lookup(self):
+        return self._registry_view or registry
+
+    def _resolve_registry_asset(self, kind: str, name: str) -> Any:
+        lookup = self._registry_lookup()
+        try:
+            return lookup.get(kind, name)
+        except KeyError as exc:
+            if self._registry_view is not None:
+                raise
+            report = import_arena_asset_module(
+                kind,
+                name,
+                registry_lookup=lookup,
+                source=f"arena:{self.adapter_id}",
+            )
+            if report.ok:
+                return lookup.get(kind, name)
+            detail = "; ".join(
+                f"{issue.code}: {issue.detail}" for issue in report.issues[:2]
+            )
+            if len(report.issues) > 2:
+                detail = f"{detail}; +{len(report.issues) - 2} more"
+            if not detail:
+                detail = "manifest import did not register the requested asset"
+            raise KeyError(
+                f"Unknown registry asset '{kind}:{name}' ({detail})"
+            ) from exc
+
     @staticmethod
     def _close_scheduler(scheduler: Any) -> None:
         close = getattr(scheduler, "close", None)
@@ -1297,7 +1320,10 @@ class ArenaRoleAdapter(RoleAdapter):
             logger.warning("Arena scheduler close failed: {}", exc)
 
     def _resolve_game_provider(self, env_impl: Any):
-        return resolve_arena_game_provider(str(env_impl or ""))
+        return resolve_arena_game_provider(
+            str(env_impl or ""),
+            registry_lookup=self._registry_lookup(),
+        )
 
     def _ensure_visualizer(
         self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]

@@ -3,7 +3,7 @@ kind: BuiltinTemplate
 metadata:
   name: local_judge_suite
   version: V1
-  digest: sha256:0ea526d2da74dfd922413148e57d3bd7c4718d3d96756d2bae256499ec775d31
+  digest: sha256:f24024cded95c15672754648e9e860e1008ca586eadb063f4d6f9df10b804765
   source_tasks:
   - piqa_validation_with_judge
   - mmlu_business_ethics_with_judge

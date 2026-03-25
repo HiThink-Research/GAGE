@@ -659,6 +659,9 @@ class PerSampleSession:
     def execute_auto_eval(self, sample_id: str) -> None:
         self.context.execute_auto_eval(sample_id)
 
+    def persist_sample_artifact(self, sample_id: str) -> None:
+        self.context.persist_sample_artifact(sample_id)
+
 
 def _resolve_default_sandbox_override(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     sandbox_routes = sample.get("sandbox_routes")

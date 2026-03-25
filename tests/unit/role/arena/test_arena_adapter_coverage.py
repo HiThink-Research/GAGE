@@ -4,7 +4,9 @@ import asyncio
 import threading
 import time
 from typing import Any
+from uuid import uuid4
 
+from gage_eval.registry import registry
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.adapters import arena as arena_module
@@ -63,6 +65,84 @@ def test_build_scheduler_supports_turn_type() -> None:
     scheduler = adapter._build_scheduler({"eval_config": {"max_turns": 7}})
 
     assert isinstance(scheduler, TurnScheduler)
+
+
+def test_build_parser_prefers_runtime_registry_view(monkeypatch) -> None:
+    impl_name = f"test_parser_{uuid4().hex}"
+    clone = registry.clone()
+
+    class _Parser:
+        def __init__(self, *, board_size: int, coord_scheme: str = "A1") -> None:
+            self.board_size = board_size
+            self.coord_scheme = coord_scheme
+
+        def parse(self, text: str, *, legal_moves=None) -> dict[str, Any]:
+            return {"text": text, "legal_moves": legal_moves}
+
+        def build_rethink_prompt(
+            self,
+            *,
+            last_output: str,
+            reason: str,
+            legal_moves: list[str],
+        ) -> str:
+            return f"{last_output}|{reason}|{legal_moves}"
+
+    clone.register("parser_impls", impl_name, _Parser, desc="test parser")
+    view = clone.freeze(view_id=f"parser-view-{uuid4().hex}")
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        parser={"impl": impl_name, "board_size": 9, "coord_scheme": "ROW_COL"},
+        registry_view=view,
+    )
+
+    monkeypatch.setattr(
+        arena_module,
+        "import_arena_asset_module",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runtime registry view must not trigger manifest fallback")
+        ),
+    )
+
+    parser = adapter._build_parser({"metadata": {"board_size": 7}})
+
+    assert parser.board_size == 7
+    assert parser.coord_scheme == "ROW_COL"
+
+
+def test_build_environment_prefers_runtime_registry_view(monkeypatch) -> None:
+    impl_name = f"test_env_{uuid4().hex}"
+    clone = registry.clone()
+
+    class _Environment:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+    class _Provider:
+        def enrich_environment_kwargs(self, **kwargs: Any) -> dict[str, Any]:
+            return dict(kwargs["env_kwargs"])
+
+    clone.register("arena_impls", impl_name, _Environment, desc="test environment")
+    view = clone.freeze(view_id=f"env-view-{uuid4().hex}")
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": impl_name},
+        registry_view=view,
+    )
+
+    monkeypatch.setattr(adapter, "_resolve_game_provider", lambda env_impl: _Provider())
+    monkeypatch.setattr(
+        arena_module,
+        "import_arena_asset_module",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runtime registry view must not trigger manifest fallback")
+        ),
+    )
+
+    environment = adapter._build_environment({"metadata": {}})
+
+    assert isinstance(environment, _Environment)
+    assert environment.kwargs["board_size"] == 15
 
 
 def test_normalize_player_specs_prefers_adapter_ref_for_generic_name() -> None:

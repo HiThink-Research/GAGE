@@ -6,6 +6,36 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 DEFAULT_TEMPLATE_DIR="${ROOT_DIR}/config/builtin_templates"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 
+resolve_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" && -x "${PYTHON_BIN}" ]]; then
+    printf '%s\n' "${PYTHON_BIN}"
+    return 0
+  fi
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    printf '%s\n' "${VIRTUAL_ENV}/bin/python"
+    return 0
+  fi
+  if [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+    printf '%s\n' "${ROOT_DIR}/.venv/bin/python"
+    return 0
+  fi
+  if [[ -x "${ROOT_DIR}/.venv311/bin/python" ]]; then
+    printf '%s\n' "${ROOT_DIR}/.venv311/bin/python"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  printf '%s\n' "python"
+}
+
+PYTHON_BIN="$(resolve_python_bin)"
+
 CONFIGS=()
 if [[ $# -gt 0 ]]; then
   CONFIGS=("$@")
@@ -24,5 +54,5 @@ fi
 
 for cfg in "${CONFIGS[@]}"; do
   echo "[gage-eval] validating ${cfg}"
-  python -m gage_eval.tools.config_checker --config "${cfg}"
+  "${PYTHON_BIN}" -m gage_eval.tools.config_checker --config "${cfg}"
 done

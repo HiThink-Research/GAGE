@@ -16,6 +16,7 @@ from gage_eval.assets.datasets.validation import (
 from gage_eval.assets.datasets.sample import (
     Sample,
     sample_from_dict,
+    sample_to_dict,
 )
 
 
@@ -139,7 +140,9 @@ class DataManager:
                     continue
                 normalized = validated
             normalized_payload = (
-                asdict(normalized) if is_dataclass(normalized) else dict(normalized)
+                sample_to_dict(normalized)
+                if isinstance(normalized, Sample)
+                else (asdict(normalized) if is_dataclass(normalized) else dict(normalized))
             )
             normalized_payload.setdefault("_gage_source_index", index)
             normalized_payload.setdefault("_gage_dataset_id", dataset_id)

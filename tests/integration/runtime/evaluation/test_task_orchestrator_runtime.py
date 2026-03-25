@@ -195,6 +195,26 @@ def test_task_orchestrator_runs_tasks(tmp_path: Path):
     assert payload["observability_close_remaining_queue"] == 0
 
 
+def test_task_orchestrator_persists_inference_only_samples(tmp_path: Path) -> None:
+    runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=2)
+
+    runtime.run()
+
+    samples_jsonl = cache.run_dir / "samples.jsonl"
+    summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert samples_jsonl.exists()
+    lines = [line for line in samples_jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 4
+    records = [json.loads(line) for line in lines]
+    answers = {record["sample"]["id"]: record["model_output"]["answer"] for record in records}
+    assert answers["s0"] == "echo-s0"
+    assert answers["s1"] == "echo-s1"
+    assert summary["sample_count"] == 4
+    assert summary["tasks"][0]["sample_count"] == 2
+    assert summary["tasks"][1]["sample_count"] == 2
+
+
 def test_task_orchestrator_records_timings(tmp_path: Path):
     runtime, trace, cache, entries = _make_runtime(tmp_path, sample_count=2)
     runtime.run()

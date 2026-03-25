@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - v1 fallback
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.assets.datasets.sample import (
     Sample,
+    sample_to_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ class SampleValidator:
         trace: Optional[ObservabilityTrace] = None,
         on_failure: Optional[Callable[[ValidationFailure], None]] = None,
     ) -> Optional[Dict[str, Any]]:
-        record_dict = asdict(record) if is_dataclass(record) else record
+        record_dict = sample_to_dict(record) if isinstance(record, Sample) else (asdict(record) if is_dataclass(record) else record)
         if not self._raw_model:
             return record_dict
         try:
@@ -107,7 +108,7 @@ class SampleValidator:
         trace: Optional[ObservabilityTrace] = None,
         on_failure: Optional[Callable[[ValidationFailure], None]] = None,
     ) -> Optional[Dict[str, Any]]:
-        sample_dict = asdict(sample) if is_dataclass(sample) else sample
+        sample_dict = sample_to_dict(sample) if isinstance(sample, Sample) else (asdict(sample) if is_dataclass(sample) else sample)
         if not self._envelope_model or self._mode == ValidationMode.OFF:
             return sample_dict
         try:

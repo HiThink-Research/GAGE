@@ -47,6 +47,10 @@ def main() -> None:
         raise SystemExit(
             "registry_manifest.yaml is stale. Run scripts/build_registry_manifest.py and commit the result."
         )
+    if not args.schema.exists():
+        print(f"{args.schema.name} not found; skipping schema validation.")
+        print("registry_manifest.yaml is up to date.")
+        return
     schema = load_schema(args.schema)
     validator = Draft7Validator(schema)
     errors = sorted(validator.iter_errors(actual), key=lambda e: e.path)

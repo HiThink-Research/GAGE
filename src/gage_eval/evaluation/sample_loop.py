@@ -350,6 +350,7 @@ class SampleLoop:
                         session.execute_judge()
                     if plan.auto_eval_enabled:
                         session.execute_auto_eval(sample_identifier)
+                session.persist_sample_artifact(sample_identifier)
         finally:
             # STEP 4: Release all sample-scoped runtime resources.
             execution_context.close()

@@ -14,3 +14,11 @@ def test_dummy_backend_random_seed_reproducible():
     outputs_b = [backend_b.generate({})["answer"] for _ in range(5)]
 
     assert outputs_a == outputs_b
+
+
+def test_dummy_backend_uses_echo_mode_when_responses_are_empty():
+    backend = DummyBackend({"responses": [], "echo_prompt": True})
+
+    output = backend.generate({"prompt": "hello"})
+
+    assert output["answer"] == "hello"
