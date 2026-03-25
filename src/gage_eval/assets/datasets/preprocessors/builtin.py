@@ -136,6 +136,9 @@ class _DeprecatedDatasetPreprocessorMixin:
 # benchmark HMMT Feb 2025
 from gage_eval.assets.datasets.preprocessors.hmmt.hmmt_converter import HMMTFeb2025Preprocessor
 
+# benchmark BeyondAIME
+from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import BeyondAIMEPreprocessor
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -555,5 +558,16 @@ class InverseIFEvalPreprocessorProvider(InverseIFEvalPreprocessor):
     tags=("prompt", "hmmt", "math"),
 )
 class HMMTFeb2025PreprocessorProvider(HMMTFeb2025Preprocessor):
+    pass
+
+
+# benchmark BeyondAIME
+@registry.asset(
+    "dataset_preprocessors",
+    "beyond_aime_preprocessor",
+    desc="BeyondAIME prompt wrapper",
+    tags=("prompt", "beyond_aime", "math"),
+)
+class BeyondAIMEPreprocessorProvider(BeyondAIMEPreprocessor):
     pass
 

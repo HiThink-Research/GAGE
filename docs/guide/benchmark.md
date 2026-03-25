@@ -155,6 +155,34 @@ python run.py \
 | **`shot_type`** | Defines the reasoning format for few-shot examples. | `'solution'` (Natural Language), `'code'` (Program-of-Thought) |
 
 
+
+### HMMT (Harvard-MIT Mathematics Tournament)
+This dataset contains the questions from HMMT February 2025 used for the MathArena Leaderboard. HMMT is a prestigious mathematics competition organized by Harvard and MIT students, featuring challenging problems that test advanced mathematical reasoning and problem-solving skills.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/hmmt/feb_2025.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id hmmt
+```
+
+### BeyondAIME
+BeyondAIME is a curated test set designed to benchmark advanced mathematical reasoning. Its creation was guided by the following core principles to ensure a fair and challenging evaluation:
+
+* **High Difficulty**: Problems are sourced from high-school and university mathematics competitions, with a difficulty level greater than or equal to that of AIME Problems #11-15.
+* **Contamination-Resistant**: Every problem has been manually revised to be unique, ensuring it will not be found in standard pre-training corpora and providing a true test of a model's reasoning abilities.
+* **Focus on Reasoning, Not Knowledge**: The dataset exclusively tests reasoning by ensuring that problems do not require mathematical knowledge beyond the standard university level.
+* **Robust Problem Design**: The dataset avoids "pseudo-proof" problems. For problems requiring proof-like steps, they have been reformulated so that guessing the answer is as difficult as formally solving the problem.
+* **Automated & Accurate Evaluation**: Each problem's answer is a positive integer, allowing for an unambiguous and 100% accurate automated verification of model performance.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/beyond_aime/beyond_aime_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id beyond_aime
+```
 ### AIME 2024
 This dataset contains problems from the American Invitational Mathematics Examination (AIME) 2024. AIME is a prestigious high school mathematics competition known for its challenging mathematical problems.
 

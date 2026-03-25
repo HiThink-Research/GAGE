@@ -169,6 +169,40 @@ python run.py \
 | **`shot_num`** | 提示词上下文中包含的 few-shot 示例数量。 | *整数 (例如, 0, 3, 5)* |
 | **`shot_type`** | 定义 few-shot 示例的推理格式。 | `'solution'` (自然语言), `'code'` (Program-of-Thought) |
 
+
+### HMMT（哈佛-麻省理工数学锦标赛）
+
+该数据集包含 HMMT 2025 年 2 月竞赛的题目，用于 MathArena 排行榜。HMMT 是由哈佛大学和麻省理工学院学生组织的著名数学竞赛，其题目极具挑战性，旨在测试参赛者的高级数学推理和问题解决能力。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/hmmt/feb_2025.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id hmmt
+
+```
+
+### BeyondAIME
+
+BeyondAIME 是一个精心设计的测试集，用于评估高级数学推理能力。其创建遵循以下核心原则，以确保评估的公平性和挑战性：
+
+* **高难度**：题目来源于高中和大学数学竞赛，难度级别大于或等于 AIME 第 11-15 题。
+* **抗污染**：每道题目都经过人工修改，确保其独特性，不会出现在标准的预训练语料库中，从而真实测试模型的推理能力。
+* **专注推理，而非知识**：数据集专门测试推理能力，确保题目不需要超出标准大学水平的数学知识。
+* **鲁棒的问题设计**：数据集避免了"伪证明"类题目。对于需要类证明步骤的题目，它们被重新设计，使得猜测答案的难度与正式求解相当。
+* **自动化且准确的评估**：每道题目的答案都是正整数，可以实现明确无误且 100% 准确的自动化验证。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/beyond_aime/beyond_aime_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id beyond_aime
+
+```
 ### AIME 2024
 
 该数据集包含 2024 年美国数学邀请赛（AIME）的试题。AIME 是一项著名的数学竞赛，以其极具挑战性的数学问题而闻名。
