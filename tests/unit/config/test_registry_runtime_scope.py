@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import importlib
+import sys
 from uuid import uuid4
 
 import pytest
 
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.config.registry import ConfigRegistry, _collect_runtime_registry_packages
+from gage_eval.evaluation.runtime_builder import build_runtime
+from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import RegistryRuntimeMutationError, registry
+from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
 
 def _build_minimal_config(**extra):
@@ -163,3 +168,142 @@ def test_prepare_runtime_registry_context_primes_provider_default_renderer_befor
         assert registry.entry("renderer_impls", "tictactoe_board_v1").name == "tictactoe_board_v1"
     finally:
         context.close()
+
+
+@pytest.mark.fast
+def test_metrics_builtin_package_import_is_safe_with_runtime_guard() -> None:
+    config = _build_minimal_config()
+    config_registry = ConfigRegistry()
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    previous_modules = {
+        name: sys.modules.pop(name, None)
+        for name in ("gage_eval.metrics.builtin", "gage_eval.metrics.builtin.gomoku")
+    }
+
+    try:
+        module = importlib.import_module("gage_eval.metrics.builtin")
+        assert module.__name__ == "gage_eval.metrics.builtin"
+    finally:
+        context.close()
+        for name in ("gage_eval.metrics.builtin", "gage_eval.metrics.builtin.gomoku"):
+            sys.modules.pop(name, None)
+        for name, module in previous_modules.items():
+            if module is not None:
+                sys.modules[name] = module
+
+
+@pytest.mark.fast
+def test_build_runtime_with_empty_metrics_task_config_is_runtime_guard_safe() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [
+                {
+                    "dataset_id": "demo_echo_dataset",
+                    "loader": "jsonl",
+                    "params": {
+                        "path": "config/builtin_templates/demo_echo/data/demo_echo.jsonl",
+                        "streaming": False,
+                    },
+                }
+            ],
+            "backends": [
+                {
+                    "backend_id": "demo_echo_dummy",
+                    "type": "dummy",
+                    "config": {"responses": [], "echo_prompt": True, "cycle": True},
+                }
+            ],
+            "role_adapters": [
+                {
+                    "adapter_id": "demo_echo_dut",
+                    "role_type": "dut_model",
+                    "backend_id": "demo_echo_dummy",
+                    "capabilities": ["chat_completion"],
+                }
+            ],
+            "tasks": [
+                {
+                    "task_id": "demo_echo_task",
+                    "dataset_id": "demo_echo_dataset",
+                    "steps": [{"step": "inference", "adapter_id": "demo_echo_dut"}],
+                    "max_samples": 1,
+                }
+            ],
+        }
+    )
+    trace = ObservabilityTrace(run_id=f"run-{uuid4().hex}")
+    runtime = build_runtime(
+        config=config,
+        registry=ConfigRegistry(),
+        resource_profile=ResourceProfile(
+            nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+        ),
+        trace=trace,
+    )
+
+    try:
+        assert runtime is not None
+    finally:
+        runtime.shutdown()
+        trace.close(cache_store=None)
+
+
+@pytest.mark.fast
+def test_build_runtime_enables_inline_sample_execution_for_single_worker_tasks() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [
+                {
+                    "dataset_id": "demo_echo_dataset",
+                    "loader": "jsonl",
+                    "params": {
+                        "path": "config/builtin_templates/demo_echo/data/demo_echo.jsonl",
+                        "streaming": False,
+                    },
+                }
+            ],
+            "backends": [
+                {
+                    "backend_id": "demo_echo_dummy",
+                    "type": "dummy",
+                    "config": {"responses": [], "echo_prompt": True, "cycle": True},
+                }
+            ],
+            "role_adapters": [
+                {
+                    "adapter_id": "demo_echo_dut",
+                    "role_type": "dut_model",
+                    "backend_id": "demo_echo_dummy",
+                    "capabilities": ["chat_completion"],
+                }
+            ],
+            "tasks": [
+                {
+                    "task_id": "t1",
+                    "dataset_id": "demo_echo_dataset",
+                    "steps": [{"step": "inference", "adapter_id": "demo_echo_dut"}],
+                    "max_samples": 1,
+                    "concurrency": 1,
+                }
+            ],
+        }
+    )
+    trace = ObservabilityTrace(run_id=f"run-{uuid4().hex}")
+    runtime = build_runtime(
+        config=config,
+        registry=ConfigRegistry(),
+        resource_profile=ResourceProfile(
+            nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+        ),
+        trace=trace,
+    )
+
+    try:
+        entry = runtime._tasks[0]
+        controller = entry.sample_loop._execution_controller
+        assert controller is not None
+        assert controller.sample_workers == 1
+        assert getattr(controller, "_inline_sample_execution") is True
+    finally:
+        runtime.shutdown()
+        trace.close(cache_store=None)
