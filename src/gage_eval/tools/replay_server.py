@@ -168,8 +168,18 @@ def _iter_events_jsonl(
             yield parsed
 
 
+def iter_events(
+    path: Path,
+    *,
+    event_type: Optional[str] = None,
+) -> Iterator[dict[str, Any]]:
+    """Public replay event iterator contract."""
+
+    yield from _iter_events_jsonl(path, event_type=event_type)
+
+
 def _load_events_jsonl(path: Path) -> list[dict[str, Any]]:
-    return list(_iter_events_jsonl(path))
+    return list(iter_events(path))
 
 
 def _load_events_page_jsonl(
@@ -189,7 +199,7 @@ def _load_events_page_jsonl(
     matched_count = 0
     has_more = False
 
-    for event in _iter_events_jsonl(path):
+    for event in iter_events(path):
         if matched_count < offset:
             matched_count += 1
             continue
@@ -200,6 +210,17 @@ def _load_events_page_jsonl(
         matched_count += 1
 
     return events, has_more
+
+
+def load_events_page(
+    path: Path,
+    *,
+    offset: int = 0,
+    limit: Optional[int] = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Public replay page loader contract."""
+
+    return _load_events_page_jsonl(path, offset=offset, limit=limit)
 
 
 def _resolve_frame_events(
@@ -214,7 +235,7 @@ def _resolve_frame_events(
     if events_path is None or not events_path.exists():
         return [], "frame_events_not_found"
     try:
-        frame_events = [dict(event) for event in _iter_events_jsonl(events_path, event_type="frame")]
+        frame_events = [dict(event) for event in iter_events(events_path, event_type="frame")]
     except Exception:
         return [], "frame_events_read_failed"
     if not frame_events:

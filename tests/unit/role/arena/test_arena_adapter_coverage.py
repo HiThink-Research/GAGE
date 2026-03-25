@@ -982,11 +982,13 @@ def test_ensure_visualizer_skips_string_false_enabled(monkeypatch) -> None:
 def test_ensure_visualizer_coerces_string_bool_flags(monkeypatch) -> None:
     adapter = ArenaRoleAdapter(
         adapter_id="arena",
+        environment={"impl": "doudizhu_arena_v1"},
         visualizer={
             "enabled": "true",
             "launch_browser": "false",
             "wait_for_finish": "off",
             "sanitize_output": "0",
+            "max_output_entries": "7",
             "show_parsed_move": "no",
             "show_chat": "false",
             "allow_status_html": "0",
@@ -1017,6 +1019,8 @@ def test_ensure_visualizer_coerces_string_bool_flags(monkeypatch) -> None:
     assert captured["launch_browser"] is False
     assert captured["wait_for_finish"] is False
     assert captured["sanitize_output"] is False
+    assert captured["max_output_entries"] == 7
+    assert captured["renderer_impl"] == "doudizhu_showdown_v1"
     assert captured["show_parsed_move"] is False
     assert captured["show_chat"] is False
     assert captured["allow_status_html"] is False

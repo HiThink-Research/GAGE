@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import random
 from typing import Any, Dict
-import transformers
 
 from loguru import logger
 
@@ -52,7 +51,9 @@ def build_prompt(self, sample,
             few_shots = few_shot_examples[:n_few_shot]
             return generate_cot_prompt(few_shots, sample, n_few_shot)
         else:
-            tokenizer = transformers.AutoTokenizer.from_pretrained(
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(
                 tokenizer_path, trust_remote_code=True)
             prompt_length_ok = False
             prompt = None
@@ -129,13 +130,13 @@ class MMLUProConverter(BasePreprocessor):
 if __name__ == '__main__':
     sample = {
         "question_id": "0",
-        "question": """The symmetric group $S_n$ has $
+        "question": r"""The symmetric group $S_n$ has $
 \factorial{n}$ elements, hence it is not true that $S_{10}$ has 10 elements.
 Find the characteristic of the ring 2Z.""",
         "options": ["0","30","3","10","12","50","2","100","20","5"],
         "answer": 'A',
         "answer_index": 0,
-        "cot_content": """	
+        "cot_content": r"""	
 A: Let's think step by step. A characteristic of a ring is R is $n$ if the statement $ka = 0$ for all $a\in 2Z$ implies that $k$ is a multiple of $n$. Assume that $ka = 0$ for all $a\in 2Z$ for some $k$. In particular $2k = 0$. Hence $k=0$ and $n=0$. The answer is (A).""",
         "category": "math",
         "src": "cot_lib-abstract_algebra"

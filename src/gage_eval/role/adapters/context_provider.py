@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.mcp.utils import sync_mcp_endpoint
-from gage_eval.registry import ensure_async, registry
+from gage_eval.registry import ensure_async, import_asset_from_manifest, registry
 from gage_eval.sandbox.provider import SandboxProvider
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 
@@ -55,7 +55,12 @@ class ContextProviderAdapter(RoleAdapter):
         except KeyError:
             if registry_view is not None:
                 raise
-            registry.auto_discover("context_impls", "gage_eval.role.context", mode="warn")
+            import_asset_from_manifest(
+                "context_impls",
+                implementation,
+                registry=lookup,
+                source=f"context_provider:{adapter_id}",
+            )
             impl_cls = registry.get("context_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "aprovide", None) or getattr(self._impl, "provide", None)

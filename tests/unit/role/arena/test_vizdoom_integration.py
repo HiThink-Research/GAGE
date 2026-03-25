@@ -381,7 +381,12 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
         def __init__(self, **kwargs: Any) -> None:
             captured_env_kwargs.update(kwargs)
 
-    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    original_get = arena_module.registry.get
+    monkeypatch.setattr(
+        arena_module.registry,
+        "get",
+        lambda kind, impl: _CapturedEnv if kind == "arena_impls" else original_get(kind, impl),
+    )
     adapter = ArenaRoleAdapter(
         adapter_id="arena",
         environment={
@@ -422,7 +427,12 @@ def test_arena_adapter_enables_capture_pov_when_replay_mode_includes_frame(monke
         def __init__(self, **kwargs: Any) -> None:
             captured_env_kwargs.update(kwargs)
 
-    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    original_get = arena_module.registry.get
+    monkeypatch.setattr(
+        arena_module.registry,
+        "get",
+        lambda kind, impl: _CapturedEnv if kind == "arena_impls" else original_get(kind, impl),
+    )
     adapter = ArenaRoleAdapter(
         adapter_id="arena",
         environment={

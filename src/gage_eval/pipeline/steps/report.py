@@ -11,7 +11,7 @@ from gage_eval.observability.logger import ObservableLogger
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.pipeline.steps.base import GlobalStep
-from gage_eval.registry import registry
+from gage_eval.registry import import_kind_from_manifest, registry
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only
     from gage_eval.pipeline.steps.auto_eval import AutoEvalStep
@@ -87,7 +87,7 @@ def _ensure_summary_generators_loaded(*, registry_view=None) -> None:
     if registry_view is not None:
         return
     try:
-        registry.auto_discover("summary_generators", "gage_eval.reporting.summary_generators", mode="warn")
+        import_kind_from_manifest("summary_generators", registry=registry)
     except Exception as exc:
         _LOGGER.warning(
             "report",

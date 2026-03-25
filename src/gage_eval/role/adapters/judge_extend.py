@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from gage_eval.registry import ensure_async, registry
+from gage_eval.registry import ensure_async, import_asset_from_manifest, registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.sandbox.provider import SandboxProvider
 
@@ -48,7 +48,12 @@ class JudgeExtendAdapter(RoleAdapter):
         except KeyError:
             if registry_view is not None:
                 raise
-            registry.auto_discover("judge_impls", "gage_eval.role.judge", mode="warn")
+            import_asset_from_manifest(
+                "judge_impls",
+                implementation,
+                registry=lookup,
+                source=f"judge_extend:{adapter_id}",
+            )
             impl_cls = registry.get("judge_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "ainvoke", None) or getattr(self._impl, "invoke", None)

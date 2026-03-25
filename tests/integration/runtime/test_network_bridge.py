@@ -9,7 +9,13 @@ from tests.integration.runtime.network_probe import probe_host_bridge
 
 @pytest.mark.io
 def test_network_bridge_from_config() -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / "appworld_agent_demo.yaml"
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "appworld"
+        / "appworld_agent_demo.yaml"
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)
 

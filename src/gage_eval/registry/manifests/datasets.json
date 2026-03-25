@@ -1,0 +1,482 @@
+{
+  "manifest_version": 1,
+  "entries": [
+    {
+      "kind": "bundles",
+      "name": "charxiv",
+      "module": "gage_eval.assets.datasets.bundles.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/bundles/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "bundles",
+      "name": "mathvista",
+      "module": "gage_eval.assets.datasets.bundles.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/bundles/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "bundles",
+      "name": "mme",
+      "module": "gage_eval.assets.datasets.bundles.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/bundles/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "bundles",
+      "name": "mmlu_pro_hf",
+      "module": "gage_eval.assets.datasets.bundles.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/bundles/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "bundles",
+      "name": "screenspot_pro",
+      "module": "gage_eval.assets.datasets.bundles.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/bundles/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_hubs",
+      "name": "huggingface",
+      "module": "gage_eval.assets.datasets.hubs.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/hubs/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_hubs",
+      "name": "inline",
+      "module": "gage_eval.assets.datasets.hubs.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/hubs/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_hubs",
+      "name": "modelscope",
+      "module": "gage_eval.assets.datasets.hubs.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/hubs/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_hubs",
+      "name": "ms_hub",
+      "module": "gage_eval.assets.datasets.hubs.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/hubs/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "arcagi2",
+      "module": "gage_eval.assets.datasets.loaders.arcagi2.arcagi2_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/arcagi2/arcagi2_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "csv",
+      "module": "gage_eval.assets.datasets.loaders.csv_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/csv_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "hf_hub",
+      "module": "gage_eval.assets.datasets.loaders.hf_hub_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/hf_hub_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "hf_hub_biz_fin_bench",
+      "module": "gage_eval.assets.datasets.loaders.biz_fin_bench.loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/biz_fin_bench/loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "hf_hub_live_code_bench",
+      "module": "gage_eval.assets.datasets.loaders.live_code_bench.loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/live_code_bench/loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "jsonl",
+      "module": "gage_eval.assets.datasets.loaders.jsonl_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/jsonl_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "modelscope",
+      "module": "gage_eval.assets.datasets.loaders.hf_hub_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/hf_hub_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "ms_hub",
+      "module": "gage_eval.assets.datasets.loaders.hf_hub_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/hf_hub_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "openai_mrcr_loader",
+      "module": "gage_eval.assets.datasets.loaders.mrcr.mrcr_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/mrcr/mrcr_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "parquet",
+      "module": "gage_eval.assets.datasets.loaders.parquet_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/parquet_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "tau2_tasks",
+      "module": "gage_eval.assets.datasets.loaders.tau2_hf_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/tau2_hf_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "aime2024_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "aime2025_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "appworld_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "arcagi2",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "bizfinbench_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "card_game_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "charxiv_reasoning",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "docvqa_image_standardizer",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "global_piqa_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "gpqa_diamond_multi_choice",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "gpqa_multi_choice",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "gpqa_struct_only",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "grid_game_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "hle_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "live_code_bench_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "math500",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "math500_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mathvista_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mathvista_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mathvista_struct_only",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mmau_pro_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mme",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mmlu_pro_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mmmu_multimodal_inputs",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mmsu_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "mrcr_chat_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "multi_choice_standardizer",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "piqa_multi_choice",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "piqa_struct_only",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "screenspot_pro",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "simpleqa_verified",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "swebench_pro_standardizer",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "tau2_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    }
+  ]
+}

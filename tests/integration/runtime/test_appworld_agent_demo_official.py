@@ -42,7 +42,13 @@ def test_appworld_demo_with_streamable_http(
     temp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / "appworld_agent_demo.yaml"
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "appworld"
+        / "appworld_agent_demo.yaml"
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 

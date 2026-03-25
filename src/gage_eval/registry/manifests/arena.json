@@ -1,0 +1,257 @@
+{
+  "manifest_version": 1,
+  "entries": [
+    {
+      "kind": "arena_game_providers",
+      "name": "doudizhu",
+      "module": "gage_eval.role.arena.game_providers",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/game_providers.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_game_providers",
+      "name": "grid_board",
+      "module": "gage_eval.role.arena.game_providers",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/game_providers.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_game_providers",
+      "name": "mahjong",
+      "module": "gage_eval.role.arena.game_providers",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/game_providers.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_game_providers",
+      "name": "pettingzoo",
+      "module": "gage_eval.role.arena.game_providers",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/game_providers.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_game_providers",
+      "name": "retro",
+      "module": "gage_eval.role.arena.game_providers",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/game_providers.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_game_providers",
+      "name": "vizdoom",
+      "module": "gage_eval.role.arena.game_providers",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/game_providers.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "doudizhu_arena_v1",
+      "module": "gage_eval.role.arena.games.doudizhu.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/doudizhu/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "doudizhu_rlcard_v1",
+      "module": "gage_eval.role.arena.games.doudizhu.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/doudizhu/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "gomoku_local_v1",
+      "module": "gage_eval.role.arena.games.gomoku.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/gomoku/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "mahjong_rlcard_v1",
+      "module": "gage_eval.role.arena.games.mahjong.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/mahjong/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "pettingzoo_aec_v1",
+      "module": "gage_eval.role.arena.games.pettingzoo.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/pettingzoo/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "retro_env_v1",
+      "module": "gage_eval.role.arena.games.retro.retro_env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/retro/retro_env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "tictactoe_v1",
+      "module": "gage_eval.role.arena.games.tictactoe.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/tictactoe/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
+      "name": "vizdoom_env_v1",
+      "module": "gage_eval.role.arena.games.vizdoom.env",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/vizdoom/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "discrete_action_parser_v1",
+      "module": "gage_eval.role.arena.parsers.pettingzoo_actions",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/parsers/pettingzoo_actions.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "doudizhu_arena_parser_v1",
+      "module": "gage_eval.role.arena.parsers.doudizhu_parser",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/parsers/doudizhu_parser.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "doudizhu_v1",
+      "module": "gage_eval.role.arena.games.doudizhu.parsers.doudizhu",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/doudizhu/parsers/doudizhu.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "gomoku_v1",
+      "module": "gage_eval.role.arena.parsers.gomoku_parser",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/parsers/gomoku_parser.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "grid_parser_v1",
+      "module": "gage_eval.role.arena.parsers.gomoku_parser",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/parsers/gomoku_parser.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "mahjong_v1",
+      "module": "gage_eval.role.arena.games.mahjong.parsers.mahjong",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/mahjong/parsers/mahjong.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "retro_action_v1",
+      "module": "gage_eval.role.arena.parsers.retro_action_parser",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/parsers/retro_action_parser.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "vizdoom_parser_v1",
+      "module": "gage_eval.role.arena.parsers.vizdoom_parser",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/parsers/vizdoom_parser.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "renderer_impls",
+      "name": "doudizhu_replay_v1",
+      "module": "gage_eval.role.arena.games.doudizhu.renderers.doudizhu",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/doudizhu/renderers/doudizhu.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "renderer_impls",
+      "name": "doudizhu_showdown_v1",
+      "module": "gage_eval.role.arena.games.doudizhu.renderers.showdown_board",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/doudizhu/renderers/showdown_board.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "renderer_impls",
+      "name": "doudizhu_text_v1",
+      "module": "gage_eval.role.arena.games.doudizhu.renderers.board_renderer",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/doudizhu/renderers/board_renderer.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "renderer_impls",
+      "name": "gomoku_board_v1",
+      "module": "gage_eval.role.arena.games.gomoku.board_renderer",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/gomoku/board_renderer.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "renderer_impls",
+      "name": "mahjong_replay_v1",
+      "module": "gage_eval.role.arena.games.mahjong.renderers.mahjong",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/mahjong/renderers/mahjong.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "renderer_impls",
+      "name": "tictactoe_board_v1",
+      "module": "gage_eval.role.arena.games.tictactoe.renderer",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/games/tictactoe/renderer.py",
+      "aliases": [],
+      "optional": false
+    }
+  ]
+}

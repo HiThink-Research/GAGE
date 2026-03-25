@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from gage_eval.utils import cleanup as cleanup_mod
+from gage_eval.utils import cleanup as cleanup_mod  # noqa: E402
 
 
 class CleanupRegistrationTests(unittest.TestCase):
@@ -54,6 +54,21 @@ class CleanupRegistrationTests(unittest.TestCase):
             callback.assert_called_once_with()
             self.assertEqual(cleanup_mod._CALLBACKS, [])
             self.assertTrue(cleanup_mod._CLEANED_UP)
+
+    def test_torch_gpu_cleanup_skips_torch_import_when_unused(self) -> None:
+        attempts: list[str] = []
+        original_import = __import__
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "torch":
+                attempts.append(name)
+                raise ImportError("blocked for test")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=guarded_import):
+            cleanup_mod.torch_gpu_cleanup()
+
+        self.assertEqual(attempts, [])
 
 
 if __name__ == "__main__":

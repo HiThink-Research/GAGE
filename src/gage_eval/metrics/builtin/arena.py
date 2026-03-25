@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from gage_eval.evaluation.sample_envelope import resolve_arena_trace
+from gage_eval.evaluation.sample_envelope import (
+    resolve_arena_trace,
+    resolve_selected_predict_result,
+)
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult, SimpleMetric
 from gage_eval.registry import registry
 
@@ -407,12 +410,7 @@ class CompletionFlagMetric(SimpleMetric):
 
 def _arena_entry(context: MetricContext) -> Mapping[str, Any]:
     sample = context.sample if isinstance(context.sample, Mapping) else {}
-    predict_result = sample.get("predict_result")
-    if isinstance(predict_result, Sequence) and not isinstance(predict_result, (str, bytes)) and predict_result:
-        entry = predict_result[0]
-        if isinstance(entry, Mapping):
-            return entry
-    return {}
+    return resolve_selected_predict_result(sample, domain="arena")
 
 
 def _arena_trace(context: MetricContext) -> list[Mapping[str, Any]]:

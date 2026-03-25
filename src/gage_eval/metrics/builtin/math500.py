@@ -68,7 +68,7 @@ def _extract_boxed_answer(text: str) -> Optional[str]:
 
 
 def _extract_answer_from_text(text: str) -> Optional[str]:
-    """Extract answer from text when \\boxed{} is not present.
+    r"""Extract answer from text when \boxed{} is not present.
     
     Tries multiple strategies:
     1. Extract from "the answer is ..." phrases
@@ -241,7 +241,7 @@ def _strip_string(string: str) -> str:
     replacements = [
         ("\n", ""), ("\\!", ""), ("\\\\", "\\"), ("tfrac", "frac"), ("dfrac", "frac"),
         ("\\left", ""), ("\\right", ""), ("^{\\circ}", ""), ("^\\circ", ""), ("\\$", ""),
-        ("\\%", ""), ("\%", ""), (" .", " 0."), ("{.", "{0."), (" ", "")
+        ("\\%", ""), (" .", " 0."), ("{.", "{0."), (" ", "")
     ]
     for old, new in replacements:
         string = string.replace(old, new)
@@ -383,7 +383,7 @@ def _normalize_prm800k(expr: str) -> Optional[str]:
     units = ["degree", "cm", "centimeter", "meter", "mile", "second", "minute",
              "hour", "day", "week", "month", "year", "foot", "feet", "inch", "yard"]
     for unit in units:
-        expr = re.sub(f"{unit}(es)?(s)? *(\^[0-9]+)?", "", expr)
+        expr = re.sub(rf"{unit}(es)?(s)? *(\^[0-9]+)?", "", expr)
     expr = re.sub(r"\^ *\\circ", "", expr)
 
     if expr and expr[0] == "{" and expr[-1] == "}":

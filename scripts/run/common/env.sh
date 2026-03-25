@@ -73,9 +73,25 @@ gage_default_venv_path() {
 
 gage_default_python() {
   local venv_path
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    printf '%s\n' "${PYTHON_BIN}"
+    return 0
+  fi
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    printf '%s\n' "${VIRTUAL_ENV}/bin/python"
+    return 0
+  fi
+  if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+    printf '%s\n' "${CONDA_PREFIX}/bin/python"
+    return 0
+  fi
   venv_path="$(gage_default_venv_path)"
   if [[ -x "${venv_path}/bin/python" ]]; then
     printf '%s\n' "${venv_path}/bin/python"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
     return 0
   fi
   if command -v python3 >/dev/null 2>&1; then

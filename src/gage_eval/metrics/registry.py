@@ -5,8 +5,6 @@ from __future__ import annotations
 import importlib
 from dataclasses import replace
 from functools import lru_cache
-from pathlib import Path
-import re
 import threading
 from typing import Callable, Dict, Optional, Type
 
@@ -16,14 +14,10 @@ from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.metrics.aggregators import MetricAggregator
 from gage_eval.metrics.runtime_context import AggregationRuntimeContext
 from gage_eval.metrics.base import BaseMetric, MetricContext, MetricResult
-from gage_eval.registry import registry
+from gage_eval.registry import import_asset_from_manifest, registry
 from gage_eval.registry.entry import RegistryEntry
 
 AggregatorFactory = Callable[..., "MetricAggregator"]
-_METRIC_ASSET_PATTERN = re.compile(
-    r'registry\.asset\(\s*["\']metrics["\']\s*,\s*["\']([^"\']+)["\']',
-    re.S,
-)
 
 _OPTIONAL_BUILTIN_AGGREGATORS: tuple[tuple[str, str, str], ...] = (
     ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator", "MMEAccPlusAggregator"),
@@ -70,6 +64,7 @@ class MetricRegistry:
     def __init__(
         self,
         runtime_context: Optional[AggregationRuntimeContext] = None,
+        registry_view=None,
     ) -> None:
         from gage_eval.metrics.aggregators import (
             IdentityAggregator,
@@ -81,6 +76,7 @@ class MetricRegistry:
         self._aggregators: Dict[str, AggregatorFactory] = {}
         self._optional_aggregator_errors: Dict[str, ImportError] = {}
         self._runtime_context = runtime_context
+        self._registry_view = registry_view
         self.register_aggregator(
             "mean",
             lambda spec, context=None: MeanAggregator(spec, runtime_context=context),
@@ -118,6 +114,9 @@ class MetricRegistry:
         runtime_context: Optional[AggregationRuntimeContext],
     ) -> None:
         self._runtime_context = runtime_context
+
+    def _registry_lookup(self):
+        return self._registry_view or registry
 
     def _ensure_optional_builtin_aggregator(self, aggregation_id: str) -> None:
         if aggregation_id in self._aggregators or aggregation_id in self._optional_aggregator_errors:
@@ -190,9 +189,12 @@ class MetricRegistry:
         impl_key = spec.implementation or spec.metric_id
         if not impl_key:
             raise ValueError(f"Metric '{spec.metric_id}' must declare implementation")
+        lookup = self._registry_lookup()
         try:
-            return impl_key, registry.entry("metrics", impl_key)
+            return impl_key, lookup.entry("metrics", impl_key)
         except KeyError:
+            if self._registry_view is not None:
+                return impl_key, None
             _import_metric_asset_module(impl_key)
             try:
                 return impl_key, registry.entry("metrics", impl_key)
@@ -217,13 +219,16 @@ class MetricRegistry:
         impl_key = impl_key or spec.implementation or spec.metric_id
         if not impl_key:
             raise ValueError(f"Metric '{spec.metric_id}' must declare implementation")
+        lookup = self._registry_lookup()
         if entry is not None:
-            metric_cls = registry.get("metrics", impl_key)
+            metric_cls = lookup.get("metrics", impl_key)
             return metric_cls(spec)
         try:
-            metric_cls = registry.get("metrics", impl_key)
+            metric_cls = lookup.get("metrics", impl_key)
             return metric_cls(spec)
         except KeyError:
+            if self._registry_view is not None:
+                raise
             _import_metric_asset_module(impl_key)
         try:
             metric_cls = registry.get("metrics", impl_key)
@@ -256,35 +261,7 @@ class MetricRegistry:
 
 
 def _import_metric_asset_module(metric_id: str) -> None:
-    module_name = _metric_asset_modules().get(str(metric_id))
-    if module_name:
-        importlib.import_module(module_name)
-
-
-@lru_cache(maxsize=1)
-def _metric_asset_modules() -> Dict[str, str]:
-    root = Path(__file__).resolve().parent / "builtin"
-    module_prefix = "gage_eval.metrics.builtin"
-    mapping: Dict[str, str] = {}
-    for path in root.rglob("*.py"):
-        if path.name in {"__init__.py"}:
-            continue
-        try:
-            source = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        module_name = _module_name_for_path(path, root=root, module_prefix=module_prefix)
-        for asset_name in _METRIC_ASSET_PATTERN.findall(source):
-            mapping.setdefault(str(asset_name), module_name)
-    return mapping
-
-
-def _module_name_for_path(path: Path, *, root: Path, module_prefix: str) -> str:
-    relative = path.relative_to(root).with_suffix("")
-    parts = relative.parts
-    if not parts:
-        return module_prefix
-    return ".".join((module_prefix, *parts))
+    import_asset_from_manifest("metrics", str(metric_id), registry=registry, source="metric_registry")
 
 
 class MetricInstance:
