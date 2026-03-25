@@ -15,7 +15,7 @@ DEFAULT_RETHINK_TEMPLATE = (
     "Your last output was: '{last_output}'.\n"
     "Instructions:\n"
     "- Output exactly one legal action string from the list below.\n"
-    '- If you include chat, use JSON: {"action": "<action>", "chat": "<short line>"}.\n'
+    '- If you include chat, use JSON: {{"action": "<action>", "chat": "<short line>"}}.\n'
     "Legal moves: {legal_moves}."
 )
 
