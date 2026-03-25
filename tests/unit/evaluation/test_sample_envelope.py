@@ -108,6 +108,40 @@ def test_model_and_judge_resolution_helpers() -> None:
     assert snap2.keys() == non_serializable.keys()
 
 
+def test_resolve_selected_predict_result_prefers_explicit_selector_then_falls_back() -> None:
+    sample = {
+        "selected_predict_result_index": 1,
+        "selected_predict_result_id": "ignored-by-index",
+        "metadata": {
+            "result_selector": {"arena": {"id": "arena-b"}},
+            "game_arena": {"result_selector": {"index": 0}},
+        },
+        "predict_result": [
+            {"index": 0, "id": "arena-a"},
+            {"index": 1, "id": "arena-b"},
+        ],
+    }
+
+    assert envelope.resolve_selected_predict_result(sample, domain="arena") == {
+        "index": 1,
+        "id": "arena-b",
+    }
+
+    sample.pop("selected_predict_result_index")
+    sample.pop("selected_predict_result_id")
+    assert envelope.resolve_selected_predict_result(sample, domain="arena") == {
+        "index": 1,
+        "id": "arena-b",
+    }
+
+    sample["metadata"]["result_selector"] = {"arena": {"index": 99}}
+    sample["metadata"]["game_arena"]["result_selector"] = {"id": "missing"}
+    assert envelope.resolve_selected_predict_result(sample, domain="arena") == {
+        "index": 0,
+        "id": "arena-a",
+    }
+
+
 def test_ensure_arena_header_populates_required_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     sample = {
         "id": "s1",

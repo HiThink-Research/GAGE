@@ -7,6 +7,7 @@ from typing import Any, Optional, Sequence
 
 from gage_eval.role.arena.interfaces import ArenaEnvironment, Player, Scheduler
 from gage_eval.role.arena.schedulers._scheduler_utils import (
+    SchedulerWaitPolicy,
     build_fallback_action,
     clock_ms,
     detect_illegal_reason,
@@ -87,6 +88,10 @@ class RecordScheduler(Scheduler):
         )
         self._trace_finalize_timing = normalize_trace_finalize_timing(trace_finalize_timing)
         self._trace_action_format = normalize_trace_action_format(trace_action_format)
+        self._wait_policy = SchedulerWaitPolicy()
+
+    def close(self) -> None:
+        self._wait_policy.close()
 
     def run_loop(self, environment: ArenaEnvironment, players: Sequence[Player]) -> GameResult:
         """Run the record-style loop and return final result.
@@ -186,47 +191,19 @@ class RecordScheduler(Scheduler):
         """Collect one action without blocking the scheduler cadence."""
 
         if self._supports_async_action_api(player):
-            return self._collect_async_action_for_tick(
+            return self._wait_policy.wait_async_action(
                 player=player,
                 observation=observation,
+                timeout_ms=0,
+                deadline_ms=self._action_timeout_ms,
             )
 
         return think_with_timeout(
             player=player,
             observation=observation,
             timeout_ms=self._resolve_sync_timeout_ms(),
+            wait_policy=self._wait_policy,
         )
-
-    def _collect_async_action_for_tick(
-        self,
-        *,
-        player: Player,
-        observation: ArenaObservation,
-    ) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
-        """Collect action from async players with non-blocking polling."""
-
-        has_action = getattr(player, "has_action")
-        pop_action = getattr(player, "pop_action")
-        start_thinking = getattr(player, "start_thinking")
-
-        try:
-            if has_action():
-                return pop_action(), False, None
-        except Exception:
-            return None, False, "think_exception"
-
-        try:
-            start_thinking(observation, deadline_ms=self._action_timeout_ms)
-        except Exception:
-            return None, False, "think_exception"
-
-        try:
-            if has_action():
-                return pop_action(), False, None
-        except Exception:
-            return None, False, "think_exception"
-
-        return None, True, "timeout"
 
     @staticmethod
     def _supports_async_action_api(player: Any) -> bool:

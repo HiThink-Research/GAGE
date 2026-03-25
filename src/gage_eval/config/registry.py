@@ -10,6 +10,7 @@ from loguru import logger
 
 from gage_eval.assets.datasets.registry_loader import import_dataset_asset_module
 from gage_eval.role.arena.registry_loader import import_arena_asset_module
+from gage_eval.role.arena.game_providers import resolve_arena_game_provider
 from gage_eval.config.pipeline_config import (
     BackendSpec,
     DatasetSpec,
@@ -493,6 +494,7 @@ def _prime_runtime_arena_assets(config: PipelineConfig) -> None:
 
         env_cfg = params.get("environment") or {}
         env_impl = str(env_cfg.get("impl") or env_cfg.get("implementation") or "").strip()
+        provider = resolve_arena_game_provider(env_impl)
         if env_impl:
             import_arena_asset_module("arena_impls", env_impl)
 
@@ -512,6 +514,13 @@ def _prime_runtime_arena_assets(config: PipelineConfig) -> None:
         renderer_impl = str(
             renderer_cfg.get("impl") or renderer_cfg.get("implementation") or ""
         ).strip()
+        if not renderer_impl and env_impl:
+            resolved_renderer = provider.resolve_renderer_impl(
+                env_impl=env_impl,
+                visualizer_cfg=visualizer_cfg,
+                environment_cfg=env_cfg,
+            )
+            renderer_impl = str(resolved_renderer or "").strip()
         if renderer_impl:
             import_arena_asset_module("renderer_impls", renderer_impl)
 

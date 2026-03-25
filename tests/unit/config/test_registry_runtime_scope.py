@@ -136,3 +136,30 @@ def test_prepare_runtime_registry_context_primes_arena_assets_before_runtime_fre
         assert registry.entry("renderer_impls", "gomoku_board_v1").name == "gomoku_board_v1"
     finally:
         context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_primes_provider_default_renderer_before_runtime_freeze() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "params": {
+                    "environment": {"impl": "tictactoe_v1"},
+                    "parser": {"impl": "grid_parser_v1"},
+                    "visualizer": {
+                        "enabled": True,
+                    },
+                },
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = ConfigRegistry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert registry.entry("renderer_impls", "tictactoe_board_v1").name == "tictactoe_board_v1"
+    finally:
+        context.close()

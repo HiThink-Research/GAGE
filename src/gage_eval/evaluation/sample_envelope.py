@@ -502,6 +502,30 @@ def latest_predict_result(sample: Optional[Mapping[str, Any]]) -> Optional[Dict[
     return None
 
 
+def resolve_selected_predict_result(
+    sample: Optional[Mapping[str, Any]],
+    *,
+    domain: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Resolve one selected predict_result entry with backward-compatible fallback."""
+
+    if not isinstance(sample, Mapping):
+        return {}
+    predict_result = sample.get("predict_result")
+    if not isinstance(predict_result, Sequence) or isinstance(
+        predict_result,
+        (str, bytes),
+    ):
+        return {}
+
+    selected_entry = _resolve_selected_predict_result_entry(
+        sample,
+        predict_result,
+        domain=domain,
+    )
+    return dict(selected_entry) if isinstance(selected_entry, Mapping) else {}
+
+
 def resolve_model_output(
     sample: Optional[Mapping[str, Any]],
     model_output: Optional[Mapping[str, Any]],
@@ -526,6 +550,116 @@ def resolve_model_output(
         if isinstance(legacy, Mapping) and legacy:
             return dict(legacy)
     return {}
+
+
+def _resolve_selected_predict_result_entry(
+    sample: Mapping[str, Any],
+    predict_result: Sequence[Any],
+    *,
+    domain: Optional[str],
+) -> Mapping[str, Any]:
+    selected_index = _resolve_explicit_selected_predict_result_index(sample, predict_result)
+    if selected_index is not None:
+        entry = predict_result[selected_index]
+        if isinstance(entry, Mapping):
+            return entry
+
+    selected_id = _resolve_explicit_selected_predict_result_id(sample)
+    if selected_id is not None:
+        for entry in predict_result:
+            if not isinstance(entry, Mapping):
+                continue
+            entry_id = entry.get("id")
+            if entry_id is not None and str(entry_id) == selected_id:
+                return entry
+
+    for selector in _selector_sources(sample, domain=domain):
+        selector_entry = _resolve_selector_entry(selector, predict_result)
+        if selector_entry:
+            return selector_entry
+
+    if predict_result:
+        first = predict_result[0]
+        if isinstance(first, Mapping):
+            return first
+    return {}
+
+
+def _resolve_explicit_selected_predict_result_index(
+    sample: Mapping[str, Any],
+    predict_result: Sequence[Any],
+) -> Optional[int]:
+    for raw_value in (sample.get("selected_predict_result_index"),):
+        try:
+            resolved = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= resolved < len(predict_result):
+            return resolved
+    return None
+
+
+def _resolve_explicit_selected_predict_result_id(
+    sample: Mapping[str, Any],
+) -> Optional[str]:
+    raw_value = sample.get("selected_predict_result_id")
+    if raw_value in (None, ""):
+        return None
+    return str(raw_value)
+
+
+def _resolve_selector_entry(
+    selector: Mapping[str, Any],
+    predict_result: Sequence[Any],
+) -> Mapping[str, Any]:
+    raw_index = selector.get("selected_predict_result_index", selector.get("index"))
+    try:
+        selected_index = int(raw_index)
+    except (TypeError, ValueError):
+        selected_index = None
+    if selected_index is not None and 0 <= selected_index < len(predict_result):
+        entry = predict_result[selected_index]
+        if isinstance(entry, Mapping):
+            return entry
+
+    selected_id = (
+        selector.get("selected_predict_result_id")
+        or selector.get("predict_result_id")
+        or selector.get("id")
+    )
+    if selected_id not in (None, ""):
+        for entry in predict_result:
+            if not isinstance(entry, Mapping):
+                continue
+            entry_id = entry.get("id")
+            if entry_id is not None and str(entry_id) == str(selected_id):
+                return entry
+    return {}
+
+
+def _selector_sources(
+    sample: Mapping[str, Any],
+    *,
+    domain: Optional[str],
+) -> list[Mapping[str, Any]]:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return []
+
+    sources: list[Mapping[str, Any]] = []
+    raw_selector = metadata.get("result_selector")
+    if isinstance(raw_selector, Mapping):
+        sources.append(raw_selector)
+        if domain and isinstance(raw_selector.get(domain), Mapping):
+            sources.append(raw_selector.get(domain))
+
+    if domain == "arena":
+        arena_meta = metadata.get("game_arena")
+        if isinstance(arena_meta, Mapping):
+            arena_selector = arena_meta.get("result_selector")
+            if isinstance(arena_selector, Mapping):
+                sources.append(arena_selector)
+    return sources
 
 
 def update_eval_result(sample: Dict[str, Any], judge_output: Optional[Dict[str, Any]]) -> None:

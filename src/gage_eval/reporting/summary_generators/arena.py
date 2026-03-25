@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.sample_envelope import resolve_selected_predict_result
 from gage_eval.registry import registry
 from gage_eval.reporting.summary_generators import SummaryGenerator
 
@@ -103,12 +104,7 @@ def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
 
 
 def _arena_entry(sample: Mapping[str, Any]) -> Mapping[str, Any]:
-    predict_result = sample.get("predict_result")
-    if isinstance(predict_result, Sequence) and not isinstance(predict_result, (str, bytes)) and predict_result:
-        entry = predict_result[0]
-        if isinstance(entry, Mapping):
-            return entry
-    return {}
+    return resolve_selected_predict_result(sample, domain="arena")
 
 
 def _duration_ms(sample: Mapping[str, Any], footer: Mapping[str, Any]) -> Optional[float]:

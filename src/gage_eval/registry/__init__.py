@@ -30,6 +30,7 @@ DEFAULT_KINDS: Dict[str, str] = {
     "judge_impls": "裁判扩展实现（Docker/脚本等）",
     "helper_impls": "助手扩展实现（预测/检索等）",
     "arena_impls": "对局环境实现（游戏规则/状态机）",
+    "arena_game_providers": "对局域装配器（环境/渲染/输入默认装配）",
     "parser_impls": "对局解析器实现（动作解析与坐标校验）",
     "renderer_impls": "对局渲染器实现（棋盘/UI 渲染）",
     "dataset_hubs": "数据集源（HF、ModelScope、本地等）",

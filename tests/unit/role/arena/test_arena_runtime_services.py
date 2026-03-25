@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+import threading
+import time
+from typing import Any
+
+from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
+
+
+class _StubVisualizer:
+    def __init__(self) -> None:
+        self.action_queue = object()
+        self.bind_calls: list[tuple[Any, str]] = []
+        self.clear_calls: list[str] = []
+        self.stopped = False
+
+    def bind_action_queue(self, action_router: Any, *, sample_id: str) -> None:
+        self.bind_calls.append((action_router, sample_id))
+
+    def clear_action_queue(self, *, sample_id: str | None = None) -> None:
+        self.clear_calls.append(str(sample_id))
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class _StubActionServer:
+    def __init__(self) -> None:
+        self.action_queue = object()
+        self.register_calls: list[tuple[str, Any]] = []
+        self.unregister_calls: list[str] = []
+        self.stopped = False
+
+    def register_action_queue(self, sample_id: str, action_router: Any) -> None:
+        self.register_calls.append((sample_id, action_router))
+
+    def unregister_action_queue(self, sample_id: str) -> None:
+        self.unregister_calls.append(sample_id)
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class _StubWsHub:
+    def __init__(self) -> None:
+        self.registrations: list[Any] = []
+        self.unregistered: list[str] = []
+        self.stopped = False
+
+    def register_display(self, registration: Any) -> None:
+        self.registrations.append(registration)
+
+    def unregister_display(self, display_id: str) -> None:
+        self.unregistered.append(display_id)
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def test_runtime_service_hub_initializes_each_shared_service_once() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    visualizer_creations = 0
+    action_server_creations = 0
+    ws_hub_creations = 0
+    results: list[tuple[Any, Any, Any]] = []
+    lock = threading.Lock()
+
+    def _visualizer_factory() -> _StubVisualizer:
+        nonlocal visualizer_creations
+        time.sleep(0.02)
+        visualizer_creations += 1
+        return _StubVisualizer()
+
+    def _action_server_factory() -> _StubActionServer:
+        nonlocal action_server_creations
+        time.sleep(0.02)
+        action_server_creations += 1
+        return _StubActionServer()
+
+    def _ws_hub_factory() -> _StubWsHub:
+        nonlocal ws_hub_creations
+        time.sleep(0.02)
+        ws_hub_creations += 1
+        return _StubWsHub()
+
+    def _worker() -> None:
+        visualizer = hub.ensure_visualizer(_visualizer_factory)
+        action_server = hub.ensure_action_server(_action_server_factory)
+        ws_hub = hub.ensure_ws_rgb_hub(_ws_hub_factory)
+        with lock:
+            results.append((visualizer, action_server, ws_hub))
+
+    threads = [threading.Thread(target=_worker, daemon=True) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1.0)
+
+    assert len(results) == 6
+    assert visualizer_creations == 1
+    assert action_server_creations == 1
+    assert ws_hub_creations == 1
+    assert len({id(item[0]) for item in results}) == 1
+    assert len({id(item[1]) for item in results}) == 1
+    assert len({id(item[2]) for item in results}) == 1
+
+
+def test_runtime_service_hub_routes_bindings_and_shutdown() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    visualizer = hub.ensure_visualizer(_StubVisualizer)
+    action_server = hub.ensure_action_server(_StubActionServer)
+    ws_hub = hub.ensure_ws_rgb_hub(_StubWsHub)
+    action_router = object()
+    registration = object()
+
+    hub.bind_sample_routes(
+        sample_id="sample-1",
+        action_server=action_server,
+        action_router=action_router,
+        visualizer=visualizer,
+    )
+    hub.register_display(
+        display_id="display-1",
+        hub=ws_hub,
+        registration=registration,
+    )
+    hub.clear_sample_routes(
+        sample_id="sample-1",
+        action_server=action_server,
+        visualizer=visualizer,
+    )
+    hub.shutdown()
+
+    assert action_server.register_calls == [("sample-1", action_router)]
+    assert visualizer.bind_calls == [(action_router, "sample-1")]
+    assert action_server.unregister_calls == ["sample-1"]
+    assert visualizer.clear_calls == ["sample-1"]
+    assert ws_hub.registrations == [registration]
+    assert ws_hub.unregistered == ["display-1"]
+    assert visualizer.stopped is True
+    assert action_server.stopped is True
+    assert ws_hub.stopped is True
+    assert hub.registered_displays() == set()
+

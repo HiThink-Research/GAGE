@@ -203,6 +203,21 @@ class _DelayedAsyncRecordPlayer:
         return action
 
 
+class _DeadlineCapturingAsyncRecordPlayer(_DelayedAsyncRecordPlayer):
+    def __init__(self, name: str, moves: list[str], *, ready_after_polls: int = 2) -> None:
+        super().__init__(name, moves, ready_after_polls=ready_after_polls)
+        self.deadlines: list[Optional[int]] = []
+
+    def start_thinking(
+        self,
+        observation: ArenaObservation,
+        *,
+        deadline_ms: Optional[int] = None,
+    ) -> bool:
+        self.deadlines.append(deadline_ms)
+        return super().start_thinking(observation, deadline_ms=deadline_ms)
+
+
 def test_record_scheduler_timeout_fallback_and_trace() -> None:
     environment = _SingleActionEnv()
     player = _StaticPlayer("p0", "UP", delay_s=0.05)
@@ -245,6 +260,21 @@ def test_record_scheduler_keeps_sampling_cadence_with_async_player() -> None:
     assert result.arena_trace
     assert [entry["timeout"] for entry in result.arena_trace] == [True, True, False]
     assert player.start_calls >= 1
+
+
+def test_record_scheduler_preserves_async_deadline_budget() -> None:
+    environment = _TwoTickDictEnv(max_ticks=2)
+    player = _DeadlineCapturingAsyncRecordPlayer("p0", ["A"], ready_after_polls=3)
+    scheduler = RecordScheduler(
+        tick_ms=1,
+        action_timeout_ms=123,
+        timeout_fallback_move="NOOP",
+    )
+
+    scheduler.run_loop(environment, [player])
+
+    assert player.deadlines
+    assert set(player.deadlines) == {123}
 
 
 def test_record_scheduler_trace_options_are_configurable() -> None:

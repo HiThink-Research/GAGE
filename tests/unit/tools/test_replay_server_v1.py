@@ -111,6 +111,20 @@ def test_load_events_page_jsonl_returns_slice_and_has_more(tmp_path: Path) -> No
     assert has_more is True
 
 
+def test_public_event_reader_contract_uses_streaming_primitives(tmp_path: Path) -> None:
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        "\n".join(json.dumps({"type": "action", "seq": index}) for index in range(1, 4)),
+        encoding="utf-8",
+    )
+
+    assert [event["seq"] for event in rs.iter_events(events_file)] == [1, 2, 3]
+    events, has_more = rs.load_events_page(events_file, offset=1, limit=1)
+
+    assert [event["seq"] for event in events] == [2]
+    assert has_more is True
+
+
 def test_is_origin_allowed_accepts_loopback_origin_by_default() -> None:
     assert rs._is_origin_allowed("http://127.0.0.1:5800", ())  # noqa: SLF001
     assert rs._is_origin_allowed("http://localhost:7860", ())  # noqa: SLF001
