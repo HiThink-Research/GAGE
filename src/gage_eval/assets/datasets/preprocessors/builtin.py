@@ -104,7 +104,6 @@ from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConv
 # benchmark inverse_ifeval
 from gage_eval.assets.datasets.preprocessors.inverse_ifeval.inverse_ifeval_preprocessor import InverseIFEvalPreprocessor
 
-
 def _warn_deprecated_dataset_preprocessor(
     asset_name: str,
     *,
@@ -134,6 +133,8 @@ class _DeprecatedDatasetPreprocessorMixin:
         )
         super().__init__(*args, **kwargs)
 
+# benchmark HMMT Feb 2025
+from gage_eval.assets.datasets.preprocessors.hmmt.hmmt_converter import HMMTFeb2025Preprocessor
 
 @registry.asset(
     "dataset_preprocessors",
@@ -543,5 +544,16 @@ class MMSUPreprocessor(MMSUConverter):
     tags=("instruction_following", "ifeval", "inverse"),
 )
 class InverseIFEvalPreprocessorProvider(InverseIFEvalPreprocessor):
+    pass
+
+
+# benchmark HMMT Feb 2025
+@registry.asset(
+    "dataset_preprocessors",
+    "hmmt_feb_2025_preprocessor",
+    desc="HMMT Feb 2025 prompt wrapper",
+    tags=("prompt", "hmmt", "math"),
+)
+class HMMTFeb2025PreprocessorProvider(HMMTFeb2025Preprocessor):
     pass
 

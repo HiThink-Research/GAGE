@@ -1,4 +1,3 @@
-
 # gage-eval 基准测试指南
 
 本文档提供当前 `gage-eval-main/` 仓库中已有 benchmark 配置的执行命令和说明。
