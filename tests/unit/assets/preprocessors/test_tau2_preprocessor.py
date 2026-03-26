@@ -4,7 +4,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from gage_eval.assets.datasets.preprocessors.tau2_preprocessor import Tau2Preprocessor
-from tests.tau2_stub import install_tau2_stub
+from tests._support.stubs.tau2_stub import install_tau2_stub
 
 
 def test_tau2_preprocessor_builds_sample(tmp_path: Path, monkeypatch) -> None:

@@ -11,7 +11,7 @@ from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.sandbox.integrations.appworld.mcp_client import AppWorldStreamableMcpClient
-from tests.integration.runtime.mcp_stub import AppWorldMcpStub
+from tests._support.stubs.mcp_stub import AppWorldMcpStub
 
 
 class DemoAgent:

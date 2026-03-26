@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gage_eval.mcp import McpClient
-from tests.integration.runtime.mcp_stub import AppWorldMcpStub
+from tests._support.stubs.mcp_stub import AppWorldMcpStub
 
 
 @pytest.mark.fast

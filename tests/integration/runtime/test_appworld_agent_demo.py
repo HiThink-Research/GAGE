@@ -10,7 +10,7 @@ from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
-from tests.integration.runtime.mcp_stub import AppWorldMcpStub
+from tests._support.stubs.mcp_stub import AppWorldMcpStub
 
 
 class DemoAgent:

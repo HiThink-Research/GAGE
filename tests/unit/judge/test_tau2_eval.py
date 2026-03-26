@@ -5,7 +5,7 @@ from pathlib import Path
 from gage_eval.role.judge.tau2_eval import Tau2Evaluate
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
-from tests.tau2_stub import install_tau2_stub
+from tests._support.stubs.tau2_stub import install_tau2_stub
 
 
 def _build_sample() -> dict:

@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from gage_eval.config.pipeline_config import PipelineConfig
-from tests.integration.runtime.network_probe import probe_host_bridge
+from tests._support.helpers.network_probe import probe_host_bridge
 
 
 @pytest.mark.io
