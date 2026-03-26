@@ -201,8 +201,7 @@ ViZDoom 在这里体现的是一个带图像观察、动作映射、调度和回
 
 相关专题文档：
 
-- [PettingZoo 指南](game_arena_topics/game_arena_pettingzoo_zh.md)
-- [PettingZoo Atari 启动命令](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
+ - [PettingZoo Atari 指南](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
 - [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
 ### 7.5 Retro Mario
