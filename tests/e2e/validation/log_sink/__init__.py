@@ -1,0 +1,1 @@
+"""Log sink smoke coverage."""

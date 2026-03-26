@@ -10,7 +10,7 @@ from gage_eval.role.context.tau2_bootstrap import Tau2BootstrapContext
 from gage_eval.role.judge.tau2_eval import Tau2Evaluate
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
-from tests.tau2_stub import install_tau2_stub
+from tests._support.stubs.tau2_stub import install_tau2_stub
 
 
 def _write_tau2_data(root: Path, *, domain: str = "airline") -> None:
