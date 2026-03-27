@@ -22,6 +22,8 @@ datasets:
       preprocess: charxiv_reasoning
       preprocess_kwargs:
         pre_encode_images: true
+
+backends:
   - backend_id: litellm_backend
     type: litellm
     config:
@@ -33,8 +35,6 @@ datasets:
         temperature: 0.0
       streaming: false
       max_retries: 6
-
-backends:
   - backend_id: charxiv_qwen2_5_vl_vllm_backend
     type: vllm
     config:
@@ -74,4 +74,3 @@ tasks:
         - type: file
           params:
             output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/charxiv_vllm_events.jsonl
-
