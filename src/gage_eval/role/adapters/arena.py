@@ -194,6 +194,7 @@ class ArenaRoleAdapter(RoleAdapter):
     _DEFAULT_GAME_LOG_INLINE_LIMIT = 1000
     _DEFAULT_GAME_LOG_INLINE_BYTES = 200_000
     _DEFAULT_GAME_LOG_PREVIEW_LIMIT = 50
+    _DEFAULT_PROCESS_END_TIMEOUT_S = 10.0
 
     def __init__(
         self,
@@ -382,7 +383,17 @@ class ArenaRoleAdapter(RoleAdapter):
                 self.adapter_id,
                 ws_session.display_id,
             )
-            ws_session.wait_for_process_end()
+            process_end_timeout_s = self._resolve_process_end_timeout_s()
+            process_end_confirmed = ws_session.wait_for_process_end(
+                timeout_s=process_end_timeout_s
+            )
+            if not process_end_confirmed:
+                logger.warning(
+                    "ArenaRoleAdapter {} timed out waiting {:.2f}s for process exit confirmation; continuing shutdown.",
+                    self.adapter_id,
+                    process_end_timeout_s,
+                )
+                ws_session.request_process_end(confirm=True)
 
         output = self._format_result(
             result,
@@ -1280,6 +1291,20 @@ class ArenaRoleAdapter(RoleAdapter):
         except (TypeError, ValueError):
             return int(default)
 
+    def _resolve_process_end_timeout_s(self) -> Optional[float]:
+        if "process_end_timeout_s" in self._human_input_cfg:
+            raw_value = self._human_input_cfg.get("process_end_timeout_s")
+        elif "process_end_timeout_s" in self._visualizer_cfg:
+            raw_value = self._visualizer_cfg.get("process_end_timeout_s")
+        else:
+            return self._DEFAULT_PROCESS_END_TIMEOUT_S
+        if raw_value is None:
+            return None
+        try:
+            return max(0.0, float(raw_value))
+        except (TypeError, ValueError):
+            return self._DEFAULT_PROCESS_END_TIMEOUT_S
+
     def _registry_lookup(self):
         return self._registry_view or registry
 
@@ -1410,6 +1435,7 @@ class ArenaRoleAdapter(RoleAdapter):
                 allow_status_html=allow_status_html,
                 demo_mode=demo_mode,
                 title=title,
+                registry_lookup=self._registry_lookup(),
             )
             visualizer.start()
             return visualizer
