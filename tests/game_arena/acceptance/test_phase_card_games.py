@@ -58,6 +58,9 @@ def test_phase_card_gamekits_run_dummy_match_end_to_end(
     assert output["arena_trace"]
     assert len(output["arena_trace"]) == move_count
     assert replay_path.exists()
+    assert replay_path.name == "replay.json"
+    assert replay_path.parent.parent.name == "replays"
+    assert replay_path.parent.name == str(sample["id"])
     assert sample["predict_result"][0]["game_arena"]["winner_player_id"] == winner
     assert sample["predict_result"][0]["game_arena"]["total_steps"] == move_count
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])

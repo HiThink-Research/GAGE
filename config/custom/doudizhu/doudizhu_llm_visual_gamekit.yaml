@@ -1,0 +1,62 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: doudizhu_llm_visual_gamekit
+  description: >
+    GameArena 斗地主 manual smoke config that binds one LLM player through
+    the visualization-ready GameKit PlayerDriver runtime and keeps the other seats deterministic.
+
+datasets:
+  - dataset_id: doudizhu_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Doudizhu_GameKit.jsonl
+      streaming: false
+
+backends:
+  - backend_id: local_qwen35_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: http://127.0.0.1:1234/v1
+      api_key: lmstudio
+      model: qwen/qwen3.5-9b
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: doudizhu_llm_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: doudizhu_llm_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: doudizhu
+      env: classic_3p
+      visualizer:
+        enabled: true
+        title: GAGE Doudizhu Replay
+        launch_browser: true
+        mode: ws_rgb
+        linger_after_finish_s: 3.0
+      players:
+        - seat: landlord
+          player_id: landlord
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend
+        - seat: farmer_left
+          player_id: farmer_left
+          player_kind: dummy
+          actions: ["pass"]
+        - seat: farmer_right
+          player_id: farmer_right
+          player_kind: dummy
+          actions: ["pass"]

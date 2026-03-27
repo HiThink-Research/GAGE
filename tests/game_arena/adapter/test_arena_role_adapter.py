@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.output.models import ArenaOutput
+from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
 
 
@@ -263,6 +264,41 @@ def test_arena_role_adapter_serializes_dataclass_gamearena_output(monkeypatch) -
         "runtime_overrides": {},
     }
     assert result["arena_trace"][0]["payload"]["value"] == 1
+
+
+def test_arena_role_adapter_passes_visualizer_context_to_core(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeCore:
+        def run_sample(self, sample, *, invocation_context=None):
+            captured["sample"] = sample
+            captured["invocation_context"] = invocation_context
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "gage_eval.role.adapters.arena.build_gamearena_core",
+        lambda **kwargs: _FakeCore(),
+    )
+
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        game_kit="gomoku",
+        visualizer={"enabled": True, "launch_browser": True, "title": "GAGE Visual"},
+    )
+    adapter._invoke_sync(
+        {"sample": {"id": "sample-visual-1", "messages": []}},
+        state=SimpleNamespace(),
+    )
+
+    invocation_context = captured["invocation_context"]
+    assert invocation_context is not None
+    assert invocation_context.sample_id == "sample-visual-1"
+    assert invocation_context.visualizer_config == {
+        "enabled": True,
+        "launch_browser": True,
+        "title": "GAGE Visual",
+    }
+    assert isinstance(invocation_context.runtime_service_hub, ArenaRuntimeServiceHub)
 
 
 def test_build_gamearena_core_wires_current_registry_components(monkeypatch) -> None:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
+from gage_eval.role.arena.replay_paths import (
+    resolve_invocation_run_sample_ids,
+    resolve_replay_manifest_path,
+)
 from gage_eval.role.arena.games.doudizhu.env import GenericCardArena
 from gage_eval.role.arena.games.doudizhu.formatters.doudizhu import DoudizhuFormatter
 from gage_eval.role.arena.games.doudizhu.parsers.doudizhu import DoudizhuMoveParser
@@ -18,11 +21,6 @@ _ACTION_ID_TO_TEXT = {
     2: "4",
 }
 _ACTION_TEXT_TO_ID = {text: action_id for action_id, text in _ACTION_ID_TO_TEXT.items()}
-
-
-def _default_replay_dir(name: str) -> str:
-    return str(Path(tempfile.gettempdir()) / "gage_eval_gamearena" / name)
-
 
 class _StubDoudizhuCore:
     num_players = 3
@@ -114,11 +112,15 @@ class Classic3pEnvironment:
         player_specs: Sequence[object],
         replay_output_dir: str | None,
         replay_filename: str | None,
+        run_id: str | None = None,
+        sample_id: str | None = None,
     ) -> None:
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_id_map = {index: player_id for index, player_id in enumerate(player_ids)}
-        self._replay_output_dir = str(replay_output_dir or _default_replay_dir("doudizhu"))
+        self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
         self._replay_filename = str(replay_filename or "doudizhu_classic_3p_replay.json")
+        self._run_id = str(run_id) if run_id else None
+        self._sample_id = str(sample_id) if sample_id else None
         self._adapter = GenericCardArena(
             game_type="doudizhu",
             core=_StubDoudizhuCore(),
@@ -135,16 +137,23 @@ class Classic3pEnvironment:
         self._final_result: GameResult | None = None
 
     @classmethod
-    def from_runtime(cls, *, sample, resolved, resources, player_specs):
+    def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
         defaults = {
             **dict(resolved.game_kit.defaults),
             **dict(resolved.env_spec.defaults),
             **dict(sample.runtime_overrides or {}),
         }
+        run_id, sample_id = resolve_invocation_run_sample_ids(
+            invocation_context=invocation_context,
+            run_id=defaults.get("run_id"),
+            sample_id=defaults.get("sample_id"),
+        )
         environment = cls(
             player_specs=player_specs,
             replay_output_dir=defaults.get("replay_output_dir"),
             replay_filename=defaults.get("replay_filename"),
+            run_id=run_id,
+            sample_id=sample_id,
         )
         return attach_runtime_resources(environment, resources)
 
@@ -197,6 +206,9 @@ class Classic3pEnvironment:
             return None
         return self._finalize_result(result_payload=result, result_label=None, reason=result.get("reason"))
 
+    def get_last_frame(self):
+        return self._adapter.get_last_frame()
+
     def is_terminal(self) -> bool:
         return self._adapter.is_terminal()
 
@@ -242,7 +254,13 @@ class Classic3pEnvironment:
         return self._final_result
 
     def _write_replay(self, serialized_replay: str) -> str:
-        output_path = Path(self._replay_output_dir) / self._replay_filename
+        output_path = resolve_replay_manifest_path(
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+            output_dir=self._replay_output_dir,
+        )
+        if output_path is None:
+            raise RuntimeError("doudizhu_replay_output_path_unresolved")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             payload = json.loads(serialized_replay)
@@ -252,10 +270,11 @@ class Classic3pEnvironment:
         return str(output_path)
 
 
-def build_classic_3p_environment(*, sample, resolved, resources, player_specs) -> Any:
+def build_classic_3p_environment(*, sample, resolved, resources, player_specs, invocation_context=None) -> Any:
     return Classic3pEnvironment.from_runtime(
         sample=sample,
         resolved=resolved,
         resources=resources,
         player_specs=player_specs,
+        invocation_context=invocation_context,
     )

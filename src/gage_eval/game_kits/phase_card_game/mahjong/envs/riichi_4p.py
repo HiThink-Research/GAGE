@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 from typing import Any, Sequence
 
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
+from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
 from gage_eval.role.arena.games.mahjong.env import MahjongArena
 from gage_eval.role.arena.games.mahjong.formatters.mahjong import StandardMahjongFormatter
 from gage_eval.role.arena.games.mahjong.parsers.mahjong import StandardMahjongParser
@@ -24,11 +23,6 @@ _ACTION_ID_TO_RAW = {
     3: "winds-east",
     4: "dragons-red",
 }
-
-
-def _default_replay_dir(name: str) -> str:
-    return str(Path(tempfile.gettempdir()) / "gage_eval_gamearena" / name)
-
 
 class _StubMahjongParser(StandardMahjongParser):
     def __init__(
@@ -134,6 +128,8 @@ class Riichi4pEnvironment:
         player_specs: Sequence[object],
         replay_output_dir: str | None,
         replay_filename: str | None,
+        run_id: str | None = None,
+        sample_id: str | None = None,
     ) -> None:
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_names = {
@@ -151,10 +147,10 @@ class Riichi4pEnvironment:
             renderer=StandardMahjongRenderer(),
             player_ids=player_ids,
             player_names=player_names,
-            replay_output_dir=str(
-                replay_output_dir or _default_replay_dir("mahjong")
-            ),
+            replay_output_dir=str(replay_output_dir) if replay_output_dir else None,
             replay_filename=str(replay_filename or "mahjong_riichi_4p_replay.json"),
+            run_id=run_id,
+            sample_id=sample_id,
             replay_live=False,
             illegal_policy={"retry": 0, "on_fail": "loss"},
         )
@@ -165,16 +161,23 @@ class Riichi4pEnvironment:
         self._adapter._action_id_to_raw = dict(_ACTION_ID_TO_RAW)
 
     @classmethod
-    def from_runtime(cls, *, sample, resolved, resources, player_specs):
+    def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
         defaults = {
             **dict(resolved.game_kit.defaults),
             **dict(resolved.env_spec.defaults),
             **dict(sample.runtime_overrides or {}),
         }
+        run_id, sample_id = resolve_invocation_run_sample_ids(
+            invocation_context=invocation_context,
+            run_id=defaults.get("run_id"),
+            sample_id=defaults.get("sample_id"),
+        )
         environment = cls(
             player_specs=player_specs,
             replay_output_dir=defaults.get("replay_output_dir"),
             replay_filename=defaults.get("replay_filename"),
+            run_id=run_id,
+            sample_id=sample_id,
         )
         return attach_runtime_resources(environment, resources)
 
@@ -187,6 +190,9 @@ class Riichi4pEnvironment:
     def apply(self, action):
         return self._adapter.apply(action)
 
+    def get_last_frame(self):
+        return self._adapter.get_last_frame()
+
     def is_terminal(self) -> bool:
         return self._adapter.is_terminal()
 
@@ -194,10 +200,11 @@ class Riichi4pEnvironment:
         return self._adapter.build_result(result=result, reason=reason)
 
 
-def build_riichi_4p_environment(*, sample, resolved, resources, player_specs) -> Any:
+def build_riichi_4p_environment(*, sample, resolved, resources, player_specs, invocation_context=None) -> Any:
     return Riichi4pEnvironment.from_runtime(
         sample=sample,
         resolved=resolved,
         resources=resources,
         player_specs=player_specs,
+        invocation_context=invocation_context,
     )

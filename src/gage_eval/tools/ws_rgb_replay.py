@@ -142,6 +142,7 @@ def _load_sample_record(sample_json_path: str) -> tuple[dict[str, Any], str]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("sample_json_invalid_root")
+    payload["_gage_sample_json_path"] = str(path)
     sample = payload.get("sample")
     sample_task_id = ""
     if isinstance(sample, Mapping):
@@ -190,12 +191,61 @@ def _resolve_replay_manifest_path(sample_record: Mapping[str, Any]) -> Optional[
     for item in predict_result:
         if not isinstance(item, Mapping):
             continue
-        replay_path = item.get("replay_path") or item.get("replay_v1_path")
-        if not replay_path:
+        for replay_ref in _iter_replay_manifest_refs(item):
+            path = _resolve_replay_ref_path(replay_ref, sample_record=sample_record)
+            if path is not None:
+                return path
+    return None
+
+
+def _iter_replay_manifest_refs(entry: Mapping[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in ("replay_path", "replay_v1_path"):
+        value = entry.get(key)
+        if value not in (None, ""):
+            candidates.append(str(value))
+
+    result = entry.get("result")
+    if isinstance(result, Mapping):
+        for key in ("replay_path", "replay_v1_path"):
+            value = result.get(key)
+            if value not in (None, ""):
+                candidates.append(str(value))
+
+    artifacts = entry.get("artifacts")
+    if isinstance(artifacts, Mapping):
+        for key in ("replay_ref", "replay_v1_ref"):
+            value = artifacts.get(key)
+            if value not in (None, ""):
+                candidates.append(str(value))
+    return candidates
+
+
+def _resolve_replay_ref_path(
+    replay_ref: str,
+    *,
+    sample_record: Mapping[str, Any],
+) -> Optional[Path]:
+    raw_path = Path(str(replay_ref)).expanduser()
+    candidates: list[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.append((Path.cwd() / raw_path).resolve())
+        sample_json_path = sample_record.get("_gage_sample_json_path")
+        if sample_json_path:
+            sample_path = Path(str(sample_json_path)).expanduser().resolve()
+            candidates.append((sample_path.parent / raw_path).resolve())
+            for base in sample_path.parents[:4]:
+                candidates.append((base / raw_path).resolve())
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
             continue
-        path = Path(str(replay_path)).expanduser()
-        if path.exists():
-            return path.resolve()
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate.resolve()
     return None
 
 

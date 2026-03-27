@@ -1,0 +1,63 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: gomoku_llm_visual_gamekit
+  description: >
+    GameArena Gomoku manual smoke config that binds one LLM player through
+    the visualization-ready GameKit PlayerDriver runtime and keeps the opponent deterministic.
+
+datasets:
+  - dataset_id: gomoku_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Gomoku.jsonl
+      streaming: false
+
+backends:
+  - backend_id: local_qwen35_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: http://127.0.0.1:1234/v1
+      api_key: lmstudio
+      model: qwen/qwen3.5-9b
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: gomoku_llm_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: gomoku_llm_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: gomoku
+      env: gomoku_standard
+      runtime_overrides:
+        board_size: 3
+        win_len: 3
+        coord_scheme: A1
+        obs_image: true
+      visualizer:
+        enabled: true
+        title: GAGE Gomoku Board
+        launch_browser: true
+        mode: ws_rgb
+        linger_after_finish_s: 3.0
+      players:
+        - seat: black
+          player_id: Black
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend
+        - seat: white
+          player_id: White
+          player_kind: dummy
+          actions: ["B1", "B2"]

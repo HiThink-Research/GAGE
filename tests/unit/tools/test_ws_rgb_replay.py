@@ -160,6 +160,160 @@ def test_build_replay_v1_display_trims_leading_empty_frame(tmp_path: Path) -> No
     assert display["frame_at"](0)["board_text"] == "frame-2"
 
 
+def test_build_replay_v1_display_accepts_result_replay_path_in_sample_envelope(tmp_path: Path) -> None:
+    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_result"
+    replay_dir.mkdir(parents=True, exist_ok=True)
+    (replay_dir / "events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "frame",
+                        "seq": 1,
+                        "step": 1,
+                        "actor": "player_0",
+                        "frame": {"board_text": "frame-from-result"},
+                    }
+                ),
+                json.dumps({"type": "result", "seq": 2, "result": "draw"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    replay_manifest = replay_dir / "replay.json"
+    _write_json(
+        replay_manifest,
+        {
+            "schema": "gage_replay/v1",
+            "recording": {"events_path": "events.jsonl"},
+            "meta": {"scheduler_type": "turn"},
+        },
+    )
+
+    sample_record = {
+        "sample": {
+            "id": "sample_result",
+            "predict_result": [
+                {
+                    "result": {"replay_path": str(replay_manifest)},
+                }
+            ],
+        }
+    }
+
+    display = ws_rgb_replay._build_replay_v1_display(
+        sample_record,
+        task_id="task_result_path",
+        fps=10.0,
+        max_frames=0,
+    )
+
+    assert display is not None
+    assert display["frame_count"]() == 1
+    assert display["frame_at"](0)["board_text"] == "frame-from-result"
+
+
+def test_build_replay_v1_display_accepts_artifacts_replay_ref_in_sample_envelope(tmp_path: Path) -> None:
+    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_artifacts"
+    replay_dir.mkdir(parents=True, exist_ok=True)
+    (replay_dir / "events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "frame",
+                        "seq": 1,
+                        "step": 1,
+                        "actor": "player_0",
+                        "frame": {"board_text": "frame-from-artifacts"},
+                    }
+                ),
+                json.dumps({"type": "result", "seq": 2, "result": "draw"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    replay_manifest = replay_dir / "replay.json"
+    _write_json(
+        replay_manifest,
+        {
+            "schema": "gage_replay/v1",
+            "recording": {"events_path": "events.jsonl"},
+            "meta": {"scheduler_type": "turn"},
+        },
+    )
+
+    sample_record = {
+        "sample": {
+            "id": "sample_artifacts",
+            "predict_result": [
+                {
+                    "artifacts": {"replay_ref": str(replay_manifest)},
+                }
+            ],
+        }
+    }
+
+    display = ws_rgb_replay._build_replay_v1_display(
+        sample_record,
+        task_id="task_artifacts_ref",
+        fps=10.0,
+        max_frames=0,
+    )
+
+    assert display is not None
+    assert display["frame_count"]() == 1
+    assert display["frame_at"](0)["board_text"] == "frame-from-artifacts"
+
+
+def test_pettingzoo_replay_infers_env_id_from_current_game_arena_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gage_eval.role.arena.games.pettingzoo import ws_rgb_replay as pettingzoo_replay
+
+    monkeypatch.setattr(
+        pettingzoo_replay,
+        "_can_import_env",
+        lambda env_id: env_id == "pettingzoo.atari.space_invaders_v2",
+    )
+
+    resolved = pettingzoo_replay._infer_env_id(
+        {
+            "metadata": {
+                "game_id": "pettingzoo_atari_space_invaders_v2",
+                "game_arena": {"env": "space_invaders"},
+            }
+        },
+        "",
+    )
+
+    assert resolved == "pettingzoo.atari.space_invaders_v2"
+
+
+def test_pettingzoo_replay_accepts_result_move_log_from_current_sample_envelope() -> None:
+    from gage_eval.role.arena.games.pettingzoo import ws_rgb_replay as pettingzoo_replay
+
+    resolved = pettingzoo_replay._resolve_game_log(
+        {
+            "predict_result": [
+                {
+                    "result": {
+                        "move_log": [
+                            {"index": 1, "player": "pilot_alpha", "move": "RIGHTFIRE"},
+                            {"index": 2, "player": "pilot_beta", "move": "LEFT"},
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert resolved == [
+        {"index": 1, "player": "pilot_alpha", "move": "RIGHTFIRE"},
+        {"index": 2, "player": "pilot_beta", "move": "LEFT"},
+    ]
+
+
 def test_maybe_open_browser_uses_webbrowser_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 

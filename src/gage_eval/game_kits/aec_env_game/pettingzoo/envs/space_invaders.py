@@ -5,6 +5,11 @@ from typing import Any, Sequence
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.games.pettingzoo.env import PettingZooAecArenaEnvironment
 
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency
+    np = None
+
 
 class _DiscreteActionSpace:
     def __init__(self, n: int) -> None:
@@ -41,10 +46,18 @@ class _StubSpaceInvadersAecEnv:
         return self._action_spaces[agent]
 
     def observe(self, agent: str) -> dict[str, Any]:
+        if np is None:
+            frame = [[self._step_count, len(agent)]]
+        else:
+            frame = np.zeros((84, 84, 3), dtype=np.uint8)
+            frame[:, :, 0] = (self._step_count * 32) % 256
+            frame[:, :, 1] = 96 if agent == "player_0" else 180
+            frame[20:64, 16:68, 2] = 210
+            frame[40:44, :, :] = 255
         return {
             "agent": agent,
             "step": self._step_count,
-            "frame": [[self._step_count, len(agent)]],
+            "frame": frame,
         }
 
     def last(self):
@@ -145,6 +158,9 @@ class SpaceInvadersEnvironment:
 
     def apply(self, action):
         return self._adapter.apply(action)
+
+    def get_last_frame(self):
+        return self._adapter.get_last_frame()
 
     def is_terminal(self) -> bool:
         return self._adapter.is_terminal()

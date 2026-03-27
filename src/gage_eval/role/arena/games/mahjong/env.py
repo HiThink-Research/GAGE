@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import json
-import os
 import random
 import re
 import time
 from dataclasses import replace
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Thread
-from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from loguru import logger
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.games.mahjong.core_factory import make_core
 from gage_eval.role.arena.games.mahjong.cores.base import AbstractGameCore
 from gage_eval.role.arena.games.mahjong.formatters.base import MahjongFormatter
@@ -556,12 +556,11 @@ class MahjongArena:
         }
 
     def _resolve_replay_output_path(self) -> Optional[Path]:
-        if self._replay_output_dir:
-            base_dir = Path(self._replay_output_dir)
-        else:
-            base_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs"))
-        filename = self._replay_filename or "mahjong_replay.json"
-        return base_dir / filename
+        return resolve_replay_manifest_path(
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+            output_dir=self._replay_output_dir,
+        )
 
     def _record_chat(self, player_id: str, chat_text: Optional[str], player_type: Optional[str]) -> None:
         if not chat_text or self._chat_mode == "off":

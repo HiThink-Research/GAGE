@@ -6,15 +6,33 @@ from typing import Any
 
 from gage_eval.role.arena.resources.handles import RuntimeHandle
 
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency
+    np = None
 
-class _RuntimeFrame:
-    def __init__(self, marker: int) -> None:
-        self.shape = (1, 1, 3)
+
+class _FallbackRuntimeFrame:
+    def __init__(self, marker: int, *, height: int, width: int) -> None:
+        self.shape = (height, width, 3)
         self.dtype = "uint8"
-        self._bytes = bytes([marker % 256, 0, 0])
+        self._bytes = bytes([marker % 256, 0, 0]) * (height * width)
 
     def tobytes(self) -> bytes:
         return self._bytes
+
+
+def _build_runtime_frame(marker: int, *, height: int, width: int):
+    if np is None:
+        return _FallbackRuntimeFrame(marker, height=height, width=width)
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[:, :, 0] = (marker * 3) % 256
+    frame[:, :, 1] = (marker * 7) % 256
+    frame[:, :, 2] = 32
+    frame[height // 4 : height - height // 4, width // 4 : width - width // 4, 2] = 200
+    frame[height // 2 - 2 : height // 2 + 2, :, :] = 255
+    frame[:, width // 2 - 2 : width // 2 + 2, 1] = 255
+    return frame
 
 
 class _ViZDoomRuntimeBackend:
@@ -26,7 +44,10 @@ class _ViZDoomRuntimeBackend:
         self._round = 0
         self._shots = {0: 0, 1: 0}
         self._last_actions = {0: 0, 1: 0}
-        self._pov_frames = {0: _RuntimeFrame(11), 1: _RuntimeFrame(22)}
+        self._pov_frames = {
+            0: _build_runtime_frame(11, height=96, width=128),
+            1: _build_runtime_frame(22, height=96, width=128),
+        }
         self._view = None
 
     def configure(self, *, max_rounds: int | None = None) -> None:
@@ -37,7 +58,10 @@ class _ViZDoomRuntimeBackend:
         self._round = 0
         self._shots = {0: 0, 1: 0}
         self._last_actions = {0: 0, 1: 0}
-        self._pov_frames = {0: _RuntimeFrame(11), 1: _RuntimeFrame(22)}
+        self._pov_frames = {
+            0: _build_runtime_frame(11, height=96, width=128),
+            1: _build_runtime_frame(22, height=96, width=128),
+        }
         return {
             0: {"HEALTH": 100.0, "AMMO": 8, "seed": seed, "round": 0},
             1: {"HEALTH": 100.0, "AMMO": 8, "seed": seed, "round": 0},
@@ -55,7 +79,7 @@ class _ViZDoomRuntimeBackend:
     def set_view(self, view: str) -> None:
         self._view = view
 
-    def get_pov_frames(self) -> dict[int, _RuntimeFrame]:
+    def get_pov_frames(self) -> dict[int, object]:
         return dict(self._pov_frames)
 
     def step(
@@ -69,8 +93,8 @@ class _ViZDoomRuntimeBackend:
                 self._shots[player_index] += 1
 
         self._pov_frames = {
-            0: _RuntimeFrame(11 + self._round),
-            1: _RuntimeFrame(22 + self._round),
+            0: _build_runtime_frame(11 + self._round, height=96, width=128),
+            1: _build_runtime_frame(22 + self._round, height=96, width=128),
         }
 
         done = self._round >= self.max_rounds
@@ -123,7 +147,7 @@ class _RetroRuntimeBackend:
     def reset(self, seed: int | None = None):
         self._tick = 0
         self._progress = 0
-        return _RuntimeFrame(31), {"tick": 0, "x": 0, "score": 0, "seed": seed}
+        return _build_runtime_frame(31, height=84, width=84), {"tick": 0, "x": 0, "score": 0, "seed": seed}
 
     def step(self, payload):
         self._tick += 1
@@ -147,7 +171,7 @@ class _RetroRuntimeBackend:
             "score": self._progress * 10,
             "win": terminated,
         }
-        return _RuntimeFrame(31 + self._tick), reward, terminated, False, info
+        return _build_runtime_frame(31 + self._tick, height=84, width=84), reward, terminated, False, info
 
     def close(self) -> None:
         self.closed = True

@@ -6,21 +6,40 @@ from typing import Any
 
 from gage_eval.game_kits.real_time_game.backend_mode import normalize_backend_mode
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
+from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
 from gage_eval.role.arena.games.retro.retro_env import StableRetroArenaEnvironment
+
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency
+    np = None
 
 
 def _default_replay_dir(name: str) -> str:
     return str(Path(tempfile.gettempdir()) / "gage_eval_gamearena" / name)
 
 
-class _StubRetroFrame:
+class _FallbackRetroFrame:
     def __init__(self, marker: int) -> None:
-        self.shape = (1, 1, 3)
+        self.shape = (84, 84, 3)
         self.dtype = "uint8"
-        self._bytes = bytes([marker % 256, 0, 0])
+        self._bytes = bytes([marker % 256, 32, 128]) * (84 * 84)
 
     def tobytes(self) -> bytes:
         return self._bytes
+
+
+def _build_stub_retro_frame(marker: int):
+    if np is None:
+        return _FallbackRetroFrame(marker)
+    frame = np.zeros((84, 84, 3), dtype=np.uint8)
+    frame[:, :, 0] = marker % 256
+    frame[:, :, 1] = (marker * 3) % 256
+    frame[:, :, 2] = 48
+    frame[16:68, 18:66, 1] = 180
+    frame[20:64, 22:62, 2] = 220
+    frame[40:44, :, :] = 255
+    return frame
 
 
 class _StubRetroBackend:
@@ -34,7 +53,7 @@ class _StubRetroBackend:
     def reset(self, seed: int | None = None):
         self._tick = 0
         self._progress = 0
-        return _StubRetroFrame(31), {"tick": 0, "x": 0, "score": 0, "seed": seed}
+        return _build_stub_retro_frame(31), {"tick": 0, "x": 0, "score": 0, "seed": seed}
 
     def step(self, payload):
         self._tick += 1
@@ -58,7 +77,7 @@ class _StubRetroBackend:
             "score": self._progress * 10,
             "win": terminated,
         }
-        return _StubRetroFrame(31 + self._tick), reward, terminated, False, info
+        return _build_stub_retro_frame(31 + self._tick), reward, terminated, False, info
 
 
 class RetroMarioEnvironment(StableRetroArenaEnvironment):
@@ -83,12 +102,17 @@ class RetroMarioEnvironment(StableRetroArenaEnvironment):
         return super()._make_env()
 
     @classmethod
-    def from_runtime(cls, *, sample, resolved, resources, player_specs):
+    def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
         defaults = {
             **dict(resolved.game_kit.defaults),
             **dict(resolved.env_spec.defaults),
             **dict(sample.runtime_overrides or {}),
         }
+        run_id, sample_id = resolve_invocation_run_sample_ids(
+            invocation_context=invocation_context,
+            run_id=defaults.get("run_id"),
+            sample_id=defaults.get("sample_id"),
+        )
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_names = {
             str(getattr(player, "player_id")): str(getattr(player, "display_name"))
@@ -128,14 +152,15 @@ class RetroMarioEnvironment(StableRetroArenaEnvironment):
             frame_stride=int(defaults.get("frame_stride", 1)),
             snapshot_stride=int(defaults.get("snapshot_stride", 1)),
             obs_image=bool(defaults.get("obs_image", False)),
-            replay_output_dir=str(
-                defaults.get("replay_output_dir")
-                or _default_replay_dir("retro_platformer")
+            replay_output_dir=(
+                str(defaults.get("replay_output_dir"))
+                if defaults.get("replay_output_dir") is not None
+                else None
             ),
             replay_filename=defaults.get("replay_filename"),
             frame_output_dir=defaults.get("frame_output_dir"),
-            run_id=defaults.get("run_id"),
-            sample_id=defaults.get("sample_id"),
+            run_id=run_id,
+            sample_id=sample_id,
             seed=int(defaults["seed"]) if defaults.get("seed") is not None else None,
         )
         try:
@@ -148,10 +173,11 @@ class RetroMarioEnvironment(StableRetroArenaEnvironment):
         return attach_runtime_resources(environment, resources)
 
 
-def build_retro_mario_environment(*, sample, resolved, resources, player_specs) -> Any:
+def build_retro_mario_environment(*, sample, resolved, resources, player_specs, invocation_context=None) -> Any:
     return RetroMarioEnvironment.from_runtime(
         sample=sample,
         resolved=resolved,
         resources=resources,
         player_specs=player_specs,
+        invocation_context=invocation_context,
     )

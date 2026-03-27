@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
+from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.types import ArenaAction, GameResult
 
 
@@ -201,16 +200,8 @@ class ReplaySchemaWriter:
         }
 
     def _resolve_replay_output_path(self) -> Optional[Path]:
-        base_dir = None
-        if self._replay_output_dir:
-            base_dir = Path(self._replay_output_dir)
-        else:
-            run_id = self._run_id or os.environ.get("GAGE_EVAL_RUN_ID")
-            if run_id:
-                base_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")) / run_id / "replays"
-        if base_dir is None:
-            return None
-        sample_id_source = self._sample_id or os.environ.get("GAGE_EVAL_SAMPLE_ID") or "unknown"
-        sample_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(sample_id_source)).strip("_") or "unknown"
-        filename = self._replay_filename or f"retro_replay_{sample_id}.json"
-        return base_dir / filename
+        return resolve_replay_manifest_path(
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+            output_dir=self._replay_output_dir,
+        )

@@ -16,6 +16,7 @@ from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.role.arena.core.bootstrap import build_gamearena_core
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.types import ArenaSample
+from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 
 
 @registry.asset(
@@ -48,7 +49,7 @@ class ArenaRoleAdapter(RoleAdapter):
         role_type: str = "arena",
         **_,
     ) -> None:
-        del environment, rules, parser, visualizer
+        del environment, rules, parser
         resolved_caps = tuple(capabilities) if capabilities else ("text",)
         super().__init__(
             adapter_id=adapter_id,
@@ -57,6 +58,7 @@ class ArenaRoleAdapter(RoleAdapter):
         )
         self._player_specs = list(players or [])
         self._human_input_cfg = dict(human_input or {})
+        self._visualizer_cfg = dict(visualizer or {})
         self._gamearena_defaults = {
             "game_kit": str(game_kit) if game_kit else None,
             "env": str(env) if env else None,
@@ -66,6 +68,10 @@ class ArenaRoleAdapter(RoleAdapter):
         self._prompt_renderer = prompt_renderer
         self._registry_view = registry_view
         self._gamearena_core = None
+        self._runtime_service_hub = ArenaRuntimeServiceHub(adapter_id=self.adapter_id)
+
+    def shutdown(self) -> None:
+        self._runtime_service_hub.shutdown()
 
     def invoke(
         self,
@@ -117,11 +123,18 @@ class ArenaRoleAdapter(RoleAdapter):
         normalized_sample = self._normalize_gamearena_sample(sample)
         invocation_context = GameArenaInvocationContext(
             adapter_id=self.adapter_id,
+            sample_id=(
+                self._resolve_sample_id(dict(sample))
+                if isinstance(sample, Mapping)
+                else None
+            ),
             role_manager=role_manager,
             trace=trace,
             prompt_renderer=self._prompt_renderer,
             sample_payload=dict(sample) if isinstance(sample, Mapping) else {},
             human_input_config=dict(self._human_input_cfg),
+            visualizer_config=dict(self._visualizer_cfg),
+            runtime_service_hub=self._runtime_service_hub,
         )
         run_sample = core.run_sample
         if _accepts_keyword(run_sample, "invocation_context"):

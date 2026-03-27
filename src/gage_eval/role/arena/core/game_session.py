@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import inspect
+import shutil
+import subprocess
+import sys
+import time
+import webbrowser
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import TYPE_CHECKING
+from typing import Any, Mapping
+
+from loguru import logger
 
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.players import BoundPlayer
@@ -9,6 +18,9 @@ from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction
+
+if TYPE_CHECKING:
+    from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
 
 
 @dataclass
@@ -25,6 +37,9 @@ class GameSession:
     arena_trace: list[dict[str, object]] = field(default_factory=list)
     invocation_context: GameArenaInvocationContext | None = None
     _finalized: bool = field(default=False, init=False, repr=False)
+    _visualization_display_id: str | None = field(default=None, init=False, repr=False)
+    _visualization_linger_s: float = field(default=0.0, init=False, repr=False)
+    _visualization_linger_done: bool = field(default=False, init=False, repr=False)
 
     @classmethod
     def from_resolved(
@@ -41,8 +56,9 @@ class GameSession:
             resolved=resolved,
             resources=resources,
             player_specs=player_specs,
+            invocation_context=invocation_context,
         )
-        return cls(
+        session = cls(
             sample=sample,
             environment=environment,
             player_specs=player_specs,
@@ -51,6 +67,8 @@ class GameSession:
             max_steps=_resolve_max_steps(sample=sample, resolved=resolved),
             invocation_context=invocation_context,
         )
+        session._initialize_visualization()
+        return session
 
     def should_stop(self) -> bool:
         if self.final_result is not None:
@@ -168,7 +186,67 @@ class GameSession:
         )
         self.final_result = final_context.payload.get("result", self.final_result)
         self._finalized = True
+        self._linger_for_visualization()
         return self.final_result
+
+    def _initialize_visualization(self) -> None:
+        if self.environment is None:
+            return
+        invocation = self.invocation_context
+        if invocation is None:
+            return
+        visualizer_config = dict(invocation.visualizer_config or {})
+        if not _is_visualizer_enabled(visualizer_config):
+            return
+        service_hub = invocation.runtime_service_hub
+        if service_hub is None:
+            return
+        frame_source = _resolve_frame_source(self.environment)
+        if frame_source is None:
+            return
+        ws_hub = service_hub.ensure_ws_rgb_hub(
+            lambda: _build_ws_rgb_hub(visualizer_config)
+        )
+        start = getattr(ws_hub, "start", None)
+        if callable(start):
+            start()
+        display_id = _build_display_id(self.sample, invocation=invocation)
+        from gage_eval.tools.ws_rgb_server import DisplayRegistration
+
+        registration = DisplayRegistration(
+            display_id=display_id,
+            label=_build_display_label(self.sample, visualizer_config=visualizer_config),
+            human_player_id=_resolve_human_player_id(
+                self.player_specs,
+                environment=self.environment,
+            ),
+            frame_source=frame_source,
+        )
+        service_hub.register_display(
+            display_id=display_id,
+            hub=ws_hub,
+            registration=registration,
+        )
+        self._visualization_display_id = display_id
+        self._visualization_linger_s = _resolve_linger_seconds(visualizer_config)
+        logger.info(
+            "Arena live viewer ready display_id={} viewer_url={}",
+            display_id,
+            getattr(ws_hub, "viewer_url", ""),
+        )
+        _maybe_open_browser(
+            getattr(ws_hub, "viewer_url", ""),
+            enabled=bool(visualizer_config.get("launch_browser", False)),
+        )
+
+    def _linger_for_visualization(self) -> None:
+        if self._visualization_linger_done:
+            return
+        linger_s = max(0.0, float(self._visualization_linger_s))
+        if linger_s <= 0.0:
+            return
+        self._visualization_linger_done = True
+        time.sleep(linger_s)
 
     def _require_player(self, player_id: str) -> BoundPlayer:
         for player in self.player_specs:
@@ -264,19 +342,29 @@ def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
     return 256
 
 
-def _build_environment(*, sample: ArenaSample, resolved, resources, player_specs) -> object:
+def _build_environment(
+    *,
+    sample: ArenaSample,
+    resolved,
+    resources,
+    player_specs,
+    invocation_context: GameArenaInvocationContext | None,
+) -> object:
     env_factory = resolved.env_spec.defaults.get("env_factory")
     if not callable(env_factory):
         raise KeyError(
             f"Env '{resolved.env_spec.env_id}' for game kit '{resolved.game_kit.kit_id}' "
             "does not define a callable 'env_factory'"
         )
-    return env_factory(
-        sample=sample,
-        resolved=resolved,
-        resources=resources,
-        player_specs=player_specs,
-    )
+    kwargs = {
+        "sample": sample,
+        "resolved": resolved,
+        "resources": resources,
+        "player_specs": player_specs,
+    }
+    if _accepts_keyword(env_factory, "invocation_context"):
+        kwargs["invocation_context"] = invocation_context
+    return env_factory(**kwargs)
 
 
 def _bind_players(
@@ -291,3 +379,136 @@ def _bind_players(
     if registry is None:
         raise RuntimeError("resolved runtime binding is missing player_driver_registry")
     return tuple(registry.bind_all(bindings, invocation=invocation_context))
+
+
+def _accepts_keyword(callable_obj: object, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return True
+    if keyword in signature.parameters:
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _is_visualizer_enabled(config: Mapping[str, Any]) -> bool:
+    return bool(config.get("enabled", False))
+
+
+def _build_ws_rgb_hub(config: Mapping[str, Any]):
+    from gage_eval.tools.ws_rgb_server import WsRgbHubServer
+
+    hub = WsRgbHubServer(
+        host=str(config.get("host") or "127.0.0.1"),
+        port=int(config.get("port") or 5800),
+        allow_origin=str(config.get("allow_origin") or "*"),
+    )
+    hub.start()
+    return hub
+
+
+def _resolve_frame_source(environment: object) -> object | None:
+    getter = getattr(environment, "get_last_frame", None)
+    if not callable(getter):
+        return None
+
+    def _frame_source() -> dict[str, Any]:
+        return _normalize_frame_payload(getter())
+
+    return _frame_source
+
+
+def _normalize_frame_payload(payload: object) -> dict[str, Any]:
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    if payload is None:
+        return {}
+    return {"board_text": str(payload)}
+
+
+def _build_display_id(
+    sample: ArenaSample,
+    *,
+    invocation: GameArenaInvocationContext,
+) -> str:
+    adapter_id = str(invocation.adapter_id or "arena")
+    sample_id = str(invocation.sample_id or "sample")
+    env_id = str(sample.env or sample.game_kit or "arena")
+    return f"{adapter_id}:{sample_id}:{env_id}"
+
+
+def _build_display_label(
+    sample: ArenaSample,
+    *,
+    visualizer_config: Mapping[str, Any],
+) -> str:
+    title = str(visualizer_config.get("title") or "").strip()
+    if title:
+        return title
+    return f"{sample.game_kit}:{sample.env or 'default'}"
+
+
+def _resolve_human_player_id(
+    player_specs: tuple[BoundPlayer, ...],
+    *,
+    environment: object,
+) -> str:
+    if player_specs:
+        return str(player_specs[0].player_id)
+    getter = getattr(environment, "get_active_player", None)
+    if callable(getter):
+        try:
+            return str(getter())
+        except Exception:
+            return "player_0"
+    return "player_0"
+
+
+def _resolve_linger_seconds(config: Mapping[str, Any]) -> float:
+    try:
+        return max(0.0, float(config.get("linger_after_finish_s", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _maybe_open_browser(viewer_url: str, *, enabled: bool) -> None:
+    if not enabled or not viewer_url:
+        return
+    try:
+        opened = bool(webbrowser.open(viewer_url))
+        if not opened:
+            opened = _open_browser_fallback(viewer_url)
+        logger.info(
+            "Arena live viewer browser_open viewer_url={} opened={}",
+            viewer_url,
+            opened,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Arena live viewer browser_open_failed viewer_url={} error={}",
+            viewer_url,
+            exc,
+        )
+        return
+
+
+def _open_browser_fallback(viewer_url: str) -> bool:
+    commands: list[list[str]] = []
+    if sys.platform == "darwin":
+        commands.append(["open", viewer_url])
+    elif sys.platform.startswith("linux"):
+        commands.append(["xdg-open", viewer_url])
+    elif sys.platform.startswith("win"):
+        commands.append(["cmd", "/c", "start", "", viewer_url])
+    for command in commands:
+        if shutil.which(command[0]) is None:
+            continue
+        try:
+            subprocess.Popen(command)  # noqa: S603
+            return True
+        except Exception:
+            continue
+    return False

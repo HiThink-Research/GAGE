@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from gage_eval.role.arena.core.arena_core import GameArenaCore
+from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.game_session import GameSession
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.schedulers.turn import TurnScheduler
@@ -293,6 +294,103 @@ def test_game_session_support_hooks_can_rewrite_action_through_real_runtime_path
         ("after_apply", [1.0, -1.0]),
         ("on_finalize", None),
     ]
+
+
+def test_game_session_registers_ws_rgb_live_viewer_when_visualizer_enabled(
+    monkeypatch,
+) -> None:
+    browser_calls: list[str] = []
+
+    class _StubWsHub:
+        def __init__(self) -> None:
+            self.started = False
+            self.registrations: list[object] = []
+            self.viewer_url = "http://127.0.0.1:5810/ws_rgb/viewer"
+
+        def start(self) -> None:
+            self.started = True
+
+        def register_display(self, registration: object) -> None:
+            self.registrations.append(registration)
+
+    class _StubRuntimeServiceHub:
+        def __init__(self) -> None:
+            self.ws_hub = _StubWsHub()
+            self.display_id: str | None = None
+
+        def ensure_ws_rgb_hub(self, factory):
+            return self.ws_hub
+
+        def register_display(self, *, display_id: str, hub: object, registration: object) -> None:
+            self.display_id = display_id
+            hub.register_display(registration)
+
+    class FakeEnvironment:
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {"board_text": "frame-1", "move_count": 0}
+
+        def observe(self, player):
+            return {
+                "player": player,
+                "legal_moves": ["A1"],
+                "active_player": "alpha",
+            }
+
+        def apply(self, action):
+            del action
+            return None
+
+        def is_terminal(self) -> bool:
+            return False
+
+    runtime_hub = _StubRuntimeServiceHub()
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.webbrowser.open",
+        lambda url: browser_calls.append(url) or True,
+    )
+
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={
+                "env_factory": (
+                    lambda *, sample, resolved, resources, player_specs: FakeEnvironment()
+                )
+            },
+        ),
+        scheduler=TurnScheduler(binding_id="turn/default"),
+        resource_spec={},
+        player_bindings=(),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=None,
+    )
+
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        resolved,
+        resources={},
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-live-1",
+            visualizer_config={"enabled": True, "launch_browser": True, "port": 5810},
+            runtime_service_hub=runtime_hub,
+        ),
+    )
+
+    assert session is not None
+    assert runtime_hub.display_id == "arena:sample-live-1:gomoku_standard"
+    assert runtime_hub.ws_hub.started is True
+    assert len(runtime_hub.ws_hub.registrations) == 1
+    registration = runtime_hub.ws_hub.registrations[0]
+    assert registration.display_id == "arena:sample-live-1:gomoku_standard"
+    assert registration.frame_source()["board_text"] == "frame-1"
+    assert browser_calls == ["http://127.0.0.1:5810/ws_rgb/viewer"]
+
 
 
 def test_game_session_advance_uses_environment_reported_progress() -> None:

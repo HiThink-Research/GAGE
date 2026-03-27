@@ -232,29 +232,27 @@ def _infer_env_id(sample: Mapping[str, Any], task_id: str) -> str:
     for key in ("env_id",):
         value = replay_meta.get(key)
         if value:
-            candidates.append(str(value))
+            candidates.extend(_expand_env_id_candidates(value))
     for key in ("env_id", "pettingzoo_env_id"):
         value = candidate_meta.get(key)
         if value:
-            candidates.append(str(value))
+            candidates.extend(_expand_env_id_candidates(value))
+    game_arena_meta = candidate_meta.get("game_arena")
+    if isinstance(game_arena_meta, Mapping):
+        for key in ("env_id", "env", "engine_id", "game_id"):
+            value = game_arena_meta.get(key)
+            if value:
+                candidates.extend(_expand_env_id_candidates(value))
 
     # STEP 2: Infer env id from task id (prefer this over metadata.game_id).
     game_name = _normalize_task_game_name(task_id)
     if game_name:
-        version = _GAME_VERSIONS.get(game_name, "v3")
-        candidates.extend(
-            [
-                f"pettingzoo.atari.{game_name}_{version}",
-                f"pettingzoo.atari.{game_name}_v3",
-                f"pettingzoo.atari.{game_name}_v2",
-                f"pettingzoo.atari.{game_name}_v1",
-            ]
-        )
+        candidates.extend(_expand_env_id_candidates(game_name))
 
     # STEP 3: Keep metadata.game_id as fallback because it can be stale in datasets.
     game_id = candidate_meta.get("game_id")
     if game_id:
-        candidates.append(str(game_id))
+        candidates.extend(_expand_env_id_candidates(game_id))
 
     # STEP 4: Return the first importable candidate.
     seen: set[str] = set()
@@ -271,6 +269,35 @@ def _infer_env_id(sample: Mapping[str, Any], task_id: str) -> str:
     )
 
 
+def _expand_env_id_candidates(value: object) -> list[str]:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return []
+    lowered = normalized.lower().replace("-", "_")
+    candidates = [normalized]
+    if lowered.startswith("pettingzoo_atari_"):
+        candidates.append(f"pettingzoo.atari.{lowered[len('pettingzoo_atari_'):]}")
+    if "." not in lowered and ":" not in lowered:
+        version = _GAME_VERSIONS.get(lowered, "v3")
+        candidates.extend(
+            [
+                f"pettingzoo.atari.{lowered}_{version}",
+                f"pettingzoo.atari.{lowered}_v3",
+                f"pettingzoo.atari.{lowered}_v2",
+                f"pettingzoo.atari.{lowered}_v1",
+            ]
+        )
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        text = str(candidate).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
+
+
 def _resolve_game_log(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
     predict_result = sample.get("predict_result")
     if not isinstance(predict_result, list):
@@ -281,6 +308,11 @@ def _resolve_game_log(sample: Mapping[str, Any]) -> list[dict[str, Any]]:
         game_log = item.get("game_log")
         if isinstance(game_log, list):
             return [dict(entry) for entry in game_log if isinstance(entry, Mapping)]
+        result = item.get("result")
+        if isinstance(result, Mapping):
+            move_log = result.get("move_log")
+            if isinstance(move_log, list):
+                return [dict(entry) for entry in move_log if isinstance(entry, Mapping)]
     return []
 
 

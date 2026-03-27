@@ -23,6 +23,9 @@ def test_vizdoom_gamekit_runs_dummy_match_end_to_end(
     assert output["tick"] == output["step"] == output["result"]["move_count"] == 3
     assert output["result"]["result"] in {"win", "draw", "terminated"}
     assert replay_path.exists()
+    assert replay_path.name == "replay.json"
+    assert replay_path.parent.parent.name == "replays"
+    assert replay_path.parent.name == str(sample["id"])
     assert output["arena_trace"]
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])
 
@@ -46,5 +49,8 @@ def test_retro_mario_gamekit_runs_dummy_match_end_to_end(
     assert output["result"]["result"] in {"win", "draw", "terminated"}
     assert output["result"]["move_count"] > 0
     assert replay_path.exists()
+    assert replay_path.name == "replay.json"
+    assert replay_path.parent.parent.name == "replays"
+    assert replay_path.parent.name == str(sample["id"])
     assert output["arena_trace"]
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])

@@ -57,6 +57,9 @@ class TicTacToeStandardEnvironment:
     def apply(self, action):
         return self._legacy.apply(action)
 
+    def get_last_frame(self):
+        return self._legacy.get_last_frame()
+
     def is_terminal(self) -> bool:
         return self._legacy.is_terminal()
 

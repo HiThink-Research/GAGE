@@ -11,6 +11,7 @@ import time
 from typing import Any, Dict, Optional, Sequence
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.games.vizdoom.observation import ViZDoomPromptBuilder
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
@@ -93,6 +94,8 @@ class ViZDoomArenaEnvironment:
         port: Optional[int] = None,
         config_path: Optional[str] = None,
         replay_output_dir: Optional[str] = None,
+        run_id: Optional[str] = None,
+        sample_id: Optional[str] = None,
         game_id: str = "vizdoom_multi_duel",
         tick_rate_hz: Optional[float] = None,
         frame_stride: int = 1,
@@ -178,6 +181,8 @@ class ViZDoomArenaEnvironment:
         self._start_player_id = str(start_player_id or self._player_ids[0])
         self._player_index = {pid: idx for idx, pid in enumerate(self._player_ids)}
         self._player_id_by_index = {idx: pid for pid, idx in self._player_index.items()}
+        self._run_id = str(run_id) if run_id else None
+        self._sample_id = str(sample_id) if sample_id else None
         self._action_label_to_id = (
             {str(label): idx for idx, label in enumerate(self._cfg.action_labels)}
             if self._cfg.action_labels
@@ -190,7 +195,11 @@ class ViZDoomArenaEnvironment:
         self._tick = 0
         self._pending_actions: Dict[int, ArenaAction] = {}
         self._move_log: list[Dict[str, Any]] = []
-        self._replay = _ReplayWriter(self._cfg.replay_output_dir)
+        self._replay = _ReplayWriter(
+            self._cfg.replay_output_dir,
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+        )
         self._start_ts = time.time()
         self._active_idx = 0
         self._last_frame_payload: Dict[str, Any] = {}
@@ -737,8 +746,16 @@ class ReplayMeta:
 class _ReplayWriter:
     """Minimal replay writer aligned with the GameArena schema."""
 
-    def __init__(self, output_dir: Optional[str]) -> None:
+    def __init__(
+        self,
+        output_dir: Optional[str],
+        *,
+        run_id: Optional[str] = None,
+        sample_id: Optional[str] = None,
+    ) -> None:
         self._output_dir = output_dir
+        self._run_id = str(run_id) if run_id else None
+        self._sample_id = str(sample_id) if sample_id else None
         self._meta: Optional[ReplayMeta] = None
         self._moves: list[Dict[str, Any]] = []
         self._frames: list[Dict[str, Any]] = []
@@ -758,11 +775,14 @@ class _ReplayWriter:
 
     def finish(self, result: Dict[str, Any]) -> Optional[str]:
         self._result = result
-        if self._output_dir is None:
+        path = resolve_replay_manifest_path(
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+            output_dir=self._output_dir,
+        )
+        if path is None:
             return None
-        Path(self._output_dir).mkdir(parents=True, exist_ok=True)
-        ts = int(time.time() * 1000)
-        path = Path(self._output_dir) / f"replay_{ts}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "meta": self._meta.__dict__ if self._meta is not None else {},
             "moves": self._moves,

@@ -24,6 +24,7 @@ def test_riichi_4p_environment_wraps_mahjong_arena(tmp_path: Path) -> None:
         player_specs=player_specs,
         replay_output_dir=str(tmp_path),
         replay_filename="mahjong_replay.json",
+        sample_id="mahjong_sample_1",
     )
 
     assert isinstance(environment._adapter, MahjongArena)
@@ -44,7 +45,7 @@ def test_riichi_4p_environment_wraps_mahjong_arena(tmp_path: Path) -> None:
     assert result is not None
     assert result.winner == "east"
     assert result.result == "win"
-    assert result.replay_path == str(tmp_path / "mahjong_replay.json")
+    assert result.replay_path == str(tmp_path / "mahjong_sample_1" / "replay.json")
 
 
 def test_riichi_4p_environment_replay_keeps_terminal_metadata(tmp_path: Path) -> None:
@@ -59,6 +60,7 @@ def test_riichi_4p_environment_replay_keeps_terminal_metadata(tmp_path: Path) ->
         player_specs=player_specs,
         replay_output_dir=str(tmp_path),
         replay_filename="mahjong_replay.json",
+        sample_id="mahjong_sample_2",
     )
 
     scripted_moves = [
@@ -75,7 +77,7 @@ def test_riichi_4p_environment_replay_keeps_terminal_metadata(tmp_path: Path) ->
         )
 
     assert result is not None
-    replay_payload = json.loads((tmp_path / "mahjong_replay.json").read_text(encoding="utf-8"))
+    replay_payload = json.loads((tmp_path / "mahjong_sample_2" / "replay.json").read_text(encoding="utf-8"))
     assert replay_payload["winner"] == "east"
     assert replay_payload["result"] == "win"
     assert replay_payload["result_reason"] == "terminal"
