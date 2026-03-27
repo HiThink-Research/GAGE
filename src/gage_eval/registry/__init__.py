@@ -50,7 +50,6 @@ DEFAULT_KINDS: Dict[str, str] = {
     "judge_impls": "裁判扩展实现（Docker/脚本等）",
     "helper_impls": "助手扩展实现（预测/检索等）",
     "arena_impls": "对局环境实现（游戏规则/状态机）",
-    "arena_game_providers": "对局域装配器（环境/渲染/输入默认装配）",
     "parser_impls": "对局解析器实现（动作解析与坐标校验）",
     "renderer_impls": "对局渲染器实现（棋盘/UI 渲染）",
     "dataset_hubs": "数据集源（HF、ModelScope、本地等）",
@@ -66,6 +65,19 @@ DEFAULT_KINDS: Dict[str, str] = {
     "observability_plugins": "观测插件",
     "pipeline_steps": "Pipeline 执行步骤",
 }
+
+DEFAULT_KINDS.update(
+    {
+        "game_kits": "GameKit definitions",
+        "scheduler_bindings": "Scheduler binding specs",
+        "support_workflows": "Game support workflow specs",
+        "support_units": "Support unit implementations",
+        "observation_workflows": "Observation workflow implementations",
+        "visualization_specs": "Game display and replay viewer specs",
+        "game_content_assets": "ROM/mod/map/content assets",
+        "player_drivers": "LLM/Human/Agent driver implementations",
+    }
+)
 
 for _kind, _desc in DEFAULT_KINDS.items():
     registry.declare_kind(_kind, desc=_desc)

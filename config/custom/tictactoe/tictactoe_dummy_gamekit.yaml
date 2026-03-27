@@ -1,0 +1,37 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: tictactoe_gamekit
+  description: >
+    Minimal GameArena Tic-Tac-Toe template. Supply samples that already
+    contain `game_kit`, `env`, and optional `runtime_overrides`; the arena
+    adapter defaults the dummy players below when the sample omits `players`.
+
+datasets:
+  - dataset_id: tictactoe_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_TicTacToe.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: tictactoe_gamekit_arena
+
+role_adapters:
+  - adapter_id: tictactoe_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: tictactoe
+      env: tictactoe_standard
+      players:
+        - seat: x
+          player_id: X
+          player_kind: dummy
+          actions: ["1,1", "2,2", "3,3"]
+        - seat: o
+          player_id: O
+          player_kind: dummy
+          actions: ["1,2", "1,3"]

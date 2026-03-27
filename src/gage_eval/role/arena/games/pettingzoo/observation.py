@@ -35,7 +35,7 @@ class PettingZooPromptBuilder:
             metadata: Observation metadata snapshot.
 
         Returns:
-            Prompt package consumed by LLMPlayer.
+            Prompt package consumed by the LLM backend driver.
         """
 
         legal_items = [str(move) for move in legal_moves]

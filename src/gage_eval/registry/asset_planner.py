@@ -74,36 +74,11 @@ class RuntimeAssetPlanner:
         adapter_id: str,
         collector: "_PlanCollector",
     ) -> None:
-        env_cfg = dict(params.get("environment") or {})
-        parser_cfg = dict(params.get("parser") or {})
-        visualizer_cfg = dict(params.get("visualizer") or {})
-        renderer_cfg = dict(visualizer_cfg.get("renderer") or {})
-
         collector.add(
-            "arena_impls",
-            env_cfg.get("impl") or env_cfg.get("implementation"),
-            source=f"arena:{adapter_id}.environment",
+            "game_kits",
+            params.get("game_kit"),
+            source=f"arena:{adapter_id}.game_kit",
         )
-        collector.add(
-            "arena_game_providers",
-            env_cfg.get("provider"),
-            source=f"arena:{adapter_id}.environment.provider",
-        )
-        collector.add(
-            "parser_impls",
-            parser_cfg.get("impl") or parser_cfg.get("implementation") or "grid_parser_v1",
-            source=f"arena:{adapter_id}.parser",
-        )
-        if not visualizer_cfg.get("enabled"):
-            return
-        collector.add(
-            "renderer_impls",
-            renderer_cfg.get("impl") or renderer_cfg.get("implementation"),
-            source=f"arena:{adapter_id}.renderer",
-        )
-        collector.add_eager_kind("arena_game_providers")
-        if not (renderer_cfg.get("impl") or renderer_cfg.get("implementation")):
-            collector.add_eager_kind("renderer_impls")
 
     def _collect_prompt_requests(self, config: "PipelineConfig", collector: "_PlanCollector") -> None:
         for spec in config.prompts:

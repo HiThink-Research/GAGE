@@ -25,7 +25,7 @@ class MahjongObservation:
     
     @property
     def metadata(self) -> dict[str, Any]:
-        """Compatibility shim for LLMPlayer."""
+        """Structured metadata view shared by runtime prompt builders."""
         return {
             "public_state": self.public_state,
             "private_state": self.private_state,

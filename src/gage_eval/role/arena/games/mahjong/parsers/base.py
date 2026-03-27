@@ -17,7 +17,7 @@ class MahjongParsedAction:
 
     @property
     def coord(self) -> str:
-        """Alias for action_text to satisfy LLMPlayer interface."""
+        """Alias retained for board-game style action consumers."""
         return self.action_text
 
 class MahjongMoveParser(ABC):

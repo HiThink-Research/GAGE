@@ -2,60 +2,6 @@
   "manifest_version": 1,
   "entries": [
     {
-      "kind": "arena_game_providers",
-      "name": "doudizhu",
-      "module": "gage_eval.role.arena.game_providers",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/game_providers.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "arena_game_providers",
-      "name": "grid_board",
-      "module": "gage_eval.role.arena.game_providers",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/game_providers.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "arena_game_providers",
-      "name": "mahjong",
-      "module": "gage_eval.role.arena.game_providers",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/game_providers.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "arena_game_providers",
-      "name": "pettingzoo",
-      "module": "gage_eval.role.arena.game_providers",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/game_providers.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "arena_game_providers",
-      "name": "retro",
-      "module": "gage_eval.role.arena.game_providers",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/game_providers.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "arena_game_providers",
-      "name": "vizdoom",
-      "module": "gage_eval.role.arena.game_providers",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/game_providers.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
       "kind": "arena_impls",
       "name": "doudizhu_arena_v1",
       "module": "gage_eval.role.arena.games.doudizhu.env",
@@ -124,6 +70,33 @@
       "module": "gage_eval.role.arena.games.vizdoom.env",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/role/arena/games/vizdoom/env.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_content_assets",
+      "name": "arena/default_content",
+      "module": "gage_eval.game_kits.content",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/content.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "arena/default",
+      "module": "gage_eval.game_kits.content",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/content.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "observation_workflows",
+      "name": "arena/default",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
       "aliases": [],
       "optional": false
     },
@@ -200,6 +173,15 @@
       "optional": false
     },
     {
+      "kind": "player_drivers",
+      "name": "player_driver/dummy",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
       "kind": "renderer_impls",
       "name": "doudizhu_replay_v1",
       "module": "gage_eval.role.arena.games.doudizhu.renderers.doudizhu",
@@ -250,6 +232,42 @@
       "module": "gage_eval.role.arena.games.tictactoe.renderer",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/role/arena/games/tictactoe/renderer.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "scheduler_bindings",
+      "name": "turn/default",
+      "module": "gage_eval.role.arena.schedulers.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/schedulers/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "support_units",
+      "name": "arena/default",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "support_workflows",
+      "name": "arena/default",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/default",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
       "aliases": [],
       "optional": false
     }

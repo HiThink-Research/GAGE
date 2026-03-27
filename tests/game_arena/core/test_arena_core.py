@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from gage_eval.role.arena.core.arena_core import GameArenaCore
+from gage_eval.role.arena.core.game_session import GameSession
+from gage_eval.role.arena.core.types import ArenaSample
+from gage_eval.role.arena.schedulers.turn import TurnScheduler
+from gage_eval.role.arena.schedulers.real_time_tick import RealTimeTickScheduler
+from gage_eval.role.arena.output.writer import ArenaOutputWriter
+from gage_eval.role.arena.player_drivers.registry import PlayerDriverRegistry
+from gage_eval.role.arena.support.context import SupportContext
+from gage_eval.role.arena.support.hooks import SupportHook
+from gage_eval.role.arena.support.units.action_shaping import (
+    ContinuousActionShapingUnit,
+)
+from gage_eval.role.arena.support.workflow import GameSupportWorkflow
+from gage_eval.role.arena.types import ArenaAction
+from gage_eval.role.arena.types import GameResult
+from gage_eval.role.arena.core.players import PlayerBindingSpec
+from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
+    DuelMap01Environment,
+)
+
+
+def test_game_arena_core_releases_resources_on_scheduler_error(
+    fake_resolver,
+    fake_resource_control,
+    fake_output_writer,
+) -> None:
+    core = GameArenaCore(
+        resolver=fake_resolver(raise_in_scheduler=True),
+        resource_control=fake_resource_control,
+        output_writer=fake_output_writer,
+    )
+
+    with pytest.raises(RuntimeError):
+        core.run_sample(ArenaSample(game_kit="gomoku", env=None))
+
+    assert fake_resource_control.release_calls == 1
+
+
+def test_game_arena_core_releases_resources_on_session_construction_error(
+    fake_resolver,
+    fake_resource_control,
+    fake_output_writer,
+    monkeypatch,
+) -> None:
+    core = GameArenaCore(
+        resolver=fake_resolver(),
+        resource_control=fake_resource_control,
+        output_writer=fake_output_writer,
+    )
+
+    def _raise_on_session_build(_cls, sample, resolved, resources):
+        raise RuntimeError("session build failed")
+
+    monkeypatch.setattr(
+        GameSession,
+        "from_resolved",
+        classmethod(_raise_on_session_build),
+    )
+
+    with pytest.raises(RuntimeError, match="session build failed"):
+        core.run_sample(ArenaSample(game_kit="gomoku", env=None))
+
+    assert fake_resource_control.release_calls == 1
+
+
+def test_arena_output_writer_returns_frozen_snapshot() -> None:
+    session = GameSession(sample=ArenaSample(game_kit="gomoku", env=None))
+    session.arena_trace.append({"event": "tick", "value": 1})
+
+    output = ArenaOutputWriter().finalize(session)
+
+    assert output.arena_trace[0] == {"event": "tick", "value": 1}
+    assert output.arena_trace[0] is not session.arena_trace[0]
+
+    session.arena_trace[0]["value"] = 2
+    assert output.arena_trace[0]["value"] == 1
+
+    with pytest.raises(TypeError):
+        output.arena_trace[0]["value"] = 3
+
+
+def test_game_session_capture_output_tick_is_available_for_record_cadence() -> None:
+    session = GameSession(sample=ArenaSample(game_kit="gomoku", env=None))
+
+    session.capture_output_tick()
+
+    assert session.tick == 0
+    assert session.step == 0
+    assert session.arena_trace == []
+
+
+def test_game_session_executes_support_hooks_across_main_chain() -> None:
+    hook_trace: list[tuple[str, object]] = []
+
+    class _RecordingUnit:
+        def __init__(self, label: str, *, rewrite: object | None = None) -> None:
+            self.label = label
+            self.rewrite = rewrite
+
+        def invoke(self, context: SupportContext) -> SupportContext:
+            hook_trace.append((self.label, context.payload.get("action")))
+            if self.rewrite is not None:
+                context.payload["action"] = self.rewrite
+            return context
+
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self.applied_actions: list[object] = []
+            self._terminal = False
+
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def observe(self, player):
+            return {"player": player}
+
+        def apply(self, action):
+            self.applied_actions.append(action.move)
+            self._terminal = True
+            return GameResult(
+                winner="alpha",
+                result="completed",
+                reason="applied",
+                move_count=len(self.applied_actions),
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": action.move}],
+            )
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner="alpha",
+                result=result,
+                reason=reason,
+                move_count=len(self.applied_actions),
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": move} for move in self.applied_actions],
+            )
+
+    class FakePlayer:
+        def __init__(self, player_id: str, move: object) -> None:
+            self.player_id = player_id
+            self._move = move
+
+        def next_action(self, observation) -> ArenaAction:
+            del observation
+            return ArenaAction(player=self.player_id, move=self._move, raw=self._move)
+
+    workflow = GameSupportWorkflow(
+        workflow_id="support-chain",
+        units_by_hook={
+            SupportHook.AFTER_OBSERVE: [_RecordingUnit("after_observe")],
+            SupportHook.BEFORE_DECIDE: [_RecordingUnit("before_decide")],
+            SupportHook.AFTER_DECIDE: [_RecordingUnit("after_decide")],
+            SupportHook.BEFORE_APPLY: [_RecordingUnit("before_apply")],
+            SupportHook.AFTER_APPLY: [_RecordingUnit("after_apply")],
+            SupportHook.ON_FINALIZE: [_RecordingUnit("on_finalize")],
+        },
+    )
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        environment=FakeEnvironment(),
+        player_specs=(FakePlayer("alpha", [0.5]),),
+        support_workflow=workflow,
+    )
+
+    observation = session.observe()
+    action = session.decide_current_player(observation)
+    session.apply(action)
+    session.finalize()
+
+    assert hook_trace == [
+        ("after_observe", None),
+        ("before_decide", None),
+        ("after_decide", [0.5]),
+        ("before_apply", [0.5]),
+        ("after_apply", [0.5]),
+        ("on_finalize", None),
+    ]
+
+
+def test_game_session_support_hooks_can_rewrite_action_through_real_runtime_path() -> None:
+    action_trace: list[tuple[str, object]] = []
+
+    class _RewriteAndRecordUnit:
+        def __init__(self, label: str, *, rewrite: object | None = None) -> None:
+            self.label = label
+            self.rewrite = rewrite
+
+        def invoke(self, context: SupportContext) -> SupportContext:
+            action_trace.append((self.label, context.payload.get("action")))
+            if self.rewrite is not None:
+                context.payload["action"] = self.rewrite
+            return context
+
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self.applied_actions: list[object] = []
+            self._terminal = False
+
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def observe(self, player):
+            return {"player": player}
+
+        def apply(self, action):
+            self.applied_actions.append(action.move)
+            self._terminal = True
+            return GameResult(
+                winner="alpha",
+                result="completed",
+                reason="applied",
+                move_count=len(self.applied_actions),
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": action.move}],
+            )
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner="alpha",
+                result=result,
+                reason=reason,
+                move_count=len(self.applied_actions),
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": move} for move in self.applied_actions],
+            )
+
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={"env_factory": lambda *, sample, resolved, resources, player_specs: FakeEnvironment()},
+        ),
+        scheduler=TurnScheduler(binding_id="turn/default"),
+        resource_spec={},
+        player_bindings=(
+            PlayerBindingSpec(
+                seat="alpha",
+                player_id="alpha",
+                player_kind="dummy",
+                driver_id="player_driver/dummy",
+                actions=([5.0, -5.0],),
+            ),
+        ),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=GameSupportWorkflow(
+            workflow_id="arena/default",
+            units_by_hook={
+                SupportHook.AFTER_DECIDE: [
+                    _RewriteAndRecordUnit("after_decide", rewrite=[2.0, -2.0])
+                ],
+                SupportHook.BEFORE_APPLY: [
+                    _RewriteAndRecordUnit("before_apply"),
+                    ContinuousActionShapingUnit(low=-1.0, high=1.0),
+                ],
+                SupportHook.AFTER_APPLY: [_RewriteAndRecordUnit("after_apply")],
+                SupportHook.ON_FINALIZE: [_RewriteAndRecordUnit("on_finalize")],
+            },
+        ),
+    )
+
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        resolved,
+        resources={},
+    )
+
+    TurnScheduler(binding_id="turn/default").run(session)
+    session.finalize()
+
+    assert session.environment.applied_actions == [[1.0, -1.0]]
+    assert action_trace == [
+        ("after_decide", [5.0, -5.0]),
+        ("before_apply", [2.0, -2.0]),
+        ("after_apply", [1.0, -1.0]),
+        ("on_finalize", None),
+    ]
+
+
+def test_game_session_advance_uses_environment_reported_progress() -> None:
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._deltas = [0, 1, 0]
+
+        def consume_session_progress_delta(self) -> int:
+            if self._deltas:
+                return self._deltas.pop(0)
+            return 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="vizdoom", env="duel_map01"),
+        environment=FakeEnvironment(),
+    )
+
+    session.advance()
+    assert session.tick == 0
+    assert session.step == 0
+
+    session.advance()
+    assert session.tick == 1
+    assert session.step == 1
+
+    session.advance()
+    assert session.tick == 1
+    assert session.step == 1
+
+
+def test_vizdoom_realtime_session_max_steps_counts_backend_flush_rounds() -> None:
+    class ScriptedPlayer:
+        def __init__(self, player_id: str, moves: list[str]) -> None:
+            self.player_id = player_id
+            self._moves = list(moves)
+            self._index = 0
+
+        def next_action(self, observation) -> ArenaAction:
+            del observation
+            move = self._moves[self._index]
+            self._index += 1
+            return ArenaAction(player=self.player_id, move=move, raw=move)
+
+    environment = DuelMap01Environment(
+        backend_mode="dummy",
+        stub_max_rounds=10,
+        player_ids=("doom_alpha", "doom_beta"),
+        player_names={"doom_alpha": "doom_alpha", "doom_beta": "doom_beta"},
+        replay_output_dir=None,
+        show_pov=False,
+        show_automap=False,
+    )
+    environment.reset()
+    session = GameSession(
+        sample=ArenaSample(game_kit="vizdoom", env="duel_map01"),
+        environment=environment,
+        player_specs=(
+            ScriptedPlayer("doom_alpha", ["1", "2", "1"]),
+            ScriptedPlayer("doom_beta", ["3", "2", "3"]),
+        ),
+        max_steps=3,
+    )
+
+    RealTimeTickScheduler(binding_id="real_time_tick/default").run(session)
+
+    assert session.tick == 3
+    assert session.step == 3
+    assert environment._tick == 3  # noqa: SLF001
+    assert session.final_result is not None
+    assert session.final_result.result == "max_steps"
+    assert session.final_result.move_count == 3
+
+
+def test_arena_output_writer_recursively_freezes_nested_trace_values() -> None:
+    session = GameSession(sample=ArenaSample(game_kit="gomoku", env=None))
+    session.arena_trace.append(
+        {
+            "event": "tick",
+            "payload": {
+                "scores": [{"name": "agent_a", "points": [1, 2]}],
+                "round": 1,
+            },
+        }
+    )
+
+    output = ArenaOutputWriter().finalize(session)
+    trace_entry = output.arena_trace[0]
+
+    session.arena_trace[0]["payload"]["scores"][0]["points"].append(3)
+    session.arena_trace[0]["payload"]["round"] = 2
+
+    assert trace_entry["payload"]["scores"][0]["points"] == (1, 2)
+    assert trace_entry["payload"]["round"] == 1
+
+    with pytest.raises(TypeError):
+        trace_entry["payload"]["round"] = 3
+
+
+def test_arena_output_writer_freezes_sample_and_result_snapshots() -> None:
+    session = GameSession(
+        sample=ArenaSample(
+            game_kit="gomoku",
+            env="gomoku_standard",
+            players=({"seat": "black"},),
+            runtime_overrides={"board_size": 3},
+        ),
+        final_result=GameResult(
+            winner="Black",
+            result="win",
+            reason="five_in_row",
+            move_count=5,
+            illegal_move_count=0,
+            final_board="board",
+            move_log=[{"index": 1, "player": "Black", "coord": "A1"}],
+        ),
+    )
+
+    output = ArenaOutputWriter().finalize(session)
+
+    session.sample.players[0]["seat"] = "mutated"
+    session.sample.runtime_overrides["board_size"] = 9
+    session.final_result.move_log[0]["coord"] = "Z9"
+
+    assert output.sample.players[0]["seat"] == "black"
+    assert output.sample.runtime_overrides["board_size"] == 3
+    assert output.result.move_log[0]["coord"] == "A1"
+
+    with pytest.raises(TypeError):
+        output.sample.players[0]["seat"] = "changed"
+    with pytest.raises(TypeError):
+        output.result.move_log[0]["coord"] = "B2"
