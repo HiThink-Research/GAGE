@@ -7,6 +7,7 @@ import os
 import random
 import re
 import time
+from dataclasses import replace
 from queue import Empty, Queue
 from threading import Event, Thread
 from pathlib import Path
@@ -308,8 +309,7 @@ class MahjongArena:
 
         # STEP 2: Persist replay output and finalize result.
         final_board = self._snapshot_board()
-        replay_path = self._save_replay(winner=winner)
-        self._final_result = GameResult(
+        pending_result = GameResult(
             winner=winner,
             result=resolved_result,
             reason=reason,
@@ -320,8 +320,10 @@ class MahjongArena:
             rule_profile=self._rule_profile,
             win_direction=None,
             line_length=None,
-            replay_path=replay_path,
+            replay_path=None,
         )
+        replay_path = self._save_replay(winner=winner, final_result=pending_result)
+        self._final_result = replace(pending_result, replay_path=replay_path)
         self._stop_chat_worker()
         return self._final_result
 
@@ -419,8 +421,7 @@ class MahjongArena:
             winner = self._resolve_illegal_winner(player_id)
             result = "loss"
 
-        replay_path = self._save_replay(winner=winner)
-        self._final_result = GameResult(
+        pending_result = GameResult(
             winner=winner,
             result=result,
             reason=reason,
@@ -431,8 +432,10 @@ class MahjongArena:
             rule_profile=self._rule_profile,
             win_direction=None,
             line_length=None,
-            replay_path=replay_path,
+            replay_path=None,
         )
+        replay_path = self._save_replay(winner=winner, final_result=pending_result)
+        self._final_result = replace(pending_result, replay_path=replay_path)
         self._stop_chat_worker()
         return self._final_result
 
@@ -503,8 +506,13 @@ class MahjongArena:
         except Exception:
             return ""
 
-    def _save_replay(self, *, winner: Optional[str]) -> Optional[str]:
-        payload = self._build_replay_payload(winner=winner)
+    def _save_replay(
+        self,
+        *,
+        winner: Optional[str],
+        final_result: Optional[GameResult] = None,
+    ) -> Optional[str]:
+        payload = self._build_replay_payload(winner=winner, final_result=final_result)
         output_path = self._resolve_replay_output_path()
         if output_path is None:
             return None
@@ -517,18 +525,24 @@ class MahjongArena:
             logger.warning("Failed to write Mahjong replay to {}: {}", output_path, exc)
             return None
 
-    def _build_replay_payload(self, *, winner: Optional[str]) -> dict[str, Any]:
+    def _build_replay_payload(
+        self,
+        *,
+        winner: Optional[str],
+        final_result: Optional[GameResult] = None,
+    ) -> dict[str, Any]:
         current_hands = self.get_all_hands() or {}
         active_player_id, active_player_idx, legal_moves = self._current_legal_snapshot()
-        end_reason = self._resolve_end_reason()
+        resolved_final_result = final_result or self._final_result
+        end_reason = self._resolve_end_reason(final_result=resolved_final_result)
         remaining_tiles = self._resolve_remaining_tiles()
         return {
             "player_ids": list(self._player_ids),
             "player_names": dict(self._player_names),
             "player_models": dict(self._player_models),
             "winner": winner,
-            "result": self._final_result.result if self._final_result else None,
-            "result_reason": self._final_result.reason if self._final_result else None,
+            "result": resolved_final_result.result if resolved_final_result else None,
+            "result_reason": resolved_final_result.reason if resolved_final_result else None,
             "end_reason": end_reason,
             "remaining_tiles": remaining_tiles,
             "moves": list(self._move_log),
@@ -613,13 +627,14 @@ class MahjongArena:
         text = re.sub(r"\\b([BCD])([1-9])\\b", replace_tile, text, flags=re.IGNORECASE)
         return text
 
-    def _resolve_end_reason(self) -> Optional[str]:
-        if self._final_result is None:
+    def _resolve_end_reason(self, *, final_result: Optional[GameResult] = None) -> Optional[str]:
+        resolved_final_result = final_result or self._final_result
+        if resolved_final_result is None:
             return None
-        if self._final_result.winner:
+        if resolved_final_result.winner:
             return "hu"
-        if self._final_result.result:
-            return str(self._final_result.result)
+        if resolved_final_result.result:
+            return str(resolved_final_result.result)
         return None
 
     def _start_chat_worker(self) -> None:

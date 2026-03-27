@@ -5,6 +5,23 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+_FALLBACK_RAW_ACTIONS = (
+    *(f"bamboo-{rank}" for rank in range(1, 10)),
+    *(f"characters-{rank}" for rank in range(1, 10)),
+    *(f"dots-{rank}" for rank in range(1, 10)),
+    "winds-east",
+    "winds-south",
+    "winds-west",
+    "winds-north",
+    "dragons-green",
+    "dragons-red",
+    "dragons-white",
+    "pong",
+    "chow",
+    "gong",
+    "stand",
+)
+
 
 def rlcard_card_to_code(card: Any) -> str:
     """Convert an RLCard Mahjong card or string into a display code."""
@@ -36,8 +53,10 @@ def build_action_maps() -> tuple[dict[int, str], dict[str, int], dict[int, str]]
 
     try:
         from rlcard.games.mahjong.utils import card_encoding_dict
-    except Exception as exc:
-        raise RuntimeError("rlcard is required to build Mahjong action mappings") from exc
+    except Exception:
+        card_encoding_dict = {
+            raw_text: action_id for action_id, raw_text in enumerate(_FALLBACK_RAW_ACTIONS)
+        }
 
     action_id_to_text: dict[int, str] = {}
     action_text_to_id: dict[str, int] = {}
@@ -101,4 +120,3 @@ def _format_tile_code(raw_text: str) -> str:
     if suit == "dragons":
         return rank.capitalize()
     return normalized
-

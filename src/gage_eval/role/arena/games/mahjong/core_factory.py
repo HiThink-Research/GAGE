@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from gage_eval.role.arena.games.mahjong.cores.base import AbstractGameCore
-from gage_eval.role.arena.games.mahjong.cores.rlcard_mahjong import RLCardCore
 
 
 def make_core(
@@ -23,6 +22,8 @@ def make_core(
 
     if str(game_type) != "mahjong":
         raise ValueError(f"Unsupported game_type for Mahjong core: {game_type}")
+    from gage_eval.role.arena.games.mahjong.cores.rlcard_mahjong import RLCardCore
+
     return RLCardCore("mahjong", config=config)
 
 
