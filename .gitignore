@@ -216,6 +216,7 @@ scripts/oneclick/.env.example
 /.scannerwork/
 /.tmp/
 /tmp/
+/.worktrees/
 
 # python artifacts
 __pycache__/
