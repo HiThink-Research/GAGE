@@ -357,10 +357,14 @@ def _materialize_role_adapters(
     role_manager: RoleManager,
 ) -> None:
     backend_instances = registry.materialize_backends(config)
+    for backend_id, backend in backend_instances.items():
+        role_manager.register_backend(backend_id, backend)
     agent_backend_instances = registry.materialize_agent_backends(
         config,
         backends=backend_instances,
     )
+    for agent_backend_id, backend in agent_backend_instances.items():
+        role_manager.register_agent_backend(agent_backend_id, backend)
     sandbox_profiles = registry.materialize_sandbox_profiles(config)
     mcp_clients = registry.materialize_mcp_clients(config)
     prompt_assets = registry.materialize_prompts(config)

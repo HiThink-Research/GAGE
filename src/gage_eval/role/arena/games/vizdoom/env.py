@@ -200,6 +200,7 @@ class ViZDoomArenaEnvironment:
             for idx in self._player_index.values()
         }
         self._prompt_builder = ViZDoomPromptBuilder()
+        self._reported_session_tick = 0
 
     def reset(self) -> None:
         """Reset the environment to its initial state."""
@@ -220,6 +221,7 @@ class ViZDoomArenaEnvironment:
             idx: deque(maxlen=max(1, int(self._cfg.obs_image_history_len)))
             for idx in self._player_index.values()
         }
+        self._reported_session_tick = 0
 
         # STEP 2: Initialize replay if enabled.
         if self._cfg.replay_in_env:
@@ -388,6 +390,13 @@ class ViZDoomArenaEnvironment:
             self._env.close()
         except Exception:
             pass
+
+    def consume_session_progress_delta(self) -> int:
+        """Report how many backend ticks completed since the last scheduler loop."""
+
+        delta = max(0, int(self._tick) - int(self._reported_session_tick))
+        self._reported_session_tick = int(self._tick)
+        return delta
 
     def _build_env(self, cfg: ViZDoomEnvConfig):
         if cfg.use_single_process:
