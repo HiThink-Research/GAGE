@@ -391,7 +391,71 @@ def test_game_session_registers_ws_rgb_live_viewer_when_visualizer_enabled(
     assert registration.frame_source()["board_text"] == "frame-1"
     assert browser_calls == ["http://127.0.0.1:5810/ws_rgb/viewer"]
 
+def test_game_session_records_action_trace_fields_for_illegal_result() -> None:
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
 
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def observe(self, player):
+            return {
+                "player": player,
+                "legal_moves": ["A1", "B2"],
+                "active_player": "alpha",
+            }
+
+        def apply(self, action):
+            self._terminal = True
+            return GameResult(
+                winner="beta",
+                result="loss",
+                reason="occupied",
+                move_count=0,
+                illegal_move_count=1,
+                final_board="board",
+                move_log=[],
+            )
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+    class FakePlayer:
+        player_id = "alpha"
+
+        def next_action(self, observation) -> ArenaAction:
+            del observation
+            return ArenaAction(
+                player="alpha",
+                move="B2",
+                raw='{"move":"B2"}',
+                metadata={
+                    "driver_id": "player_driver/llm_backend",
+                    "player_type": "llm",
+                    "retry_count": "2",
+                },
+            )
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        environment=FakeEnvironment(),
+        player_specs=(FakePlayer(),),
+    )
+
+    observation = session.observe()
+    action = session.decide_current_player(observation)
+    session.apply(action)
+
+    assert len(session.arena_trace) == 1
+    entry = session.arena_trace[0]
+    assert entry["player_id"] == "alpha"
+    assert entry["action_raw"] == '{"move":"B2"}'
+    assert entry["action_applied"] == "B2"
+    assert entry["retry_count"] == 2
+    assert entry["is_action_legal"] is False
+    assert entry["illegal_reason"] == "occupied"
+    assert entry["t_action_submitted_ms"] >= entry["t_obs_ready_ms"]
 
 def test_game_session_advance_uses_environment_reported_progress() -> None:
     class FakeEnvironment:

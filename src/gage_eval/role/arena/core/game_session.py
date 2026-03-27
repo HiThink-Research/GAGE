@@ -15,6 +15,15 @@ from loguru import logger
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.players import BoundPlayer
 from gage_eval.role.arena.core.types import ArenaSample
+from gage_eval.role.arena.schedulers._scheduler_utils import (
+    detect_illegal_reason,
+    finalize_trace_entry,
+    infer_legality,
+    infer_retry_count,
+    make_trace_entry,
+    set_trace_action_fields,
+    wall_clock_ms,
+)
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction
@@ -36,6 +45,7 @@ class GameSession:
     step: int = 0
     arena_trace: list[dict[str, object]] = field(default_factory=list)
     invocation_context: GameArenaInvocationContext | None = None
+    _current_trace_entry: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _finalized: bool = field(default=False, init=False, repr=False)
     _visualization_display_id: str | None = field(default=None, init=False, repr=False)
     _visualization_linger_s: float = field(default=0.0, init=False, repr=False)
@@ -93,6 +103,12 @@ class GameSession:
             {"observation": observation, "player_id": player_id},
         )
         observation = support_context.payload.get("observation", observation)
+        self._current_trace_entry = make_trace_entry(
+            step_index=self.step,
+            player_id=player_id,
+            timestamp_ms=wall_clock_ms(),
+            t_obs_ready_ms=wall_clock_ms(),
+        )
         return observation
 
     def decide_current_player(self, observation) -> ArenaAction:
@@ -116,7 +132,13 @@ class GameSession:
             },
         )
         updated_action = after_context.payload.get("action", action.move)
-        return self._coerce_action(action, updated_action)
+        resolved_action = self._coerce_action(action, updated_action)
+        trace_entry = self._ensure_trace_entry(player_id)
+        set_trace_action_fields(trace_entry, resolved_action, action_format="flat")
+        trace_entry["t_action_submitted_ms"] = wall_clock_ms()
+        trace_entry["retry_count"] = infer_retry_count(resolved_action)
+        trace_entry["is_action_legal"] = infer_legality(resolved_action)
+        return resolved_action
 
     def apply(self, action: ArenaAction) -> None:
         if self.environment is None:
@@ -130,6 +152,12 @@ class GameSession:
             },
         )
         action = self._coerce_action(action, before_context.payload.get("action", action.move))
+        trace_entry = self._ensure_trace_entry(action.player)
+        trace_entry["player_id"] = action.player
+        set_trace_action_fields(trace_entry, action, action_format="flat")
+        trace_entry["t_action_submitted_ms"] = wall_clock_ms()
+        trace_entry["retry_count"] = infer_retry_count(action)
+        trace_entry["is_action_legal"] = infer_legality(action)
         result = self.environment.apply(action)
         if result is not None:
             self.final_result = result
@@ -145,16 +173,12 @@ class GameSession:
         updated_result = after_context.payload.get("result", result)
         if updated_result is not None:
             self.final_result = updated_result
-        self.arena_trace.append(
-            {
-                "tick": self.tick + 1,
-                "step": self.step + 1,
-                "player_id": action.player,
-                "move": action.move,
-                "result": getattr(result, "result", None),
-                "winner": getattr(result, "winner", None),
-            }
-        )
+        illegal_reason = self._resolve_illegal_reason(updated_result)
+        trace_entry["illegal_reason"] = illegal_reason
+        if illegal_reason is not None:
+            trace_entry["is_action_legal"] = False
+        self.arena_trace.append(finalize_trace_entry(trace_entry))
+        self._current_trace_entry = None
 
     def advance(self) -> None:
         delta = self._resolve_progress_delta()
@@ -326,6 +350,39 @@ class GameSession:
         except Exception:
             return 1
         return max(0, delta)
+
+    def _ensure_trace_entry(self, player_id: str) -> dict[str, Any]:
+        if self._current_trace_entry is None:
+            now_ms = wall_clock_ms()
+            self._current_trace_entry = make_trace_entry(
+                step_index=self.step,
+                player_id=player_id,
+                timestamp_ms=now_ms,
+                t_obs_ready_ms=now_ms,
+            )
+        return self._current_trace_entry
+
+    @staticmethod
+    def _resolve_illegal_reason(result: object | None) -> str | None:
+        if result is None:
+            return None
+        if isinstance(result, Mapping):
+            reason = result.get("reason")
+            if reason in {
+                "invalid_format",
+                "illegal_move",
+                "unknown_player",
+                "wrong_player",
+                "out_of_bounds",
+                "occupied",
+                "illegal_action",
+            }:
+                return str(reason)
+            return None
+        try:
+            return detect_illegal_reason(result)
+        except AttributeError:
+            return None
 
 
 def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
