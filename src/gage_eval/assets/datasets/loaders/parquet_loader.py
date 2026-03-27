@@ -65,6 +65,8 @@ class ParquetDatasetLoader(DatasetLoader):
             raw_records,
             self.spec,
             data_path=str(filesystem_path),
+            registry_lookup=self.registry_lookup,
+            allow_lazy_import=self.allow_asset_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,

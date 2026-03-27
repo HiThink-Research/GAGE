@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from gage_eval.assets.datasets.loaders.loader_utils import build_bundle_context
 from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.config.registry import ConfigRegistry, _collect_runtime_registry_packages
 from gage_eval.evaluation.runtime_builder import build_runtime
@@ -111,6 +112,70 @@ def test_prepare_runtime_registry_context_primes_metric_assets_before_runtime_fr
         assert entry.name == metric_name
         metrics = config_registry.with_runtime_registry_context(context).materialize_metrics(config)
         assert metric_name in metrics
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_runtime_scoped_jsonl_preprocessor_materialization_uses_registry_view(tmp_path) -> None:
+    dataset_path = tmp_path / "appworld.jsonl"
+    dataset_path.write_text(
+        '{"task_id":"task-1","instruction":"Open the settings page."}\n',
+        encoding="utf-8",
+    )
+    config = _build_minimal_config(
+        datasets=[
+            {
+                "dataset_id": "appworld_dataset",
+                "loader": "jsonl",
+                "params": {
+                    "path": str(dataset_path),
+                    "preprocess": "appworld_preprocessor",
+                },
+            }
+        ],
+    )
+    config_registry = ConfigRegistry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        datasets = config_registry.with_runtime_registry_context(context).materialize_datasets(config)
+        records = list(datasets["appworld_dataset"].records)
+        assert len(records) == 1
+        sample = records[0]
+        assert sample.id == "task-1"
+        assert sample.task_type == "agent"
+        assert sample.messages[0].content[0].text == "Open the settings page."
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_primes_dataset_bundle_assets_before_runtime_freeze() -> None:
+    config = _build_minimal_config(
+        datasets=[
+            {
+                "dataset_id": "mme_dataset",
+                "loader": "dummy",
+                "params": {
+                    "bundle": "mme",
+                },
+            }
+        ],
+    )
+    config_registry = ConfigRegistry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        ctx = build_bundle_context(
+            config.datasets[0],
+            data_path="dummy",
+            registry_lookup=context.view,
+            allow_lazy_import=False,
+        )
+        assert ctx is not None
+        sample = ctx.handle.apply({"image": None}, dataset_id="mme_dataset", dataset_metadata={})
+        assert sample == {"image": None}
     finally:
         context.close()
 

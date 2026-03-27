@@ -117,6 +117,8 @@ class Tau2TasksLoader(DatasetLoader):
             records,
             self.spec,
             data_path=str(tasks_path),
+            registry_lookup=self.registry_lookup,
+            allow_lazy_import=self.allow_asset_lazy_import,
             trace=trace,
         )
         records = apply_default_params(records, self.spec)
