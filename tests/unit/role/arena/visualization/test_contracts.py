@@ -334,11 +334,12 @@ def test_chat_message_round_trip() -> None:
     assert ChatMessage.from_dict(payload) == message
 
 
-def test_seek_snapshot_record_round_trip() -> None:
+@pytest.mark.parametrize("snapshot_mode", ["full", "media_ref"])
+def test_seek_snapshot_record_round_trip(snapshot_mode: str) -> None:
     record = SeekSnapshotRecord(
         seq=15,
         ts_ms=1234,
-        snapshot_mode="full",
+        snapshot_mode=snapshot_mode,
         snapshot_ref="snapshots/seq-000015.json",
     )
 
@@ -347,7 +348,7 @@ def test_seek_snapshot_record_round_trip() -> None:
     assert payload == {
         "seq": 15,
         "tsMs": 1234,
-        "snapshotMode": "full",
+        "snapshotMode": snapshot_mode,
         "snapshotRef": "snapshots/seq-000015.json",
     }
     assert SeekSnapshotRecord.from_dict(payload) == record

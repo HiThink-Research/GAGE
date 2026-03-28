@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.arena.visualization.artifacts import to_bounded_json_safe, to_visual_json_safe
@@ -130,6 +132,54 @@ def test_visual_session_recorder_persists_seek_snapshot_index(tmp_path: Path) ->
             "snapshotRef": "snapshots/seq-000001.json",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("visual_kind", "expected_snapshot_mode"),
+    [
+        ("board", "full"),
+        ("table", "full"),
+        ("frame", "media_ref"),
+    ],
+)
+def test_visual_session_recorder_applies_seek_snapshot_mode_by_visual_kind(
+    tmp_path: Path,
+    visual_kind: str,
+    expected_snapshot_mode: str,
+) -> None:
+    replay_path = tmp_path / "runs" / visual_kind / "replays" / "sample-1" / "replay.json"
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=f"arena.visualization.{visual_kind}.v1",
+        game_id="demo",
+        scheduling_family="turn",
+        session_id="sample-1",
+        visual_kind=visual_kind,
+    )
+
+    recorder.record_snapshot(
+        ts_ms=1005,
+        step=2,
+        tick=1,
+        snapshot={
+            "board": {"state": "demo"} if visual_kind != "frame" else None,
+            "media": {
+                "primary": {
+                    "mediaId": "frame-1",
+                    "transport": "artifact_ref",
+                    "mimeType": "image/png",
+                    "url": "frames/frame-1.png",
+                }
+            }
+            if visual_kind == "frame"
+            else None,
+        },
+        anchor=True,
+    )
+
+    artifacts = recorder.persist(replay_path)
+
+    seek_index = json.loads((artifacts.layout.session_dir / "seek_snapshots.json").read_text(encoding="utf-8"))
+    assert seek_index["seekSnapshots"][0]["snapshotMode"] == expected_snapshot_mode
 
 
 def test_visual_session_recorder_bounds_heavy_snapshot_payloads() -> None:

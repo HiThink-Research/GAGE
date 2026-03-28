@@ -451,6 +451,7 @@ def test_arena_visual_gateway_persists_observer_modes_from_resolved_runtime_into
     output = ArenaOutputWriter().finalize(session)
     serialized = ArenaRoleAdapter._serialize_gamearena_value(output)
     manifest_path = Path(serialized["artifacts"]["visual_session_ref"])
+    seek_snapshots_path = manifest_path.parent / "seek_snapshots.json"
 
     query_service = ArenaVisualGatewayQueryService()
     visual_session = query_service.load_session(manifest_path)
@@ -459,6 +460,8 @@ def test_arena_visual_gateway_persists_observer_modes_from_resolved_runtime_into
         visual_session.capabilities,
         observer_modes=["player", "camera"],
     )
+    seek_snapshot_payload = json.loads(seek_snapshots_path.read_text(encoding="utf-8"))
+    assert seek_snapshot_payload["seekSnapshots"][0]["snapshotMode"] == "media_ref"
 
     server = ArenaVisualHTTPServer(
         host="127.0.0.1",

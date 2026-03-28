@@ -33,6 +33,7 @@ class ArenaVisualSessionRecorder:
     scheduling_family: str
     session_id: str
     observer_modes: tuple[str, ...] = ()
+    visual_kind: str | None = None
     lifecycle: str = "initializing"
     playback_mode: str = "live_tail"
     observer_id: str = ""
@@ -286,7 +287,7 @@ class ArenaVisualSessionRecorder:
                 SeekSnapshotRecord(
                     seq=int(snapshot["seq"]),
                     ts_ms=int(snapshot["tsMs"]),
-                    snapshot_mode="full",
+                    snapshot_mode=self._resolve_seek_snapshot_mode(),
                     snapshot_ref=str(snapshot_path),
                 )
             )
@@ -380,6 +381,23 @@ class ArenaVisualSessionRecorder:
         if self._latest_result is not None:
             summary["result"] = to_bounded_json_safe(self._latest_result)
         return summary
+
+    def _resolve_seek_snapshot_mode(self) -> str:
+        visual_kind = self._resolve_visual_kind()
+        if visual_kind == "frame":
+            return "media_ref"
+        return "full"
+
+    def _resolve_visual_kind(self) -> str | None:
+        if self.visual_kind in {"board", "table", "frame", "rts"}:
+            return str(self.visual_kind)
+        if self.plugin_id.endswith(".board_v1"):
+            return "board"
+        if self.plugin_id.endswith(".table_v1"):
+            return "table"
+        if self.plugin_id.endswith(".frame_v1"):
+            return "frame"
+        return None
 
     def _build_timeline_manifest(self) -> dict[str, Any]:
         return {

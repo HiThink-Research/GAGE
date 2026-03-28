@@ -36,7 +36,7 @@ _CONTROL_COMMAND_TYPES = {
     "back_to_tail",
 }
 _CHAT_CHANNELS = {"table", "system", "private"}
-_SNAPSHOT_MODES = {"full", "delta"}
+_SNAPSHOT_MODES = {"full", "delta", "media_ref"}
 
 
 def _jsonify(value: Any) -> Any:

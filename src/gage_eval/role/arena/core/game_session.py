@@ -619,6 +619,7 @@ def _build_visual_recorder(
         scheduling_family=_resolve_scheduler_family(sample=sample, resolved=resolved),
         session_id=str(session_id),
         observer_modes=_resolve_visual_observer_modes(visualization_spec),
+        visual_kind=_resolve_visual_kind(visualization_spec),
     )
 
 
@@ -628,6 +629,14 @@ def _resolve_visual_observer_modes(visualization_spec: Any) -> tuple[str, ...]:
     if not isinstance(supported_modes, (list, tuple)):
         return ()
     return tuple(str(mode) for mode in supported_modes if str(mode).strip())
+
+
+def _resolve_visual_kind(visualization_spec: Any) -> str | None:
+    visual_kind = getattr(visualization_spec, "visual_kind", None)
+    if visual_kind is None:
+        return None
+    normalized = str(visual_kind).strip()
+    return normalized or None
 
 
 def _resolve_scheduler_family(*, sample: ArenaSample, resolved) -> str:
