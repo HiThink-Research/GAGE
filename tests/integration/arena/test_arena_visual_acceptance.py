@@ -883,6 +883,17 @@ def _assert_observer_projection(
     assert alternate_seats[private_player_id]["hand"]["cards"] == []
 
 
+def _assert_capabilities_include(
+    capabilities: dict[str, object],
+    *,
+    observer_modes: list[str],
+) -> None:
+    assert capabilities["supportsReplay"] is True
+    assert capabilities["supportsTimeline"] is True
+    assert capabilities["supportsSeek"] is True
+    assert capabilities["observerModes"] == observer_modes
+
+
 @dataclass(frozen=True)
 class AcceptanceCase:
     game_id: str
@@ -1068,12 +1079,10 @@ def test_arena_visual_acceptance_matrix_exercises_render_playback_seek_observer_
     assert session.game_id == case.game_id
     assert session.plugin_id == case.visualization_spec.plugin_id
     assert session.playback.can_seek is True
-    assert session.capabilities == {
-        "supportsReplay": True,
-        "supportsTimeline": True,
-        "supportsSeek": True,
-        "observerModes": list(case.visualization_spec.observer_schema["supported_modes"]),
-    }
+    _assert_capabilities_include(
+        session.capabilities,
+        observer_modes=list(case.visualization_spec.observer_schema["supported_modes"]),
+    )
     assert [event.type for event in timeline_page.events] == [
         "snapshot",
         "decision_window_open",

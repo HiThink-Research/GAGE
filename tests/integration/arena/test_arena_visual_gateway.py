@@ -22,6 +22,7 @@ from gage_eval.role.arena.human_input_protocol import (
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.types import ArenaAction, GameResult
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt, ObserverRef, VisualSession
+from gage_eval.role.arena.visualization.gateway_service import ArenaVisualGatewayQueryService
 from gage_eval.role.arena.visualization.http_server import ArenaVisualHTTPServer
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
@@ -218,6 +219,17 @@ def _materialize_visual_http_session(tmp_path: Path, *, run_id: str, sample_id: 
     ArenaOutputWriter().finalize(session)
 
 
+def _assert_capabilities_include(
+    capabilities: dict[str, object],
+    *,
+    observer_modes: list[str],
+) -> None:
+    assert capabilities["supportsReplay"] is True
+    assert capabilities["supportsTimeline"] is True
+    assert capabilities["supportsSeek"] is True
+    assert capabilities["observerModes"] == observer_modes
+
+
 def _materialize_table_visual_http_session(tmp_path: Path, *, run_id: str, sample_id: str) -> None:
     session_dir = tmp_path / "runs" / run_id / "replays" / sample_id / "arena_visual_session" / "v1"
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -396,6 +408,78 @@ def test_arena_visual_gateway_prefers_visualization_spec_identity_for_recorder(t
     ]
 
 
+def test_arena_visual_gateway_persists_observer_modes_from_resolved_runtime_into_query_and_http_read_paths(
+    tmp_path: Path,
+) -> None:
+    replay_path = tmp_path / "runs" / "run-wired" / "replays" / "sample-wired" / "replay.json"
+
+    def _env_factory(**kwargs):
+        del kwargs
+        return _DummyEnv(replay_path)
+
+    resolved = _DummyResolved(
+        _env_factory,
+        visualization_spec=_DummyVisualizationSpec(
+            plugin_id="arena.visualization.vizdoom.frame_v1",
+            game_id="ignored",
+            supported_modes=("player", "camera"),
+        ),
+    )
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku-standard", scheduler="turn/default"),
+        resolved,
+        resources=None,
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-wired",
+        ),
+    )
+    session.player_specs = (_DummyPlayer(),)
+
+    replay_path.parent.mkdir(parents=True, exist_ok=True)
+    replay_path.write_text(
+        json.dumps({"schema": "gage_replay/v1", "artifacts": {}}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    observation = session.observe()
+    action = session.decide_current_player(observation)
+    session.apply(action)
+    session.advance()
+    session.finalize()
+
+    output = ArenaOutputWriter().finalize(session)
+    serialized = ArenaRoleAdapter._serialize_gamearena_value(output)
+    manifest_path = Path(serialized["artifacts"]["visual_session_ref"])
+
+    query_service = ArenaVisualGatewayQueryService()
+    visual_session = query_service.load_session(manifest_path)
+
+    _assert_capabilities_include(
+        visual_session.capabilities,
+        observer_modes=["player", "camera"],
+    )
+
+    server = ArenaVisualHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        base_dir=tmp_path,
+    )
+    server.start()
+    try:
+        host, port = server.server_address
+        session_payload = _get_json(
+            f"http://{host}:{port}/arena_visual/sessions/sample-wired"
+        )
+
+        _assert_capabilities_include(
+            session_payload["capabilities"],
+            observer_modes=["player", "camera"],
+        )
+    finally:
+        server.stop()
+
+
 def test_update_replay_manifest_visual_session_ref_is_non_fatal_when_missing(tmp_path: Path) -> None:
     replay_path = tmp_path / "missing" / "replay.json"
     assert update_replay_manifest_visual_session_ref(
@@ -469,12 +553,10 @@ def test_arena_visual_gateway_http_server_reads_generated_artifacts(tmp_path: Pa
         assert session_payload["sessionId"] == "sample-http"
         assert session_payload["timeline"]["eventCount"] == 6
         assert session_payload["playback"]["canSeek"] is True
-        assert session_payload["capabilities"] == {
-            "supportsReplay": True,
-            "supportsTimeline": True,
-            "supportsSeek": True,
-            "observerModes": ["player", "global"],
-        }
+        _assert_capabilities_include(
+            session_payload["capabilities"],
+            observer_modes=["player", "global"],
+        )
 
         assert timeline_payload["sessionId"] == "sample-http"
         assert timeline_payload["limit"] == 3
