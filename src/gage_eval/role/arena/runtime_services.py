@@ -9,7 +9,11 @@ from typing import Any, Optional
 from loguru import logger
 
 from gage_eval.role.arena.human_input_protocol import build_action_payload
-from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
+from gage_eval.role.arena.visualization.contracts import (
+    ActionIntentReceipt,
+    ChatMessage,
+    ControlCommand,
+)
 
 
 class _LazyService:
@@ -57,6 +61,8 @@ class ArenaRuntimeServiceHub:
         self._registered_displays: set[str] = set()
         self._intent_lock = threading.Lock()
         self._intent_counter = 0
+        self._control_lock = threading.Lock()
+        self._pending_controls: list[dict[str, Any]] = []
 
     def ensure_visualizer(self, factory: Callable[[], Any]) -> Any:
         return self._visualizer.get_or_create(factory)
@@ -137,6 +143,99 @@ class ArenaRuntimeServiceHub:
                 state="rejected",
                 reason=str(error),
             )
+        return ActionIntentReceipt(
+            intent_id=intent_id,
+            state="accepted",
+            reason="queued",
+        )
+
+    def submit_chat_message(
+        self,
+        session_id: str,
+        run_id: str | None,
+        payload: Mapping[str, Any],
+    ) -> ActionIntentReceipt:
+        del run_id
+        normalized = _normalize_chat_message(payload)
+        intent_id = self._next_intent_id(session_id)
+        action_server = self.peek_action_server()
+        if action_server is None:
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="rejected",
+                reason="action_queue_not_available",
+            )
+
+        route_error = _resolve_sample_route_error(action_server, session_id=session_id)
+        if route_error is not None:
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="rejected",
+                reason=route_error,
+            )
+
+        chat_queue = getattr(action_server, "chat_queue", None)
+        if chat_queue is None or not hasattr(chat_queue, "put"):
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="rejected",
+                reason="chat_queue_not_available",
+            )
+
+        chat_queue.put(normalized)
+        return ActionIntentReceipt(
+            intent_id=intent_id,
+            state="accepted",
+            reason="queued",
+        )
+
+    def submit_control_command(
+        self,
+        session_id: str,
+        run_id: str | None,
+        payload: Mapping[str, Any],
+    ) -> ActionIntentReceipt:
+        normalized = _normalize_control_command(payload)
+        intent_id = self._next_intent_id(session_id)
+        action_server = self.peek_action_server()
+        if action_server is None:
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="rejected",
+                reason="action_queue_not_available",
+            )
+
+        route_error = _resolve_sample_route_error(action_server, session_id=session_id)
+        if route_error is not None:
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="rejected",
+                reason=route_error,
+            )
+
+        submit_control_payload = getattr(action_server, "submit_control_payload", None)
+        if callable(submit_control_payload):
+            error = submit_control_payload(normalized)
+            if error is not None:
+                return ActionIntentReceipt(
+                    intent_id=intent_id,
+                    state="rejected",
+                    reason=str(error),
+                )
+        else:
+            control_queue = getattr(action_server, "control_queue", None)
+            if control_queue is not None and hasattr(control_queue, "put"):
+                control_queue.put(normalized)
+            else:
+                with self._control_lock:
+                    self._pending_controls.append(
+                        {
+                            "sessionId": str(session_id),
+                            "runId": None if run_id is None else str(run_id),
+                            "command": dict(normalized),
+                        }
+                    )
+
         return ActionIntentReceipt(
             intent_id=intent_id,
             state="accepted",
@@ -234,6 +333,30 @@ def _normalize_action_intent(
     )
 
 
+def _normalize_chat_message(payload: Mapping[str, Any]) -> dict[str, str]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("invalid_chat_payload")
+    try:
+        chat = ChatMessage.from_dict(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid_chat_payload") from exc
+    return {
+        "player_id": chat.player_id,
+        "text": chat.text,
+        "channel": chat.channel,
+    }
+
+
+def _normalize_control_command(payload: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("invalid_control_payload")
+    try:
+        command = ControlCommand.from_dict(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid_control_payload") from exc
+    return command.to_dict()
+
+
 def _normalize_action_value(action_payload: Any) -> tuple[str | None, dict[str, Any]]:
     if isinstance(action_payload, Mapping):
         metadata = dict(action_payload.get("metadata") or {})
@@ -249,6 +372,19 @@ def _normalize_action_value(action_payload: Any) -> tuple[str | None, dict[str, 
         )
         return action_text, metadata
     return _first_text(action_payload), {}
+
+
+def _resolve_sample_route_error(action_server: Any, *, session_id: str) -> str | None:
+    has_action_routes = getattr(action_server, "has_action_routes", None)
+    if callable(has_action_routes) and not has_action_routes():
+        return "sample_route_not_found"
+
+    resolve_action_queue = getattr(action_server, "resolve_action_queue", None)
+    if callable(resolve_action_queue):
+        _, error = resolve_action_queue(str(session_id))
+        if error is not None:
+            return str(error)
+    return None
 
 
 def _first_text(*values: Any) -> str | None:

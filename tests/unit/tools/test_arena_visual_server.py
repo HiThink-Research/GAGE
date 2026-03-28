@@ -151,10 +151,12 @@ def _persist_visual_session(
 
 def test_arena_visual_http_server_serves_session_timeline_scene_media_and_markers(tmp_path: Path) -> None:
     _persist_visual_session(tmp_path)
-    submitted: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_actions: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_chat: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_control: list[tuple[str, str | None, dict[str, object]]] = []
 
-    def _submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
-        submitted.append((session_id, run_id, payload))
+    def _action_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_actions.append((session_id, run_id, payload))
         return ActionIntentReceipt(
             intent_id="intent-1",
             state="accepted",
@@ -162,11 +164,29 @@ def test_arena_visual_http_server_serves_session_timeline_scene_media_and_marker
             reason="queued",
         )
 
+    def _chat_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_chat.append((session_id, run_id, payload))
+        return ActionIntentReceipt(
+            intent_id="chat-1",
+            state="accepted",
+            reason="queued",
+        )
+
+    def _control_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_control.append((session_id, run_id, payload))
+        return ActionIntentReceipt(
+            intent_id="control-1",
+            state="accepted",
+            reason="queued",
+        )
+
     server = ArenaVisualHTTPServer(
         host="127.0.0.1",
         port=0,
         base_dir=tmp_path,
-        action_submitter=_submitter,
+        action_submitter=_action_submitter,
+        chat_submitter=_chat_submitter,
+        control_submitter=_control_submitter,
     )
     server.start()
     try:
@@ -184,6 +204,19 @@ def test_arena_visual_http_server_serves_session_timeline_scene_media_and_marker
             {
                 "playerId": "player_0",
                 "action": {"move": "fire"},
+            },
+        )
+        chat_receipt_payload = _post_json(
+            f"{base_url}/chat",
+            {
+                "playerId": "player_0",
+                "text": "hello",
+            },
+        )
+        control_receipt_payload = _post_json(
+            f"{base_url}/control",
+            {
+                "commandType": "pause",
             },
         )
 
@@ -256,13 +289,42 @@ def test_arena_visual_http_server_serves_session_timeline_scene_media_and_marker
             "relatedEventSeq": 6,
             "reason": "queued",
         }
-        assert submitted == [
+        assert chat_receipt_payload == {
+            "intentId": "chat-1",
+            "state": "accepted",
+            "reason": "queued",
+        }
+        assert control_receipt_payload == {
+            "intentId": "control-1",
+            "state": "accepted",
+            "reason": "queued",
+        }
+        assert submitted_actions == [
             (
                 "sample-1",
                 None,
                 {
                     "playerId": "player_0",
                     "action": {"move": "fire"},
+                },
+            )
+        ]
+        assert submitted_chat == [
+            (
+                "sample-1",
+                None,
+                {
+                    "playerId": "player_0",
+                    "text": "hello",
+                },
+            )
+        ]
+        assert submitted_control == [
+            (
+                "sample-1",
+                None,
+                {
+                    "commandType": "pause",
                 },
             )
         ]
@@ -286,6 +348,46 @@ def test_arena_visual_http_server_reports_action_submitter_not_configured(tmp_pa
         )
         assert code == 501
         assert payload == {"error": "action_submitter_not_configured"}
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_reports_chat_submitter_not_configured(tmp_path: Path) -> None:
+    _persist_visual_session(tmp_path)
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.start()
+    try:
+        host, port = server.server_address
+        code, payload = _read_http_error(
+            Request(
+                f"http://{host}:{port}/arena_visual/sessions/sample-1/chat",
+                data=json.dumps({"playerId": "player_0", "text": "hello"}, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+        )
+        assert code == 501
+        assert payload == {"error": "chat_submitter_not_configured"}
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_reports_control_submitter_not_configured(tmp_path: Path) -> None:
+    _persist_visual_session(tmp_path)
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.start()
+    try:
+        host, port = server.server_address
+        code, payload = _read_http_error(
+            Request(
+                f"http://{host}:{port}/arena_visual/sessions/sample-1/control",
+                data=json.dumps({"commandType": "pause"}, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+        )
+        assert code == 501
+        assert payload == {"error": "control_submitter_not_configured"}
     finally:
         server.stop()
 

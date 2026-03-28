@@ -19,6 +19,8 @@ from gage_eval.role.arena.visualization.gateway_service import ArenaVisualGatewa
 
 ManifestResolver = Callable[[str, str | None], str | Path | None]
 ActionSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
+ChatSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
+ControlSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
 _SESSION_MANIFEST_SUFFIX = Path("arena_visual_session") / "v1" / "manifest.json"
 
 
@@ -227,6 +229,12 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         if suffix == ("actions",):
             self._handle_submit_action(session_id, run_id=run_id)
             return
+        if suffix == ("chat",):
+            self._handle_submit_chat(session_id, run_id=run_id)
+            return
+        if suffix == ("control",):
+            self._handle_submit_control(session_id, run_id=run_id)
+            return
         self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - match base signature
@@ -375,24 +383,63 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_json(media.to_dict(), status=HTTPStatus.OK)
 
     def _handle_submit_action(self, session_id: str, *, run_id: str | None) -> None:
+        self._handle_write_submission(
+            session_id=session_id,
+            run_id=run_id,
+            submitter=self._app.action_submitter,
+            not_configured_error="action_submitter_not_configured",
+            invalid_payload_error="invalid_action_payload",
+            submit_failed_error="action_submit_failed",
+        )
+
+    def _handle_submit_chat(self, session_id: str, *, run_id: str | None) -> None:
+        self._handle_write_submission(
+            session_id=session_id,
+            run_id=run_id,
+            submitter=self._app.chat_submitter,
+            not_configured_error="chat_submitter_not_configured",
+            invalid_payload_error="invalid_chat_payload",
+            submit_failed_error="chat_submit_failed",
+        )
+
+    def _handle_submit_control(self, session_id: str, *, run_id: str | None) -> None:
+        self._handle_write_submission(
+            session_id=session_id,
+            run_id=run_id,
+            submitter=self._app.control_submitter,
+            not_configured_error="control_submitter_not_configured",
+            invalid_payload_error="invalid_control_payload",
+            submit_failed_error="control_submit_failed",
+        )
+
+    def _handle_write_submission(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None,
+        submitter: ActionSubmitter | ChatSubmitter | ControlSubmitter | None,
+        not_configured_error: str,
+        invalid_payload_error: str,
+        submit_failed_error: str,
+    ) -> None:
         try:
             payload = self._read_json_object()
         except ValueError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
 
-        if self._app.action_submitter is None:
-            self._send_json({"error": "action_submitter_not_configured"}, status=HTTPStatus.NOT_IMPLEMENTED)
+        if submitter is None:
+            self._send_json({"error": not_configured_error}, status=HTTPStatus.NOT_IMPLEMENTED)
             return
 
         try:
-            receipt = self._app.action_submitter(session_id, run_id, payload)
+            receipt = submitter(session_id, run_id, payload)
         except ValueError:
-            self._send_json({"error": "invalid_action_payload"}, status=HTTPStatus.BAD_REQUEST)
+            self._send_json({"error": invalid_payload_error}, status=HTTPStatus.BAD_REQUEST)
             return
         except Exception:
-            logger.exception("Failed to submit action for {}", session_id)
-            self._send_json({"error": "action_submit_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            logger.exception("Failed write submission {} for {}", submit_failed_error, session_id)
+            self._send_json({"error": submit_failed_error}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         self._send_json(receipt.to_dict(), status=HTTPStatus.OK)
 
@@ -487,6 +534,8 @@ class ArenaVisualHTTPServer:
         query_service: ArenaVisualGatewayQueryService | None = None,
         manifest_resolver: ManifestResolver | None = None,
         action_submitter: ActionSubmitter | None = None,
+        chat_submitter: ChatSubmitter | None = None,
+        control_submitter: ControlSubmitter | None = None,
         allow_origin: str = "*",
     ) -> None:
         self._host = str(host)
@@ -495,6 +544,8 @@ class ArenaVisualHTTPServer:
         self._query_service = query_service or ArenaVisualGatewayQueryService()
         self._manifest_resolver = manifest_resolver or build_session_manifest_resolver(self._base_dir)
         self._action_submitter = action_submitter
+        self._chat_submitter = chat_submitter
+        self._control_submitter = control_submitter
         self._allow_origin = str(allow_origin)
         self._server = HTTPServer((self._host, self._port), ArenaVisualRequestHandler)
         setattr(self._server, "allow_origin", self._allow_origin)
@@ -504,6 +555,14 @@ class ArenaVisualHTTPServer:
     @property
     def action_submitter(self) -> ActionSubmitter | None:
         return self._action_submitter
+
+    @property
+    def chat_submitter(self) -> ChatSubmitter | None:
+        return self._chat_submitter
+
+    @property
+    def control_submitter(self) -> ControlSubmitter | None:
+        return self._control_submitter
 
     @property
     def query_service(self) -> ArenaVisualGatewayQueryService:
@@ -586,6 +645,8 @@ def _is_within_root(candidate: Path, root: Path) -> bool:
 
 __all__ = [
     "ActionSubmitter",
+    "ChatSubmitter",
+    "ControlSubmitter",
     "ArenaVisualHTTPServer",
     "ArenaVisualRequestHandler",
     "ManifestResolver",

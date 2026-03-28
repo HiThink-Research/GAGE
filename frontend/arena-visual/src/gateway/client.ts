@@ -42,6 +42,14 @@ interface SubmitActionRequest extends RequestContext {
   payload: Record<string, unknown>;
 }
 
+interface SubmitChatRequest extends RequestContext {
+  payload: Record<string, unknown>;
+}
+
+interface SubmitControlRequest extends RequestContext {
+  payload: Record<string, unknown>;
+}
+
 export interface ArenaGatewayClient {
   loadSession(input: ObserverReadContext): Promise<VisualSession>;
   loadTimeline(input: TimelineRequest): Promise<TimelinePage>;
@@ -49,6 +57,8 @@ export interface ArenaGatewayClient {
   loadMarkers(input: MarkerRequest): Promise<{ sessionId: string; marker: string; seqs: number[] }>;
   loadMedia(input: MediaRequest): Promise<MediaSourceRef>;
   submitAction(input: SubmitActionRequest): Promise<ActionIntentReceipt>;
+  submitChat(input: SubmitChatRequest): Promise<ActionIntentReceipt>;
+  submitControl(input: SubmitControlRequest): Promise<ActionIntentReceipt>;
   buildMediaUrl(input: MediaRequest): string;
 }
 
@@ -135,6 +145,22 @@ export function createArenaGatewayClient({
 
     submitAction: ({ sessionId, payload, runId }) =>
       requestJson<ActionIntentReceipt>(`${buildSessionPath(sessionId)}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        runId,
+      }),
+
+    submitChat: ({ sessionId, payload, runId }) =>
+      requestJson<ActionIntentReceipt>(`${buildSessionPath(sessionId)}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        runId,
+      }),
+
+    submitControl: ({ sessionId, payload, runId }) =>
+      requestJson<ActionIntentReceipt>(`${buildSessionPath(sessionId)}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

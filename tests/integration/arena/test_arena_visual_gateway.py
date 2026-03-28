@@ -386,10 +386,12 @@ def test_update_replay_manifest_visual_session_ref_is_non_fatal_when_missing(tmp
 def test_arena_visual_gateway_http_server_reads_generated_artifacts(tmp_path: Path) -> None:
     _materialize_visual_http_session(tmp_path, run_id="run-http", sample_id="sample-http")
 
-    submitted: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_actions: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_chat: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_control: list[tuple[str, str | None, dict[str, object]]] = []
 
-    def _submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
-        submitted.append((session_id, run_id, payload))
+    def _action_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_actions.append((session_id, run_id, payload))
         return ActionIntentReceipt(
             intent_id="intent-http-1",
             state="accepted",
@@ -397,11 +399,29 @@ def test_arena_visual_gateway_http_server_reads_generated_artifacts(tmp_path: Pa
             reason="queued",
         )
 
+    def _chat_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_chat.append((session_id, run_id, payload))
+        return ActionIntentReceipt(
+            intent_id="chat-http-1",
+            state="accepted",
+            reason="queued",
+        )
+
+    def _control_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_control.append((session_id, run_id, payload))
+        return ActionIntentReceipt(
+            intent_id="control-http-1",
+            state="accepted",
+            reason="queued",
+        )
+
     server = ArenaVisualHTTPServer(
         host="127.0.0.1",
         port=0,
         base_dir=tmp_path,
-        action_submitter=_submitter,
+        action_submitter=_action_submitter,
+        chat_submitter=_chat_submitter,
+        control_submitter=_control_submitter,
     )
     server.start()
     try:
@@ -415,6 +435,14 @@ def test_arena_visual_gateway_http_server_reads_generated_artifacts(tmp_path: Pa
         receipt_payload = _post_json(
             f"{base_url}/actions",
             {"playerId": "player_0", "action": {"move": "A1"}},
+        )
+        chat_receipt_payload = _post_json(
+            f"{base_url}/chat",
+            {"playerId": "player_0", "text": "hello"},
+        )
+        control_receipt_payload = _post_json(
+            f"{base_url}/control",
+            {"commandType": "pause"},
         )
 
         assert session_payload["sessionId"] == "sample-http"
@@ -447,11 +475,35 @@ def test_arena_visual_gateway_http_server_reads_generated_artifacts(tmp_path: Pa
             "relatedEventSeq": 6,
             "reason": "queued",
         }
-        assert submitted == [
+        assert chat_receipt_payload == {
+            "intentId": "chat-http-1",
+            "state": "accepted",
+            "reason": "queued",
+        }
+        assert control_receipt_payload == {
+            "intentId": "control-http-1",
+            "state": "accepted",
+            "reason": "queued",
+        }
+        assert submitted_actions == [
             (
                 "sample-http",
                 None,
                 {"playerId": "player_0", "action": {"move": "A1"}},
+            )
+        ]
+        assert submitted_chat == [
+            (
+                "sample-http",
+                None,
+                {"playerId": "player_0", "text": "hello"},
+            )
+        ]
+        assert submitted_control == [
+            (
+                "sample-http",
+                None,
+                {"commandType": "pause"},
             )
         ]
     finally:
@@ -542,6 +594,8 @@ def test_arena_visual_gateway_routes_actions_into_runtime_queue_and_driver_consu
         port=0,
         base_dir=tmp_path,
         action_submitter=runtime_hub.submit_action_intent,
+        chat_submitter=runtime_hub.submit_chat_message,
+        control_submitter=runtime_hub.submit_control_command,
     )
     server.start()
     monkeypatch.setattr(
@@ -561,9 +615,32 @@ def test_arena_visual_gateway_routes_actions_into_runtime_queue_and_driver_consu
                 },
             },
         )
+        chat_receipt_payload = _post_json(
+            f"http://{host}:{port}/arena_visual/sessions/sample-human-1/chat",
+            {
+                "playerId": "Human",
+                "text": "hello from human",
+            },
+        )
+        control_receipt_payload = _post_json(
+            f"http://{host}:{port}/arena_visual/sessions/sample-human-1/control",
+            {
+                "commandType": "pause",
+            },
+        )
 
         assert receipt_payload == {
             "intentId": "sample-human-1:intent-1",
+            "state": "accepted",
+            "reason": "queued",
+        }
+        assert chat_receipt_payload == {
+            "intentId": "sample-human-1:intent-2",
+            "state": "accepted",
+            "reason": "queued",
+        }
+        assert control_receipt_payload == {
+            "intentId": "sample-human-1:intent-3",
             "state": "accepted",
             "reason": "queued",
         }
@@ -585,6 +662,12 @@ def test_arena_visual_gateway_routes_actions_into_runtime_queue_and_driver_consu
                 "source": "frontend",
                 "hold_ticks": 3,
             },
+        }
+        queued_chat_payload = action_server.chat_queue.get(timeout=1.0)
+        assert queued_chat_payload == {
+            "player_id": "Human",
+            "text": "hello from human",
+            "channel": "table",
         }
         action_router.queue_for("Human").put(json.dumps(queued_payload, ensure_ascii=False))
 
@@ -614,17 +697,29 @@ def test_arena_visual_gateway_http_server_disambiguates_duplicate_sample_ids_by_
     _materialize_visual_http_session(tmp_path, run_id="run-a", sample_id="shared-sample")
     _materialize_visual_http_session(tmp_path, run_id="run-b", sample_id="shared-sample")
 
-    submitted: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_actions: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_chat: list[tuple[str, str | None, dict[str, object]]] = []
+    submitted_control: list[tuple[str, str | None, dict[str, object]]] = []
 
-    def _submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
-        submitted.append((session_id, run_id, payload))
+    def _action_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_actions.append((session_id, run_id, payload))
         return ActionIntentReceipt(intent_id="intent-run-b", state="accepted")
+
+    def _chat_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_chat.append((session_id, run_id, payload))
+        return ActionIntentReceipt(intent_id="chat-run-b", state="accepted")
+
+    def _control_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_control.append((session_id, run_id, payload))
+        return ActionIntentReceipt(intent_id="control-run-b", state="accepted")
 
     server = ArenaVisualHTTPServer(
         host="127.0.0.1",
         port=0,
         base_dir=tmp_path,
-        action_submitter=_submitter,
+        action_submitter=_action_submitter,
+        chat_submitter=_chat_submitter,
+        control_submitter=_control_submitter,
     )
     server.start()
     try:
@@ -639,6 +734,14 @@ def test_arena_visual_gateway_http_server_disambiguates_duplicate_sample_ids_by_
             f"http://{host}:{port}/arena_visual/sessions/shared-sample/actions?run_id=run-b",
             {"playerId": "player_0", "action": {"move": "A1"}},
         )
+        chat_receipt_payload = _post_json(
+            f"http://{host}:{port}/arena_visual/sessions/shared-sample/chat?run_id=run-b",
+            {"playerId": "player_0", "text": "hello"},
+        )
+        control_receipt_payload = _post_json(
+            f"http://{host}:{port}/arena_visual/sessions/shared-sample/control?run_id=run-b",
+            {"commandType": "pause"},
+        )
 
         assert code == 409
         assert payload == {
@@ -651,11 +754,33 @@ def test_arena_visual_gateway_http_server_disambiguates_duplicate_sample_ids_by_
             "intentId": "intent-run-b",
             "state": "accepted",
         }
-        assert submitted == [
+        assert chat_receipt_payload == {
+            "intentId": "chat-run-b",
+            "state": "accepted",
+        }
+        assert control_receipt_payload == {
+            "intentId": "control-run-b",
+            "state": "accepted",
+        }
+        assert submitted_actions == [
             (
                 "shared-sample",
                 "run-b",
                 {"playerId": "player_0", "action": {"move": "A1"}},
+            )
+        ]
+        assert submitted_chat == [
+            (
+                "shared-sample",
+                "run-b",
+                {"playerId": "player_0", "text": "hello"},
+            )
+        ]
+        assert submitted_control == [
+            (
+                "shared-sample",
+                "run-b",
+                {"commandType": "pause"},
             )
         ]
     finally:

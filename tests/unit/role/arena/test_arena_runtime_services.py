@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from queue import Queue
 from typing import Any
 
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
@@ -27,6 +28,7 @@ class _StubVisualizer:
 class _StubActionServer:
     def __init__(self) -> None:
         self.action_queue = object()
+        self.chat_queue: Queue[dict[str, str]] = Queue()
         self.register_calls: list[tuple[str, Any]] = []
         self.unregister_calls: list[str] = []
         self.stopped = False
@@ -142,3 +144,21 @@ def test_runtime_service_hub_routes_bindings_and_shutdown() -> None:
     assert ws_hub.stopped is True
     assert hub.registered_displays() == set()
 
+
+def test_runtime_service_hub_submits_chat_and_control_messages() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    hub.ensure_action_server(_StubActionServer)
+
+    chat_receipt = hub.submit_chat_message(
+        "session-1",
+        None,
+        {"playerId": "p0", "text": "hi"},
+    )
+    control_receipt = hub.submit_control_command(
+        "session-1",
+        None,
+        {"commandType": "pause"},
+    )
+
+    assert chat_receipt.state == "accepted"
+    assert control_receipt.state == "accepted"

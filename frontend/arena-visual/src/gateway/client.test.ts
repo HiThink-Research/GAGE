@@ -150,6 +150,73 @@ describe("createArenaGatewayClient", () => {
     );
   });
 
+  it("submits chat and control payloads to dedicated routes", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        intentId: "chat-1",
+        state: "accepted",
+        reason: "queued",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        intentId: "control-1",
+        state: "accepted",
+        reason: "queued",
+      }),
+    );
+
+    const client = createArenaGatewayClient({ baseUrl: "http://arena.local" });
+    const chatReceipt = await client.submitChat({
+      sessionId: "sample-1",
+      payload: {
+        playerId: "player_0",
+        text: "hello",
+      },
+    });
+    const controlReceipt = await client.submitControl({
+      sessionId: "sample-1",
+      payload: {
+        commandType: "pause",
+      },
+    });
+
+    expect(chatReceipt).toEqual({
+      intentId: "chat-1",
+      state: "accepted",
+      relatedEventSeq: undefined,
+      reason: "queued",
+    });
+    expect(controlReceipt).toEqual({
+      intentId: "control-1",
+      state: "accepted",
+      relatedEventSeq: undefined,
+      reason: "queued",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://arena.local/arena_visual/sessions/sample-1/chat",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          playerId: "player_0",
+          text: "hello",
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://arena.local/arena_visual/sessions/sample-1/control",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          commandType: "pause",
+        }),
+      }),
+    );
+  });
+
   it("throws stable gateway errors for non-ok responses", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(
