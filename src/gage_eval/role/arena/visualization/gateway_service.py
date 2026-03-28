@@ -14,6 +14,7 @@ from gage_eval.role.arena.visualization.assembly import (
 from gage_eval.role.arena.visualization.contracts import (
     MediaSourceRef,
     ObserverRef,
+    SeekSnapshotRecord,
     TimelineEvent,
     VisualScene,
     VisualSession,
@@ -38,6 +39,7 @@ class _LoadedVisualSession:
     timeline_events: tuple[TimelineEvent, ...]
     event_index: dict[int, TimelineEvent]
     snapshot_anchors: tuple[dict[str, Any], ...]
+    seek_snapshots: tuple[SeekSnapshotRecord, ...]
 
 
 class ArenaVisualGatewayQueryService:
@@ -109,7 +111,14 @@ class ArenaVisualGatewayQueryService:
         if event is None:
             return None
 
-        snapshot_anchor = self._select_snapshot_anchor(bundle.snapshot_anchors, seq=event.seq, event=event)
+        snapshot_anchor = self._select_seek_snapshot(bundle.seek_snapshots, seq=event.seq, event=event)
+        if snapshot_anchor is not None:
+            snapshot_anchor = self._merge_snapshot_anchor_metadata(
+                snapshot_anchor,
+                snapshot_anchors=bundle.snapshot_anchors,
+            )
+        if snapshot_anchor is None:
+            snapshot_anchor = self._select_snapshot_anchor(bundle.snapshot_anchors, seq=event.seq, event=event)
         snapshot_body = self._load_snapshot_body(bundle.manifest_path, snapshot_anchor)
         scene = assemble_visual_scene(
             visual_session=visual_session,
@@ -167,6 +176,11 @@ class ArenaVisualGatewayQueryService:
             self._normalize_snapshot_anchor(normalized_manifest_path, anchor)
             for anchor in self._load_snapshot_anchors(manifest_payload, index_payload)
         )
+        seek_snapshots = self._load_seek_snapshots(
+            normalized_manifest_path,
+            manifest_payload,
+            snapshot_anchors,
+        )
         bundle = _LoadedVisualSession(
             manifest_path=normalized_manifest_path,
             manifest_payload=manifest_payload,
@@ -175,6 +189,7 @@ class ArenaVisualGatewayQueryService:
             timeline_events=timeline_events,
             event_index={event.seq: event for event in timeline_events},
             snapshot_anchors=snapshot_anchors,
+            seek_snapshots=seek_snapshots,
         )
         self._session_cache[normalized_manifest_path] = bundle
         return bundle
@@ -247,6 +262,51 @@ class ArenaVisualGatewayQueryService:
         normalized["snapshotRef"] = str(snapshot_path)
         return normalized
 
+    def _load_seek_snapshots(
+        self,
+        manifest_path: Path,
+        manifest_payload: Mapping[str, Any],
+        snapshot_anchors: Sequence[Mapping[str, Any]],
+    ) -> tuple[SeekSnapshotRecord, ...]:
+        ref = manifest_payload.get("artifacts", {}).get("seek_snapshots_ref")
+        if ref:
+            seek_snapshots_path = self._resolve_ref_path(manifest_path, str(ref))
+            if seek_snapshots_path.exists():
+                payload = json.loads(seek_snapshots_path.read_text(encoding="utf-8"))
+                records = payload.get("seekSnapshots", ())
+                if isinstance(records, Sequence) and not isinstance(records, (str, bytes)):
+                    return tuple(
+                        self._normalize_seek_snapshot_record(manifest_path, record)
+                        for record in records
+                        if isinstance(record, Mapping)
+                    )
+                return ()
+
+        return tuple(
+            SeekSnapshotRecord(
+                seq=int(anchor["seq"]),
+                ts_ms=int(anchor.get("tsMs", 0)),
+                snapshot_mode="full",
+                snapshot_ref=str(anchor["snapshotRef"]),
+            )
+            for anchor in snapshot_anchors
+        )
+
+    def _normalize_seek_snapshot_record(
+        self,
+        manifest_path: Path,
+        payload: Mapping[str, Any],
+    ) -> SeekSnapshotRecord:
+        record = SeekSnapshotRecord.from_dict(payload)
+        snapshot_path = self._resolve_ref_path(manifest_path, record.snapshot_ref)
+        self._require_existing_file(snapshot_path, label="snapshotRef")
+        return SeekSnapshotRecord(
+            seq=record.seq,
+            ts_ms=record.ts_ms,
+            snapshot_mode=record.snapshot_mode,
+            snapshot_ref=str(snapshot_path),
+        )
+
     def _select_snapshot_anchor(
         self,
         snapshot_anchors: Sequence[Mapping[str, Any]],
@@ -266,6 +326,44 @@ class ArenaVisualGatewayQueryService:
             if anchor_seq <= seq and (best is None or anchor_seq > int(best.get("seq", -1))):
                 best = anchor
         return None if best is None else dict(best)
+
+    def _select_seek_snapshot(
+        self,
+        seek_snapshots: Sequence[SeekSnapshotRecord],
+        *,
+        seq: int,
+        event: TimelineEvent,
+    ) -> dict[str, Any] | None:
+        requested_snapshot_seq = event.ref_snapshot_seq
+        if requested_snapshot_seq is not None:
+            for record in seek_snapshots:
+                if record.seq == int(requested_snapshot_seq):
+                    return record.to_dict()
+            return None
+
+        best: SeekSnapshotRecord | None = None
+        for record in seek_snapshots:
+            if record.seq <= seq and (best is None or record.seq > best.seq):
+                best = record
+        return None if best is None else best.to_dict()
+
+    def _merge_snapshot_anchor_metadata(
+        self,
+        snapshot_anchor: Mapping[str, Any],
+        *,
+        snapshot_anchors: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        merged = dict(snapshot_anchor)
+        snapshot_seq = int(merged.get("seq", -1))
+        for legacy_anchor in snapshot_anchors:
+            if int(legacy_anchor.get("seq", -1)) != snapshot_seq:
+                continue
+            for key, value in legacy_anchor.items():
+                if key == "snapshotRef":
+                    continue
+                merged.setdefault(key, value)
+            break
+        return merged
 
     def _load_snapshot_body(
         self,

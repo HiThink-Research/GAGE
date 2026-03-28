@@ -331,10 +331,12 @@ def test_arena_visual_gateway_records_and_persists_sidecar_artifacts(tmp_path: P
     timeline_path = manifest_path.parent / "timeline.jsonl"
     snapshot_dir = manifest_path.parent / "snapshots"
     index_path = manifest_path.parent / "index.json"
+    seek_snapshots_path = manifest_path.parent / "seek_snapshots.json"
 
     assert manifest_path.exists()
     assert timeline_path.exists()
     assert index_path.exists()
+    assert seek_snapshots_path.exists()
     assert any(snapshot_dir.iterdir())
 
     events = [json.loads(line) for line in timeline_path.read_text(encoding="utf-8").splitlines()]
@@ -347,6 +349,8 @@ def test_arena_visual_gateway_records_and_persists_sidecar_artifacts(tmp_path: P
         "result",
     ]
     assert [int(event["seq"]) for event in events] == [1, 2, 3, 4, 5, 6]
+    seek_snapshots = json.loads(seek_snapshots_path.read_text(encoding="utf-8"))
+    assert seek_snapshots["seekSnapshots"][0]["snapshotMode"] == "full"
     replay_manifest = json.loads(Path(artifacts["replay_ref"]).read_text(encoding="utf-8"))
     assert replay_manifest["artifacts"]["visual_session_ref"].endswith(
         "arena_visual_session/v1/manifest.json"

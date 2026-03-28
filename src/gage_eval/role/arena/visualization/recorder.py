@@ -20,6 +20,7 @@ from gage_eval.role.arena.visualization.contracts import (
     ObserverRef,
     PlaybackState,
     SchedulingState,
+    SeekSnapshotRecord,
     TimelineEvent,
     VisualSession,
 )
@@ -256,6 +257,7 @@ class ArenaVisualSessionRecorder:
         layout.snapshot_dir.mkdir(parents=True, exist_ok=True)
 
         snapshot_anchors: list[dict[str, Any]] = []
+        seek_snapshots: list[SeekSnapshotRecord] = []
         for snapshot in self._snapshot_payloads:
             snapshot_path = layout.snapshot_dir / f"seq-{int(snapshot['seq']):06d}.json"
             snapshot_payload = {
@@ -276,6 +278,14 @@ class ArenaVisualSessionRecorder:
                     "label": snapshot.get("label"),
                     "snapshotRef": str(snapshot_path),
                 }
+            )
+            seek_snapshots.append(
+                SeekSnapshotRecord(
+                    seq=int(snapshot["seq"]),
+                    ts_ms=int(snapshot["tsMs"]),
+                    snapshot_mode="full",
+                    snapshot_ref=str(snapshot_path),
+                )
             )
 
         timeline_path = layout.timeline_path
@@ -303,6 +313,25 @@ class ArenaVisualSessionRecorder:
         )
         layout.index_path.write_text(
             json.dumps(index_payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        layout.seek_snapshots_path.write_text(
+            json.dumps(
+                {
+                    "schema": "arena_visual_session/v1",
+                    "version": "1.0.0",
+                    "seekSnapshots": [
+                        {
+                            **record.to_dict(),
+                            "snapshotRef": layout.relative_ref(Path(record.snapshot_ref)),
+                        }
+                        for record in seek_snapshots
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
             encoding="utf-8",
         )
         persisted_session = VisualSession.from_dict(manifest_payload["visualSession"])

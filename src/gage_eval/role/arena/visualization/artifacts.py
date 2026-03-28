@@ -334,6 +334,10 @@ class ArenaVisualArtifactLayout:
         return self.session_dir / "index.json"
 
     @property
+    def seek_snapshots_path(self) -> Path:
+        return self.session_dir / "seek_snapshots.json"
+
+    @property
     def snapshot_dir(self) -> Path:
         return self.session_dir / "snapshots"
 
@@ -355,6 +359,7 @@ class ArenaVisualArtifactLayout:
             "timelineRef": str(self.timeline_path),
             "manifestRef": str(self.manifest_path),
             "indexRef": str(self.index_path),
+            "seekSnapshotsRef": str(self.seek_snapshots_path),
             "snapshotDir": str(self.snapshot_dir),
             "visualSessionRef": self.visual_session_ref,
             "version": self.version,
@@ -393,6 +398,10 @@ class ArenaVisualSessionArtifacts:
     @property
     def snapshot_dir(self) -> Path:
         return self.layout.snapshot_dir
+
+    @property
+    def seek_snapshots_path(self) -> Path:
+        return self.layout.seek_snapshots_path
 
     @property
     def visual_session_ref(self) -> str:
@@ -475,6 +484,7 @@ def build_visual_session_manifest(
         "artifacts": {
             "timeline_ref": layout.relative_ref(layout.timeline_path),
             "index_ref": layout.relative_ref(layout.index_path),
+            "seek_snapshots_ref": layout.relative_ref(layout.seek_snapshots_path),
             "manifest_ref": layout.relative_ref(layout.manifest_path),
             "snapshot_dir_ref": layout.relative_ref(layout.snapshot_dir),
             "visual_session_ref": layout.visual_session_ref,

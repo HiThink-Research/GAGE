@@ -102,6 +102,36 @@ def test_visual_session_recorder_persists_timeline_manifest_snapshot_and_markers
     assert snapshot_payload["seq"] == 5
 
 
+def test_visual_session_recorder_persists_seek_snapshot_index(tmp_path: Path) -> None:
+    replay_path = tmp_path / "runs" / "run-1" / "replays" / "sample-1" / "replay.json"
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena-role",
+        game_id="gomoku",
+        scheduling_family="turn",
+        session_id="sample-1",
+    )
+
+    recorder.record_snapshot(
+        ts_ms=1005,
+        step=2,
+        tick=1,
+        snapshot={"board_text": "demo-board"},
+        anchor=True,
+    )
+
+    artifacts = recorder.persist(replay_path)
+
+    seek_index = json.loads((artifacts.layout.session_dir / "seek_snapshots.json").read_text(encoding="utf-8"))
+    assert seek_index["seekSnapshots"] == [
+        {
+            "seq": 1,
+            "tsMs": 1005,
+            "snapshotMode": "full",
+            "snapshotRef": "snapshots/seq-000001.json",
+        }
+    ]
+
+
 def test_visual_session_recorder_bounds_heavy_snapshot_payloads() -> None:
     recorder = ArenaVisualSessionRecorder(
         plugin_id="arena-role",

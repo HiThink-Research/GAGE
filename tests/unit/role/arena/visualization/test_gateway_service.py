@@ -215,6 +215,131 @@ def _persist_table_visual_session(tmp_path: Path) -> Path:
     return manifest_path
 
 
+def _persist_visual_session_with_dedicated_seek_snapshots(
+    tmp_path: Path,
+    *,
+    seek_snapshot_seqs: tuple[int, ...] = (5, 8),
+    event_ref_snapshot_seq: int | None = None,
+) -> Path:
+    session_dir = tmp_path / "runs" / "run-seek" / "replays" / "seek-sample" / "arena_visual_session" / "v1"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = session_dir / "manifest.json"
+    index_path = session_dir / "index.json"
+    timeline_path = session_dir / "timeline.jsonl"
+    seek_snapshots_path = session_dir / "seek_snapshots.json"
+    snapshot_dir = session_dir / "snapshots"
+    snapshot_dir.mkdir(exist_ok=True)
+    snapshot_path_5 = snapshot_dir / "seq-5.json"
+    snapshot_path_8 = snapshot_dir / "seq-8.json"
+
+    manifest_payload = {
+        "visualSession": VisualSession(
+            session_id="seek-sample",
+            game_id="gomoku",
+            plugin_id=GOMOKU_VISUALIZATION_SPEC.plugin_id,
+            lifecycle="closed",
+            observer=ObserverRef(observer_id="", observer_kind="spectator"),
+            timeline={"eventCount": 3, "tailSeq": 8},
+        ).to_dict(),
+        "artifacts": {
+            "index_ref": "index.json",
+            "timeline_ref": "timeline.jsonl",
+            "seek_snapshots_ref": "seek_snapshots.json",
+        },
+        "timeline": {
+            "indexRef": "index.json",
+            "timelineRef": "timeline.jsonl",
+            "snapshotAnchors": [
+                {
+                    "seq": 5,
+                    "label": "legacy-anchor-5",
+                    "snapshotRef": "snapshots/seq-5.json",
+                },
+                {
+                    "seq": 8,
+                    "label": "legacy-anchor-8",
+                    "snapshotRef": "snapshots/seq-8.json",
+                }
+            ],
+        },
+    }
+    index_payload = {
+        "snapshotAnchors": [
+            {
+                "seq": 5,
+                "label": "legacy-anchor-5",
+                "snapshotRef": "snapshots/seq-5.json",
+            },
+            {
+                "seq": 8,
+                "label": "legacy-anchor-8",
+                "snapshotRef": "snapshots/seq-8.json",
+            }
+        ],
+        "markers": {
+            "snapshot": [5, 8],
+            "result": [7],
+        },
+    }
+    seek_snapshot_payload = {
+        "seekSnapshots": [
+            payload
+            for payload in (
+                {
+                    "seq": 5,
+                    "tsMs": 1005,
+                    "snapshotMode": "full",
+                    "snapshotRef": "snapshots/seq-5.json",
+                },
+                {
+                    "seq": 8,
+                    "tsMs": 1008,
+                    "snapshotMode": "full",
+                    "snapshotRef": "snapshots/seq-8.json",
+                },
+            )
+            if int(payload["seq"]) in set(seek_snapshot_seqs)
+        ]
+    }
+    events = [
+        {
+            "seq": 5,
+            "tsMs": 1005,
+            "type": "snapshot",
+            "label": "snapshot",
+        },
+        {
+            "seq": 7,
+            "tsMs": 1007,
+            "type": "result",
+            "label": "result",
+        },
+        {
+            "seq": 8,
+            "tsMs": 1008,
+            "type": "snapshot",
+            "label": "snapshot",
+            "refSnapshotSeq": event_ref_snapshot_seq,
+        },
+    ]
+    snapshot_path_5.write_text(
+        json.dumps({"body": {"board": {"state": "older-anchor"}, "step": 5}}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    snapshot_path_8.write_text(
+        json.dumps({"body": {"board": {"state": "dedicated-anchor"}, "step": 8}}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    index_path.write_text(json.dumps(index_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    seek_snapshots_path.write_text(json.dumps(seek_snapshot_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    timeline_path.write_text(
+        "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
 def _persist_runtime_style_recorded_session(
     tmp_path: Path,
     *,
@@ -518,6 +643,51 @@ def test_gateway_service_loads_scene_by_seq_using_snapshot_anchor_when_available
     assert scene.media.primary is not None
     assert scene.media.primary.media_id == "frame-5"
     assert [ref.media_id for ref in scene.media.auxiliary] == ["frame-5-mini"]
+
+
+def test_gateway_service_loads_scene_by_seq_using_seek_snapshot_index(tmp_path: Path) -> None:
+    manifest_path = _persist_visual_session_with_dedicated_seek_snapshots(tmp_path)
+    service = ArenaVisualGatewayQueryService(visualization_spec=GOMOKU_VISUALIZATION_SPEC)
+
+    scene = service.load_scene(manifest_path, seq=8)
+
+    assert scene is not None
+    assert scene.phase == "replay"
+    assert scene.seq == 8
+    assert scene.summary["snapshotSeq"] == 8
+    assert scene.summary["snapshotLabel"] == "legacy-anchor-8"
+    assert scene.summary["eventType"] == "snapshot"
+
+
+def test_gateway_service_falls_back_to_legacy_snapshot_anchor_when_seek_snapshot_file_is_missing(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _persist_visual_session_with_dedicated_seek_snapshots(tmp_path)
+    (manifest_path.parent / "seek_snapshots.json").unlink()
+    service = ArenaVisualGatewayQueryService(visualization_spec=GOMOKU_VISUALIZATION_SPEC)
+
+    scene = service.load_scene(manifest_path, seq=8)
+
+    assert scene is not None
+    assert scene.summary["snapshotSeq"] == 8
+    assert scene.summary["snapshotLabel"] == "legacy-anchor-8"
+
+
+def test_gateway_service_falls_back_to_legacy_snapshot_anchor_when_explicit_ref_snapshot_seq_is_missing_from_seek_index(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _persist_visual_session_with_dedicated_seek_snapshots(
+        tmp_path,
+        seek_snapshot_seqs=(5,),
+        event_ref_snapshot_seq=8,
+    )
+    service = ArenaVisualGatewayQueryService(visualization_spec=GOMOKU_VISUALIZATION_SPEC)
+
+    scene = service.load_scene(manifest_path, seq=8)
+
+    assert scene is not None
+    assert scene.summary["snapshotSeq"] == 8
+    assert scene.summary["snapshotLabel"] == "legacy-anchor-8"
 
 
 def test_gateway_service_looks_up_marker_sequences_from_index(tmp_path: Path) -> None:
