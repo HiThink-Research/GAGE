@@ -286,6 +286,37 @@ def test_control_command_invalid_payload_validation(payload: dict[str, object]) 
         ControlCommand.from_dict(payload)
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"commandType": "pause", "targetSeq": 3},
+        {"commandType": "pause", "stepDelta": 1},
+        {"commandType": "pause", "speed": 1.25},
+        {"commandType": "follow_tail", "targetSeq": 3},
+        {"commandType": "follow_tail", "stepDelta": 1},
+        {"commandType": "follow_tail", "speed": 1.25},
+        {"commandType": "replay", "targetSeq": 3},
+        {"commandType": "replay", "stepDelta": 1},
+        {"commandType": "replay", "speed": 1.25},
+        {"commandType": "seek_end", "targetSeq": 3},
+        {"commandType": "seek_end", "stepDelta": 1},
+        {"commandType": "seek_end", "speed": 1.25},
+        {"commandType": "seek_seq", "targetSeq": 42, "stepDelta": 1},
+        {"commandType": "seek_seq", "targetSeq": 42, "speed": 1.25},
+        {"commandType": "step", "stepDelta": 1, "targetSeq": 42},
+        {"commandType": "step", "stepDelta": 1, "speed": 1.25},
+        {"commandType": "set_speed", "speed": 1.25, "targetSeq": 42},
+        {"commandType": "set_speed", "speed": 1.25, "stepDelta": 1},
+        {"commandType": "back_to_tail", "targetSeq": 3},
+        {"commandType": "back_to_tail", "stepDelta": 1},
+        {"commandType": "back_to_tail", "speed": 1.25},
+    ],
+)
+def test_control_command_rejects_incompatible_extra_fields(payload: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        ControlCommand.from_dict(payload)
+
+
 def test_chat_message_round_trip() -> None:
     message = ChatMessage(
         player_id="p0",

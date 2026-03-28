@@ -3,15 +3,43 @@ import { describe, expect, it } from "vitest";
 import { resolveArenaPlugin } from "./registry";
 
 describe("resolveArenaPlugin", () => {
-  const knownPluginIds = [
-    "arena.visualization.gomoku.board_v1",
-    "arena.visualization.tictactoe.board_v1",
-    "arena.visualization.doudizhu.table_v1",
-    "arena.visualization.mahjong.table_v1",
-    "arena.visualization.pettingzoo.frame_v1",
-    "arena.visualization.vizdoom.frame_v1",
-    "arena.visualization.retro_platformer.frame_v1",
-  ] as const;
+  const expectedKnownPluginManifests = {
+    "arena.visualization.gomoku.board_v1": {
+      sceneKinds: ["board"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
+    "arena.visualization.tictactoe.board_v1": {
+      sceneKinds: ["board"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
+    "arena.visualization.doudizhu.table_v1": {
+      sceneKinds: ["table"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
+    "arena.visualization.mahjong.table_v1": {
+      sceneKinds: ["table"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
+    "arena.visualization.pettingzoo.frame_v1": {
+      sceneKinds: ["frame"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
+    "arena.visualization.vizdoom.frame_v1": {
+      sceneKinds: ["frame"],
+      supportedObservers: ["player", "camera"],
+      acceptsHumanIntent: true,
+    },
+    "arena.visualization.retro_platformer.frame_v1": {
+      sceneKinds: ["frame"],
+      supportedObservers: ["player", "camera"],
+      acceptsHumanIntent: true,
+    },
+  } as const;
 
   it("resolves known plugins by exact plugin_id", () => {
     const plugin = resolveArenaPlugin("arena.visualization.gomoku.board_v1");
@@ -19,12 +47,13 @@ describe("resolveArenaPlugin", () => {
     expect(plugin.isFallback).toBe(false);
   });
 
-  it("exposes non-empty manifests for known shipped plugins", () => {
-    for (const pluginId of knownPluginIds) {
+  it("exposes exact manifests for known shipped plugins", () => {
+    for (const [pluginId, expectedManifest] of Object.entries(
+      expectedKnownPluginManifests,
+    )) {
       const plugin = resolveArenaPlugin(pluginId);
       expect(plugin.isFallback).toBe(false);
-      expect(plugin.manifest.sceneKinds.length).toBeGreaterThan(0);
-      expect(plugin.manifest.supportedObservers.length).toBeGreaterThan(0);
+      expect(plugin.manifest).toEqual(expectedManifest);
     }
   });
 

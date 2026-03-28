@@ -158,18 +158,38 @@ class ControlCommand:
 
     def __post_init__(self) -> None:
         _validate_choice(self.command_type, _CONTROL_COMMAND_TYPES, "command_type")
+        if self.command_type in {"follow_tail", "pause", "replay", "seek_end", "back_to_tail"}:
+            if self.target_seq is not None:
+                raise ValueError(f"{self.command_type} does not allow target_seq")
+            if self.step_delta is not None:
+                raise ValueError(f"{self.command_type} does not allow step_delta")
+            if self.speed is not None:
+                raise ValueError(f"{self.command_type} does not allow speed")
         if self.command_type == "seek_seq" and self.target_seq is None:
             raise ValueError("seek_seq requires target_seq")
+        if self.command_type == "seek_seq":
+            if self.step_delta is not None:
+                raise ValueError("seek_seq does not allow step_delta")
+            if self.speed is not None:
+                raise ValueError("seek_seq does not allow speed")
         if self.command_type == "step":
             if self.step_delta is None:
                 raise ValueError("step requires step_delta")
             if self.step_delta not in {-1, 1}:
                 raise ValueError("step_delta must be -1 or 1")
+            if self.target_seq is not None:
+                raise ValueError("step does not allow target_seq")
+            if self.speed is not None:
+                raise ValueError("step does not allow speed")
         if self.command_type == "set_speed":
             if self.speed is None:
                 raise ValueError("set_speed requires speed")
             if self.speed <= 0:
                 raise ValueError("speed must be positive")
+            if self.target_seq is not None:
+                raise ValueError("set_speed does not allow target_seq")
+            if self.step_delta is not None:
+                raise ValueError("set_speed does not allow step_delta")
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
