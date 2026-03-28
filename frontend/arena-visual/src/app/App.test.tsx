@@ -1,15 +1,134 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./routes/SessionPage", () => ({
-  SessionPage: () => <h1>Session workspace mock</h1>,
-}));
-
+import gomokuScene from "../test/fixtures/gomoku.visual.json";
+import type { VisualScene } from "../gateway/types";
+import type {
+  ArenaSessionStore,
+  ArenaSessionStoreSnapshot,
+} from "./store/arenaSessionStore";
 import { App } from "./App";
 
+const {
+  createArenaGatewayClientMock,
+  createArenaSessionStoreMock,
+  createArenaMediaResolverMock,
+} = vi.hoisted(() => ({
+  createArenaGatewayClientMock: vi.fn(),
+  createArenaSessionStoreMock: vi.fn(),
+  createArenaMediaResolverMock: vi.fn(),
+}));
+
+vi.mock("../gateway/client", () => ({
+  createArenaGatewayClient: createArenaGatewayClientMock,
+}));
+
+vi.mock("./store/arenaSessionStore", () => ({
+  createArenaSessionStore: createArenaSessionStoreMock,
+}));
+
+vi.mock("../gateway/media", () => ({
+  createArenaMediaResolver: createArenaMediaResolverMock,
+}));
+
+function buildReadySnapshot(): ArenaSessionStoreSnapshot {
+  return {
+    status: "ready",
+    sessionRequest: {
+      sessionId: "demo-session",
+    },
+    session: {
+      sessionId: "demo-session",
+      gameId: "gomoku",
+      pluginId: "arena.visualization.gomoku.board_v1",
+      lifecycle: "live_running",
+      playback: {
+        mode: "paused",
+        cursorTs: 1005,
+        cursorEventSeq: 5,
+        speed: 1,
+        canSeek: true,
+      },
+      observer: {
+        observerId: "Black",
+        observerKind: "player",
+      },
+      scheduling: {
+        family: "turn",
+        phase: "waiting_for_intent",
+        acceptsHumanIntent: true,
+        activeActorId: "White",
+      },
+      capabilities: {
+        observerModes: ["global", "player"],
+      },
+      summary: {},
+      timeline: {},
+    },
+    sceneStatus: "ready",
+    scene: gomokuScene as VisualScene,
+    currentSceneSeq: 5,
+    timeline: {
+      status: "ready",
+      events: [],
+      nextAfterSeq: null,
+      hasMore: false,
+      limit: 50,
+      filters: {
+        eventTypes: [],
+        severity: "all",
+        humanIntentOnly: false,
+      },
+    },
+    latestActionReceipt: undefined,
+    error: undefined,
+  };
+}
+
+function createStoreMock(
+  snapshot: ArenaSessionStoreSnapshot = buildReadySnapshot(),
+): ArenaSessionStore {
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: () => () => {},
+    loadSession: vi.fn().mockResolvedValue(undefined),
+    loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+    loadScene: vi.fn().mockResolvedValue(undefined),
+    setCurrentSceneSeq: vi.fn(),
+    setPlaybackMode: vi.fn(),
+    setTimelineFilters: vi.fn(),
+    setObserver: vi.fn().mockResolvedValue(undefined),
+    submitControl: vi.fn().mockResolvedValue({
+      intentId: "control-1",
+      state: "accepted",
+    }),
+    submitAction: vi.fn().mockResolvedValue({
+      intentId: "intent-1",
+      state: "accepted",
+    }),
+    submitChat: vi.fn().mockResolvedValue({
+      intentId: "chat-1",
+      state: "accepted",
+    }),
+    clearLatestActionReceipt: vi.fn(),
+  };
+}
+
 describe("App", () => {
+  beforeEach(() => {
+    createArenaGatewayClientMock.mockReset();
+    createArenaSessionStoreMock.mockReset();
+    createArenaMediaResolverMock.mockReset();
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+  });
+
   it("renders the empty host route", () => {
+    createArenaSessionStoreMock.mockReturnValue(createStoreMock());
+
     render(
       <MemoryRouter initialEntries={["/"]}>
         <App />
@@ -24,20 +143,62 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the session route mounted inside the app shell", () => {
+  it("navigates through the host shell into the real session workspace workflow", async () => {
+    const store = createStoreMock();
+    createArenaSessionStoreMock.mockReturnValue(store);
+
     render(
-      <MemoryRouter initialEntries={["/sessions/demo-session"]}>
+      <MemoryRouter initialEntries={["/"]}>
         <App />
       </MemoryRouter>,
     );
 
-    expect(
-      screen.getByRole("heading", { name: /session workspace mock/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /home/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: /session stub/i }));
+
+    await waitFor(() => {
+      expect(store.loadSession).toHaveBeenCalledWith({ sessionId: "demo-session" });
+    });
+
+    expect(screen.getByRole("heading", { name: /demo-session/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /live tail/i }));
+    fireEvent.click(screen.getByRole("button", { name: /step \+1/i }));
+    fireEvent.change(screen.getByLabelText(/observer view/i), {
+      target: { value: "global" },
+    });
+    fireEvent.click(screen.getByTestId("board-cell-B1"));
+    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.change(screen.getByLabelText(/chat message/i), {
+      target: { value: "hello from app" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send chat/i }));
+
+    await waitFor(() => {
+      expect(store.submitControl).toHaveBeenNthCalledWith(1, {
+        commandType: "follow_tail",
+      });
+      expect(store.submitControl).toHaveBeenNthCalledWith(2, {
+        commandType: "step",
+        stepDelta: 1,
+      });
+      expect(store.setObserver).toHaveBeenCalledWith({
+        observerId: "",
+        observerKind: "global",
+      });
+      expect(store.submitAction).toHaveBeenCalledWith({
+        playerId: "Black",
+        action: { move: "B1" },
+      });
+      expect(store.submitChat).toHaveBeenCalledWith({
+        playerId: "Black",
+        text: "hello from app",
+      });
+    });
   });
 
   it("redirects unknown routes back to the host home", () => {
+    createArenaSessionStoreMock.mockReturnValue(createStoreMock());
+
     render(
       <MemoryRouter initialEntries={["/missing-route"]}>
         <App />
