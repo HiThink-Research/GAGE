@@ -6,7 +6,7 @@ import type { ArenaPluginDefinition, ArenaPluginRenderProps } from "./contracts"
 interface CreatePluginInput {
   pluginId: string;
   displayName: string;
-  manifest?: GamePluginManifest;
+  manifest: GamePluginManifest;
   render: ComponentType<ArenaPluginRenderProps>;
   isFallback?: boolean;
   requestedPluginId?: string;
@@ -15,11 +15,7 @@ interface CreatePluginInput {
 export function createPlugin({
   pluginId,
   displayName,
-  manifest = {
-    sceneKinds: [],
-    supportedObservers: [],
-    acceptsHumanIntent: false,
-  },
+  manifest,
   render,
   isFallback = false,
   requestedPluginId,

@@ -1,5 +1,6 @@
 import { createElement } from "react";
 
+import type { GamePluginManifest } from "../gateway/types";
 import type { ArenaPluginRenderProps, ArenaPluginDefinition } from "./sdk/contracts";
 import { createPlugin } from "./sdk/createPlugin";
 import { DoudizhuPlugin } from "./doudizhu/DoudizhuPlugin";
@@ -14,32 +15,71 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.gomoku.board_v1",
     displayName: "Gomoku",
+    manifest: {
+      sceneKinds: ["board"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
   },
   {
     pluginId: "arena.visualization.tictactoe.board_v1",
     displayName: "Tic-Tac-Toe",
+    manifest: {
+      sceneKinds: ["board"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
   },
   {
     pluginId: "arena.visualization.doudizhu.table_v1",
     displayName: "Doudizhu",
+    manifest: {
+      sceneKinds: ["table"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
   },
   {
     pluginId: "arena.visualization.mahjong.table_v1",
     displayName: "Mahjong",
+    manifest: {
+      sceneKinds: ["table"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
   },
   {
     pluginId: "arena.visualization.pettingzoo.frame_v1",
     displayName: "PettingZoo",
+    manifest: {
+      sceneKinds: ["frame"],
+      supportedObservers: ["player", "global"],
+      acceptsHumanIntent: true,
+    },
   },
   {
     pluginId: "arena.visualization.vizdoom.frame_v1",
     displayName: "VizDoom",
+    manifest: {
+      sceneKinds: ["frame"],
+      supportedObservers: ["player", "camera"],
+      acceptsHumanIntent: true,
+    },
   },
   {
     pluginId: "arena.visualization.retro_platformer.frame_v1",
     displayName: "Retro Mario",
+    manifest: {
+      sceneKinds: ["frame"],
+      supportedObservers: ["player", "camera"],
+      acceptsHumanIntent: true,
+    },
   },
-] as const;
+] as const satisfies ReadonlyArray<{
+  pluginId: string;
+  displayName: string;
+  manifest: GamePluginManifest;
+}>;
 
 function PlaceholderPluginStage({
   session,
@@ -93,11 +133,12 @@ function PlaceholderPluginStage({
 }
 
 const KNOWN_PLUGINS = new Map<string, ArenaPluginDefinition>(
-  KNOWN_PLUGIN_META.map(({ pluginId, displayName }) => [
+  KNOWN_PLUGIN_META.map(({ pluginId, displayName, manifest }) => [
     pluginId,
     createPlugin({
       pluginId,
       displayName,
+      manifest,
       render:
         pluginId === "arena.visualization.gomoku.board_v1"
           ? GomokuPlugin
@@ -127,6 +168,11 @@ export function resolveArenaPlugin(pluginId: string): ArenaPluginDefinition {
   return createPlugin({
     pluginId: "arena.visualization.host.fallback_v1",
     displayName: "Host Fallback",
+    manifest: {
+      sceneKinds: ["frame"],
+      supportedObservers: ["global"],
+      acceptsHumanIntent: false,
+    },
     render: PlaceholderPluginStage,
     isFallback: true,
     requestedPluginId: pluginId,

@@ -25,7 +25,16 @@ _SCENE_KINDS = {"board", "table", "frame", "rts"}
 _SCENE_PHASES = {"live", "replay"}
 _MEDIA_TRANSPORTS = {"artifact_ref", "http_pull", "binary_stream", "low_latency_channel"}
 _RECEIPT_STATES = {"pending", "accepted", "committed", "rejected", "expired"}
-_CONTROL_COMMAND_TYPES = {"seek_seq"}
+_CONTROL_COMMAND_TYPES = {
+    "follow_tail",
+    "pause",
+    "replay",
+    "seek_seq",
+    "seek_end",
+    "step",
+    "set_speed",
+    "back_to_tail",
+}
 _CHAT_CHANNELS = {"table", "system", "private"}
 _SNAPSHOT_MODES = {"full", "delta"}
 
@@ -143,10 +152,24 @@ class ObserverRef:
 class ControlCommand:
     command_type: str
     target_seq: int | None = None
+    step_delta: int | None = None
+    speed: float | None = None
     issued_by: ObserverRef | None = None
 
     def __post_init__(self) -> None:
         _validate_choice(self.command_type, _CONTROL_COMMAND_TYPES, "command_type")
+        if self.command_type == "seek_seq" and self.target_seq is None:
+            raise ValueError("seek_seq requires target_seq")
+        if self.command_type == "step":
+            if self.step_delta is None:
+                raise ValueError("step requires step_delta")
+            if self.step_delta not in {-1, 1}:
+                raise ValueError("step_delta must be -1 or 1")
+        if self.command_type == "set_speed":
+            if self.speed is None:
+                raise ValueError("set_speed requires speed")
+            if self.speed <= 0:
+                raise ValueError("speed must be positive")
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -154,6 +177,10 @@ class ControlCommand:
         }
         if self.target_seq is not None:
             payload["targetSeq"] = self.target_seq
+        if self.step_delta is not None:
+            payload["stepDelta"] = self.step_delta
+        if self.speed is not None:
+            payload["speed"] = self.speed
         if self.issued_by is not None:
             payload["issuedBy"] = self.issued_by.to_dict()
         return payload
@@ -165,6 +192,8 @@ class ControlCommand:
         return cls(
             command_type=_require_string(payload, "commandType"),
             target_seq=None if payload.get("targetSeq") is None else int(payload["targetSeq"]),
+            step_delta=None if payload.get("stepDelta") is None else int(payload["stepDelta"]),
+            speed=None if payload.get("speed") is None else float(payload["speed"]),
             issued_by=(
                 None if issued_by_payload is None else ObserverRef.from_dict(issued_by_payload)
             ),

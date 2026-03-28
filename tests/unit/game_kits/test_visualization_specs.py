@@ -27,14 +27,14 @@ EXPECTED_VISUALIZATION_SPECS = {
         "spec_id": "arena/visualization/doudizhu_table_v1",
         "plugin_id": "arena.visualization.doudizhu.table_v1",
         "visual_kind": "table",
-        "supported_observers": ("player", "global", "spectator"),
+        "supported_observers": ("player", "global"),
     },
     "mahjong": {
         "env": "riichi_4p",
         "spec_id": "arena/visualization/mahjong_table_v1",
         "plugin_id": "arena.visualization.mahjong.table_v1",
         "visual_kind": "table",
-        "supported_observers": ("player", "global", "spectator"),
+        "supported_observers": ("player", "global"),
     },
     "pettingzoo": {
         "env": "space_invaders",

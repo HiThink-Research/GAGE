@@ -39,7 +39,7 @@ OBSERVER_SCHEMA = {
         kit_id="mahjong",
         channel="observer_schema",
     ),
-    "supported_modes": ["player", "global", "spectator"],
+    "supported_modes": ["player", "global"],
 }
 TIMELINE_ANNOTATION_RULES = build_placeholder_descriptor(
     spec_id=VISUALIZATION_SPEC_ID,

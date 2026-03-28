@@ -225,6 +225,67 @@ def test_control_command_round_trip_for_seek() -> None:
     assert ControlCommand.from_dict(payload) == command
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_payload"),
+    [
+        (
+            {"commandType": "follow_tail"},
+            {"commandType": "follow_tail"},
+        ),
+        (
+            {"commandType": "pause"},
+            {"commandType": "pause"},
+        ),
+        (
+            {"commandType": "replay"},
+            {"commandType": "replay"},
+        ),
+        (
+            {"commandType": "seek_end"},
+            {"commandType": "seek_end"},
+        ),
+        (
+            {"commandType": "step", "stepDelta": 1},
+            {"commandType": "step", "stepDelta": 1},
+        ),
+        (
+            {"commandType": "set_speed", "speed": 2.5},
+            {"commandType": "set_speed", "speed": 2.5},
+        ),
+        (
+            {"commandType": "back_to_tail"},
+            {"commandType": "back_to_tail"},
+        ),
+    ],
+)
+def test_control_command_round_trip_for_phase2_vocabulary(
+    payload: dict[str, object],
+    expected_payload: dict[str, object],
+) -> None:
+    command = ControlCommand.from_dict(payload)
+    serialized = command.to_dict()
+
+    assert serialized == expected_payload
+    assert ControlCommand.from_dict(serialized) == command
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"commandType": "seek_seq"},
+        {"commandType": "step"},
+        {"commandType": "step", "stepDelta": 0},
+        {"commandType": "step", "stepDelta": 2},
+        {"commandType": "set_speed"},
+        {"commandType": "set_speed", "speed": 0},
+        {"commandType": "set_speed", "speed": -1.5},
+    ],
+)
+def test_control_command_invalid_payload_validation(payload: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        ControlCommand.from_dict(payload)
+
+
 def test_chat_message_round_trip() -> None:
     message = ChatMessage(
         player_id="p0",
