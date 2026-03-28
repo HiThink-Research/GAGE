@@ -337,6 +337,31 @@ describe("arenaSessionStore", () => {
     expect(state.scene?.seq).toBe(9);
   });
 
+  it("keeps the previous scene mounted while a newer scene is loading", async () => {
+    const nextScene = deferred<VisualScene>();
+    const client = createStubClient({
+      loadScene: vi
+        .fn()
+        .mockResolvedValueOnce(buildScene(2))
+        .mockImplementationOnce(() => nextScene.promise),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.loadScene({ seq: 2 });
+
+    const loading = store.loadScene({ seq: 9 });
+
+    expect(store.getSnapshot().sceneStatus).toBe("loading");
+    expect(store.getSnapshot().scene?.seq).toBe(2);
+
+    nextScene.resolve(buildScene(9));
+    await loading;
+
+    expect(store.getSnapshot().sceneStatus).toBe("ready");
+    expect(store.getSnapshot().scene?.seq).toBe(9);
+  });
+
   it("updates the selected seq when switching back to live tail", async () => {
     const store = createArenaSessionStore(createStubClient());
 

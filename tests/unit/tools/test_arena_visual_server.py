@@ -39,6 +39,13 @@ def _get_bytes(url: str) -> bytes:
         return response.read()
 
 
+def _read_stream_prefix(url: str) -> tuple[str, bytes]:
+    with urlopen(url, timeout=3) as response:  # noqa: S310 - local test endpoint
+        content_type = response.headers.get("Content-Type", "")
+        prefix = response.readline() + response.readline() + response.readline()
+    return content_type, prefix
+
+
 def _read_http_error(target: str | Request) -> tuple[int, dict[str, object]]:
     try:
         with urlopen(target) as _:
@@ -199,6 +206,41 @@ def _build_live_visual_recorder(
         label="live_frame_snapshot",
         anchor=True,
     )
+    return recorder
+
+
+def _build_repeated_live_visual_recorder(
+    *,
+    session_id: str = "sample-live-repeat",
+) -> ArenaVisualSessionRecorder:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.pettingzoo.frame_v1",
+        game_id="pettingzoo",
+        scheduling_family="real_time_tick",
+        session_id=session_id,
+    )
+    for tick in (1, 2):
+        recorder.record_snapshot(
+            ts_ms=3000 + tick,
+            step=tick,
+            tick=tick,
+            snapshot={
+                "step": tick,
+                "tick": tick,
+                "observation": {
+                    "activePlayerId": "pilot_alpha",
+                    "view": {
+                        "text": f"live frame {tick}",
+                        "image": {
+                            "data_url": "data:image/png;base64,Zm9v",
+                        },
+                    },
+                    "legalActions": [{"id": "noop", "label": "No-op"}],
+                },
+            },
+            label=f"repeated_frame_{tick}",
+            anchor=True,
+        )
     return recorder
 
 
@@ -425,6 +467,106 @@ def test_arena_visual_http_server_serves_registered_live_session_without_manifes
         assert media_content == b"foo"
     finally:
         server.stop()
+
+
+def test_arena_visual_http_server_serves_registered_binary_stream_live_session_without_manifest(
+    tmp_path: Path,
+) -> None:
+    recorder = _build_live_visual_recorder()
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="binary_stream",
+    )
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        scene_url = f"http://{host}:{port}/arena_visual/sessions/sample-live/scene?seq=2&run_id=run-live"
+
+        scene_payload = _get_json(scene_url)
+        primary_media = scene_payload["media"]["primary"]
+        assert isinstance(primary_media, dict)
+        media_id = str(primary_media["mediaId"])
+        media_payload = _get_json(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}?run_id=run-live"
+        )
+        media_content = _get_bytes(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}?run_id=run-live&content=1"
+        )
+
+        assert primary_media["transport"] == "binary_stream"
+        assert "url" not in primary_media
+        assert media_payload["transport"] == "binary_stream"
+        assert "url" not in media_payload
+        assert media_content == b"foo"
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_serves_registered_low_latency_live_stream_without_manifest(
+    tmp_path: Path,
+) -> None:
+    recorder = _build_live_visual_recorder()
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="low_latency_channel",
+    )
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        scene_url = f"http://{host}:{port}/arena_visual/sessions/sample-live/scene?seq=2&run_id=run-live"
+
+        scene_payload = _get_json(scene_url)
+        primary_media = scene_payload["media"]["primary"]
+        assert isinstance(primary_media, dict)
+        media_id = str(primary_media["mediaId"])
+        media_payload = _get_json(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}?run_id=run-live"
+        )
+        stream_url = str(primary_media["url"])
+        if stream_url.startswith("/"):
+            stream_url = f"http://{host}:{port}{stream_url}"
+        content_type, prefix = _read_stream_prefix(stream_url)
+
+        assert primary_media["transport"] == "low_latency_channel"
+        assert media_payload["transport"] == "low_latency_channel"
+        assert str(primary_media["url"]).endswith(
+            f"/arena_visual/sessions/sample-live/media/{media_id}/stream?run_id=run-live"
+        )
+        assert content_type.startswith("multipart/x-mixed-replace")
+        assert b"--frame" in prefix
+        assert b"Content-Type:" in prefix
+    finally:
+        server.stop()
+
+
+def test_binary_stream_live_scene_versions_media_id_per_scene_seq() -> None:
+    recorder = _build_repeated_live_visual_recorder()
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="binary_stream",
+    )
+
+    first_scene = live_source.load_scene(seq=1)
+    second_scene = live_source.load_scene(seq=2)
+
+    assert first_scene is not None
+    assert second_scene is not None
+    assert first_scene.media is not None
+    assert second_scene.media is not None
+    assert first_scene.media.primary is not None
+    assert second_scene.media.primary is not None
+    assert first_scene.media.primary.transport == "binary_stream"
+    assert second_scene.media.primary.transport == "binary_stream"
+    assert first_scene.media.primary.media_id != second_scene.media.primary.media_id
+    assert live_source.load_media_content(first_scene.media.primary.media_id) == (b"foo", "image/png")
+    assert live_source.load_media_content(second_scene.media.primary.media_id) == (b"foo", "image/png")
 
 
 def test_arena_visual_http_server_serves_frontend_shell_and_assets(tmp_path: Path) -> None:

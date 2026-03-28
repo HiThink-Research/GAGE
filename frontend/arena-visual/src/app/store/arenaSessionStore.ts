@@ -304,7 +304,6 @@ export function createArenaSessionStore(
     setState((previous) => ({
       ...previous,
       currentSceneSeq: seq,
-      scene: undefined,
       sceneStatus: "loading",
       error: undefined,
     }));

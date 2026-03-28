@@ -1,10 +1,17 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { usePlaybackControls } from "../hooks/usePlaybackControls";
-import { createArenaSessionStore } from "../store/arenaSessionStore";
+import {
+  createArenaSessionStore,
+  type ArenaSessionStore,
+} from "../store/arenaSessionStore";
+import { useArenaStoreSelector } from "../store/useArenaStoreSelector";
 import { createArenaGatewayClient } from "../../gateway/client";
-import { createArenaMediaResolver } from "../../gateway/media";
+import {
+  createArenaMediaResolver,
+  type ArenaMediaResolver,
+} from "../../gateway/media";
 import { resolveArenaPlugin } from "../../plugins/registry";
 import { useInputBridge } from "../../plugins/sdk/useInputBridge";
 import { GlobalControlBar } from "../../ui/controls/GlobalControlBar";
@@ -31,21 +38,58 @@ export function SessionPage() {
   );
   const [store] = useState(() => createArenaSessionStore(client));
   const [mediaResolver] = useState(() => createArenaMediaResolver(client));
-  const snapshot = useSyncExternalStore(
-    store.subscribe,
-    store.getSnapshot,
-    store.getSnapshot,
+
+  return (
+    <main className="app-shell__body">
+      <SessionRuntimeEffects
+        runIdParam={runIdParam}
+        sessionId={sessionId}
+        store={store}
+      />
+
+      <section className="hero-panel">
+        <p className="eyebrow">Session Workspace</p>
+        <h1>{sessionId ?? "Unknown session"}</h1>
+        <p className="hero-copy">
+          The host store, gateway client, and plugin registry are now wired.
+          The next slices will swap these placeholder surfaces for real game
+          renderers.
+        </p>
+      </section>
+
+      <ArenaLayout
+        controls={<SessionControls store={store} />}
+        stage={<SessionStage mediaResolver={mediaResolver} store={store} />}
+        timeline={<SessionTimeline store={store} />}
+        sidePanel={<SessionSidePanelRegion store={store} />}
+      />
+
+      <div className="app-shell__footer">
+        <Link className="app-shell__nav-link" to="/">
+          Back to host
+        </Link>
+      </div>
+    </main>
   );
-  const playbackControls = usePlaybackControls(store);
-  const plugin =
-    snapshot.session !== undefined
-      ? resolveArenaPlugin(snapshot.session.pluginId)
-      : undefined;
-  const inputBridge = useInputBridge({
-    latestReceipt: snapshot.latestActionReceipt,
-    submitAction: store.submitAction,
-    interpreter: plugin?.inputInterpreter,
-  });
+}
+
+function SessionRuntimeEffects({
+  sessionId,
+  runIdParam,
+  store,
+}: {
+  sessionId?: string;
+  runIdParam?: string;
+  store: ArenaSessionStore;
+}) {
+  const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
+  const sceneStatus = useArenaStoreSelector(store, (snapshot) => snapshot.sceneStatus);
+  const currentSceneSeq = useArenaStoreSelector(store, (snapshot) => snapshot.currentSceneSeq);
+  const sceneSeq = useArenaStoreSelector(store, (snapshot) => snapshot.scene?.seq);
+  const playbackMode = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.session?.playback.mode ?? "live_tail",
+  );
 
   useEffect(() => {
     if (!sessionId) {
@@ -57,19 +101,19 @@ export function SessionPage() {
 
   useEffect(() => {
     if (
-      snapshot.status !== "ready" ||
-      snapshot.sceneStatus === "loading" ||
-      snapshot.currentSceneSeq === undefined ||
-      snapshot.scene?.seq === snapshot.currentSceneSeq
+      status !== "ready" ||
+      sceneStatus === "loading" ||
+      currentSceneSeq === undefined ||
+      sceneSeq === currentSceneSeq
     ) {
       return;
     }
 
-    void store.loadScene({ seq: snapshot.currentSceneSeq }).catch(() => {});
-  }, [snapshot.currentSceneSeq, snapshot.scene?.seq, snapshot.sceneStatus, snapshot.status, store]);
+    void store.loadScene({ seq: currentSceneSeq }).catch(() => {});
+  }, [currentSceneSeq, sceneSeq, sceneStatus, status, store]);
 
   useEffect(() => {
-    if (snapshot.status !== "ready" || snapshot.session?.playback.mode !== "live_tail") {
+    if (status !== "ready" || playbackMode !== "live_tail") {
       return;
     }
 
@@ -88,118 +132,147 @@ export function SessionPage() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [snapshot.session?.playback.mode, snapshot.status, store]);
+  }, [playbackMode, status, store]);
 
-  const PluginView = plugin?.render;
+  return null;
+}
+
+function SessionControls({ store }: { store: ArenaSessionStore }) {
+  const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
+  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
+  const playbackControls = usePlaybackControls(store);
 
   return (
-    <main className="app-shell__body">
-      <section className="hero-panel">
-        <p className="eyebrow">Session Workspace</p>
-        <h1>{sessionId ?? "Unknown session"}</h1>
-        <p className="hero-copy">
-          The host store, gateway client, and plugin registry are now wired.
-          The next slices will swap these placeholder surfaces for real game
-          renderers.
-        </p>
-      </section>
+    <GlobalControlBar
+      playbackMode={session?.playback.mode ?? "live_tail"}
+      playbackSpeed={session?.playback.speed ?? 1}
+      disabled={status !== "ready" || session === undefined}
+      scheduling={session?.scheduling}
+      onPause={() => {
+        void playbackControls.pause();
+      }}
+      onPlayLive={() => {
+        void playbackControls.playLive();
+      }}
+      onReplay={() => {
+        void playbackControls.playReplay();
+      }}
+      onSetSpeed={(speed) => {
+        void playbackControls.setSpeed(speed);
+      }}
+      onStep={(delta) => {
+        if (delta > 0) {
+          void playbackControls.stepForward();
+          return;
+        }
+        void playbackControls.stepBackward();
+      }}
+      onSeekEnd={() => {
+        void playbackControls.seekEnd();
+      }}
+      onBackToTail={() => {
+        void playbackControls.backToTail();
+      }}
+    />
+  );
+}
 
-      <ArenaLayout
-        controls={
-          <GlobalControlBar
-            playbackMode={snapshot.session?.playback.mode ?? "live_tail"}
-            playbackSpeed={snapshot.session?.playback.speed ?? 1}
-            disabled={snapshot.status !== "ready" || snapshot.session === undefined}
-            scheduling={snapshot.session?.scheduling}
-            onPause={() => {
-              void playbackControls.pause();
-            }}
-            onPlayLive={() => {
-              void playbackControls.playLive();
-            }}
-            onReplay={() => {
-              void playbackControls.playReplay();
-            }}
-            onSetSpeed={(speed) => {
-              void playbackControls.setSpeed(speed);
-            }}
-            onStep={(delta) => {
-              if (delta > 0) {
-                void playbackControls.stepForward();
-                return;
-              }
-              void playbackControls.stepBackward();
-            }}
-            onSeekEnd={() => {
-              void playbackControls.seekEnd();
-            }}
-            onBackToTail={() => {
-              void playbackControls.backToTail();
-            }}
-          />
-        }
-        stage={
-          snapshot.session && plugin && PluginView ? (
-            <PluginView
-              session={snapshot.session}
-              scene={snapshot.scene}
-              latestActionReceipt={inputBridge.latestReceipt}
-              submitAction={inputBridge.submitAction}
-              submitInput={inputBridge.submitInput}
-              mediaSubscribe={mediaResolver.subscribe}
-              isFallback={plugin.isFallback}
-              requestedPluginId={plugin.requestedPluginId}
-            />
-          ) : (
-            <section className="plugin-stage-card">
-              <p className="eyebrow">Host State</p>
-              <h2>{snapshot.status === "loading" ? "Loading session..." : "No session loaded"}</h2>
-              <p className="plugin-stage-card__copy">
-                {snapshot.status === "error"
-                  ? snapshot.error ?? "The session failed to load."
-                  : "Open a valid session id to populate the visual host."}
-              </p>
-            </section>
-          )
-        }
-        timeline={
-          <TimelineView
-            events={snapshot.timeline.events}
-            filters={snapshot.timeline.filters}
-            currentSeq={snapshot.currentSceneSeq}
-            status={snapshot.timeline.status}
-            hasMore={snapshot.timeline.hasMore}
-            onSelectEvent={(seq) => {
-              void playbackControls.selectEvent(seq);
-            }}
-            onLoadMore={() => {
-              void playbackControls.loadMoreTimeline();
-            }}
-            onFiltersChange={(filters) => {
-              store.setTimelineFilters(filters);
-            }}
-          />
-        }
-        sidePanel={
-          <SharedSidePanel
-            session={snapshot.session}
-            scene={snapshot.scene}
-            latestActionReceipt={snapshot.latestActionReceipt}
-            error={inputBridge.error ?? snapshot.error}
-            isSubmitting={inputBridge.isSubmitting}
-            onObserverChange={(observer) => {
-              void store.setObserver(observer).catch(() => {});
-            }}
-            onChatSubmit={(payload) => store.submitChat(payload)}
-          />
-        }
+function SessionStage({
+  store,
+  mediaResolver,
+}: {
+  store: ArenaSessionStore;
+  mediaResolver: ArenaMediaResolver;
+}) {
+  const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
+  const error = useArenaStoreSelector(store, (snapshot) => snapshot.error);
+  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
+  const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
+  const latestActionReceipt = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.latestActionReceipt,
+  );
+  const plugin =
+    session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined;
+  const inputBridge = useInputBridge({
+    latestReceipt: latestActionReceipt,
+    submitAction: store.submitAction,
+    interpreter: plugin?.inputInterpreter,
+  });
+  const PluginView = plugin?.render;
+
+  if (session && plugin && PluginView) {
+    return (
+      <PluginView
+        session={session}
+        scene={scene}
+        latestActionReceipt={inputBridge.latestReceipt}
+        submitAction={inputBridge.submitAction}
+        submitInput={inputBridge.submitInput}
+        mediaSubscribe={mediaResolver.subscribe}
+        isFallback={plugin.isFallback}
+        requestedPluginId={plugin.requestedPluginId}
       />
+    );
+  }
 
-      <div className="app-shell__footer">
-        <Link className="app-shell__nav-link" to="/">
-          Back to host
-        </Link>
-      </div>
-    </main>
+  return (
+    <section className="plugin-stage-card">
+      <p className="eyebrow">Host State</p>
+      <h2>{status === "loading" ? "Loading session..." : "No session loaded"}</h2>
+      <p className="plugin-stage-card__copy">
+        {status === "error"
+          ? error ?? "The session failed to load."
+          : "Open a valid session id to populate the visual host."}
+      </p>
+    </section>
+  );
+}
+
+function SessionTimeline({ store }: { store: ArenaSessionStore }) {
+  const timeline = useArenaStoreSelector(store, (snapshot) => snapshot.timeline);
+  const currentSceneSeq = useArenaStoreSelector(store, (snapshot) => snapshot.currentSceneSeq);
+  const playbackControls = usePlaybackControls(store);
+
+  return (
+    <TimelineView
+      events={timeline.events}
+      filters={timeline.filters}
+      currentSeq={currentSceneSeq}
+      status={timeline.status}
+      hasMore={timeline.hasMore}
+      onSelectEvent={(seq) => {
+        void playbackControls.selectEvent(seq);
+      }}
+      onLoadMore={() => {
+        void playbackControls.loadMoreTimeline();
+      }}
+      onFiltersChange={(filters) => {
+        store.setTimelineFilters(filters);
+      }}
+    />
+  );
+}
+
+function SessionSidePanelRegion({ store }: { store: ArenaSessionStore }) {
+  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
+  const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
+  const latestActionReceipt = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.latestActionReceipt,
+  );
+  const error = useArenaStoreSelector(store, (snapshot) => snapshot.error);
+
+  return (
+    <SharedSidePanel
+      session={session}
+      scene={scene}
+      latestActionReceipt={latestActionReceipt}
+      error={error}
+      onObserverChange={(observer) => {
+        void store.setObserver(observer).catch(() => {});
+      }}
+      onChatSubmit={(payload) => store.submitChat(payload)}
+    />
   );
 }

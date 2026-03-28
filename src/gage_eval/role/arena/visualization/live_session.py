@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from threading import RLock
 from typing import Protocol
-from urllib.parse import unquote_to_bytes
+from urllib.parse import quote, unquote, unquote_to_bytes
 
 from gage_eval.game_kits.contracts import GameVisualizationSpec
 from gage_eval.role.arena.visualization.assembly import (
@@ -17,6 +18,7 @@ from gage_eval.role.arena.visualization.contracts import (
     MediaSourceRef,
     ObserverRef,
     TimelineEvent,
+    VisualSceneMedia,
     VisualScene,
     VisualSession,
 )
@@ -25,7 +27,18 @@ from gage_eval.role.arena.visualization.recorder import (
     ArenaVisualSessionRecorder,
 )
 
-_SUPPORTED_LIVE_SCENE_SCHEMES = {"http_pull"}
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
+
+_SUPPORTED_LIVE_SCENE_SCHEMES = {
+    "http_pull",
+    "binary_stream",
+    "low_latency_channel",
+}
+_BINARY_MEDIA_PREFIX = "live-binary:"
+_LOW_LATENCY_MEDIA_PREFIX = "live-channel-"
 
 
 class ArenaVisualLiveSessionSource(Protocol):
@@ -48,6 +61,8 @@ class ArenaVisualLiveSessionSource(Protocol):
     def lookup_media(self, media_id: str) -> MediaSourceRef | None: ...
 
     def load_media_content(self, media_id: str) -> tuple[bytes, str | None] | None: ...
+
+    def load_stream_frame(self, media_id: str) -> tuple[bytes, str | None] | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +117,60 @@ class RecorderLiveSessionSource:
         observer: ObserverRef | None = None,
     ) -> VisualScene | None:
         state = self.recorder.export_live_state()
+        raw_scene = self._load_raw_scene(state=state, seq=seq, observer=observer)
+        if raw_scene is None:
+            return None
+        return self._adapt_scene_for_live_transport(raw_scene)
+
+    def lookup_marker(self, marker: str) -> tuple[int, ...]:
+        state = self.recorder.export_live_state()
+        return tuple(state.marker_index.get(marker, ()))
+
+    def lookup_media(self, media_id: str) -> MediaSourceRef | None:
+        state = self.recorder.export_live_state()
+        if self.live_scene_scheme == "binary_stream":
+            binary_ref = self._lookup_binary_media_ref(state=state, media_id=media_id)
+            if binary_ref is not None:
+                return replace(binary_ref, media_id=media_id, transport="binary_stream", url=None)
+        if self.live_scene_scheme == "low_latency_channel":
+            channel_ref = self._lookup_low_latency_media_ref(state=state, media_id=media_id)
+            if channel_ref is not None:
+                return channel_ref
+        raw_ref = self._lookup_raw_media_ref(state=state, media_id=media_id)
+        if raw_ref is None:
+            return None
+        return self._adapt_media_ref(
+            raw_ref=raw_ref,
+            scene_kind="frame",
+            scene_seq=0,
+            stream_id=None,
+            is_primary=False,
+        )
+
+    def load_media_content(self, media_id: str) -> tuple[bytes, str | None] | None:
+        state = self.recorder.export_live_state()
+        raw_ref = self._resolve_media_content_ref(state=state, media_id=media_id)
+        if raw_ref is None:
+            return None
+        url = str(raw_ref.url or "").strip()
+        if not url.startswith("data:"):
+            return None
+        return _decode_data_url(url)
+
+    def load_stream_frame(self, media_id: str) -> tuple[bytes, str | None] | None:
+        payload = self.load_media_content(media_id)
+        if payload is None:
+            return None
+        content, mime_type = payload
+        return _encode_low_latency_frame(content=content, mime_type=mime_type)
+
+    def _load_raw_scene(
+        self,
+        *,
+        state,
+        seq: int,
+        observer: ObserverRef | None = None,
+    ) -> VisualScene | None:
         event = _lookup_event(state.timeline_events, seq=seq)
         if event is None:
             return None
@@ -126,14 +195,84 @@ class RecorderLiveSessionSource:
         )
         return replace(assembled, phase="live")
 
-    def lookup_marker(self, marker: str) -> tuple[int, ...]:
-        state = self.recorder.export_live_state()
-        return tuple(state.marker_index.get(marker, ()))
+    def _adapt_scene_for_live_transport(self, scene: VisualScene) -> VisualScene:
+        if scene.media is None:
+            return scene
+        stream_id = _read_scene_stream_id(scene)
+        primary = None
+        if scene.media.primary is not None:
+            primary = self._adapt_media_ref(
+                raw_ref=scene.media.primary,
+                scene_kind=scene.kind,
+                scene_seq=scene.seq,
+                stream_id=stream_id,
+                is_primary=True,
+            )
+        auxiliary = tuple(
+            ref
+            for ref in (
+                self._adapt_media_ref(
+                    raw_ref=item,
+                    scene_kind=scene.kind,
+                    scene_seq=scene.seq,
+                    stream_id=stream_id,
+                    is_primary=False,
+                )
+                for item in scene.media.auxiliary
+            )
+            if ref is not None
+        )
+        return replace(scene, media=VisualSceneMedia(primary=primary, auxiliary=auxiliary))
 
-    def lookup_media(self, media_id: str) -> MediaSourceRef | None:
-        state = self.recorder.export_live_state()
-        for event in state.timeline_events:
-            scene = self.load_scene(seq=event.seq)
+    def _adapt_media_ref(
+        self,
+        *,
+        raw_ref: MediaSourceRef,
+        scene_kind: str,
+        scene_seq: int,
+        stream_id: str | None,
+        is_primary: bool,
+    ) -> MediaSourceRef | None:
+        url = str(raw_ref.url or "").strip()
+        if self.live_scene_scheme == "http_pull" or not url.startswith("data:"):
+            return raw_ref
+        if self.live_scene_scheme == "binary_stream":
+            return replace(
+                raw_ref,
+                media_id=self._build_binary_media_id(scene_seq=scene_seq, raw_media_id=raw_ref.media_id),
+                transport="binary_stream",
+                url=None,
+            )
+        if self.live_scene_scheme == "low_latency_channel" and scene_kind == "frame" and is_primary:
+            channel_id = self._build_low_latency_media_id(stream_id or raw_ref.media_id)
+            return MediaSourceRef(
+                media_id=channel_id,
+                transport="low_latency_channel",
+                mime_type="multipart/x-mixed-replace",
+                url=self._build_low_latency_stream_url(channel_id),
+                preview_ref=raw_ref.preview_ref,
+            )
+        return replace(
+            raw_ref,
+            media_id=self._build_binary_media_id(scene_seq=scene_seq, raw_media_id=raw_ref.media_id),
+            transport="binary_stream",
+            url=None,
+        )
+
+    def _lookup_binary_media_ref(self, *, state, media_id: str) -> MediaSourceRef | None:
+        parsed = _parse_binary_media_id(media_id)
+        if parsed is None:
+            return None
+        scene_seq, raw_media_id = parsed
+        scene = self._load_raw_scene(state=state, seq=scene_seq)
+        if scene is None:
+            return None
+        refs = collect_scene_media_refs(scene)
+        return refs.get(raw_media_id)
+
+    def _lookup_raw_media_ref(self, *, state, media_id: str) -> MediaSourceRef | None:
+        for event in reversed(state.timeline_events):
+            scene = self._load_raw_scene(state=state, seq=event.seq)
             if scene is None:
                 continue
             refs = collect_scene_media_refs(scene)
@@ -142,14 +281,52 @@ class RecorderLiveSessionSource:
                 return ref
         return None
 
-    def load_media_content(self, media_id: str) -> tuple[bytes, str | None] | None:
-        ref = self.lookup_media(media_id)
-        if ref is None:
+    def _lookup_low_latency_media_ref(self, *, state, media_id: str) -> MediaSourceRef | None:
+        for event in reversed(state.timeline_events):
+            scene = self._load_raw_scene(state=state, seq=event.seq)
+            if scene is None or scene.kind != "frame" or scene.media is None or scene.media.primary is None:
+                continue
+            adapted = self._adapt_media_ref(
+                raw_ref=scene.media.primary,
+                scene_kind=scene.kind,
+                scene_seq=scene.seq,
+                stream_id=_read_scene_stream_id(scene),
+                is_primary=True,
+            )
+            if adapted is not None and adapted.media_id == media_id:
+                return adapted
+        return None
+
+    def _resolve_media_content_ref(self, *, state, media_id: str) -> MediaSourceRef | None:
+        if self.live_scene_scheme == "binary_stream" and media_id.startswith(_BINARY_MEDIA_PREFIX):
+            return self._lookup_binary_media_ref(state=state, media_id=media_id)
+        if self.live_scene_scheme == "low_latency_channel" and media_id.startswith(_LOW_LATENCY_MEDIA_PREFIX):
+            for event in reversed(state.timeline_events):
+                scene = self._load_raw_scene(state=state, seq=event.seq)
+                if scene is None or scene.kind != "frame" or scene.media is None or scene.media.primary is None:
+                    continue
+                stream_id = _read_scene_stream_id(scene) or scene.media.primary.media_id
+                if self._build_low_latency_media_id(stream_id) == media_id:
+                    return scene.media.primary
             return None
-        url = str(ref.url or "").strip()
-        if not url.startswith("data:"):
-            return None
-        return _decode_data_url(url)
+        return self._lookup_raw_media_ref(state=state, media_id=media_id)
+
+    def _build_binary_media_id(self, *, scene_seq: int, raw_media_id: str) -> str:
+        normalized_raw_media_id = str(raw_media_id).strip() or "primary"
+        encoded_raw_media_id = quote(normalized_raw_media_id, safe="")
+        return f"{_BINARY_MEDIA_PREFIX}{int(scene_seq)}:{encoded_raw_media_id}"
+
+    def _build_low_latency_media_id(self, stream_id: str) -> str:
+        normalized_stream_id = str(stream_id).strip() or "primary"
+        return f"{_LOW_LATENCY_MEDIA_PREFIX}{normalized_stream_id}"
+
+    def _build_low_latency_stream_url(self, media_id: str) -> str:
+        session_path = quote(self.session_id, safe="")
+        media_path = quote(media_id, safe="")
+        if self.run_id is None or not str(self.run_id).strip():
+            return f"/arena_visual/sessions/{session_path}/media/{media_path}/stream"
+        run_path = quote(str(self.run_id), safe="")
+        return f"/arena_visual/sessions/{session_path}/media/{media_path}/stream?run_id={run_path}"
 
 
 class ArenaVisualLiveRegistry:
@@ -218,6 +395,56 @@ def _normalize_run_id(run_id: str | None) -> str | None:
         return None
     text = str(run_id).strip()
     return text or None
+
+
+def _read_scene_stream_id(scene: VisualScene) -> str | None:
+    body = scene.body
+    if not isinstance(body, dict):
+        return None
+    frame = body.get("frame")
+    if not isinstance(frame, dict):
+        return None
+    stream_id = frame.get("streamId")
+    if not isinstance(stream_id, str):
+        return None
+    normalized = stream_id.strip()
+    return normalized or None
+
+
+def _parse_binary_media_id(media_id: str) -> tuple[int, str] | None:
+    if not media_id.startswith(_BINARY_MEDIA_PREFIX):
+        return None
+    payload = media_id[len(_BINARY_MEDIA_PREFIX) :]
+    scene_seq_text, separator, encoded_raw_media_id = payload.partition(":")
+    if separator == "" or encoded_raw_media_id == "":
+        return None
+    try:
+        scene_seq = int(scene_seq_text)
+    except ValueError:
+        return None
+    raw_media_id = unquote(encoded_raw_media_id).strip()
+    if raw_media_id == "":
+        return None
+    return scene_seq, raw_media_id
+
+
+def _encode_low_latency_frame(*, content: bytes, mime_type: str | None) -> tuple[bytes, str | None]:
+    normalized_mime_type = str(mime_type or "").strip().lower()
+    if normalized_mime_type in {"image/jpeg", "image/jpg"}:
+        return content, "image/jpeg"
+    if Image is None:
+        return content, mime_type
+    try:
+        image = Image.open(io.BytesIO(content))
+        if image.mode not in {"RGB", "L"}:
+            image = image.convert("RGB")
+        elif image.mode == "L":
+            image = image.convert("RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85, optimize=True)
+        return buffer.getvalue(), "image/jpeg"
+    except Exception:
+        return content, mime_type
 
 
 def _decode_data_url(url: str) -> tuple[bytes, str | None]:

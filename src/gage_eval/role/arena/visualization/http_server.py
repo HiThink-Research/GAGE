@@ -5,9 +5,10 @@ import binascii
 import json
 from collections.abc import Callable, Mapping
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from mimetypes import guess_type
 from pathlib import Path
+import time
 from threading import Thread
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, unquote_to_bytes, urlparse
@@ -219,6 +220,9 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             return
         if len(suffix) == 2 and suffix[0] == "media":
             self._handle_media(session_id, parsed, media_id=suffix[1], run_id=run_id)
+            return
+        if len(suffix) == 3 and suffix[0] == "media" and suffix[2] == "stream":
+            self._handle_media_stream(session_id, media_id=suffix[1], run_id=run_id)
             return
 
         self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
@@ -483,6 +487,22 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json(media.to_dict(), status=HTTPStatus.OK)
 
+    def _handle_media_stream(self, session_id: str, *, media_id: str, run_id: str | None) -> None:
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is None:
+            self._send_json({"error": "media_stream_not_found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        try:
+            media = live_source.lookup_media(media_id)
+        except Exception:
+            logger.exception("Failed to lookup live media stream {} for {}", media_id, session_id)
+            self._send_json({"error": "media_lookup_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if media is None or media.transport != "low_latency_channel":
+            self._send_json({"error": "media_stream_not_found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        self._stream_low_latency_media(live_source=live_source, media_id=media_id, session_id=session_id)
+
     def _handle_submit_action(self, session_id: str, *, run_id: str | None) -> None:
         self._handle_write_submission(
             session_id=session_id,
@@ -637,6 +657,65 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _stream_low_latency_media(
+        self,
+        *,
+        live_source: ArenaVisualLiveSessionSource,
+        media_id: str,
+        session_id: str,
+    ) -> None:
+        boundary = b"frame"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Connection", "close")
+        self._send_cors_headers()
+        self.end_headers()
+
+        last_payload: bytes | None = None
+        sent_frames = 0
+        idle_rounds_after_end = 0
+        while True:
+            try:
+                frame_payload = live_source.load_stream_frame(media_id)
+            except Exception:
+                logger.exception("Failed to stream live media {} for {}", media_id, session_id)
+                break
+            if frame_payload is None:
+                break
+            content, mime_type = frame_payload
+            frame_changed = content != last_payload
+            if frame_changed:
+                last_payload = content
+                sent_frames += 1
+                try:
+                    self.wfile.write(b"--" + boundary + b"\r\n")
+                    part_mime_type = str(mime_type or "application/octet-stream")
+                    self.wfile.write(f"Content-Type: {part_mime_type}\r\n".encode("utf-8"))
+                    self.wfile.write(f"Content-Length: {len(content)}\r\n\r\n".encode("utf-8"))
+                    self.wfile.write(content)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    break
+
+            try:
+                lifecycle = live_source.load_session().lifecycle
+            except Exception:
+                lifecycle = None
+            if lifecycle != "live_running":
+                if not frame_changed and sent_frames > 0:
+                    idle_rounds_after_end += 1
+                else:
+                    idle_rounds_after_end = 0
+                if idle_rounds_after_end >= 2:
+                    break
+            try:
+                time.sleep(0.05)
+            except Exception:
+                break
+
     def _match_session_route(self, path: str) -> tuple[str, tuple[str, ...]] | None:
         parts = tuple(unquote(part) for part in path.split("/") if part)
         if len(parts) < 3:
@@ -674,7 +753,7 @@ class ArenaVisualHTTPServer:
         self._chat_submitter = chat_submitter
         self._control_submitter = control_submitter
         self._allow_origin = str(allow_origin)
-        self._server = HTTPServer((self._host, self._port), ArenaVisualRequestHandler)
+        self._server = ThreadingHTTPServer((self._host, self._port), ArenaVisualRequestHandler)
         setattr(self._server, "allow_origin", self._allow_origin)
         setattr(self._server, "arena_visual_server_ref", self)
         self._thread: Thread | None = None

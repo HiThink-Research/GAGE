@@ -152,6 +152,9 @@ async function resolveMediaSrc(
   request: MediaSubscriptionRequest,
   ref: MediaSourceRef,
 ): Promise<string> {
+  if (ref.transport === "low_latency_channel" && ref.url) {
+    return resolveLowLatencyMediaUrl(client, request, ref.url);
+  }
   if (ref.url && ref.transport !== "binary_stream" && isAbsoluteMediaUrl(ref.url)) {
     return ref.url;
   }
@@ -172,6 +175,23 @@ async function resolveMediaSrc(
 
   const blob = await response.blob();
   return URL.createObjectURL(blob);
+}
+
+function resolveLowLatencyMediaUrl(
+  client: Partial<Pick<ArenaGatewayClient, "buildMediaUrl">>,
+  request: MediaSubscriptionRequest,
+  url: string,
+): string {
+  if (isAbsoluteMediaUrl(url) || url.startsWith("blob:")) {
+    return url;
+  }
+  const fallbackUrl =
+    typeof client.buildMediaUrl === "function"
+      ? client.buildMediaUrl(request)
+      : `/arena_visual/sessions/${encodeURIComponent(request.sessionId)}/media/${encodeURIComponent(
+          request.mediaId,
+        )}?content=1`;
+  return new URL(url, fallbackUrl).toString();
 }
 
 function isAbsoluteMediaUrl(url: string): boolean {

@@ -46,6 +46,7 @@ class GameSession:
     player_specs: tuple[BoundPlayer, ...] = ()
     observation_workflow: object = None
     support_workflow: object = None
+    visualization_spec: object | None = None
     max_steps: int = 256
     final_result: object | None = None
     tick: int = 0
@@ -100,6 +101,7 @@ class GameSession:
             player_specs=player_specs,
             observation_workflow=resolved.observation_workflow,
             support_workflow=getattr(resolved, "support_workflow", None),
+            visualization_spec=getattr(resolved, "visualization_spec", None),
             max_steps=_resolve_max_steps(sample=sample, resolved=resolved),
             invocation_context=invocation_context,
             visual_recorder=_build_visual_recorder(
@@ -301,6 +303,7 @@ class GameSession:
                     RecorderLiveSessionSource(
                         recorder=self.visual_recorder,
                         run_id=run_id,
+                        visualization_spec=self.visualization_spec,
                         live_scene_scheme=_resolve_live_scene_scheme(visualizer_config),
                     )
                 )

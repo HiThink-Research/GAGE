@@ -770,6 +770,7 @@ def test_game_session_registers_live_arena_visual_source_before_finalize(
     assert getattr(live_source, "session_id") == "sample-live-3"
     assert getattr(live_source, "run_id") == "run-live-3"
     assert getattr(live_source, "live_scene_scheme") == "http_pull"
+    assert getattr(live_source, "visualization_spec") is resolved.visualization_spec
     assert browser_calls == ["http://127.0.0.1:5810/sessions/sample-live-3?run_id=run-live-3"]
 
 def test_game_session_records_action_trace_fields_for_illegal_result() -> None:

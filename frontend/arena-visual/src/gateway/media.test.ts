@@ -181,6 +181,40 @@ describe("createArenaMediaResolver", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("uses low-latency channel urls directly without falling back to media content fetches", async () => {
+    const client: Pick<ArenaGatewayClient, "loadMedia" | "buildMediaUrl"> = {
+      loadMedia: vi.fn().mockResolvedValue({
+        mediaId: "live-channel-main",
+        transport: "low_latency_channel",
+        mimeType: "multipart/x-mixed-replace",
+        url: "/arena_visual/sessions/sample-1/media/live-channel-main/stream?run_id=run-live",
+      }),
+      buildMediaUrl: vi
+        .fn()
+        .mockReturnValue("http://arena.local/arena_visual/sessions/sample-1/media/live-channel-main?content=1"),
+    };
+    const resolver = createArenaMediaResolver(client);
+
+    const resolved = await resolver.resolve({
+      sessionId: "sample-1",
+      mediaId: "live-channel-main",
+      runId: "run-live",
+    });
+
+    expect(resolved).toEqual({
+      mediaId: "live-channel-main",
+      ref: {
+        mediaId: "live-channel-main",
+        transport: "low_latency_channel",
+        mimeType: "multipart/x-mixed-replace",
+        url: "/arena_visual/sessions/sample-1/media/live-channel-main/stream?run_id=run-live",
+      },
+      src: "http://arena.local/arena_visual/sessions/sample-1/media/live-channel-main/stream?run_id=run-live",
+      status: "ready",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("allows retry after a transient media failure", async () => {
     const client: Pick<ArenaGatewayClient, "loadMedia"> = {
       loadMedia: vi.fn().mockResolvedValue({
