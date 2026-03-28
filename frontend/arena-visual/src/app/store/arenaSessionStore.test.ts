@@ -562,6 +562,56 @@ describe("arenaSessionStore", () => {
     });
   });
 
+  it("ignores a stale chat receipt after the host switches to a newer session", async () => {
+    const staleChat = deferred<{
+      intentId: string;
+      state: "accepted";
+      relatedEventSeq: number;
+      reason: string;
+    }>();
+    const client = createStubClient({
+      submitChat: vi
+        .fn()
+        .mockImplementationOnce(() => staleChat.promise)
+        .mockResolvedValue({
+          intentId: "chat-2",
+          state: "accepted",
+          relatedEventSeq: 4,
+          reason: "queued",
+        }),
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(buildSession("sample-1"))
+        .mockResolvedValueOnce(buildSession("sample-2")),
+      loadTimeline: vi
+        .fn()
+        .mockResolvedValueOnce(buildTimelinePage("sample-1", [1, 2]))
+        .mockResolvedValueOnce(buildTimelinePage("sample-2", [3, 4])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    const chatRequest = store.submitChat({
+      playerId: "player_0",
+      text: "hello host",
+    });
+    await store.loadSession({ sessionId: "sample-2" });
+
+    staleChat.resolve({
+      intentId: "chat-1",
+      state: "accepted",
+      relatedEventSeq: 9,
+      reason: "queued",
+    });
+    await chatRequest;
+
+    const state = store.getSnapshot();
+    expect(state.sessionRequest?.sessionId).toBe("sample-2");
+    expect(state.session?.sessionId).toBe("sample-2");
+    expect(state.currentSceneSeq).toBe(4);
+    expect(state.latestActionReceipt).toBeUndefined();
+  });
+
   it("reloads session and current scene for an observer override without discarding timeline state", async () => {
     const deferredSession = deferred<VisualSession>();
     const deferredScene = deferred<VisualScene>();

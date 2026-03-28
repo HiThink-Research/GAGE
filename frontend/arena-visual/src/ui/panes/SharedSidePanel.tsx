@@ -203,13 +203,36 @@ function readPlayers(scene?: VisualScene): Array<{ playerId: string; playerName:
     return [];
   }
 
+  const players = new Map<string, { playerId: string; playerName: string }>();
+  const addPlayer = (playerId: unknown, playerName?: unknown) => {
+    const normalizedId = readString(playerId);
+    if (normalizedId === null || players.has(normalizedId)) {
+      return;
+    }
+    players.set(normalizedId, {
+      playerId: normalizedId,
+      playerName: readString(playerName) ?? normalizedId,
+    });
+  };
+
   const playersRaw = Array.isArray(scene.body.players) ? scene.body.players : [];
-  return playersRaw
-    .filter(isRecord)
-    .map((player) => ({
-      playerId: readString(player.playerId) ?? "unknown",
-      playerName: readString(player.playerName) ?? readString(player.playerId) ?? "unknown",
-    }));
+  for (const player of playersRaw) {
+    if (!isRecord(player)) {
+      continue;
+    }
+    addPlayer(player.playerId, player.playerName);
+  }
+
+  const table = isRecord(scene.body.table) ? scene.body.table : undefined;
+  const seatsRaw = table && Array.isArray(table.seats) ? table.seats : [];
+  for (const seat of seatsRaw) {
+    if (!isRecord(seat)) {
+      continue;
+    }
+    addPlayer(seat.playerId, seat.playerName);
+  }
+
+  return Array.from(players.values());
 }
 
 function readChatPlayerId(session?: VisualSession): string | undefined {
