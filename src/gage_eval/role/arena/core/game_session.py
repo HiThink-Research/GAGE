@@ -618,7 +618,16 @@ def _build_visual_recorder(
         game_id=str(game_id or sample.game_kit or "arena"),
         scheduling_family=_resolve_scheduler_family(sample=sample, resolved=resolved),
         session_id=str(session_id),
+        observer_modes=_resolve_visual_observer_modes(visualization_spec),
     )
+
+
+def _resolve_visual_observer_modes(visualization_spec: Any) -> tuple[str, ...]:
+    observer_schema = getattr(visualization_spec, "observer_schema", {}) or {}
+    supported_modes = observer_schema.get("supported_modes")
+    if not isinstance(supported_modes, (list, tuple)):
+        return ()
+    return tuple(str(mode) for mode in supported_modes if str(mode).strip())
 
 
 def _resolve_scheduler_family(*, sample: ArenaSample, resolved) -> str:

@@ -97,9 +97,16 @@ class _DummyScheduler:
 
 
 class _DummyVisualizationSpec:
-    def __init__(self, plugin_id: str, game_id: str | None = None) -> None:
+    def __init__(
+        self,
+        plugin_id: str,
+        game_id: str | None = None,
+        *,
+        supported_modes: tuple[str, ...] = (),
+    ) -> None:
         self.plugin_id = plugin_id
         self.game_id = game_id
+        self.observer_schema = {"supported_modes": list(supported_modes)}
 
 
 class _DummyResolved:
@@ -188,6 +195,7 @@ def _materialize_visual_http_session(tmp_path: Path, *, run_id: str, sample_id: 
         game_id="gomoku",
         scheduling_family="turn",
         session_id=sample_id,
+        observer_modes=("player", "global"),
     )
     session = GameSession(
         sample=ArenaSample(game_kit="gomoku", env="gomoku-standard", scheduler="turn/default"),
@@ -366,7 +374,11 @@ def test_arena_visual_gateway_prefers_visualization_spec_identity_for_recorder(t
 
     resolved = _DummyResolved(
         _env_factory,
-        visualization_spec=_DummyVisualizationSpec(plugin_id="viz-plugin", game_id="ignored"),
+        visualization_spec=_DummyVisualizationSpec(
+            plugin_id="viz-plugin",
+            game_id="ignored",
+            supported_modes=("player", "camera"),
+        ),
     )
     session = GameSession.from_resolved(
         ArenaSample(game_kit="gomoku", env="gomoku-standard", scheduler="turn/default"),
@@ -377,6 +389,11 @@ def test_arena_visual_gateway_prefers_visualization_spec_identity_for_recorder(t
     assert session.visual_recorder is not None
     assert session.visual_recorder.plugin_id == "viz-plugin"
     assert session.visual_recorder.game_id == "gomoku"
+    assert session.visual_recorder.observer_modes == ("player", "camera")
+    assert session.visual_recorder.build_visual_session().capabilities["observerModes"] == [
+        "player",
+        "camera",
+    ]
 
 
 def test_update_replay_manifest_visual_session_ref_is_non_fatal_when_missing(tmp_path: Path) -> None:
@@ -451,6 +468,13 @@ def test_arena_visual_gateway_http_server_reads_generated_artifacts(tmp_path: Pa
 
         assert session_payload["sessionId"] == "sample-http"
         assert session_payload["timeline"]["eventCount"] == 6
+        assert session_payload["playback"]["canSeek"] is True
+        assert session_payload["capabilities"] == {
+            "supportsReplay": True,
+            "supportsTimeline": True,
+            "supportsSeek": True,
+            "observerModes": ["player", "global"],
+        }
 
         assert timeline_payload["sessionId"] == "sample-http"
         assert timeline_payload["limit"] == 3

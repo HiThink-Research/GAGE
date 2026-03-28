@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from gage_eval.game_kits.contracts import GameVisualizationSpec
 from gage_eval.game_kits.aec_env_game.pettingzoo.visualization import (
     VISUALIZATION_SPEC as PETTINGZOO_VISUALIZATION_SPEC,
 )
@@ -28,6 +29,7 @@ from gage_eval.game_kits.real_time_game.vizdoom.visualization import (
 )
 from gage_eval.role.arena.visualization.assembly import assemble_visual_scene
 from gage_eval.role.arena.visualization.contracts import ObserverRef, TimelineEvent, VisualScene, VisualSession
+from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 
 
 def _event(seq: int) -> TimelineEvent:
@@ -348,39 +350,145 @@ def _assert_non_blank_frame(scene: VisualScene) -> None:
     assert scene.body["view"]["text"] or scene.body["frame"]["viewport"] is not None
 
 
-_SCENE_CASES: tuple[tuple[str, Callable[[], VisualScene], Callable[[VisualScene], None]], ...] = (
-    ("gomoku", _build_gomoku_scene, _assert_non_blank_board),
-    ("tictactoe", _build_tictactoe_scene, _assert_non_blank_board),
+def _build_acceptance_session(
+    *,
+    game_id: str,
+    visualization_spec: GameVisualizationSpec,
+    scheduling_family: str,
+) -> VisualSession:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=visualization_spec.plugin_id,
+        game_id=game_id,
+        scheduling_family=scheduling_family,
+        session_id=f"{game_id}-acceptance",
+        observer_modes=tuple(visualization_spec.observer_schema.get("supported_modes", ())),
+    )
+    recorder.record_decision_window_open(
+        ts_ms=1001,
+        step=1,
+        tick=1,
+        player_id="human-0",
+        observation={"gameId": game_id},
+    )
+    return recorder.build_visual_session()
+
+
+_SCENE_CASES: tuple[
+    tuple[
+        str,
+        GameVisualizationSpec,
+        Callable[[], VisualScene],
+        Callable[[VisualScene], None],
+        tuple[str, ...],
+        str,
+    ],
+    ...,
+] = (
+    (
+        "gomoku",
+        GOMOKU_VISUALIZATION_SPEC,
+        _build_gomoku_scene,
+        _assert_non_blank_board,
+        ("player", "global"),
+        "turn",
+    ),
+    (
+        "tictactoe",
+        TICTACTOE_VISUALIZATION_SPEC,
+        _build_tictactoe_scene,
+        _assert_non_blank_board,
+        ("player", "global"),
+        "turn",
+    ),
     (
         "doudizhu",
+        DOUDIZHU_VISUALIZATION_SPEC,
         lambda: _build_doudizhu_scene(ObserverRef(observer_id="player_0", observer_kind="player")),
         _assert_non_blank_table,
+        ("player", "global"),
+        "turn",
     ),
     (
         "mahjong",
+        MAHJONG_VISUALIZATION_SPEC,
         lambda: _build_mahjong_scene(ObserverRef(observer_id="east", observer_kind="player")),
         _assert_non_blank_table,
+        ("player", "global"),
+        "turn",
     ),
-    ("pettingzoo", _build_pettingzoo_scene, _assert_non_blank_frame),
-    ("vizdoom", _build_vizdoom_scene, _assert_non_blank_frame),
-    ("retro_platformer", _build_retro_scene, _assert_non_blank_frame),
+    (
+        "pettingzoo",
+        PETTINGZOO_VISUALIZATION_SPEC,
+        _build_pettingzoo_scene,
+        _assert_non_blank_frame,
+        ("player", "global"),
+        "agent_cycle",
+    ),
+    (
+        "vizdoom",
+        VIZDOOM_VISUALIZATION_SPEC,
+        _build_vizdoom_scene,
+        _assert_non_blank_frame,
+        ("player", "camera"),
+        "real_time_tick",
+    ),
+    (
+        "retro_platformer",
+        RETRO_VISUALIZATION_SPEC,
+        _build_retro_scene,
+        _assert_non_blank_frame,
+        ("player", "camera"),
+        "real_time_tick",
+    ),
 )
 
 
-@pytest.mark.parametrize(("game_id", "scene_builder", "surface_assertion"), _SCENE_CASES)
-def test_arena_visual_acceptance_matrix_exposes_non_blank_surface_and_human_intent(
+@pytest.mark.parametrize(
+    (
+        "game_id",
+        "visualization_spec",
+        "scene_builder",
+        "surface_assertion",
+        "expected_observer_modes",
+        "expected_scheduling_family",
+    ),
+    _SCENE_CASES,
+)
+def test_arena_visual_acceptance_matrix_exposes_render_playback_seek_observer_and_human_intent(
     game_id: str,
+    visualization_spec: GameVisualizationSpec,
     scene_builder: Callable[[], VisualScene],
     surface_assertion: Callable[[VisualScene], None],
+    expected_observer_modes: tuple[str, ...],
+    expected_scheduling_family: str,
 ) -> None:
     scene = scene_builder()
+    session = _build_acceptance_session(
+        game_id=game_id,
+        visualization_spec=visualization_spec,
+        scheduling_family=expected_scheduling_family,
+    )
 
     assert scene.game_id == game_id
-    assert scene.plugin_id.startswith("arena.visualization.")
-    assert scene.kind in {"board", "table", "frame"}
+    assert scene.plugin_id == visualization_spec.plugin_id
+    assert scene.kind == visualization_spec.visual_kind
     assert scene.scene_id.endswith(f":seq:{scene.seq}")
     assert scene.legal_actions
     surface_assertion(scene)
+
+    assert session.game_id == game_id
+    assert session.plugin_id == visualization_spec.plugin_id
+    assert session.playback.mode == "live_tail"
+    assert session.playback.can_seek is True
+    assert session.scheduling.family == expected_scheduling_family
+    assert session.scheduling.phase == "waiting_for_intent"
+    assert session.scheduling.accepts_human_intent is True
+    assert session.capabilities == {
+        "supportsReplay": True,
+        "supportsTimeline": True,
+        "supportsSeek": True,
+        "observerModes": list(expected_observer_modes),
+    }
 
 
 @pytest.mark.parametrize(

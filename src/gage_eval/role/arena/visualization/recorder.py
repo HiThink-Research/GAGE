@@ -32,6 +32,7 @@ class ArenaVisualSessionRecorder:
     game_id: str
     scheduling_family: str
     session_id: str
+    observer_modes: tuple[str, ...] = ()
     lifecycle: str = "initializing"
     playback_mode: str = "live_tail"
     observer_id: str = ""
@@ -243,6 +244,8 @@ class ArenaVisualSessionRecorder:
             capabilities={
                 "supportsReplay": True,
                 "supportsTimeline": True,
+                "supportsSeek": True,
+                "observerModes": list(self.observer_modes),
             },
             summary=self._build_summary(),
             timeline=self._build_timeline_manifest(),
