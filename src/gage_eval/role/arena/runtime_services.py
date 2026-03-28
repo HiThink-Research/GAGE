@@ -61,8 +61,6 @@ class ArenaRuntimeServiceHub:
         self._registered_displays: set[str] = set()
         self._intent_lock = threading.Lock()
         self._intent_counter = 0
-        self._control_lock = threading.Lock()
-        self._pending_controls: list[dict[str, Any]] = []
 
     def ensure_visualizer(self, factory: Callable[[], Any]) -> Any:
         return self._visualizer.get_or_create(factory)
@@ -226,15 +224,6 @@ class ArenaRuntimeServiceHub:
             control_queue = getattr(action_server, "control_queue", None)
             if control_queue is not None and hasattr(control_queue, "put"):
                 control_queue.put(normalized)
-            else:
-                with self._control_lock:
-                    self._pending_controls.append(
-                        {
-                            "sessionId": str(session_id),
-                            "runId": None if run_id is None else str(run_id),
-                            "command": dict(normalized),
-                        }
-                    )
 
         return ActionIntentReceipt(
             intent_id=intent_id,
