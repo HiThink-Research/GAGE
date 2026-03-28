@@ -10,12 +10,16 @@ from mimetypes import guess_type
 from pathlib import Path
 from threading import Thread
 from typing import Any
-from urllib.parse import parse_qs, unquote, unquote_to_bytes, urlparse
+from urllib.parse import parse_qs, quote, unquote, unquote_to_bytes, urlparse
 
 from loguru import logger
 
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt, ObserverRef
 from gage_eval.role.arena.visualization.gateway_service import ArenaVisualGatewayQueryService
+from gage_eval.role.arena.visualization.live_session import (
+    ArenaVisualLiveRegistry,
+    ArenaVisualLiveSessionSource,
+)
 
 ManifestResolver = Callable[[str, str | None], str | Path | None]
 ActionSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
@@ -189,6 +193,9 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - match BaseHTTPRequestHandler
         parsed = urlparse(self.path)
+        if not parsed.path.startswith("/arena_visual/"):
+            self._handle_app_request(parsed.path)
+            return
         route = self._match_session_route(parsed.path)
         if route is None:
             self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
@@ -241,14 +248,24 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         logger.debug("ArenaVisualServer {}", format % args)
 
     def _handle_session(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
-        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
-        if manifest_path is None:
-            return
         params = parse_qs(parsed_url.query)
         try:
             observer = _parse_observer_override(params)
         except ValueError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is not None:
+            try:
+                session = live_source.load_session(observer=observer)
+            except Exception:
+                logger.exception("Failed to load live visual session {}", session_id)
+                self._send_json({"error": "session_load_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self._send_json(session.to_dict(), status=HTTPStatus.OK)
+            return
+        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
+        if manifest_path is None:
             return
         try:
             session = self._app.query_service.load_session(manifest_path, observer=observer)
@@ -259,9 +276,6 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_json(session.to_dict(), status=HTTPStatus.OK)
 
     def _handle_timeline(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
-        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
-        if manifest_path is None:
-            return
         params = parse_qs(parsed_url.query)
         try:
             after_seq = _parse_optional_int(_first_param(params, "after_seq"), field_name="after_seq")
@@ -274,6 +288,30 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             return
         if limit is not None and limit <= 0:
             self._send_json({"error": "invalid_limit"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is not None:
+            try:
+                page = live_source.page_timeline(
+                    after_seq=after_seq,
+                    limit=50 if limit is None else limit,
+                )
+            except Exception:
+                logger.exception("Failed to page live timeline for {}", session_id)
+                self._send_json({"error": "timeline_load_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            payload = {
+                "sessionId": session_id,
+                "afterSeq": page.after_seq,
+                "nextAfterSeq": page.next_after_seq,
+                "limit": page.limit,
+                "hasMore": page.has_more,
+                "events": [event.to_dict() for event in page.events],
+            }
+            self._send_json(payload, status=HTTPStatus.OK)
+            return
+        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
+        if manifest_path is None:
             return
 
         try:
@@ -298,9 +336,6 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_json(payload, status=HTTPStatus.OK)
 
     def _handle_scene(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
-        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
-        if manifest_path is None:
-            return
         params = parse_qs(parsed_url.query)
         try:
             seq = _parse_optional_int(_first_param(params, "seq"), field_name="seq")
@@ -313,6 +348,22 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             return
         if seq < 0:
             self._send_json({"error": "invalid_seq"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is not None:
+            try:
+                scene = live_source.load_scene(seq=seq, observer=observer)
+            except Exception:
+                logger.exception("Failed to load live scene {} for {}", seq, session_id)
+                self._send_json({"error": "scene_load_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if scene is None:
+                self._send_json({"error": "scene_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(scene.to_dict(), status=HTTPStatus.OK)
+            return
+        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
+        if manifest_path is None:
             return
 
         try:
@@ -327,13 +378,30 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_json(scene.to_dict(), status=HTTPStatus.OK)
 
     def _handle_markers(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
-        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
-        if manifest_path is None:
-            return
         params = parse_qs(parsed_url.query)
         marker = str(_first_param(params, "marker") or "").strip()
         if not marker:
             self._send_json({"error": "missing_marker"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is not None:
+            try:
+                seqs = live_source.lookup_marker(marker)
+            except Exception:
+                logger.exception("Failed to lookup live marker {} for {}", marker, session_id)
+                self._send_json({"error": "marker_lookup_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self._send_json(
+                {
+                    "sessionId": session_id,
+                    "marker": marker,
+                    "seqs": list(seqs),
+                },
+                status=HTTPStatus.OK,
+            )
+            return
+        manifest_path = self._require_manifest_path(session_id, run_id=run_id)
+        if manifest_path is None:
             return
         try:
             seqs = self._app.query_service.lookup_marker(manifest_path, marker)
@@ -351,11 +419,44 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_media(self, session_id: str, parsed_url, *, media_id: str, run_id: str | None) -> None:
+        params = parse_qs(parsed_url.query)
+        serve_content = _first_param(params, "content") in {"1", "true", "yes"}
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is not None:
+            try:
+                media = live_source.lookup_media(media_id)
+            except Exception:
+                logger.exception("Failed to lookup live media {} for {}", media_id, session_id)
+                self._send_json({"error": "media_lookup_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            if media is None:
+                self._send_json({"error": "media_not_found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if serve_content:
+                try:
+                    content_payload = live_source.load_media_content(media_id)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                except Exception:
+                    logger.exception("Failed to serve live media {} for {}", media_id, session_id)
+                    self._send_json({"error": "media_lookup_failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                if content_payload is None:
+                    self._send_json({"error": "media_content_not_found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+                content, mime_type = content_payload
+                self._send_bytes(
+                    content,
+                    status=HTTPStatus.OK,
+                    mime_type=media.mime_type or mime_type or "application/octet-stream",
+                )
+                return
+            self._send_json(media.to_dict(), status=HTTPStatus.OK)
+            return
         manifest_path = self._require_manifest_path(session_id, run_id=run_id)
         if manifest_path is None:
             return
-        params = parse_qs(parsed_url.query)
-        serve_content = _first_param(params, "content") in {"1", "true", "yes"}
         try:
             media = self._app.query_service.lookup_media(manifest_path, media_id)
         except Exception:
@@ -442,6 +543,27 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": submit_failed_error}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         self._send_json(receipt.to_dict(), status=HTTPStatus.OK)
+
+    def _handle_app_request(self, request_path: str) -> None:
+        app_dir = self._app.app_dir
+        if app_dir is None or not app_dir.exists():
+            self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        target = _resolve_app_path(app_dir, request_path)
+        if target is None or not target.exists() or not target.is_file():
+            self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        mime_type, _ = guess_type(target.name)
+        resolved_mime_type = mime_type or "application/octet-stream"
+        if resolved_mime_type.startswith("text/html"):
+            resolved_mime_type = "text/html; charset=utf-8"
+        elif resolved_mime_type.startswith("text/css"):
+            resolved_mime_type = "text/css; charset=utf-8"
+        elif resolved_mime_type in {"text/javascript", "application/javascript"}:
+            resolved_mime_type = "application/javascript; charset=utf-8"
+        self._send_bytes(target.read_bytes(), status=HTTPStatus.OK, mime_type=resolved_mime_type)
 
     def _read_json_object(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or 0)
@@ -537,12 +659,17 @@ class ArenaVisualHTTPServer:
         chat_submitter: ChatSubmitter | None = None,
         control_submitter: ControlSubmitter | None = None,
         allow_origin: str = "*",
+        app_dir: str | Path | None = None,
+        live_registry: ArenaVisualLiveRegistry | None = None,
     ) -> None:
         self._host = str(host)
         self._port = int(port)
         self._base_dir = Path(base_dir).expanduser().resolve()
+        resolved_app_dir = _default_app_dir() if app_dir is None else Path(app_dir).expanduser().resolve()
+        self._app_dir = resolved_app_dir if resolved_app_dir.exists() else None
         self._query_service = query_service or ArenaVisualGatewayQueryService()
         self._manifest_resolver = manifest_resolver or build_session_manifest_resolver(self._base_dir)
+        self._live_registry = live_registry or ArenaVisualLiveRegistry()
         self._action_submitter = action_submitter
         self._chat_submitter = chat_submitter
         self._control_submitter = control_submitter
@@ -573,11 +700,36 @@ class ArenaVisualHTTPServer:
         host, port = self._server.server_address[:2]
         return str(host), int(port)
 
+    @property
+    def app_dir(self) -> Path | None:
+        return self._app_dir
+
+    def register_live_session(self, source: ArenaVisualLiveSessionSource) -> None:
+        self._live_registry.register(source)
+
+    def unregister_live_session(self, *, session_id: str, run_id: str | None = None) -> None:
+        self._live_registry.unregister(session_id=session_id, run_id=run_id)
+
+    def resolve_live_session(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None = None,
+    ) -> ArenaVisualLiveSessionSource | None:
+        return self._live_registry.resolve(session_id=session_id, run_id=run_id)
+
     def resolve_manifest_path(self, session_id: str, *, run_id: str | None = None) -> Path | None:
         resolved = self._manifest_resolver(session_id, run_id)
         if resolved is None:
             return None
         return Path(resolved).expanduser().resolve()
+
+    def build_viewer_url(self, session_id: str, *, run_id: str | None = None) -> str:
+        host, port = self.server_address
+        base_url = f"http://{host}:{port}/sessions/{quote(str(session_id), safe='')}"
+        if run_id is None or str(run_id).strip() == "":
+            return base_url
+        return f"{base_url}?run_id={quote(str(run_id), safe='')}"
 
     def serve_forever(self) -> None:
         logger.info(
@@ -641,6 +793,26 @@ def _is_within_root(candidate: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _resolve_app_path(app_dir: Path, request_path: str) -> Path | None:
+    normalized_path = str(request_path or "/").split("?", 1)[0]
+    stripped = unquote(normalized_path).lstrip("/")
+    if stripped == "" or stripped.endswith("/"):
+        return app_dir / "index.html"
+
+    candidate = (app_dir / stripped).resolve()
+    if _is_within_root(candidate, app_dir) and candidate.exists() and candidate.is_file():
+        return candidate
+
+    if "." not in Path(stripped).name:
+        return app_dir / "index.html"
+    return None
+
+
+def _default_app_dir() -> Path:
+    repo_root = Path(__file__).resolve().parents[5]
+    return (repo_root / "frontend" / "arena-visual" / "dist").resolve()
 
 
 __all__ = [

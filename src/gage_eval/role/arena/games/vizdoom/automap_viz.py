@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from loguru import logger
 import numpy as np
 
 try:
@@ -85,12 +86,25 @@ class _NoopBackend:
 
 class AutomapWindow:
     def __init__(self, window_name: str, bgr: bool):
+        self._impl = _NoopBackend()
         if cv2 is not None:
-            self._impl = _Cv2Backend(window_name, bgr)
-        elif plt is not None:
-            self._impl = _MplBackend(window_name)
-        else:
-            self._impl = _NoopBackend()
+            try:
+                self._impl = _Cv2Backend(window_name, bgr)
+                return
+            except Exception:
+                logger.warning(
+                    "ViZDoom window backend unavailable for '{}'; falling back",
+                    window_name,
+                )
+        if plt is not None:
+            try:
+                self._impl = _MplBackend(window_name)
+                return
+            except Exception:
+                logger.warning(
+                    "ViZDoom matplotlib backend unavailable for '{}'; falling back to noop",
+                    window_name,
+                )
 
     def update(self, frame):
         return self._impl.update(frame)

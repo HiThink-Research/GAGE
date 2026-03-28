@@ -45,7 +45,7 @@ role_adapters:
         enabled: true
         title: GAGE Doudizhu Replay
         launch_browser: true
-        mode: ws_rgb
+        mode: arena_visual
         linger_after_finish_s: 3.0
       players:
         - seat: landlord

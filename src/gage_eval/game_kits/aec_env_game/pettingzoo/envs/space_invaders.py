@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from loguru import logger
+
+from gage_eval.game_kits.real_time_game.backend_mode import normalize_backend_mode
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.games.pettingzoo.env import PettingZooAecArenaEnvironment
 
@@ -109,23 +112,53 @@ class SpaceInvadersEnvironment:
         illegal_policy: dict[str, str | int] | None,
         action_labels: Sequence[str] | None,
         player_specs: Sequence[object],
+        backend_mode: str = "auto",
+        env_kwargs: dict[str, Any] | None = None,
     ) -> None:
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_names = {
             str(getattr(player, "player_id")): str(getattr(player, "display_name"))
             for player in player_specs
         }
-        self._adapter = PettingZooAecArenaEnvironment(
-            env=_StubSpaceInvadersAecEnv(max_cycles=max_cycles),
-            env_id=env_id,
-            player_ids=player_ids,
-            player_names=player_names,
-            seed=seed,
-            action_labels=action_labels,
-            use_action_meanings=use_action_meanings,
-            include_raw_obs=include_raw_obs,
-            illegal_policy=illegal_policy,
-        )
+        resolved_backend_mode = normalize_backend_mode(backend_mode)
+        adapter_kwargs = {
+            "player_ids": player_ids,
+            "player_names": player_names,
+            "seed": seed,
+            "action_labels": action_labels,
+            "use_action_meanings": use_action_meanings,
+            "include_raw_obs": include_raw_obs,
+            "illegal_policy": illegal_policy,
+        }
+        if resolved_backend_mode == "dummy":
+            self._adapter = PettingZooAecArenaEnvironment(
+                env=_StubSpaceInvadersAecEnv(max_cycles=max_cycles),
+                env_id=env_id,
+                **adapter_kwargs,
+            )
+            return
+
+        resolved_env_kwargs = dict(env_kwargs or {})
+        resolved_env_kwargs.setdefault("render_mode", "rgb_array")
+        resolved_env_kwargs.setdefault("max_cycles", max_cycles)
+        try:
+            self._adapter = PettingZooAecArenaEnvironment(
+                env_id=env_id,
+                env_kwargs=resolved_env_kwargs,
+                **adapter_kwargs,
+            )
+        except Exception:
+            if resolved_backend_mode == "real":
+                raise
+            logger.warning(
+                "SpaceInvadersEnvironment falling back to stub backend for env_id={}",
+                env_id,
+            )
+            self._adapter = PettingZooAecArenaEnvironment(
+                env=_StubSpaceInvadersAecEnv(max_cycles=max_cycles),
+                env_id=env_id,
+                **adapter_kwargs,
+            )
 
     @classmethod
     def from_runtime(cls, *, sample, resolved, resources, player_specs):
@@ -147,6 +180,8 @@ class SpaceInvadersEnvironment:
             illegal_policy=defaults.get("illegal_policy"),
             action_labels=action_labels,
             player_specs=player_specs,
+            backend_mode=str(defaults.get("backend_mode", "auto")),
+            env_kwargs=defaults.get("env_kwargs"),
         )
         return attach_runtime_resources(environment, resources)
 
@@ -167,6 +202,11 @@ class SpaceInvadersEnvironment:
 
     def build_result(self, *, result: str, reason: str | None):
         return self._adapter.build_result(result=result, reason=reason)
+
+    def close(self) -> None:
+        closer = getattr(self._adapter, "close", None)
+        if callable(closer):
+            closer()
 
 
 def build_space_invaders_environment(*, sample, resolved, resources, player_specs) -> Any:

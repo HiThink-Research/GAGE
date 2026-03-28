@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
 from gage_eval.role.arena.visualization.http_server import ArenaVisualHTTPServer
+from gage_eval.role.arena.visualization.live_session import RecorderLiveSessionSource
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 
 
@@ -147,6 +148,58 @@ def _persist_visual_session(
     (frames_dir / "frame-5.png").write_bytes(b"frame-5-bytes")
     (frames_dir / "frame-5-mini.png").write_bytes(b"frame-5-mini-bytes")
     return manifest_path
+
+
+def _build_live_visual_recorder(
+    *,
+    session_id: str = "sample-live",
+) -> ArenaVisualSessionRecorder:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.pettingzoo.frame_v1",
+        game_id="pettingzoo",
+        scheduling_family="real_time_tick",
+        session_id=session_id,
+    )
+    recorder.record_decision_window_open(
+        ts_ms=2001,
+        step=1,
+        tick=1,
+        player_id="pilot_alpha",
+        observation={
+            "activePlayerId": "pilot_alpha",
+            "view": {
+                "text": "live frame text",
+                "image": {
+                    "data_url": "data:image/png;base64,Zm9v",
+                },
+            },
+            "legalActions": [{"id": "noop", "label": "No-op"}],
+            "metadata": {"stream_id": "main"},
+        },
+    )
+    recorder.record_snapshot(
+        ts_ms=2002,
+        step=1,
+        tick=1,
+        snapshot={
+            "step": 1,
+            "tick": 1,
+            "observation": {
+                "activePlayerId": "pilot_alpha",
+                "view": {
+                    "text": "live frame text",
+                    "image": {
+                        "data_url": "data:image/png;base64,Zm9v",
+                    },
+                },
+                "legalActions": [{"id": "noop", "label": "No-op"}],
+                "metadata": {"stream_id": "main"},
+            },
+        },
+        label="live_frame_snapshot",
+        anchor=True,
+    )
+    return recorder
 
 
 def test_arena_visual_http_server_serves_session_timeline_scene_media_and_markers(tmp_path: Path) -> None:
@@ -328,6 +381,82 @@ def test_arena_visual_http_server_serves_session_timeline_scene_media_and_marker
                 },
             )
         ]
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_serves_registered_live_session_without_manifest(tmp_path: Path) -> None:
+    recorder = _build_live_visual_recorder()
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="http_pull",
+    )
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        session_url = f"http://{host}:{port}/arena_visual/sessions/sample-live?run_id=run-live"
+        timeline_url = f"http://{host}:{port}/arena_visual/sessions/sample-live/timeline?run_id=run-live"
+        scene_url = f"http://{host}:{port}/arena_visual/sessions/sample-live/scene?seq=2&run_id=run-live"
+
+        session_payload = _get_json(session_url)
+        timeline_payload = _get_json(timeline_url)
+        scene_payload = _get_json(scene_url)
+        primary_media = scene_payload["media"]["primary"]
+        assert isinstance(primary_media, dict)
+        media_id = str(primary_media["mediaId"])
+        media_payload = _get_json(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}?run_id=run-live"
+        )
+        media_content = _get_bytes(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}?run_id=run-live&content=1"
+        )
+
+        assert session_payload["sessionId"] == "sample-live"
+        assert session_payload["lifecycle"] == "live_running"
+        assert timeline_payload["events"][-1]["type"] == "snapshot"
+        assert scene_payload["phase"] == "live"
+        assert scene_payload["kind"] == "frame"
+        assert primary_media["transport"] == "http_pull"
+        assert str(primary_media["url"]).startswith("data:image/png;base64,")
+        assert media_payload["transport"] == "http_pull"
+        assert media_content == b"foo"
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_serves_frontend_shell_and_assets(tmp_path: Path) -> None:
+    app_dir = tmp_path / "app"
+    assets_dir = app_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (app_dir / "index.html").write_text(
+        "<!doctype html><html><head><title>Arena Visual</title></head><body>shell</body></html>",
+        encoding="utf-8",
+    )
+    (assets_dir / "app.js").write_text("console.log('arena-visual');", encoding="utf-8")
+
+    server = ArenaVisualHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        base_dir=tmp_path,
+        app_dir=app_dir,
+    )
+    server.start()
+    try:
+        host, port = server.server_address
+        root_html = _get_bytes(f"http://{host}:{port}/").decode("utf-8")
+        session_html = _get_bytes(f"http://{host}:{port}/sessions/sample-1?run_id=run-9").decode("utf-8")
+        asset_bytes = _get_bytes(f"http://{host}:{port}/assets/app.js")
+
+        assert "<title>Arena Visual</title>" in root_html
+        assert "<title>Arena Visual</title>" in session_html
+        assert asset_bytes == b"console.log('arena-visual');"
+        assert (
+            server.build_viewer_url("sample-1", run_id="run-9")
+            == f"http://{host}:{port}/sessions/sample-1?run_id=run-9"
+        )
     finally:
         server.stop()
 

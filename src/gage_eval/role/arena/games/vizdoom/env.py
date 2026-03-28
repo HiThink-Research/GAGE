@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 import base64
 import importlib
+import io
 from pathlib import Path
 import time
 from typing import Any, Dict, Optional, Sequence
@@ -14,6 +15,11 @@ from gage_eval.registry import registry
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.games.vizdoom.observation import ViZDoomPromptBuilder
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
 
 DEFAULT_ACTION_LABELS = ("turn_left", "turn_right", "move_forward", "move_backward", "attack")
 ACTION_ID_MAPPING = {
@@ -804,12 +810,30 @@ def _encode_frame(frame: Any) -> Optional[Dict[str, Any]]:
             return {
                 "encoding": "raw_base64",
                 "data": base64.b64encode(raw).decode("ascii"),
+                "data_url": _build_image_data_url(frame),
                 "shape": list(frame.shape),
                 "dtype": str(getattr(frame, "dtype", "unknown")),
             }
         except Exception:
             return None
     return None
+
+
+def _build_image_data_url(frame: Any) -> Optional[str]:
+    if Image is None:
+        return None
+    try:
+        image = Image.fromarray(frame)
+        if image.mode not in {"RGB", "RGBA", "L"}:
+            image = image.convert("RGB")
+        if image.mode == "RGBA":
+            image = image.convert("RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85, optimize=True)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
+    except Exception:
+        return None
 
 
 def _json_dump(payload: Dict[str, Any]) -> str:

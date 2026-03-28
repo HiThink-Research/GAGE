@@ -46,9 +46,10 @@ role_adapters:
         use_action_meanings: true
       visualizer:
         enabled: true
-        title: GAGE Space Invaders ws_rgb
+        title: GAGE Space Invaders Arena Visual
         launch_browser: true
-        mode: ws_rgb
+        mode: arena_visual
+        live_scene_scheme: http_pull
         linger_after_finish_s: 3.0
       players:
         - seat: pilot_0

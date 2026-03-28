@@ -56,6 +56,19 @@ class FakeAecEnv:
         self.agent_selection = self.agents[(idx + 1) % len(self.agents)]
 
 
+class FakeRgbFrame:
+    shape = (2, 2, 3)
+    dtype = "uint8"
+
+    def tobytes(self) -> bytes:
+        return bytes([0, 64, 128, 255]) * 3
+
+
+class FakeRgbAecEnv(FakeAecEnv):
+    def observe(self, agent: str) -> Dict[str, Any]:
+        return {"observation": FakeRgbFrame(), "agent": agent, "step": self._step_count}
+
+
 def test_pettingzoo_env_basic_loop():
     env = FakeAecEnv(max_steps=4)
     adapter = PettingZooAecArenaEnvironment(
@@ -118,3 +131,25 @@ def test_pettingzoo_env_disable_action_meanings_uses_numeric_moves():
     assert observation.legal_moves[:3] == ["0", "1", "2"]
     assert "NOOP" not in observation.legal_moves
     assert observation.prompt is not None
+
+
+def test_pettingzoo_env_observation_includes_inline_image_when_rgb_obs_available(monkeypatch):
+    env = FakeRgbAecEnv(max_steps=2, action_n=6)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        env_id="pettingzoo.atari.space_invaders_v2",
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_image_data_url",
+        lambda frame: "data:image/png;base64,Zm9v",
+    )
+
+    adapter.reset()
+    observation = adapter.observe(adapter.get_active_player())
+
+    assert observation.view is not None
+    assert observation.view["image"]["data_url"] == "data:image/png;base64,Zm9v"
+    assert observation.view["image"]["shape"] == [2, 2, 3]

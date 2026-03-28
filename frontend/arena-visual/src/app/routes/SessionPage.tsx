@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { usePlaybackControls } from "../hooks/usePlaybackControls";
 import { createArenaSessionStore } from "../store/arenaSessionStore";
@@ -12,6 +12,8 @@ import { ArenaLayout } from "../../ui/layout/ArenaLayout";
 import { SharedSidePanel } from "../../ui/panes/SharedSidePanel";
 import { TimelineView } from "../../ui/timeline/TimelineView";
 
+const LIVE_TIMELINE_POLL_MS = 300;
+
 function readGatewayBaseUrl(): string {
   const envBaseUrl = import.meta.env.VITE_ARENA_GATEWAY_BASE_URL;
   if (typeof envBaseUrl === "string" && envBaseUrl.trim()) {
@@ -22,6 +24,8 @@ function readGatewayBaseUrl(): string {
 
 export function SessionPage() {
   const { sessionId } = useParams();
+  const [searchParams] = useSearchParams();
+  const runIdParam = searchParams.get("run_id")?.trim() || undefined;
   const [client] = useState(() =>
     createArenaGatewayClient({ baseUrl: readGatewayBaseUrl() }),
   );
@@ -48,8 +52,8 @@ export function SessionPage() {
       return;
     }
 
-    void store.loadSession({ sessionId });
-  }, [sessionId, store]);
+    void store.loadSession({ sessionId, runId: runIdParam });
+  }, [runIdParam, sessionId, store]);
 
   useEffect(() => {
     if (
@@ -63,6 +67,28 @@ export function SessionPage() {
 
     void store.loadScene({ seq: snapshot.currentSceneSeq }).catch(() => {});
   }, [snapshot.currentSceneSeq, snapshot.scene?.seq, snapshot.sceneStatus, snapshot.status, store]);
+
+  useEffect(() => {
+    if (snapshot.status !== "ready" || snapshot.session?.playback.mode !== "live_tail") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const current = store.getSnapshot();
+      if (
+        current.status !== "ready" ||
+        current.session?.playback.mode !== "live_tail" ||
+        current.timeline.status === "loading"
+      ) {
+        return;
+      }
+      void store.loadMoreTimeline().catch(() => {});
+    }, LIVE_TIMELINE_POLL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [snapshot.session?.playback.mode, snapshot.status, store]);
 
   const PluginView = plugin?.render;
 

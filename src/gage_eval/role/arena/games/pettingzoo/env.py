@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import importlib
+import io
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
@@ -11,6 +13,11 @@ from gage_eval.registry import registry
 from gage_eval.role.arena.games.pettingzoo.observation import PettingZooPromptBuilder
 from gage_eval.role.arena.parsers.pettingzoo_actions import DiscreteActionCodec
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
 
 
 from .constants import ACTION_MEANINGS
@@ -216,6 +223,9 @@ class PettingZooAecArenaEnvironment:
             rgb_frame=rgb_frame,
         )
         view = {"text": board_text}
+        image = self._build_observation_image(rgb_frame)
+        if image is not None:
+            view["image"] = image
         legal_actions: Dict[str, Any] = {"items": list(legal_moves)}
         if action_mask is not None:
             legal_actions["mask"] = action_mask
@@ -552,6 +562,49 @@ class PettingZooAecArenaEnvironment:
         if self._is_rgb_like(candidate):
             return candidate
         return None
+
+    def _build_observation_image(self, frame: Any) -> Optional[dict[str, Any]]:
+        if frame is None:
+            return None
+        if not hasattr(frame, "tobytes") or not hasattr(frame, "shape"):
+            return None
+        shape = getattr(frame, "shape", None)
+        if not isinstance(shape, (list, tuple)) or len(shape) < 2:
+            return None
+        normalized_shape: list[int] = []
+        for dim in shape:
+            try:
+                normalized_shape.append(int(dim))
+            except Exception:
+                return None
+        try:
+            raw = frame.tobytes()
+        except Exception:
+            return None
+        return {
+            "encoding": "raw_base64",
+            "data": base64.b64encode(raw).decode("ascii"),
+            "data_url": self._build_image_data_url(frame),
+            "shape": normalized_shape,
+            "dtype": str(getattr(frame, "dtype", "unknown")),
+        }
+
+    @staticmethod
+    def _build_image_data_url(frame: Any) -> Optional[str]:
+        if Image is None:
+            return None
+        try:
+            image = Image.fromarray(frame)
+            if image.mode not in {"RGB", "RGBA", "L"}:
+                image = image.convert("RGB")
+            if image.mode == "RGBA":
+                image = image.convert("RGB")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG", optimize=True)
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            return f"data:image/png;base64,{encoded}"
+        except Exception:
+            return None
 
     @staticmethod
     def _is_rgb_like(value: Any) -> bool:

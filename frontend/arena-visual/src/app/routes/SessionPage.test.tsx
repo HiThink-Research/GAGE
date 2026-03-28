@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import gomokuScene from "../../test/fixtures/gomoku.visual.json";
 import type { VisualScene } from "../../gateway/types";
@@ -34,6 +34,10 @@ describe("SessionPage", () => {
     createArenaGatewayClientMock.mockReset();
     createArenaSessionStoreMock.mockReset();
     createArenaMediaResolverMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("routes host controls side-panel actions and plugin input through the session store", async () => {
@@ -198,5 +202,150 @@ describe("SessionPage", () => {
         text: "hello host",
       });
     });
+  });
+
+  it("threads run_id from the URL query into the session load request", async () => {
+    const loadSession = vi.fn().mockResolvedValue(undefined);
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "idle",
+      sceneStatus: "idle",
+      timeline: {
+        status: "idle",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession,
+      loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    } as unknown as ArenaSessionStore);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-1?run_id=run-live-9"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(loadSession).toHaveBeenCalledWith({
+        sessionId: "sample-1",
+        runId: "run-live-9",
+      });
+    });
+  });
+
+  it("polls the live timeline while the session stays on live tail", async () => {
+    vi.useFakeTimers();
+    const loadSession = vi.fn().mockResolvedValue(undefined);
+    const loadMoreTimeline = vi.fn().mockResolvedValue(undefined);
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-1",
+        runId: "run-live-9",
+      },
+      session: {
+        sessionId: "sample-1",
+        gameId: "pettingzoo",
+        pluginId: "arena.visualization.pettingzoo.frame_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 1005,
+          cursorEventSeq: 5,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "",
+          observerKind: "spectator",
+        },
+        scheduling: {
+          family: "real_time_tick",
+          phase: "advancing",
+          acceptsHumanIntent: false,
+        },
+        capabilities: {},
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "idle",
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession,
+      loadMoreTimeline,
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    } as unknown as ArenaSessionStore);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-1?run_id=run-live-9"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await Promise.resolve();
+
+    expect(loadSession).toHaveBeenCalledWith({
+      sessionId: "sample-1",
+      runId: "run-live-9",
+    });
+
+    await vi.advanceTimersByTimeAsync(1200);
+
+    expect(loadMoreTimeline).toHaveBeenCalled();
   });
 });

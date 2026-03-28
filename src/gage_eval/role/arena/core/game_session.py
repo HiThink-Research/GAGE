@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.arena.visualization.artifacts import to_visual_json_safe
+from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.replay_schema_writer import update_replay_manifest_visual_session_ref
 
 if TYPE_CHECKING:
@@ -57,6 +59,11 @@ class GameSession:
     _sample_action_router: SampleActionRouter | None = field(default=None, init=False, repr=False)
     _sample_action_server: Any | None = field(default=None, init=False, repr=False)
     _visualization_display_id: str | None = field(default=None, init=False, repr=False)
+    _visualization_mode: str | None = field(default=None, init=False, repr=False)
+    _visualization_viewer_url: str | None = field(default=None, init=False, repr=False)
+    _visualization_run_id: str | None = field(default=None, init=False, repr=False)
+    _visualization_launch_browser: bool = field(default=False, init=False, repr=False)
+    _visualization_browser_launched: bool = field(default=False, init=False, repr=False)
     _visualization_linger_s: float = field(default=0.0, init=False, repr=False)
     _visualization_linger_done: bool = field(default=False, init=False, repr=False)
     _visual_artifacts_error: str | None = field(default=None, init=False, repr=False)
@@ -252,6 +259,7 @@ class GameSession:
         self.final_result = final_context.payload.get("result", self.final_result)
         self._record_visual_result()
         self._persist_visual_recorder()
+        self._maybe_launch_visualization_browser()
         self._clear_sample_action_routing()
         self._finalized = True
         self._linger_for_visualization()
@@ -268,6 +276,40 @@ class GameSession:
             return
         service_hub = invocation.runtime_service_hub
         if service_hub is None:
+            return
+        self._visualization_mode = _resolve_visualizer_mode(visualizer_config)
+        self._visualization_linger_s = _resolve_linger_seconds(visualizer_config)
+        self._visualization_launch_browser = bool(visualizer_config.get("launch_browser", False))
+        if self._visualization_mode == "arena_visual":
+            visual_server = service_hub.ensure_visualizer(
+                lambda: _build_arena_visual_server(visualizer_config, service_hub=service_hub)
+            )
+            start = getattr(visual_server, "start", None)
+            if callable(start):
+                start()
+            session_id = _resolve_visualization_session_id(self)
+            run_id = _resolve_invocation_run_id(invocation)
+            self._visualization_run_id = run_id
+            build_viewer_url = getattr(visual_server, "build_viewer_url", None)
+            if callable(build_viewer_url) and session_id is not None:
+                self._visualization_viewer_url = build_viewer_url(session_id, run_id=run_id)
+            register_live_session = getattr(visual_server, "register_live_session", None)
+            if callable(register_live_session) and self.visual_recorder is not None and session_id is not None:
+                from gage_eval.role.arena.visualization.live_session import RecorderLiveSessionSource
+
+                register_live_session(
+                    RecorderLiveSessionSource(
+                        recorder=self.visual_recorder,
+                        run_id=run_id,
+                        live_scene_scheme=_resolve_live_scene_scheme(visualizer_config),
+                    )
+                )
+            logger.info(
+                "Arena visual workspace ready session_id={} viewer_url={}",
+                session_id,
+                self._visualization_viewer_url or "",
+            )
+            self._maybe_launch_visualization_browser()
             return
         frame_source = _resolve_frame_source(self.environment)
         if frame_source is None:
@@ -296,7 +338,6 @@ class GameSession:
             registration=registration,
         )
         self._visualization_display_id = display_id
-        self._visualization_linger_s = _resolve_linger_seconds(visualizer_config)
         logger.info(
             "Arena live viewer ready display_id={} viewer_url={}",
             display_id,
@@ -523,7 +564,10 @@ class GameSession:
         recorder = self.visual_recorder
         if recorder is None:
             return
-        replay_path = _resolve_result_replay_path(self.final_result)
+        replay_path = _resolve_visual_replay_path(
+            result=self.final_result,
+            invocation_context=self.invocation_context,
+        )
         if replay_path is None:
             return
         try:
@@ -552,6 +596,17 @@ class GameSession:
                 replay_path,
                 exc,
             )
+
+    def _maybe_launch_visualization_browser(self) -> None:
+        if self._visualization_mode != "arena_visual":
+            return
+        if self._visualization_browser_launched:
+            return
+        viewer_url = str(self._visualization_viewer_url or "").strip()
+        if not viewer_url:
+            return
+        self._visualization_browser_launched = True
+        _maybe_open_browser(viewer_url, enabled=self._visualization_launch_browser)
 
     def _clear_sample_action_routing(self) -> None:
         router = self._sample_action_router
@@ -795,6 +850,28 @@ def _resolve_session_sample_id(
     return None
 
 
+def _resolve_invocation_run_id(
+    invocation_context: GameArenaInvocationContext | None,
+) -> str | None:
+    if invocation_context is None:
+        return None
+    trace = invocation_context.trace
+    if trace is None:
+        return None
+    run_id = getattr(trace, "run_id", None)
+    if run_id is None:
+        return None
+    text = str(run_id).strip()
+    return text or None
+
+
+def _resolve_visualization_session_id(session: GameSession) -> str | None:
+    recorder = session.visual_recorder
+    if recorder is not None and str(recorder.session_id).strip():
+        return str(recorder.session_id)
+    return _resolve_session_sample_id(session.invocation_context)
+
+
 def _accepts_keyword(callable_obj: object, keyword: str) -> bool:
     try:
         signature = inspect.signature(callable_obj)
@@ -812,6 +889,18 @@ def _is_visualizer_enabled(config: Mapping[str, Any]) -> bool:
     return bool(config.get("enabled", False))
 
 
+def _resolve_visualizer_mode(config: Mapping[str, Any]) -> str:
+    mode = str(config.get("mode") or "").strip().lower()
+    if mode == "arena_visual":
+        return "arena_visual"
+    return "ws_rgb"
+
+
+def _resolve_live_scene_scheme(config: Mapping[str, Any]) -> str:
+    scheme = str(config.get("live_scene_scheme") or "").strip().lower()
+    return scheme or "http_pull"
+
+
 def _resolve_result_replay_path(result: object | None) -> str | None:
     if result is None:
         return None
@@ -824,6 +913,30 @@ def _resolve_result_replay_path(result: object | None) -> str | None:
     return str(replay_path)
 
 
+def _resolve_visual_replay_path(
+    *,
+    result: object | None,
+    invocation_context: GameArenaInvocationContext | None,
+) -> str | None:
+    replay_path = _resolve_result_replay_path(result)
+    if replay_path is not None:
+        return replay_path
+    if invocation_context is None:
+        return None
+    run_id = _resolve_invocation_run_id(invocation_context)
+    sample_id = _resolve_session_sample_id(invocation_context)
+    if run_id is None or sample_id is None:
+        return None
+    resolved = resolve_replay_manifest_path(
+        run_id=run_id,
+        sample_id=sample_id,
+        base_dir=os.environ.get("GAGE_EVAL_SAVE_DIR"),
+    )
+    if resolved is None:
+        return None
+    return str(resolved)
+
+
 def _build_ws_rgb_hub(config: Mapping[str, Any]):
     from gage_eval.tools.ws_rgb_server import WsRgbHubServer
 
@@ -834,6 +947,24 @@ def _build_ws_rgb_hub(config: Mapping[str, Any]):
     )
     hub.start()
     return hub
+
+
+def _build_arena_visual_server(
+    config: Mapping[str, Any],
+    *,
+    service_hub: Any,
+) -> Any:
+    from gage_eval.role.arena.visualization.http_server import ArenaVisualHTTPServer
+
+    return ArenaVisualHTTPServer(
+        host=str(config.get("host") or "127.0.0.1"),
+        port=int(config.get("port") or 5800),
+        base_dir=str(config.get("base_dir") or os.environ.get("GAGE_EVAL_SAVE_DIR") or "./runs"),
+        action_submitter=getattr(service_hub, "submit_action_intent", None),
+        chat_submitter=getattr(service_hub, "submit_chat_message", None),
+        control_submitter=getattr(service_hub, "submit_control_command", None),
+        allow_origin=str(config.get("allow_origin") or "*"),
+    )
 
 
 def _resolve_frame_source(environment: object) -> object | None:

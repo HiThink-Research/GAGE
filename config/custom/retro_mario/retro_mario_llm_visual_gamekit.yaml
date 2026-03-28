@@ -42,8 +42,8 @@ role_adapters:
       game_kit: retro_platformer
       env: retro_mario
       runtime_overrides:
-        backend_mode: dummy
         stub_max_ticks: 4
+        max_turns: 12
         display_mode: headless
         obs_image: true
         frame_stride: 1
@@ -51,7 +51,8 @@ role_adapters:
         enabled: true
         title: GAGE Retro Mario Live
         launch_browser: true
-        mode: ws_rgb
+        mode: arena_visual
+        live_scene_scheme: http_pull
         linger_after_finish_s: 3.0
       players:
         - seat: player_0

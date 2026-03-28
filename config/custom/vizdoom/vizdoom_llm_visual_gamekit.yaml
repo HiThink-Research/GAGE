@@ -42,9 +42,8 @@ role_adapters:
       game_kit: vizdoom
       env: duel_map01
       runtime_overrides:
-        backend_mode: dummy
         stub_max_rounds: 3
-        show_pov: true
+        show_pov: false
         capture_pov: true
         obs_image: true
         frame_stride: 1
@@ -52,7 +51,8 @@ role_adapters:
         enabled: true
         title: GAGE ViZDoom Live
         launch_browser: true
-        mode: ws_rgb
+        mode: arena_visual
+        live_scene_scheme: http_pull
         linger_after_finish_s: 3.0
       players:
         - seat: p0

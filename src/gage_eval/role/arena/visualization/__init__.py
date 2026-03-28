@@ -15,11 +15,20 @@ from gage_eval.role.arena.visualization.artifacts import (
     ArenaVisualArtifactLayout,
     ArenaVisualSessionArtifacts,
 )
-from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
+from gage_eval.role.arena.visualization.live_session import (
+    ArenaVisualLiveRegistry,
+    RecorderLiveSessionSource,
+)
+from gage_eval.role.arena.visualization.recorder import (
+    ArenaVisualLiveState,
+    ArenaVisualSessionRecorder,
+)
 
 __all__ = [
     "ActionIntentReceipt",
     "ArenaVisualArtifactLayout",
+    "ArenaVisualLiveRegistry",
+    "ArenaVisualLiveState",
     "ArenaVisualSessionArtifacts",
     "ArenaVisualSessionRecorder",
     "MediaSourceRef",
@@ -27,6 +36,7 @@ __all__ = [
     "PlaybackState",
     "SchedulingState",
     "TimelineEvent",
+    "RecorderLiveSessionSource",
     "VisualScene",
     "VisualSceneMedia",
     "VisualSession",
