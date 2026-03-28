@@ -391,6 +391,40 @@ describe("arenaSessionStore", () => {
     });
   });
 
+  it("leaves the current scene cursor unchanged when a seek control is rejected", async () => {
+    const client = createStubClient({
+      submitControl: vi.fn().mockResolvedValue({
+        intentId: "control-2",
+        state: "rejected",
+        relatedEventSeq: 9,
+        reason: "seek_denied",
+      }),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [3, 5, 9])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    const beforeSeek = store.getSnapshot();
+
+    await store.submitControl({
+      commandType: "seek_seq",
+      targetSeq: 9,
+    });
+
+    const afterSeek = store.getSnapshot();
+    expect(afterSeek.currentSceneSeq).toBe(beforeSeek.currentSceneSeq);
+    expect(afterSeek.session?.playback.mode).toBe(beforeSeek.session?.playback.mode);
+    expect(afterSeek.session?.playback.cursorEventSeq).toBe(
+      beforeSeek.session?.playback.cursorEventSeq,
+    );
+    expect(afterSeek.latestActionReceipt).toEqual({
+      intentId: "control-2",
+      state: "rejected",
+      relatedEventSeq: 9,
+      reason: "seek_denied",
+    });
+  });
+
   it("clears the synthetic pending receipt when action submission fails", async () => {
     const client = createStubClient({
       submitAction: vi.fn().mockRejectedValue(new Error("queue_unavailable")),

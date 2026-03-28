@@ -12,7 +12,6 @@ export function usePlaybackControls(store: ArenaSessionStore) {
       await store.submitControl({ commandType: "replay" });
     },
     async selectEvent(seq: number) {
-      store.setCurrentSceneSeq(seq);
       await store.submitControl({
         commandType: "seek_seq",
         targetSeq: seq,
