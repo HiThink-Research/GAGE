@@ -22,20 +22,26 @@ SCENE_PROJECTION_RULES = {
     "default_stream_id": "main",
     "default_fit": "contain",
 }
-ACTION_SCHEMA = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="retro_platformer",
-    channel="action_schema",
-)
-OBSERVER_SCHEMA = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="retro_platformer",
-    channel="observer_schema",
-)
+ACTION_SCHEMA = {
+    **build_placeholder_descriptor(
+        spec_id=VISUALIZATION_SPEC_ID,
+        plugin_id=VISUALIZATION_PLUGIN_ID,
+        visual_kind=VISUAL_KIND,
+        kit_id="retro_platformer",
+        channel="action_schema",
+    ),
+    "action_metadata": {"descriptor": "placeholder"},
+}
+OBSERVER_SCHEMA = {
+    **build_placeholder_descriptor(
+        spec_id=VISUALIZATION_SPEC_ID,
+        plugin_id=VISUALIZATION_PLUGIN_ID,
+        visual_kind=VISUAL_KIND,
+        kit_id="retro_platformer",
+        channel="observer_schema",
+    ),
+    "supported_modes": ["player", "camera"],
+}
 TIMELINE_ANNOTATION_RULES = build_placeholder_descriptor(
     spec_id=VISUALIZATION_SPEC_ID,
     plugin_id=VISUALIZATION_PLUGIN_ID,

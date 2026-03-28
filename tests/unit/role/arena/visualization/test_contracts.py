@@ -4,10 +4,13 @@ import pytest
 
 from gage_eval.role.arena.visualization.contracts import (
     ActionIntentReceipt,
+    ChatMessage,
+    ControlCommand,
     MediaSourceRef,
     ObserverRef,
     PlaybackState,
     SchedulingState,
+    SeekSnapshotRecord,
     TimelineEvent,
     VisualScene,
     VisualSceneMedia,
@@ -200,6 +203,62 @@ def test_media_source_ref_round_trip_and_defaults() -> None:
         "mediaId": "media-2",
         "transport": "artifact_ref",
     }
+
+
+def test_control_command_round_trip_for_seek() -> None:
+    command = ControlCommand(
+        command_type="seek_seq",
+        target_seq=42,
+        issued_by=ObserverRef(observer_id="ops", observer_kind="global"),
+    )
+
+    payload = command.to_dict()
+
+    assert payload == {
+        "commandType": "seek_seq",
+        "targetSeq": 42,
+        "issuedBy": {
+            "observerId": "ops",
+            "observerKind": "global",
+        },
+    }
+    assert ControlCommand.from_dict(payload) == command
+
+
+def test_chat_message_round_trip() -> None:
+    message = ChatMessage(
+        player_id="p0",
+        text="hold position",
+        channel="table",
+    )
+
+    payload = message.to_dict()
+
+    assert payload == {
+        "playerId": "p0",
+        "text": "hold position",
+        "channel": "table",
+    }
+    assert ChatMessage.from_dict(payload) == message
+
+
+def test_seek_snapshot_record_round_trip() -> None:
+    record = SeekSnapshotRecord(
+        seq=15,
+        ts_ms=1234,
+        snapshot_mode="full",
+        snapshot_ref="snapshots/seq-000015.json",
+    )
+
+    payload = record.to_dict()
+
+    assert payload == {
+        "seq": 15,
+        "tsMs": 1234,
+        "snapshotMode": "full",
+        "snapshotRef": "snapshots/seq-000015.json",
+    }
+    assert SeekSnapshotRecord.from_dict(payload) == record
 
 
 def test_visual_scene_serialization_includes_nested_media_refs() -> None:

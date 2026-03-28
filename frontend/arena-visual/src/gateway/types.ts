@@ -142,3 +142,10 @@ export interface ActionIntentReceipt {
   relatedEventSeq?: number;
   reason?: string;
 }
+
+export interface GamePluginManifest {
+  sceneKinds: VisualSceneKind[];
+  supportedObservers: ObserverKind[];
+  acceptsHumanIntent: boolean;
+  extensionPanels?: string[];
+}

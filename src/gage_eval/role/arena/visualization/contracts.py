@@ -25,6 +25,9 @@ _SCENE_KINDS = {"board", "table", "frame", "rts"}
 _SCENE_PHASES = {"live", "replay"}
 _MEDIA_TRANSPORTS = {"artifact_ref", "http_pull", "binary_stream", "low_latency_channel"}
 _RECEIPT_STATES = {"pending", "accepted", "committed", "rejected", "expired"}
+_CONTROL_COMMAND_TYPES = {"seek_seq"}
+_CHAT_CHANNELS = {"table", "system", "private"}
+_SNAPSHOT_MODES = {"full", "delta"}
 
 
 def _jsonify(value: Any) -> Any:
@@ -133,6 +136,93 @@ class ObserverRef:
         return cls(
             observer_id=str(payload.get("observerId", "")),
             observer_kind=str(payload.get("observerKind", "spectator")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ControlCommand:
+    command_type: str
+    target_seq: int | None = None
+    issued_by: ObserverRef | None = None
+
+    def __post_init__(self) -> None:
+        _validate_choice(self.command_type, _CONTROL_COMMAND_TYPES, "command_type")
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "commandType": self.command_type,
+        }
+        if self.target_seq is not None:
+            payload["targetSeq"] = self.target_seq
+        if self.issued_by is not None:
+            payload["issuedBy"] = self.issued_by.to_dict()
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ControlCommand":
+        payload = payload or {}
+        issued_by_payload = payload.get("issuedBy")
+        return cls(
+            command_type=_require_string(payload, "commandType"),
+            target_seq=None if payload.get("targetSeq") is None else int(payload["targetSeq"]),
+            issued_by=(
+                None if issued_by_payload is None else ObserverRef.from_dict(issued_by_payload)
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ChatMessage:
+    player_id: str
+    text: str
+    channel: str = "table"
+
+    def __post_init__(self) -> None:
+        _validate_choice(self.channel, _CHAT_CHANNELS, "channel")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "playerId": self.player_id,
+            "text": self.text,
+            "channel": self.channel,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ChatMessage":
+        payload = payload or {}
+        return cls(
+            player_id=_require_string(payload, "playerId"),
+            text=_require_string(payload, "text"),
+            channel=str(payload.get("channel", "table")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SeekSnapshotRecord:
+    seq: int
+    ts_ms: int
+    snapshot_mode: str
+    snapshot_ref: str
+
+    def __post_init__(self) -> None:
+        _validate_choice(self.snapshot_mode, _SNAPSHOT_MODES, "snapshot_mode")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "seq": self.seq,
+            "tsMs": self.ts_ms,
+            "snapshotMode": self.snapshot_mode,
+            "snapshotRef": self.snapshot_ref,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "SeekSnapshotRecord":
+        payload = payload or {}
+        return cls(
+            seq=int(payload["seq"]),
+            ts_ms=int(payload["tsMs"]),
+            snapshot_mode=str(payload["snapshotMode"]),
+            snapshot_ref=_require_string(payload, "snapshotRef"),
         )
 
 

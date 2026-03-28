@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 
 import type {
   ActionIntentReceipt,
+  GamePluginManifest,
   VisualScene,
   VisualSession,
 } from "../../gateway/types";
@@ -28,6 +29,7 @@ export interface ArenaPluginRenderProps {
 export interface ArenaPluginDefinition {
   pluginId: string;
   displayName: string;
+  manifest: GamePluginManifest;
   render: ComponentType<ArenaPluginRenderProps>;
   isFallback: boolean;
   requestedPluginId?: string;

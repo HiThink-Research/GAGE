@@ -20,20 +20,26 @@ SCENE_PROJECTION_RULES = {
     "default_coord_scheme": "A1",
     "ordered_player_tokens": ["B", "W"],
 }
-ACTION_SCHEMA = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="gomoku",
-    channel="action_schema",
-)
-OBSERVER_SCHEMA = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="gomoku",
-    channel="observer_schema",
-)
+ACTION_SCHEMA = {
+    **build_placeholder_descriptor(
+        spec_id=VISUALIZATION_SPEC_ID,
+        plugin_id=VISUALIZATION_PLUGIN_ID,
+        visual_kind=VISUAL_KIND,
+        kit_id="gomoku",
+        channel="action_schema",
+    ),
+    "action_metadata": {"descriptor": "placeholder"},
+}
+OBSERVER_SCHEMA = {
+    **build_placeholder_descriptor(
+        spec_id=VISUALIZATION_SPEC_ID,
+        plugin_id=VISUALIZATION_PLUGIN_ID,
+        visual_kind=VISUAL_KIND,
+        kit_id="gomoku",
+        channel="observer_schema",
+    ),
+    "supported_modes": ["player", "global"],
+}
 TIMELINE_ANNOTATION_RULES = build_placeholder_descriptor(
     spec_id=VISUALIZATION_SPEC_ID,
     plugin_id=VISUALIZATION_PLUGIN_ID,

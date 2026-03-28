@@ -21,20 +21,26 @@ SCENE_PROJECTION_RULES = {
     "seat_count": 3,
     "default_layout": "three-seat",
 }
-ACTION_SCHEMA = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="doudizhu",
-    channel="action_schema",
-)
-OBSERVER_SCHEMA = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="doudizhu",
-    channel="observer_schema",
-)
+ACTION_SCHEMA = {
+    **build_placeholder_descriptor(
+        spec_id=VISUALIZATION_SPEC_ID,
+        plugin_id=VISUALIZATION_PLUGIN_ID,
+        visual_kind=VISUAL_KIND,
+        kit_id="doudizhu",
+        channel="action_schema",
+    ),
+    "action_metadata": {"descriptor": "placeholder"},
+}
+OBSERVER_SCHEMA = {
+    **build_placeholder_descriptor(
+        spec_id=VISUALIZATION_SPEC_ID,
+        plugin_id=VISUALIZATION_PLUGIN_ID,
+        visual_kind=VISUAL_KIND,
+        kit_id="doudizhu",
+        channel="observer_schema",
+    ),
+    "supported_modes": ["player", "global", "spectator"],
+}
 TIMELINE_ANNOTATION_RULES = build_placeholder_descriptor(
     spec_id=VISUALIZATION_SPEC_ID,
     plugin_id=VISUALIZATION_PLUGIN_ID,
