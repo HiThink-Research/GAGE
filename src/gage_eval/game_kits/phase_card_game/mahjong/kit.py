@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.phase_card_game.mahjong.envs.riichi_4p import (
     build_riichi_4p_environment,
 )
+from gage_eval.game_kits.phase_card_game.mahjong.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
 from gage_eval.registry import registry
 
 
@@ -19,6 +22,7 @@ def build_mahjong_game_kit() -> GameKit:
         family="phase_card_game",
         scheduler_binding="turn/default",
         observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
                 env_id="riichi_4p",

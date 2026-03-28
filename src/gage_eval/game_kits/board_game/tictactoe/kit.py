@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.board_game.tictactoe.envs.tictactoe_standard import (
     build_tictactoe_standard_environment,
 )
+from gage_eval.game_kits.board_game.tictactoe.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
 from gage_eval.registry import registry
 
 
@@ -19,6 +22,7 @@ def build_tictactoe_game_kit() -> GameKit:
         family="board_game",
         scheduler_binding="turn/default",
         observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
                 env_id="tictactoe_standard",

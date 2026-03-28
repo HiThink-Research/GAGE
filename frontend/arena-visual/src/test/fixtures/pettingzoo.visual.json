@@ -1,0 +1,56 @@
+{
+  "sceneId": "pettingzoo-sample:seq:11",
+  "gameId": "pettingzoo",
+  "pluginId": "arena.visualization.pettingzoo.frame_v1",
+  "kind": "frame",
+  "tsMs": 2011,
+  "seq": 11,
+  "phase": "replay",
+  "activePlayerId": "pilot_0",
+  "legalActions": [
+    { "id": "NOOP", "label": "NOOP", "text": "NOOP" },
+    { "id": "LEFT", "label": "LEFT", "text": "LEFT" },
+    { "id": "FIRE", "label": "FIRE", "text": "FIRE" }
+  ],
+  "summary": {
+    "eventType": "snapshot",
+    "eventLabel": "snapshot",
+    "streamId": "arena",
+    "frameTitle": "PettingZoo Frame"
+  },
+  "body": {
+    "frame": {
+      "title": "PettingZoo Frame",
+      "subtitle": "Stream arena",
+      "altText": "PettingZoo frame",
+      "streamId": "arena",
+      "fit": "contain",
+      "viewport": null
+    },
+    "status": {
+      "activePlayerId": "pilot_0",
+      "observerPlayerId": "pilot_0",
+      "tick": 3,
+      "step": 3,
+      "moveCount": 3,
+      "lastMove": "FIRE",
+      "reward": 1.5
+    },
+    "view": {
+      "text": "Space Invaders wave 3"
+    }
+  },
+  "media": {
+    "primary": {
+      "mediaId": "pz-frame-3",
+      "transport": "artifact_ref",
+      "mimeType": "image/png",
+      "url": "frames/pz-frame-3.png"
+    }
+  },
+  "overlays": [
+    { "kind": "badge", "label": "Tick", "value": "3" },
+    { "kind": "badge", "label": "Reward", "value": "1.5" },
+    { "kind": "badge", "label": "Last move", "value": "FIRE" }
+  ]
+}

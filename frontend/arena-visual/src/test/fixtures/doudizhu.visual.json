@@ -1,0 +1,74 @@
+{
+  "sceneId": "doudizhu-sample:seq:7",
+  "gameId": "doudizhu",
+  "pluginId": "arena.visualization.doudizhu.table_v1",
+  "kind": "table",
+  "tsMs": 1007,
+  "seq": 7,
+  "phase": "replay",
+  "activePlayerId": "player_0",
+  "legalActions": [
+    { "id": "pass", "label": "pass", "text": "pass" },
+    { "id": "4", "label": "4", "text": "4" }
+  ],
+  "summary": {
+    "eventType": "snapshot",
+    "eventLabel": "snapshot",
+    "seatCount": 3
+  },
+  "body": {
+    "table": {
+      "layout": "three-seat",
+      "seats": [
+        {
+          "seatId": "bottom",
+          "playerId": "player_0",
+          "playerName": "Player 0",
+          "role": "landlord",
+          "isActive": true,
+          "isObserver": true,
+          "playedCards": ["3"],
+          "publicNotes": [],
+          "hand": { "isVisible": true, "cards": ["3", "4"], "maskedCount": 0 }
+        },
+        {
+          "seatId": "left",
+          "playerId": "player_1",
+          "playerName": "Player 1",
+          "role": "peasant",
+          "isActive": false,
+          "isObserver": false,
+          "playedCards": [],
+          "publicNotes": [],
+          "hand": { "isVisible": false, "cards": [], "maskedCount": 2 }
+        },
+        {
+          "seatId": "right",
+          "playerId": "player_2",
+          "playerName": "Player 2",
+          "role": "peasant",
+          "isActive": false,
+          "isObserver": false,
+          "playedCards": [],
+          "publicNotes": [],
+          "hand": { "isVisible": false, "cards": [], "maskedCount": 2 }
+        }
+      ],
+      "center": {
+        "label": "Seen cards",
+        "cards": ["3"],
+        "history": ["player_0: 3"]
+      }
+    },
+    "status": {
+      "activePlayerId": "player_0",
+      "observerPlayerId": "player_0",
+      "moveCount": 1,
+      "lastMove": "3",
+      "landlordId": "player_0"
+    },
+    "panels": {
+      "chatLog": [{ "playerId": "player_1", "text": "watch this" }]
+    }
+  }
+}

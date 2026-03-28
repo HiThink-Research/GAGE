@@ -8,6 +8,7 @@ from gage_eval.role.arena.core.arena_core import GameArenaCore
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.game_session import GameSession
 from gage_eval.role.arena.core.types import ArenaSample
+from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.schedulers.turn import TurnScheduler
 from gage_eval.role.arena.schedulers.real_time_tick import RealTimeTickScheduler
 from gage_eval.role.arena.output.writer import ArenaOutputWriter
@@ -189,6 +190,136 @@ def test_game_session_executes_support_hooks_across_main_chain() -> None:
         ("after_apply", [0.5]),
         ("on_finalize", None),
     ]
+
+
+def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up() -> None:
+    class _StubActionServer:
+        def __init__(self) -> None:
+            self.register_calls: list[tuple[str, object]] = []
+            self.unregister_calls: list[str] = []
+
+        def register_action_queue(self, sample_id: str, action_router: object) -> None:
+            self.register_calls.append((sample_id, action_router))
+
+        def unregister_action_queue(self, sample_id: str) -> None:
+            self.unregister_calls.append(sample_id)
+
+    class _StubRuntimeServiceHub:
+        def __init__(self) -> None:
+            self.action_server = _StubActionServer()
+            self.bind_calls: list[tuple[str, object, object]] = []
+            self.clear_calls: list[tuple[str, object]] = []
+
+        def ensure_action_server(self, factory):
+            _ = factory
+            return self.action_server
+
+        def bind_sample_routes(
+            self,
+            *,
+            sample_id: str,
+            action_server: object | None = None,
+            action_router: object | None = None,
+            visualizer: object | None = None,
+        ) -> None:
+            _ = visualizer
+            self.bind_calls.append((sample_id, action_server, action_router))
+            if action_server is not None and action_router is not None:
+                action_server.register_action_queue(sample_id, action_router)
+
+        def clear_sample_routes(
+            self,
+            *,
+            sample_id: str,
+            action_server: object | None = None,
+            visualizer: object | None = None,
+        ) -> None:
+            _ = visualizer
+            self.clear_calls.append((sample_id, action_server))
+            if action_server is not None:
+                action_server.unregister_action_queue(sample_id)
+
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+
+        def get_active_player(self) -> str:
+            return "Human"
+
+        def observe(self, player_id: str) -> dict[str, object]:
+            return {"player_id": player_id, "legal_moves": ["A1"]}
+
+        def apply(self, action):
+            self._terminal = True
+            return GameResult(
+                winner=action.player,
+                result="completed",
+                reason="applied",
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": action.move}],
+            )
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+    runtime_hub = _StubRuntimeServiceHub()
+    seen_invocation_contexts: list[GameArenaInvocationContext | None] = []
+
+    def _env_factory(*, sample, resolved, resources, player_specs, invocation_context=None):
+        _ = sample, resolved, resources, player_specs
+        seen_invocation_contexts.append(invocation_context)
+        return FakeEnvironment()
+
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={"env_factory": _env_factory},
+        ),
+        scheduler=TurnScheduler(binding_id="turn/default"),
+        resource_spec={},
+        player_bindings=(
+            PlayerBindingSpec(
+                seat="human-seat",
+                player_id="Human",
+                player_kind="human",
+                driver_id="player_driver/human_local_input",
+            ),
+        ),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=None,
+    )
+
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku-standard"),
+        resolved,
+        resources={},
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-human-1",
+            human_input_config={"enabled": True, "host": "127.0.0.1", "port": 0},
+            runtime_service_hub=runtime_hub,
+        ),
+    )
+
+    assert runtime_hub.bind_calls and runtime_hub.action_server.register_calls
+    sample_id, action_server, action_router = runtime_hub.bind_calls[0]
+    assert sample_id == "sample-human-1"
+    assert isinstance(action_router, SampleActionRouter)
+    assert action_server is runtime_hub.action_server
+
+    assert seen_invocation_contexts[0] is not None
+    assert seen_invocation_contexts[0].player_action_queues["Human"] is action_router.queue_for("Human")
+    assert session.invocation_context is not None
+    assert session.invocation_context.player_action_queues["Human"] is action_router.queue_for("Human")
+
+    session.finalize()
+
+    assert runtime_hub.clear_calls == [("sample-human-1", runtime_hub.action_server)]
+    assert runtime_hub.action_server.unregister_calls == ["sample-human-1"]
 
 
 def test_game_session_support_hooks_can_rewrite_action_through_real_runtime_path() -> None:

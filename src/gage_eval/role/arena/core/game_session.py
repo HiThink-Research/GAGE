@@ -6,7 +6,8 @@ import subprocess
 import sys
 import time
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import Any, Mapping
 
@@ -15,6 +16,7 @@ from loguru import logger
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.players import BoundPlayer
 from gage_eval.role.arena.core.types import ArenaSample
+from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.schedulers._scheduler_utils import (
     detect_illegal_reason,
     finalize_trace_entry,
@@ -27,6 +29,9 @@ from gage_eval.role.arena.schedulers._scheduler_utils import (
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction
+from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
+from gage_eval.role.arena.visualization.artifacts import to_visual_json_safe
+from gage_eval.role.arena.replay_schema_writer import update_replay_manifest_visual_session_ref
 
 if TYPE_CHECKING:
     from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
@@ -45,11 +50,16 @@ class GameSession:
     step: int = 0
     arena_trace: list[dict[str, object]] = field(default_factory=list)
     invocation_context: GameArenaInvocationContext | None = None
+    visual_recorder: ArenaVisualSessionRecorder | None = None
     _current_trace_entry: dict[str, Any] | None = field(default=None, init=False, repr=False)
+    _last_observation: Any | None = field(default=None, init=False, repr=False)
     _finalized: bool = field(default=False, init=False, repr=False)
+    _sample_action_router: SampleActionRouter | None = field(default=None, init=False, repr=False)
+    _sample_action_server: Any | None = field(default=None, init=False, repr=False)
     _visualization_display_id: str | None = field(default=None, init=False, repr=False)
     _visualization_linger_s: float = field(default=0.0, init=False, repr=False)
     _visualization_linger_done: bool = field(default=False, init=False, repr=False)
+    _visual_artifacts_error: str | None = field(default=None, init=False, repr=False)
 
     @classmethod
     def from_resolved(
@@ -60,6 +70,15 @@ class GameSession:
         *,
         invocation_context: GameArenaInvocationContext | None = None,
     ):
+        (
+            invocation_context,
+            sample_action_router,
+            sample_action_server,
+        ) = _prepare_human_action_routing(
+            sample=sample,
+            resolved=resolved,
+            invocation_context=invocation_context,
+        )
         player_specs = _bind_players(resolved=resolved, invocation_context=invocation_context)
         environment = _build_environment(
             sample=sample,
@@ -76,7 +95,14 @@ class GameSession:
             support_workflow=getattr(resolved, "support_workflow", None),
             max_steps=_resolve_max_steps(sample=sample, resolved=resolved),
             invocation_context=invocation_context,
+            visual_recorder=_build_visual_recorder(
+                sample=sample,
+                resolved=resolved,
+                invocation_context=invocation_context,
+            ),
         )
+        session._sample_action_router = sample_action_router
+        session._sample_action_server = sample_action_server
         session._initialize_visualization()
         return session
 
@@ -103,12 +129,14 @@ class GameSession:
             {"observation": observation, "player_id": player_id},
         )
         observation = support_context.payload.get("observation", observation)
+        self._last_observation = observation
         self._current_trace_entry = make_trace_entry(
             step_index=self.step,
             player_id=player_id,
             timestamp_ms=wall_clock_ms(),
             t_obs_ready_ms=wall_clock_ms(),
         )
+        self._record_visual_decision_window_open(player_id=player_id, observation=observation)
         return observation
 
     def decide_current_player(self, observation) -> ArenaAction:
@@ -138,6 +166,11 @@ class GameSession:
         trace_entry["t_action_submitted_ms"] = wall_clock_ms()
         trace_entry["retry_count"] = infer_retry_count(resolved_action)
         trace_entry["is_action_legal"] = infer_legality(resolved_action)
+        self._record_visual_action_intent(
+            player_id=player_id,
+            action=resolved_action,
+            observation=observation,
+        )
         return resolved_action
 
     def apply(self, action: ArenaAction) -> None:
@@ -177,13 +210,21 @@ class GameSession:
         trace_entry["illegal_reason"] = illegal_reason
         if illegal_reason is not None:
             trace_entry["is_action_legal"] = False
-        self.arena_trace.append(finalize_trace_entry(trace_entry))
+        finalized_trace_entry = finalize_trace_entry(trace_entry)
+        self._record_visual_action_committed(
+            action=action,
+            trace_entry=finalized_trace_entry,
+            result=updated_result,
+        )
+        self._record_visual_decision_window_close(player_id=action.player)
+        self.arena_trace.append(finalized_trace_entry)
         self._current_trace_entry = None
 
     def advance(self) -> None:
         delta = self._resolve_progress_delta()
         self.tick += delta
         self.step += delta
+        self._record_visual_snapshot()
         if self.final_result is None and self.environment is not None and self.environment.is_terminal():
             self.final_result = self._build_result(result="completed", reason="completed")
 
@@ -209,6 +250,9 @@ class GameSession:
             {"result": self.final_result, "sample": self.sample},
         )
         self.final_result = final_context.payload.get("result", self.final_result)
+        self._record_visual_result()
+        self._persist_visual_recorder()
+        self._clear_sample_action_routing()
         self._finalized = True
         self._linger_for_visualization()
         return self.final_result
@@ -384,6 +428,156 @@ class GameSession:
         except AttributeError:
             return None
 
+    def _record_visual_decision_window_open(self, *, player_id: str, observation: object) -> None:
+        recorder = self.visual_recorder
+        if recorder is None:
+            return
+        recorder.record_decision_window_open(
+            ts_ms=wall_clock_ms(),
+            step=self.step,
+            tick=self.tick,
+            player_id=player_id,
+            observation=_visual_payload_snapshot(observation),
+        )
+
+    def _record_visual_action_committed(
+        self,
+        *,
+        action: ArenaAction,
+        trace_entry: dict[str, Any],
+        result: object | None,
+    ) -> None:
+        recorder = self.visual_recorder
+        if recorder is None:
+            return
+        recorder.record_action_committed(
+            ts_ms=wall_clock_ms(),
+            step=self.step,
+            tick=self.tick,
+            player_id=action.player,
+            action=action,
+            trace_entry=trace_entry,
+            result=result,
+        )
+
+    def _record_visual_action_intent(
+        self,
+        *,
+        player_id: str,
+        action: ArenaAction,
+        observation: object,
+    ) -> None:
+        recorder = self.visual_recorder
+        if recorder is None:
+            return
+        recorder.record_action_intent(
+            ts_ms=wall_clock_ms(),
+            step=self.step,
+            tick=self.tick,
+            player_id=player_id,
+            action=action,
+            observation=_visual_payload_snapshot(observation),
+        )
+
+    def _record_visual_decision_window_close(self, *, player_id: str) -> None:
+        recorder = self.visual_recorder
+        if recorder is None:
+            return
+        recorder.record_decision_window_close(
+            ts_ms=wall_clock_ms(),
+            step=self.step,
+            tick=self.tick,
+            player_id=player_id,
+        )
+
+    def _record_visual_snapshot(self) -> None:
+        recorder = self.visual_recorder
+        if recorder is None:
+            return
+        recorder.record_snapshot(
+            ts_ms=wall_clock_ms(),
+            step=self.step,
+            tick=self.tick,
+            snapshot={
+                "step": self.step,
+                "tick": self.tick,
+                "playerId": self._current_trace_entry.get("player_id") if self._current_trace_entry else None,
+                "observation": _visual_payload_snapshot(self._last_observation),
+                "arenaTrace": _visual_payload_snapshot(self.arena_trace[-1]) if self.arena_trace else None,
+                "result": _visual_payload_snapshot(self.final_result),
+            },
+        )
+
+    def _record_visual_result(self) -> None:
+        recorder = self.visual_recorder
+        if recorder is None or self.final_result is None:
+            return
+        recorder.record_result(
+            ts_ms=wall_clock_ms(),
+            step=self.step,
+            tick=self.tick,
+            result=self.final_result,
+        )
+
+    def _persist_visual_recorder(self) -> None:
+        recorder = self.visual_recorder
+        if recorder is None:
+            return
+        replay_path = _resolve_result_replay_path(self.final_result)
+        if replay_path is None:
+            return
+        try:
+            artifacts = recorder.persist(replay_path)
+            replay_manifest_path = Path(replay_path)
+            if replay_manifest_path.exists():
+                updated = update_replay_manifest_visual_session_ref(
+                    replay_path=replay_path,
+                    visual_session_ref=artifacts.visual_session_ref,
+                )
+                if not updated:
+                    self._visual_artifacts_error = "replay_manifest_update_failed"
+                    logger.warning(
+                        "Arena visual replay manifest update failed for replay_path={}",
+                        replay_path,
+                    )
+            else:
+                logger.debug(
+                    "Arena visual replay manifest not yet present for replay_path={}, skipping visual_session_ref wiring",
+                    replay_path,
+                )
+        except Exception as exc:  # pragma: no cover - defensive sidecar guard
+            self._visual_artifacts_error = str(exc)
+            logger.warning(
+                "Arena visual sidecar persistence failed for replay_path={}: {}",
+                replay_path,
+                exc,
+            )
+
+    def _clear_sample_action_routing(self) -> None:
+        router = self._sample_action_router
+        if router is None:
+            return
+        invocation = self.invocation_context
+        service_hub = None if invocation is None else invocation.runtime_service_hub
+        sample_id = _resolve_session_sample_id(invocation)
+        if service_hub is not None and sample_id is not None:
+            action_server = self._sample_action_server
+            if action_server is None:
+                action_server = getattr(service_hub, "peek_action_server", lambda: None)()
+            clear_routes = getattr(service_hub, "clear_sample_routes", None)
+            if callable(clear_routes):
+                clear_routes(
+                    sample_id=sample_id,
+                    action_server=action_server,
+                    visualizer=None,
+                )
+            elif action_server is not None:
+                unregister = getattr(action_server, "unregister_action_queue", None)
+                if callable(unregister):
+                    unregister(sample_id)
+        self._sample_action_router = None
+        self._sample_action_server = None
+
 
 def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
     runtime_overrides = sample.runtime_overrides or {}
@@ -397,6 +591,45 @@ def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
         if value is not None:
             return max(1, int(value))
     return 256
+
+
+def _build_visual_recorder(
+    *,
+    sample: ArenaSample,
+    resolved,
+    invocation_context: GameArenaInvocationContext | None,
+) -> ArenaVisualSessionRecorder | None:
+    visualization_spec = getattr(resolved, "visualization_spec", None)
+    plugin_id = getattr(visualization_spec, "plugin_id", None)
+    if not plugin_id:
+        plugin_id = invocation_context.adapter_id if invocation_context is not None else None
+    if not plugin_id:
+        plugin_id = sample.game_kit
+    game_id = sample.game_kit or getattr(visualization_spec, "game_id", None) or sample.env
+    session_id = None
+    if invocation_context is not None:
+        session_id = invocation_context.sample_id
+        if session_id is None and invocation_context.trace is not None:
+            session_id = getattr(invocation_context.trace, "sample_id", None)
+    if not session_id:
+        session_id = f"{sample.game_kit}:{sample.env or 'default'}"
+    return ArenaVisualSessionRecorder(
+        plugin_id=str(plugin_id or "arena"),
+        game_id=str(game_id or sample.game_kit or "arena"),
+        scheduling_family=_resolve_scheduler_family(sample=sample, resolved=resolved),
+        session_id=str(session_id),
+    )
+
+
+def _resolve_scheduler_family(*, sample: ArenaSample, resolved) -> str:
+    scheduler = getattr(resolved, "scheduler", None)
+    family = getattr(scheduler, "family", None)
+    if family:
+        return str(family)
+    scheduler_binding = str(sample.scheduler or "").strip()
+    if scheduler_binding:
+        return scheduler_binding.split("/", 1)[0]
+    return "turn"
 
 
 def _build_environment(
@@ -438,6 +671,112 @@ def _bind_players(
     return tuple(registry.bind_all(bindings, invocation=invocation_context))
 
 
+def _prepare_human_action_routing(
+    *,
+    sample: ArenaSample,
+    resolved,
+    invocation_context: GameArenaInvocationContext | None,
+) -> tuple[GameArenaInvocationContext | None, SampleActionRouter | None, Any | None]:
+    del sample
+    if invocation_context is None:
+        return None, None, None
+    if not _is_human_input_routing_enabled(invocation_context):
+        return invocation_context, None, None
+    service_hub = invocation_context.runtime_service_hub
+    if service_hub is None:
+        return invocation_context, None, None
+
+    sample_id = _resolve_session_sample_id(invocation_context)
+    human_player_ids = _collect_human_player_ids(resolved)
+    if sample_id is None or not human_player_ids:
+        return invocation_context, None, None
+
+    action_router = SampleActionRouter(sample_id=sample_id, player_ids=human_player_ids)
+    action_server = _ensure_action_server(service_hub, invocation_context=invocation_context)
+    if action_server is not None:
+        bind_sample_routes = getattr(service_hub, "bind_sample_routes", None)
+        if callable(bind_sample_routes):
+            bind_sample_routes(
+                sample_id=sample_id,
+                action_server=action_server,
+                action_router=action_router,
+                visualizer=None,
+            )
+        elif hasattr(action_server, "register_action_queue"):
+            action_server.register_action_queue(sample_id, action_router)
+
+    merged_action_queues = dict(invocation_context.player_action_queues or {})
+    merged_action_queues.update(action_router.player_queues)
+    updated_invocation_context = replace(
+        invocation_context,
+        player_action_queues=merged_action_queues,
+    )
+    return updated_invocation_context, action_router, action_server
+
+
+def _collect_human_player_ids(resolved) -> tuple[str, ...]:
+    bindings = tuple(getattr(resolved, "player_bindings", ()) or ())
+    human_player_ids = [
+        str(binding.player_id)
+        for binding in bindings
+        if str(getattr(binding, "player_kind", "") or "").strip() == "human"
+        and str(getattr(binding, "player_id", "") or "").strip()
+    ]
+    return tuple(human_player_ids)
+
+
+def _ensure_action_server(
+    service_hub: Any,
+    *,
+    invocation_context: GameArenaInvocationContext,
+) -> Any | None:
+    ensure_action_server = getattr(service_hub, "ensure_action_server", None)
+    if not callable(ensure_action_server):
+        return None
+    return ensure_action_server(lambda: _build_action_server(invocation_context))
+
+
+def _build_action_server(invocation_context: GameArenaInvocationContext) -> Any:
+    from gage_eval.tools.action_server import ActionQueueServer
+
+    config = dict(invocation_context.human_input_config or {})
+    server = ActionQueueServer(
+        host=str(config.get("host") or "127.0.0.1"),
+        port=int(config.get("port") or 8001),
+        allow_origin=str(config.get("allow_origin") or "*"),
+    )
+    start = getattr(server, "start", None)
+    if callable(start):
+        start()
+    return server
+
+
+def _is_human_input_routing_enabled(invocation_context: GameArenaInvocationContext) -> bool:
+    config = dict(invocation_context.human_input_config or {})
+    if not config:
+        return False
+    enabled = config.get("enabled")
+    if enabled is None:
+        return True
+    return bool(enabled)
+
+
+def _resolve_session_sample_id(
+    invocation_context: GameArenaInvocationContext | None,
+) -> str | None:
+    if invocation_context is None:
+        return None
+    sample_id = invocation_context.sample_id
+    if sample_id:
+        return str(sample_id)
+    trace = invocation_context.trace
+    if trace is not None:
+        trace_sample_id = getattr(trace, "sample_id", None)
+        if trace_sample_id:
+            return str(trace_sample_id)
+    return None
+
+
 def _accepts_keyword(callable_obj: object, keyword: str) -> bool:
     try:
         signature = inspect.signature(callable_obj)
@@ -453,6 +792,18 @@ def _accepts_keyword(callable_obj: object, keyword: str) -> bool:
 
 def _is_visualizer_enabled(config: Mapping[str, Any]) -> bool:
     return bool(config.get("enabled", False))
+
+
+def _resolve_result_replay_path(result: object | None) -> str | None:
+    if result is None:
+        return None
+    if isinstance(result, Mapping):
+        replay_path = result.get("replay_path")
+        return str(replay_path) if replay_path not in (None, "") else None
+    replay_path = getattr(result, "replay_path", None)
+    if replay_path in (None, ""):
+        return None
+    return str(replay_path)
 
 
 def _build_ws_rgb_hub(config: Mapping[str, Any]):
@@ -484,6 +835,10 @@ def _normalize_frame_payload(payload: object) -> dict[str, Any]:
     if payload is None:
         return {}
     return {"board_text": str(payload)}
+
+
+def _visual_payload_snapshot(payload: object | None) -> object | None:
+    return to_visual_json_safe(payload)
 
 
 def _build_display_id(

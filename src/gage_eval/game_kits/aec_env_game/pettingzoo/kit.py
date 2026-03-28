@@ -4,6 +4,9 @@ from gage_eval.game_kits.aec_env_game.pettingzoo.envs.space_invaders import (
     build_space_invaders_environment,
 )
 from gage_eval.game_kits.contracts import EnvSpec, GameKit
+from gage_eval.game_kits.aec_env_game.pettingzoo.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
 from gage_eval.registry import registry
 
 
@@ -19,6 +22,7 @@ def build_pettingzoo_game_kit() -> GameKit:
         family="aec_env_game",
         scheduler_binding="agent_cycle/default",
         observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
                 env_id="space_invaders",

@@ -39,6 +39,20 @@ class GameKit:
 
 
 @dataclass(frozen=True)
+class GameVisualizationSpec:
+    """Resolved visualization contract for a game kit."""
+
+    spec_id: str
+    plugin_id: str
+    visual_kind: str
+    renderer_impl: str | None = None
+    scene_projection_rules: dict[str, object] = field(default_factory=dict)
+    action_schema: dict[str, object] = field(default_factory=dict)
+    observer_schema: dict[str, object] = field(default_factory=dict)
+    timeline_annotation_rules: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ResolvedRuntimeBinding:
     """Resolved runtime resources for a concrete sample."""
 
@@ -46,6 +60,7 @@ class ResolvedRuntimeBinding:
     env_spec: EnvSpec
     scheduler: object
     resource_spec: object
+    visualization_spec: GameVisualizationSpec | None = None
     players: tuple[dict[str, object], ...] = ()
     player_bindings: tuple[object, ...] = ()
     player_driver_registry: Any | None = None

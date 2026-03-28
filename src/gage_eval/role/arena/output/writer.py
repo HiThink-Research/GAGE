@@ -140,11 +140,22 @@ def _build_footer_contract(
     return footer
 
 
-def _build_artifacts_contract(result: Any) -> dict[str, object] | None:
+def _build_artifacts_contract(session: Any, result: Any) -> dict[str, object] | None:
+    artifacts: dict[str, object] = {}
     replay_path = _coerce_optional_str(_read_value(result, "replay_path"))
-    if replay_path is None:
-        return None
-    return {"replay_ref": replay_path}
+    if replay_path is not None:
+        artifacts["replay_ref"] = replay_path
+
+    visual_session_ref = None
+    recorder = _read_value(session, "visual_recorder")
+    recorder_artifacts = _read_value(recorder, "artifacts") if recorder is not None else None
+    if recorder_artifacts is not None:
+        visual_session_ref = _coerce_optional_str(
+            _read_value(recorder_artifacts, "visual_session_ref")
+        )
+    if visual_session_ref is not None:
+        artifacts["visual_session_ref"] = visual_session_ref
+    return artifacts or None
 
 
 class ArenaOutputWriter:
@@ -162,5 +173,5 @@ class ArenaOutputWriter:
             header=_freeze_value(_build_header_contract(session.sample)),
             trace=frozen_trace,
             footer=_freeze_value(_build_footer_contract(result, frozen_trace)),
-            artifacts=_freeze_value(_build_artifacts_contract(result)),
+            artifacts=_freeze_value(_build_artifacts_contract(session, result)),
         )

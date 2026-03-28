@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.phase_card_game.doudizhu.envs.classic_3p import (
     build_classic_3p_environment,
 )
+from gage_eval.game_kits.phase_card_game.doudizhu.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
 from gage_eval.registry import registry
 
 
@@ -19,6 +22,7 @@ def build_doudizhu_game_kit() -> GameKit:
         family="phase_card_game",
         scheduler_binding="turn/default",
         observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
                 env_id="classic_3p",

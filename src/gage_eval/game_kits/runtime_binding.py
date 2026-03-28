@@ -13,6 +13,7 @@ from gage_eval.role.arena.support.registry import SupportWorkflowRegistry
 from gage_eval.game_kits.contracts import EnvSpec, GameKit, ResolvedRuntimeBinding
 from gage_eval.game_kits.observation import ObservationWorkflowRegistry
 from gage_eval.game_kits.registry import GameKitRegistry
+from gage_eval.game_kits.visualization_specs import VisualizationSpecRegistry
 
 
 class RuntimeBindingResolver:
@@ -36,6 +37,9 @@ class RuntimeBindingResolver:
         self.observation_workflows = observation_workflows or ObservationWorkflowRegistry(
             registry_view=game_kits.registry_view
         )
+        self.visualization_specs = VisualizationSpecRegistry(
+            registry_view=game_kits.registry_view
+        )
         self.support_workflows = support_workflows or SupportWorkflowRegistry(
             registry_view=game_kits.registry_view
         )
@@ -48,6 +52,7 @@ class RuntimeBindingResolver:
         env_spec = self._resolve_env_spec(game_kit, sample)
         scheduler_binding = self._resolve_scheduler_binding(sample, game_kit, env_spec)
         observation_workflow_id = self._resolve_observation_workflow_id(game_kit, env_spec)
+        visualization_spec_id = self._resolve_visualization_spec_id(game_kit)
         support_workflow_id = self._resolve_support_workflow_id(game_kit)
         player_bindings = self._resolve_player_bindings(sample=sample, game_kit=game_kit)
 
@@ -56,6 +61,7 @@ class RuntimeBindingResolver:
             env_spec=env_spec,
             scheduler=self.schedulers.build(scheduler_binding),
             resource_spec=env_spec.resource_spec,
+            visualization_spec=self.visualization_specs.build(visualization_spec_id),
             players=tuple(sample.players),
             player_bindings=player_bindings,
             player_driver_registry=self.player_drivers,
@@ -171,6 +177,10 @@ class RuntimeBindingResolver:
     @staticmethod
     def _resolve_observation_workflow_id(game_kit: GameKit, env_spec: EnvSpec) -> str:
         return str(env_spec.observation_workflow or game_kit.observation_workflow)
+
+    @staticmethod
+    def _resolve_visualization_spec_id(game_kit: GameKit) -> str:
+        return str(game_kit.visualization_spec or "arena/default")
 
     @staticmethod
     def _resolve_support_workflow_id(game_kit: GameKit) -> str:

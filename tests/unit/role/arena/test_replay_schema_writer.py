@@ -142,3 +142,24 @@ def test_replay_schema_writer_accepts_legacy_trace_mapping_shape(tmp_path: Path)
     # NOTE: seq must be globally increasing across action/frame/result events.
     seqs = [int(event["seq"]) for event in events]
     assert seqs == [1]
+
+
+def test_replay_schema_writer_surfaces_visual_session_ref_in_artifacts(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "run_5"
+    writer = ReplaySchemaWriter(run_dir=run_dir, sample_id="sample_visual")
+    result = _build_result()
+    replay_path = writer.write(
+        scheduler_type="turn",
+        result=result,
+        move_log=[],
+        arena_trace=None,
+        extra_meta={
+            "visual_session_ref": "runs/run_5/replays/sample_visual/arena_visual_session/v1/manifest.json",
+        },
+    )
+
+    replay_file = Path(replay_path)
+    payload = json.loads(replay_file.read_text(encoding="utf-8"))
+    assert payload["artifacts"]["visual_session_ref"].endswith(
+        "arena_visual_session/v1/manifest.json"
+    )

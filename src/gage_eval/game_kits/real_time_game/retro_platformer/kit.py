@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.real_time_game.retro_platformer.envs.retro_mario import (
     build_retro_mario_environment,
 )
+from gage_eval.game_kits.real_time_game.retro_platformer.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
 from gage_eval.registry import registry
 
 
@@ -19,6 +22,7 @@ def build_retro_platformer_game_kit() -> GameKit:
         family="real_time_game",
         scheduler_binding="real_time_tick/default",
         observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
                 env_id="retro_mario",
@@ -30,6 +34,7 @@ def build_retro_platformer_game_kit() -> GameKit:
                     "stub_max_ticks": 4,
                     "game": "SuperMarioBros3-Nes-v0",
                     "display_mode": "headless",
+                    "obs_image": True,
                     "record_bk2": False,
                     "legal_moves": (
                         "noop",
@@ -55,6 +60,7 @@ def build_retro_platformer_game_kit() -> GameKit:
             "stub_max_ticks": 4,
             "game": "SuperMarioBros3-Nes-v0",
             "display_mode": "headless",
+            "obs_image": True,
             "record_bk2": False,
             "legal_moves": (
                 "noop",

@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
     build_duel_map01_environment,
 )
+from gage_eval.game_kits.real_time_game.vizdoom.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
 from gage_eval.registry import registry
 
 
@@ -19,6 +22,7 @@ def build_vizdoom_game_kit() -> GameKit:
         family="real_time_game",
         scheduler_binding="real_time_tick/default",
         observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
                 env_id="duel_map01",
@@ -29,6 +33,9 @@ def build_vizdoom_game_kit() -> GameKit:
                     "backend_mode": "real",
                     "stub_max_rounds": 3,
                     "max_steps": 12,
+                    "capture_pov": True,
+                    "obs_image": True,
+                    "obs_image_history_len": 1,
                     "show_pov": False,
                     "show_automap": False,
                     "allow_partial_actions": False,
@@ -42,6 +49,9 @@ def build_vizdoom_game_kit() -> GameKit:
             "backend_mode": "real",
             "stub_max_rounds": 3,
             "max_steps": 12,
+            "capture_pov": True,
+            "obs_image": True,
+            "obs_image_history_len": 1,
             "show_pov": False,
             "show_automap": False,
             "allow_partial_actions": False,

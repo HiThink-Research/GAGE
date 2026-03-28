@@ -4,11 +4,54 @@ from gage_eval.evaluation.sample_envelope import append_arena_contract, ensure_a
 from gage_eval.role.arena.core.game_session import GameSession
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.output.writer import ArenaOutputWriter
+from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.arena.types import GameResult
 
 
 def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena-role",
+        game_id="gomoku",
+        scheduling_family="turn",
+        session_id="sample-1",
+    )
+    replay_path = "artifacts/replays/sample-1/replay.json"
+    recorder.record_decision_window_open(
+        ts_ms=1001,
+        step=0,
+        tick=0,
+        player_id="Black",
+        observation={"board_text": "board"},
+    )
+    recorder.record_action_intent(
+        ts_ms=1002,
+        step=0,
+        tick=0,
+        player_id="Black",
+        action={"move": "A1"},
+    )
+    recorder.record_action_committed(
+        ts_ms=1003,
+        step=0,
+        tick=0,
+        player_id="Black",
+        action={"move": "A1"},
+    )
+    recorder.record_decision_window_close(
+        ts_ms=1004,
+        step=1,
+        tick=1,
+        player_id="White",
+    )
+    recorder.record_snapshot(
+        ts_ms=1005,
+        step=1,
+        tick=1,
+        snapshot={"board_text": "board"},
+    )
+    recorder.persist(replay_path)
+
     session = GameSession(
         sample=ArenaSample(
             game_kit="gomoku",
@@ -30,7 +73,7 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
             illegal_move_count=0,
             final_board="board",
             move_log=[{"index": 1, "player": "Black", "move": "A1"}],
-            replay_path="artifacts/replays/sample-1/replay.json",
+            replay_path=replay_path,
         ),
         arena_trace=[
             {
@@ -47,6 +90,7 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
                 "retry_count": 0,
             }
         ],
+        visual_recorder=recorder,
     )
 
     output = ArenaOutputWriter().finalize(session)
@@ -63,6 +107,9 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
     assert serialized["footer"]["termination_reason"] == "five_in_row"
     assert serialized["footer"]["total_steps"] == 3
     assert serialized["artifacts"]["replay_ref"] == "artifacts/replays/sample-1/replay.json"
+    assert serialized["artifacts"]["visual_session_ref"].endswith(
+        "arena_visual_session/v1/manifest.json"
+    )
 
     sample = {
         "id": "sample-1",
