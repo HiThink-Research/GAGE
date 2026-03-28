@@ -1,8 +1,12 @@
 import { createElement } from "react";
 
 import type { GamePluginManifest } from "../gateway/types";
-import type { ArenaPluginRenderProps, ArenaPluginDefinition } from "./sdk/contracts";
+import type {
+  ArenaPluginRenderProps,
+  AnyArenaPluginDefinition,
+} from "./sdk/contracts";
 import { createPlugin } from "./sdk/createPlugin";
+import { createInputInterpreter, type ActionIntent } from "./sdk/input";
 import { DoudizhuPlugin } from "./doudizhu/DoudizhuPlugin";
 import { GomokuPlugin } from "./gomoku/GomokuPlugin";
 import { MahjongPlugin } from "./mahjong/MahjongPlugin";
@@ -86,7 +90,7 @@ function PlaceholderPluginStage({
   scene,
   requestedPluginId,
   isFallback,
-}: ArenaPluginRenderProps) {
+}: ArenaPluginRenderProps<any>) {
   return createElement(
     "section",
     { className: "plugin-stage-card" },
@@ -132,34 +136,102 @@ function PlaceholderPluginStage({
   );
 }
 
-const KNOWN_PLUGINS = new Map<string, ArenaPluginDefinition>(
-  KNOWN_PLUGIN_META.map(({ pluginId, displayName, manifest }) => [
-    pluginId,
-    createPlugin({
-      pluginId,
-      displayName,
-      manifest,
-      render:
-        pluginId === "arena.visualization.gomoku.board_v1"
-          ? GomokuPlugin
-          : pluginId === "arena.visualization.tictactoe.board_v1"
-            ? TicTacToePlugin
-            : pluginId === "arena.visualization.doudizhu.table_v1"
-              ? DoudizhuPlugin
-              : pluginId === "arena.visualization.mahjong.table_v1"
-                ? MahjongPlugin
-                : pluginId === "arena.visualization.pettingzoo.frame_v1"
-                  ? PettingZooPlugin
-                  : pluginId === "arena.visualization.vizdoom.frame_v1"
-                    ? VizDoomPlugin
-                    : pluginId === "arena.visualization.retro_platformer.frame_v1"
-                      ? RetroMarioPlugin
-                      : PlaceholderPluginStage,
-    }),
-  ]),
+interface BoardDeviceEvent {
+  playerId: string;
+  coord: string;
+}
+
+interface TableDeviceEvent {
+  playerId: string;
+  actionText: string;
+}
+
+interface FrameDeviceEvent {
+  playerId: string;
+  actionPayload: ActionIntent["action"];
+}
+
+const boardInputInterpreter = createInputInterpreter<BoardDeviceEvent>(
+  ({ playerId, coord }) => ({
+    playerId,
+    action: { move: coord },
+  }),
 );
 
-export function resolveArenaPlugin(pluginId: string): ArenaPluginDefinition {
+const tableInputInterpreter = createInputInterpreter<TableDeviceEvent>(
+  ({ playerId, actionText }) => ({
+    playerId,
+    action: { move: actionText },
+  }),
+);
+
+const frameInputInterpreter = createInputInterpreter<FrameDeviceEvent>(
+  ({ playerId, actionPayload }) => ({
+    playerId,
+    action: actionPayload,
+  }),
+);
+
+const KNOWN_PLUGINS = new Map<string, AnyArenaPluginDefinition>([
+  [
+    "arena.visualization.gomoku.board_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[0],
+      render: GomokuPlugin,
+      inputInterpreter: boardInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.tictactoe.board_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[1],
+      render: TicTacToePlugin,
+      inputInterpreter: boardInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.doudizhu.table_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[2],
+      render: DoudizhuPlugin,
+      inputInterpreter: tableInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.mahjong.table_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[3],
+      render: MahjongPlugin,
+      inputInterpreter: tableInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.pettingzoo.frame_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[4],
+      render: PettingZooPlugin,
+      inputInterpreter: frameInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.vizdoom.frame_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[5],
+      render: VizDoomPlugin,
+      inputInterpreter: frameInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.retro_platformer.frame_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[6],
+      render: RetroMarioPlugin,
+      inputInterpreter: frameInputInterpreter,
+    }),
+  ],
+]);
+
+export function resolveArenaPlugin(pluginId: string): AnyArenaPluginDefinition {
   const plugin = KNOWN_PLUGINS.get(pluginId);
   if (plugin) {
     return plugin;

@@ -10,8 +10,8 @@ import {
 export function TicTacToePlugin({
   session,
   scene,
-  submitAction,
-}: ArenaPluginRenderProps) {
+  submitInput,
+}: ArenaPluginRenderProps<{ playerId: string; coord: string }>) {
   const boardScene = readBoardScene(scene);
 
   if (!boardScene) {
@@ -41,9 +41,9 @@ export function TicTacToePlugin({
         if (!resolvedActorId) {
           return;
         }
-        void submitAction({
+        void submitInput({
           playerId: resolvedActorId,
-          action: { move: coord },
+          coord,
         });
       }}
     />

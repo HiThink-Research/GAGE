@@ -43,6 +43,7 @@ describe("RetroMarioPlugin", () => {
         }}
         scene={retroScene as VisualScene}
         submitAction={async () => undefined}
+        submitInput={async () => undefined}
         mediaSubscribe={(request, listener) => {
           listener({
             mediaId: request.mediaId,
@@ -60,7 +61,7 @@ describe("RetroMarioPlugin", () => {
   });
 
   it("submits stable retro action ids with hold duration metadata", async () => {
-    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
       <RetroMarioPlugin
@@ -91,7 +92,8 @@ describe("RetroMarioPlugin", () => {
           timeline: {}
         }}
         scene={retroScene as VisualScene}
-        submitAction={submitAction}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={(request, listener) => {
           listener({
             mediaId: request.mediaId,
@@ -109,9 +111,9 @@ describe("RetroMarioPlugin", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /right \+ jump/i }));
-    expect(submitAction).toHaveBeenCalledWith({
+    expect(submitInput).toHaveBeenCalledWith({
       playerId: "player_0",
-      action: {
+      actionPayload: {
         id: "right_jump",
         move: "right_jump",
         hold_ticks: 6

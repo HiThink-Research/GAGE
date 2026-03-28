@@ -33,9 +33,14 @@ export function SessionPage() {
     store.getSnapshot,
   );
   const playbackControls = usePlaybackControls(store);
+  const plugin =
+    snapshot.session !== undefined
+      ? resolveArenaPlugin(snapshot.session.pluginId)
+      : undefined;
   const inputBridge = useInputBridge({
     latestReceipt: snapshot.latestActionReceipt,
     submitAction: store.submitAction,
+    interpreter: plugin?.inputInterpreter,
   });
 
   useEffect(() => {
@@ -59,10 +64,6 @@ export function SessionPage() {
     void store.loadScene({ seq: snapshot.currentSceneSeq }).catch(() => {});
   }, [snapshot.currentSceneSeq, snapshot.scene?.seq, snapshot.sceneStatus, snapshot.status, store]);
 
-  const plugin =
-    snapshot.session !== undefined
-      ? resolveArenaPlugin(snapshot.session.pluginId)
-      : undefined;
   const PluginView = plugin?.render;
 
   return (
@@ -118,6 +119,7 @@ export function SessionPage() {
               scene={snapshot.scene}
               latestActionReceipt={inputBridge.latestReceipt}
               submitAction={inputBridge.submitAction}
+              submitInput={inputBridge.submitInput}
               mediaSubscribe={mediaResolver.subscribe}
               isFallback={plugin.isFallback}
               requestedPluginId={plugin.requestedPluginId}

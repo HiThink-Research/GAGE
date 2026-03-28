@@ -7,7 +7,16 @@ import {
   resolveBoardActorId,
 } from "../board/boardScene";
 
-export function GomokuPlugin({ session, scene, submitAction }: ArenaPluginRenderProps) {
+interface GomokuInputEvent {
+  playerId: string;
+  coord: string;
+}
+
+export function GomokuPlugin({
+  session,
+  scene,
+  submitInput,
+}: ArenaPluginRenderProps<GomokuInputEvent>) {
   const boardScene = readBoardScene(scene);
 
   if (!boardScene) {
@@ -37,9 +46,9 @@ export function GomokuPlugin({ session, scene, submitAction }: ArenaPluginRender
         if (!resolvedActorId) {
           return;
         }
-        void submitAction({
+        void submitInput({
           playerId: resolvedActorId,
-          action: { move: coord },
+          coord,
         });
       }}
     />

@@ -7,7 +7,7 @@ import { TicTacToePlugin } from "./TicTacToePlugin";
 
 describe("TicTacToePlugin", () => {
   it("renders non-blank board state, winning cells, and blocks coord actions when input is closed", () => {
-    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
       <TicTacToePlugin
@@ -38,7 +38,8 @@ describe("TicTacToePlugin", () => {
           timeline: {}
         }}
         scene={tictactoeScene as VisualScene}
-        submitAction={submitAction}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={() => () => {}}
         isFallback={false}
       />,
@@ -56,6 +57,6 @@ describe("TicTacToePlugin", () => {
     const actionButton = screen.getByRole("button", { name: /board cell 1,2/i });
     expect(actionButton).toBeDisabled();
     fireEvent.click(actionButton);
-    expect(submitAction).not.toHaveBeenCalled();
+    expect(submitInput).not.toHaveBeenCalled();
   });
 });

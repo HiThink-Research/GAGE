@@ -4,15 +4,18 @@ import { FrameSurface } from "../frame/FrameSurface";
 export function RetroMarioPlugin({
   session,
   scene,
-  submitAction,
+  submitInput,
   mediaSubscribe,
-}: ArenaPluginRenderProps) {
+}: ArenaPluginRenderProps<{
+  playerId: string;
+  actionPayload: Record<string, unknown>;
+}>) {
   return (
     <FrameSurface
       gameLabel="Retro Mario"
       session={session}
       scene={scene}
-      submitAction={submitAction}
+      submitInput={submitInput}
       mediaSubscribe={mediaSubscribe}
     />
   );

@@ -11,7 +11,7 @@ const FRAME_DATA_URL =
 
 describe("VizDoomPlugin", () => {
   it("renders a non-blank frame, overlay badges, and disables frame actions when input is closed", async () => {
-    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
       <VizDoomPlugin
@@ -42,7 +42,8 @@ describe("VizDoomPlugin", () => {
           timeline: {}
         }}
         scene={vizdoomScene as VisualScene}
-        submitAction={submitAction}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={(request, listener) => {
           listener({
             mediaId: request.mediaId,
@@ -66,6 +67,6 @@ describe("VizDoomPlugin", () => {
     const fireButton = screen.getByRole("button", { name: /fire/i });
     expect(fireButton).toBeDisabled();
     fireEvent.click(fireButton);
-    expect(submitAction).not.toHaveBeenCalled();
+    expect(submitInput).not.toHaveBeenCalled();
   });
 });

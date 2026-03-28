@@ -41,6 +41,7 @@ describe("PettingZooPlugin", () => {
         }}
         scene={pettingzooScene as VisualScene}
         submitAction={async () => undefined}
+        submitInput={async () => undefined}
         mediaSubscribe={(request, listener) => {
           listener({
             mediaId: request.mediaId,
@@ -106,6 +107,7 @@ describe("PettingZooPlugin", () => {
           ]
         }}
         submitAction={async () => undefined}
+        submitInput={async () => undefined}
         mediaSubscribe={(request, listener) => {
           listener({
             mediaId: request.mediaId,

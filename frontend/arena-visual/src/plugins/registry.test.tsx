@@ -45,6 +45,7 @@ describe("resolveArenaPlugin", () => {
     const plugin = resolveArenaPlugin("arena.visualization.gomoku.board_v1");
     expect(plugin.pluginId).toBe("arena.visualization.gomoku.board_v1");
     expect(plugin.isFallback).toBe(false);
+    expect(plugin.inputInterpreter).toBeDefined();
   });
 
   it("exposes exact manifests for known shipped plugins", () => {
@@ -54,6 +55,7 @@ describe("resolveArenaPlugin", () => {
       const plugin = resolveArenaPlugin(pluginId);
       expect(plugin.isFallback).toBe(false);
       expect(plugin.manifest).toEqual(expectedManifest);
+      expect(plugin.inputInterpreter).toBeDefined();
     }
   });
 
@@ -64,5 +66,6 @@ describe("resolveArenaPlugin", () => {
     expect(plugin.manifest.sceneKinds).toEqual(["frame"]);
     expect(plugin.manifest.supportedObservers).toEqual(["global"]);
     expect(plugin.manifest.acceptsHumanIntent).toBe(false);
+    expect(plugin.inputInterpreter).toBeUndefined();
   });
 });

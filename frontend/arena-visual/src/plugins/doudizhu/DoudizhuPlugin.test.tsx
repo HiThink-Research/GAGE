@@ -7,7 +7,7 @@ import { DoudizhuPlugin } from "./DoudizhuPlugin";
 
 describe("DoudizhuPlugin", () => {
   it("renders a non-blank table, masks other seats, and submits action chips", () => {
-    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
       <DoudizhuPlugin
@@ -38,7 +38,8 @@ describe("DoudizhuPlugin", () => {
           timeline: {},
         }}
         scene={doudizhuScene as VisualScene}
-        submitAction={submitAction}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={() => () => {}}
         isFallback={false}
       />,
@@ -52,9 +53,9 @@ describe("DoudizhuPlugin", () => {
     expect(screen.getByText(/observer: player_0/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /play pass/i }));
-    expect(submitAction).toHaveBeenCalledWith({
+    expect(submitInput).toHaveBeenCalledWith({
       playerId: "player_0",
-      action: { move: "pass" },
+      actionText: "pass",
     });
   });
 });

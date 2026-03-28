@@ -7,7 +7,11 @@ import {
   TableLayout,
 } from "../table/TableLayout";
 
-export function MahjongPlugin({ session, scene, submitAction }: ArenaPluginRenderProps) {
+export function MahjongPlugin({
+  session,
+  scene,
+  submitInput,
+}: ArenaPluginRenderProps<{ playerId: string; actionText: string }>) {
   const tableScene = readTableScene(scene);
 
   if (!tableScene) {
@@ -35,9 +39,9 @@ export function MahjongPlugin({ session, scene, submitAction }: ArenaPluginRende
         if (!resolvedActorId) {
           return;
         }
-        void submitAction({
+        void submitInput({
           playerId: resolvedActorId,
-          action: { move: actionText },
+          actionText,
         });
       }}
     />

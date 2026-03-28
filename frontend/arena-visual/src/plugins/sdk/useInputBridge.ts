@@ -1,32 +1,49 @@
 import { useState } from "react";
 
 import type { ActionIntentReceipt } from "../../gateway/types";
+import type { ActionIntent, InputInterpreter } from "./input";
 
-interface UseInputBridgeOptions {
+interface UseInputBridgeOptions<
+  TDeviceEvent = never,
+  TIntent extends ActionIntent = ActionIntent,
+> {
   latestReceipt?: ActionIntentReceipt;
-  submitAction: (payload: Record<string, unknown>) => Promise<ActionIntentReceipt>;
+  submitAction: (payload: TIntent) => Promise<ActionIntentReceipt>;
+  interpreter?: InputInterpreter<TDeviceEvent, TIntent>;
 }
 
-export function useInputBridge({
+export function useInputBridge<
+  TDeviceEvent = never,
+  TIntent extends ActionIntent = ActionIntent,
+>({
   latestReceipt,
   submitAction,
-}: UseInputBridgeOptions) {
+  interpreter,
+}: UseInputBridgeOptions<TDeviceEvent, TIntent>) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string>();
 
-  async function submit(payload: Record<string, unknown>): Promise<void> {
+  async function submit(payload: TIntent): Promise<void> {
     setIsSubmitting(true);
     setError(undefined);
     try {
       await submitAction(payload);
     } catch (caughtError) {
-      setError(
-        caughtError instanceof Error ? caughtError.message : "Action submission failed.",
-      );
+      const message =
+        caughtError instanceof Error ? caughtError.message : "Action submission failed.";
+      setError(message);
+      await Promise.resolve();
       throw caughtError;
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function submitInput(event: TDeviceEvent): Promise<void> {
+    if (!interpreter) {
+      throw new Error("Plugin input interpreter is not available.");
+    }
+    await submit(interpreter.interpret(event));
   }
 
   return {
@@ -34,5 +51,6 @@ export function useInputBridge({
     isSubmitting,
     error,
     submitAction: submit,
+    submitInput,
   };
 }

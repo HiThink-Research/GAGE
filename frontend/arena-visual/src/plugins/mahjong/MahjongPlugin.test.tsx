@@ -7,7 +7,7 @@ import { MahjongPlugin } from "./MahjongPlugin";
 
 describe("MahjongPlugin", () => {
   it("renders a non-blank discard table, masks spectator hands, and blocks tile actions when input is closed", () => {
-    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
       <MahjongPlugin
@@ -38,7 +38,8 @@ describe("MahjongPlugin", () => {
           timeline: {},
         }}
         scene={mahjongScene as VisualScene}
-        submitAction={submitAction}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={() => () => {}}
         isFallback={false}
       />,
@@ -54,6 +55,6 @@ describe("MahjongPlugin", () => {
     const playButton = screen.getByRole("button", { name: /play b1/i });
     expect(playButton).toBeDisabled();
     fireEvent.click(playButton);
-    expect(submitAction).not.toHaveBeenCalled();
+    expect(submitInput).not.toHaveBeenCalled();
   });
 });

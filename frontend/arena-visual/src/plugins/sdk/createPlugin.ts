@@ -2,29 +2,39 @@ import type { ComponentType } from "react";
 
 import type { GamePluginManifest } from "../../gateway/types";
 import type { ArenaPluginDefinition, ArenaPluginRenderProps } from "./contracts";
+import type { ActionIntent, InputInterpreter } from "./input";
 
-interface CreatePluginInput {
+interface CreatePluginInput<
+  TDeviceEvent = never,
+  TIntent extends ActionIntent = ActionIntent,
+> {
   pluginId: string;
   displayName: string;
   manifest: GamePluginManifest;
-  render: ComponentType<ArenaPluginRenderProps>;
+  render: ComponentType<ArenaPluginRenderProps<TDeviceEvent, TIntent>>;
+  inputInterpreter?: InputInterpreter<TDeviceEvent, TIntent>;
   isFallback?: boolean;
   requestedPluginId?: string;
 }
 
-export function createPlugin({
+export function createPlugin<
+  TDeviceEvent = never,
+  TIntent extends ActionIntent = ActionIntent,
+>({
   pluginId,
   displayName,
   manifest,
   render,
+  inputInterpreter,
   isFallback = false,
   requestedPluginId,
-}: CreatePluginInput): ArenaPluginDefinition {
+}: CreatePluginInput<TDeviceEvent, TIntent>): ArenaPluginDefinition<TDeviceEvent, TIntent> {
   return {
     pluginId,
     displayName,
     manifest,
     render,
+    inputInterpreter,
     isFallback,
     requestedPluginId,
   };

@@ -7,7 +7,11 @@ import {
   TableLayout,
 } from "../table/TableLayout";
 
-export function DoudizhuPlugin({ session, scene, submitAction }: ArenaPluginRenderProps) {
+export function DoudizhuPlugin({
+  session,
+  scene,
+  submitInput,
+}: ArenaPluginRenderProps<{ playerId: string; actionText: string }>) {
   const tableScene = readTableScene(scene);
 
   if (!tableScene) {
@@ -35,9 +39,9 @@ export function DoudizhuPlugin({ session, scene, submitAction }: ArenaPluginRend
         if (!resolvedActorId) {
           return;
         }
-        void submitAction({
+        void submitInput({
           playerId: resolvedActorId,
-          action: { move: actionText },
+          actionText,
         });
       }}
     />

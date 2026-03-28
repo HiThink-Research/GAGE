@@ -7,7 +7,7 @@ import { GomokuPlugin } from "./GomokuPlugin";
 
 describe("GomokuPlugin", () => {
   it("renders a visible board, highlights the last move, and submits coord intents", () => {
-    const submitAction = vi.fn().mockResolvedValue(undefined);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
       <GomokuPlugin
@@ -38,7 +38,8 @@ describe("GomokuPlugin", () => {
           timeline: {}
         }}
         scene={gomokuScene as VisualScene}
-        submitAction={submitAction}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={() => () => {}}
         isFallback={false}
       />,
@@ -54,9 +55,9 @@ describe("GomokuPlugin", () => {
     expect(lastMoveCell.getAttribute("data-last-move")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: /board cell b1/i }));
-    expect(submitAction).toHaveBeenCalledWith({
+    expect(submitInput).toHaveBeenCalledWith({
       playerId: "Black",
-      action: { move: "B1" },
+      coord: "B1",
     });
   });
 });

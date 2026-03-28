@@ -1,6 +1,7 @@
 import type { VisualScene, VisualSession } from "../../gateway/types";
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
+import type { ActionIntent } from "../sdk/input";
 
 interface FrameViewport {
   width: number;
@@ -45,7 +46,10 @@ interface FrameSurfaceProps {
   gameLabel: string;
   session: VisualSession;
   scene?: VisualScene;
-  submitAction: (payload: Record<string, unknown>) => Promise<void>;
+  submitInput: (event: {
+    playerId: string;
+    actionPayload: ActionIntent["action"];
+  }) => Promise<void>;
   mediaSubscribe: ArenaMediaSubscriber;
 }
 
@@ -212,7 +216,7 @@ export function FrameSurface({
   gameLabel,
   session,
   scene,
-  submitAction,
+  submitInput,
   mediaSubscribe,
 }: FrameSurfaceProps) {
   const frameScene = readFrameScene(scene);
@@ -294,9 +298,9 @@ export function FrameSurface({
                 if (!canSubmitActions || !resolvedActorId) {
                   return;
                 }
-                void submitAction({
+                void submitInput({
                   playerId: resolvedActorId,
-                  action: actionDescriptor.payload,
+                  actionPayload: actionDescriptor.payload,
                 });
               }}
               type="button"
