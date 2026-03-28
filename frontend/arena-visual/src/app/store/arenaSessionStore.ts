@@ -85,6 +85,7 @@ export interface ArenaSessionStore {
   setPlaybackMode: (mode: PlaybackMode) => void;
   setTimelineFilters: (filters: TimelineFilterState) => void;
   setObserver: (observer: ObserverRef) => Promise<void>;
+  submitChat: (payload: Record<string, unknown>) => Promise<ActionIntentReceipt>;
   submitControl: (payload: ArenaControlPayload) => Promise<ActionIntentReceipt>;
   submitAction: (payload: Record<string, unknown>) => Promise<ActionIntentReceipt>;
   clearLatestActionReceipt: () => void;
@@ -537,6 +538,45 @@ export function createArenaSessionStore(
     return receipt;
   }
 
+  async function submitChat(
+    payload: Record<string, unknown>,
+  ): Promise<ActionIntentReceipt> {
+    if (!state.sessionRequest) {
+      throw new Error("No session is loaded.");
+    }
+
+    setState((previous) => ({
+      ...previous,
+      latestActionReceipt: {
+        intentId: "pending-chat",
+        state: "pending",
+      },
+    }));
+
+    try {
+      const receipt = await client.submitChat({
+        sessionId: state.sessionRequest.sessionId,
+        runId: state.sessionRequest.runId,
+        payload,
+      });
+      setState((previous) => ({
+        ...previous,
+        latestActionReceipt: receipt,
+      }));
+      return receipt;
+    } catch (caughtError) {
+      setState((previous) => ({
+        ...previous,
+        latestActionReceipt: {
+          intentId: "rejected-chat",
+          state: "rejected",
+          reason: toErrorMessage(caughtError),
+        },
+      }));
+      throw caughtError;
+    }
+  }
+
   async function submitControl(payload: ArenaControlPayload): Promise<ActionIntentReceipt> {
     if (!state.sessionRequest) {
       throw new Error("No session is loaded.");
@@ -620,6 +660,7 @@ export function createArenaSessionStore(
     setPlaybackMode,
     setTimelineFilters,
     setObserver,
+    submitChat,
     submitControl,
     submitAction: submitActionWithFailureHandling,
     clearLatestActionReceipt() {

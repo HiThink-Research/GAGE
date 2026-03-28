@@ -529,6 +529,39 @@ describe("arenaSessionStore", () => {
     });
   });
 
+  it("submits chat through the gateway client and stores the latest host receipt", async () => {
+    const client = createStubClient({
+      submitChat: vi.fn().mockResolvedValue({
+        intentId: "chat-1",
+        state: "accepted",
+        relatedEventSeq: 6,
+        reason: "queued",
+      }),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.submitChat({
+      playerId: "player_0",
+      text: "hello host",
+    });
+
+    expect(client.submitChat).toHaveBeenCalledWith({
+      sessionId: "sample-1",
+      runId: undefined,
+      payload: {
+        playerId: "player_0",
+        text: "hello host",
+      },
+    });
+    expect(store.getSnapshot().latestActionReceipt).toEqual({
+      intentId: "chat-1",
+      state: "accepted",
+      relatedEventSeq: 6,
+      reason: "queued",
+    });
+  });
+
   it("reloads session and current scene for an observer override without discarding timeline state", async () => {
     const deferredSession = deferred<VisualSession>();
     const deferredScene = deferred<VisualScene>();

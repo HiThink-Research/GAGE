@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { ActionIntentFlow } from "./ActionIntentFlow";
 
 describe("ActionIntentFlow", () => {
-  it("renders receipt transitions and submission errors from the action submit flow", () => {
+  it("renders generic host receipt transitions and submission errors", () => {
     const { rerender } = render(
       <ActionIntentFlow
         isSubmitting={true}
@@ -14,27 +14,26 @@ describe("ActionIntentFlow", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /action intent/i })).toBeInTheDocument();
-    expect(screen.getByText(/submitting action/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /host receipt/i })).toBeInTheDocument();
+    expect(screen.getByText(/submitting host request/i)).toBeInTheDocument();
 
     rerender(
       <ActionIntentFlow
         error="queue_unavailable"
         isSubmitting={false}
         latestReceipt={{
-          intentId: "sample-human-1:intent-1",
-          state: "accepted",
-          relatedEventSeq: 1,
+          intentId: "chat-1",
+          state: "committed",
+          relatedEventSeq: 14,
           reason: "queued",
         }}
       />,
     );
 
-    expect(
-      screen.getByText(/accepted · sample-human-1:intent-1/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/committed · chat-1/i)).toBeInTheDocument();
+    expect(screen.getByText(/event seq 14/i)).toBeInTheDocument();
     expect(screen.getByText(/queued/i)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /action error/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /host error/i })).toBeInTheDocument();
     expect(screen.getByText(/queue_unavailable/i)).toBeInTheDocument();
   });
 });

@@ -162,6 +162,7 @@ export function SessionPage() {
             onObserverChange={(observer) => {
               void store.setObserver(observer).catch(() => {});
             }}
+            onChatSubmit={(payload) => store.submitChat(payload)}
           />
         }
       />

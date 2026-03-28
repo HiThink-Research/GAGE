@@ -8,7 +8,7 @@ interface ActionIntentFlowProps {
 
 function formatReceipt(latestReceipt?: ActionIntentReceipt): string {
   if (!latestReceipt) {
-    return "No action submitted";
+    return "No host requests yet";
   }
   return `${latestReceipt.state} · ${latestReceipt.intentId}`;
 }
@@ -21,13 +21,16 @@ export function ActionIntentFlow({
   return (
     <section className="action-intent-flow" aria-label="Action intent flow">
       <article className="side-panel__card">
-        <h2>Action intent</h2>
-        <p>{isSubmitting ? "Submitting action..." : formatReceipt(latestReceipt)}</p>
+        <h2>Host receipt</h2>
+        <p>{isSubmitting ? "Submitting host request..." : formatReceipt(latestReceipt)}</p>
+        {latestReceipt?.relatedEventSeq !== undefined ? (
+          <p>{`Event seq ${latestReceipt.relatedEventSeq}`}</p>
+        ) : null}
         {latestReceipt?.reason ? <p>{latestReceipt.reason}</p> : null}
       </article>
       {error ? (
         <article className="side-panel__card side-panel__card--error">
-          <h2>Action error</h2>
+          <h2>Host error</h2>
           <p>{error}</p>
         </article>
       ) : null}

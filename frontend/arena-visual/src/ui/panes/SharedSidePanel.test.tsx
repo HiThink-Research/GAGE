@@ -1,10 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import type { VisualScene } from "../../gateway/types";
+import gomokuScene from "../../test/fixtures/gomoku.visual.json";
 import { SharedSidePanel } from "./SharedSidePanel";
 
 describe("SharedSidePanel", () => {
-  it("renders controlled scene panels such as chat logs", () => {
+  it("renders fixed host tabs for players, events, chat, and trace", () => {
     render(
       <SharedSidePanel
         session={{
@@ -60,12 +61,13 @@ describe("SharedSidePanel", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /chat log/i })).toBeInTheDocument();
-    expect(screen.getByText(/player_1/i)).toBeInTheDocument();
-    expect(screen.getByText(/watch this/i)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Players" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Events" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Trace" })).toBeInTheDocument();
   });
 
-  it("offers a neutral observer option and scene-derived player observer options", () => {
+  it("reads observer options from frozen session capabilities and host labels", () => {
     const onObserverChange = vi.fn();
 
     render(
@@ -83,8 +85,8 @@ describe("SharedSidePanel", () => {
             canSeek: true,
           },
           observer: {
-            observerId: "host",
-            observerKind: "global",
+            observerId: "",
+            observerKind: "camera",
           },
           scheduling: {
             family: "turn",
@@ -92,43 +94,35 @@ describe("SharedSidePanel", () => {
             acceptsHumanIntent: true,
             activeActorId: "player_0",
           },
-          capabilities: {},
+          capabilities: {
+            observerModes: ["global", "camera", "player"],
+          },
           summary: {},
           timeline: {},
         }}
-        scene={
-          {
-            sceneId: "gomoku-sample:seq:7",
-            gameId: "gomoku",
-            pluginId: "arena.visualization.gomoku.board_v1",
-            kind: "board",
-            tsMs: 1007,
-            seq: 7,
-            phase: "replay",
-            activePlayerId: "player_0",
-            legalActions: [],
-            summary: {},
-            body: {
-              players: [
-                { playerId: "player_0", playerName: "Alpha", token: "X" },
-                { playerId: "player_1", playerName: "Beta", token: "O" },
-              ],
-            },
-          } as VisualScene
-        }
+        scene={gomokuScene as VisualScene}
         onObserverChange={onObserverChange}
       />,
     );
 
     const selector = screen.getByLabelText(/observer view/i);
-    expect(screen.getByRole("option", { name: /neutral observer/i })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Alpha/i })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /Beta/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Host overview" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Camera view" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Black" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "White" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /neutral observer/i })).not.toBeInTheDocument();
 
-    fireEvent.change(selector, { target: { value: "player:player_1" } });
+    fireEvent.change(selector, { target: { value: "camera" } });
 
     expect(onObserverChange).toHaveBeenCalledWith({
-      observerId: "player_1",
+      observerId: "",
+      observerKind: "camera",
+    });
+
+    fireEvent.change(selector, { target: { value: "player:White" } });
+
+    expect(onObserverChange).toHaveBeenCalledWith({
+      observerId: "White",
       observerKind: "player",
     });
   });
