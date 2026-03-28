@@ -82,6 +82,7 @@ export function SessionPage() {
           <GlobalControlBar
             playbackMode={snapshot.session?.playback.mode ?? "live_tail"}
             playbackSpeed={snapshot.session?.playback.speed ?? 1}
+            disabled={snapshot.status !== "ready" || snapshot.session === undefined}
             scheduling={snapshot.session?.scheduling}
             onPause={() => {
               void playbackControls.pause();

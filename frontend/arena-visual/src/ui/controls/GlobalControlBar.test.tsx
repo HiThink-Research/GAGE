@@ -43,4 +43,30 @@ describe("GlobalControlBar", () => {
     expect(onSeekEnd).toHaveBeenCalledTimes(1);
     expect(onBackToTail).toHaveBeenCalledTimes(1);
   });
+
+  it("disables playback controls when the host is not ready", () => {
+    render(
+      <GlobalControlBar
+        playbackMode="live_tail"
+        playbackSpeed={1}
+        disabled
+        onPause={vi.fn()}
+        onPlayLive={vi.fn()}
+        onReplay={vi.fn()}
+        onSetSpeed={vi.fn()}
+        onStep={vi.fn()}
+        onSeekEnd={vi.fn()}
+        onBackToTail={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /live tail/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /pause/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /replay/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /2x/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /step -1/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /step \+1/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /end/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /back to tail/i })).toBeDisabled();
+  });
 });

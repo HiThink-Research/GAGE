@@ -3,6 +3,7 @@ import type { PlaybackMode, SchedulingState } from "../../gateway/types";
 interface GlobalControlBarProps {
   playbackMode: PlaybackMode;
   playbackSpeed: number;
+  disabled?: boolean;
   scheduling?: SchedulingState;
   onPause: () => void;
   onPlayLive: () => void;
@@ -16,6 +17,7 @@ interface GlobalControlBarProps {
 export function GlobalControlBar({
   playbackMode,
   playbackSpeed,
+  disabled = false,
   scheduling,
   onPause,
   onPlayLive,
@@ -31,6 +33,7 @@ export function GlobalControlBar({
         <button
           type="button"
           className={playbackMode === "live_tail" ? "control-chip is-active" : "control-chip"}
+          disabled={disabled}
           onClick={onPlayLive}
         >
           Live tail
@@ -38,6 +41,7 @@ export function GlobalControlBar({
         <button
           type="button"
           className={playbackMode === "paused" ? "control-chip is-active" : "control-chip"}
+          disabled={disabled}
           onClick={onPause}
         >
           Pause
@@ -45,6 +49,7 @@ export function GlobalControlBar({
         <button
           type="button"
           className={playbackMode === "replay_playing" ? "control-chip is-active" : "control-chip"}
+          disabled={disabled}
           onClick={onReplay}
         >
           Replay
@@ -54,21 +59,22 @@ export function GlobalControlBar({
             key={speed}
             type="button"
             className={playbackSpeed === speed ? "control-chip is-active" : "control-chip"}
+            disabled={disabled}
             onClick={() => onSetSpeed(speed)}
           >
             {speed}x
           </button>
         ))}
-        <button type="button" className="control-chip" onClick={() => onStep(-1)}>
+        <button type="button" className="control-chip" disabled={disabled} onClick={() => onStep(-1)}>
           Step -1
         </button>
-        <button type="button" className="control-chip" onClick={() => onStep(1)}>
+        <button type="button" className="control-chip" disabled={disabled} onClick={() => onStep(1)}>
           Step +1
         </button>
-        <button type="button" className="control-chip" onClick={onSeekEnd}>
+        <button type="button" className="control-chip" disabled={disabled} onClick={onSeekEnd}>
           End
         </button>
-        <button type="button" className="control-chip" onClick={onBackToTail}>
+        <button type="button" className="control-chip" disabled={disabled} onClick={onBackToTail}>
           Back to tail
         </button>
       </div>
