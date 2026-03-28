@@ -10,6 +10,7 @@ describe("usePlaybackControls", () => {
       setCurrentSceneSeq: vi.fn(),
       loadScene: vi.fn(),
       loadMoreTimeline: vi.fn(),
+      submitControl: vi.fn(),
     } as unknown as ArenaSessionStore;
 
     const controls = usePlaybackControls(store);
@@ -17,5 +18,34 @@ describe("usePlaybackControls", () => {
 
     expect(store.setCurrentSceneSeq).toHaveBeenCalledWith(7);
     expect(store.loadScene).not.toHaveBeenCalled();
+  });
+
+  it("submits step, follow-tail, and back-to-tail playback commands through the store", async () => {
+    const store = {
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn(),
+    } as unknown as ArenaSessionStore;
+
+    const controls = usePlaybackControls(store);
+
+    await controls.stepBackward();
+    await controls.stepForward();
+    await controls.followTail();
+    await controls.backToTail();
+
+    expect(store.submitControl).toHaveBeenNthCalledWith(1, {
+      commandType: "step",
+      stepDelta: -1,
+    });
+    expect(store.submitControl).toHaveBeenNthCalledWith(2, {
+      commandType: "step",
+      stepDelta: 1,
+    });
+    expect(store.submitControl).toHaveBeenNthCalledWith(3, {
+      commandType: "follow_tail",
+    });
+    expect(store.submitControl).toHaveBeenNthCalledWith(4, {
+      commandType: "back_to_tail",
+    });
   });
 });

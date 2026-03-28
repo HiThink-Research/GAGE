@@ -349,6 +349,48 @@ describe("arenaSessionStore", () => {
     expect(state.currentSceneSeq).toBe(2);
   });
 
+  it("stores timeline filters and applies an accepted seek receipt to the current scene cursor", async () => {
+    const client = createStubClient({
+      submitControl: vi.fn().mockResolvedValue({
+        intentId: "control-1",
+        state: "accepted",
+        relatedEventSeq: 9,
+        reason: "seek_applied",
+      }),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [3, 5, 9])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    store.setTimelineFilters({
+      eventTypes: ["action_intent"],
+      severity: "warn",
+      humanIntentOnly: true,
+    });
+    await store.submitControl({
+      commandType: "seek_seq",
+      targetSeq: 9,
+    });
+
+    const state = store.getSnapshot();
+    expect(state.timeline.filters).toEqual({
+      eventTypes: ["action_intent"],
+      severity: "warn",
+      humanIntentOnly: true,
+    });
+    expect(state.currentSceneSeq).toBe(9);
+    expect(state.session?.playback.mode).toBe("paused");
+    expect(state.session?.playback.cursorEventSeq).toBe(9);
+    expect(client.submitControl).toHaveBeenCalledWith({
+      sessionId: "sample-1",
+      runId: undefined,
+      payload: {
+        commandType: "seek_seq",
+        targetSeq: 9,
+      },
+    });
+  });
+
   it("clears the synthetic pending receipt when action submission fails", async () => {
     const client = createStubClient({
       submitAction: vi.fn().mockRejectedValue(new Error("queue_unavailable")),
@@ -545,6 +587,14 @@ function createStubClient(
     }),
     submitAction: vi.fn().mockResolvedValue({
       intentId: "intent-1",
+      state: "accepted",
+    }),
+    submitChat: vi.fn().mockResolvedValue({
+      intentId: "chat-1",
+      state: "accepted",
+    }),
+    submitControl: vi.fn().mockResolvedValue({
+      intentId: "control-1",
       state: "accepted",
     }),
     buildMediaUrl: vi.fn().mockReturnValue("/media/frame-1"),

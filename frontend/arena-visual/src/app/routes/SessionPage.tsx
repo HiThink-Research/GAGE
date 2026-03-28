@@ -81,10 +81,33 @@ export function SessionPage() {
         controls={
           <GlobalControlBar
             playbackMode={snapshot.session?.playback.mode ?? "live_tail"}
+            playbackSpeed={snapshot.session?.playback.speed ?? 1}
             scheduling={snapshot.session?.scheduling}
-            onPause={playbackControls.pause}
-            onPlayLive={playbackControls.playLive}
-            onReplay={playbackControls.playReplay}
+            onPause={() => {
+              void playbackControls.pause();
+            }}
+            onPlayLive={() => {
+              void playbackControls.playLive();
+            }}
+            onReplay={() => {
+              void playbackControls.playReplay();
+            }}
+            onSetSpeed={(speed) => {
+              void playbackControls.setSpeed(speed);
+            }}
+            onStep={(delta) => {
+              if (delta > 0) {
+                void playbackControls.stepForward();
+                return;
+              }
+              void playbackControls.stepBackward();
+            }}
+            onSeekEnd={() => {
+              void playbackControls.seekEnd();
+            }}
+            onBackToTail={() => {
+              void playbackControls.backToTail();
+            }}
           />
         }
         stage={
@@ -113,6 +136,7 @@ export function SessionPage() {
         timeline={
           <TimelineView
             events={snapshot.timeline.events}
+            filters={snapshot.timeline.filters}
             currentSeq={snapshot.currentSceneSeq}
             status={snapshot.timeline.status}
             hasMore={snapshot.timeline.hasMore}
@@ -121,6 +145,9 @@ export function SessionPage() {
             }}
             onLoadMore={() => {
               void playbackControls.loadMoreTimeline();
+            }}
+            onFiltersChange={(filters) => {
+              store.setTimelineFilters(filters);
             }}
           />
         }

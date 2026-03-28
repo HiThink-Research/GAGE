@@ -2,18 +2,28 @@ import type { PlaybackMode, SchedulingState } from "../../gateway/types";
 
 interface GlobalControlBarProps {
   playbackMode: PlaybackMode;
+  playbackSpeed: number;
   scheduling?: SchedulingState;
   onPause: () => void;
   onPlayLive: () => void;
   onReplay: () => void;
+  onSetSpeed: (speed: number) => void;
+  onStep: (delta: -1 | 1) => void;
+  onSeekEnd: () => void;
+  onBackToTail: () => void;
 }
 
 export function GlobalControlBar({
   playbackMode,
+  playbackSpeed,
   scheduling,
   onPause,
   onPlayLive,
   onReplay,
+  onSetSpeed,
+  onStep,
+  onSeekEnd,
+  onBackToTail,
 }: GlobalControlBarProps) {
   return (
     <section className="control-bar" aria-label="Playback controls">
@@ -38,6 +48,28 @@ export function GlobalControlBar({
           onClick={onReplay}
         >
           Replay
+        </button>
+        {([0.5, 1, 2] as const).map((speed) => (
+          <button
+            key={speed}
+            type="button"
+            className={playbackSpeed === speed ? "control-chip is-active" : "control-chip"}
+            onClick={() => onSetSpeed(speed)}
+          >
+            {speed}x
+          </button>
+        ))}
+        <button type="button" className="control-chip" onClick={() => onStep(-1)}>
+          Step -1
+        </button>
+        <button type="button" className="control-chip" onClick={() => onStep(1)}>
+          Step +1
+        </button>
+        <button type="button" className="control-chip" onClick={onSeekEnd}>
+          End
+        </button>
+        <button type="button" className="control-chip" onClick={onBackToTail}>
+          Back to tail
         </button>
       </div>
       <div className="control-bar__status">

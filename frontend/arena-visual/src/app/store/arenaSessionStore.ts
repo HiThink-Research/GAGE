@@ -5,6 +5,8 @@ import type {
   PlaybackMode,
   TimelineEvent,
   TimelinePage,
+  TimelineEventType,
+  TimelineSeverity,
   VisualScene,
   VisualSession,
 } from "../../gateway/types";
@@ -24,7 +26,31 @@ export interface ArenaTimelineState {
   nextAfterSeq?: number | null;
   hasMore: boolean;
   limit: number;
+  filters: TimelineFilterState;
   error?: string;
+}
+
+export type TimelineFilterSeverity = TimelineSeverity | "all";
+
+export interface TimelineFilterState {
+  eventTypes: TimelineEventType[];
+  severity: TimelineFilterSeverity;
+  humanIntentOnly: boolean;
+}
+
+export interface ArenaControlPayload {
+  commandType:
+    | "follow_tail"
+    | "pause"
+    | "replay"
+    | "seek_seq"
+    | "seek_end"
+    | "step"
+    | "set_speed"
+    | "back_to_tail";
+  targetSeq?: number;
+  stepDelta?: -1 | 1;
+  speed?: number;
 }
 
 export interface ArenaSessionStoreSnapshot {
@@ -57,12 +83,19 @@ export interface ArenaSessionStore {
   loadScene: (input: LoadSceneInput) => Promise<void>;
   setCurrentSceneSeq: (seq: number) => void;
   setPlaybackMode: (mode: PlaybackMode) => void;
+  setTimelineFilters: (filters: TimelineFilterState) => void;
   setObserver: (observer: ObserverRef) => Promise<void>;
+  submitControl: (payload: ArenaControlPayload) => Promise<ActionIntentReceipt>;
   submitAction: (payload: Record<string, unknown>) => Promise<ActionIntentReceipt>;
   clearLatestActionReceipt: () => void;
 }
 
 const DEFAULT_TIMELINE_LIMIT = 50;
+const DEFAULT_TIMELINE_FILTERS: TimelineFilterState = {
+  eventTypes: [],
+  severity: "all",
+  humanIntentOnly: false,
+};
 
 export function createArenaSessionStore(
   client: ArenaGatewayClient,
@@ -79,6 +112,7 @@ export function createArenaSessionStore(
       nextAfterSeq: undefined,
       hasMore: false,
       limit: DEFAULT_TIMELINE_LIMIT,
+      filters: DEFAULT_TIMELINE_FILTERS,
     },
   };
 
@@ -125,6 +159,16 @@ export function createArenaSessionStore(
     notify();
   }
 
+  function setTimelineFilters(filters: TimelineFilterState): void {
+    setState((previous) => ({
+      ...previous,
+      timeline: {
+        ...previous.timeline,
+        filters,
+      },
+    }));
+  }
+
   async function loadSession({ sessionId, runId, observer }: LoadSessionInput): Promise<void> {
     sessionRequestVersion += 1;
     sceneRequestVersion += 1;
@@ -165,7 +209,7 @@ export function createArenaSessionStore(
         sceneStatus: "idle",
         currentSceneSeq:
           lastEvent?.seq ?? (session.playback.cursorEventSeq > 0 ? session.playback.cursorEventSeq : undefined),
-        timeline: timelineFromPage(timelinePage),
+        timeline: timelineFromPage(timelinePage, previous.timeline.filters),
       }));
     } catch (caughtError) {
       if (requestVersion !== sessionRequestVersion) {
@@ -224,7 +268,7 @@ export function createArenaSessionStore(
             ? lastEvent.seq
             : previous.currentSceneSeq,
         timeline: {
-          ...timelineFromPage(page),
+          ...timelineFromPage(page, previous.timeline.filters),
           events: mergedEvents,
         },
       }));
@@ -316,6 +360,74 @@ export function createArenaSessionStore(
       currentSceneSeq: mode === "live_tail" ? nextCursorSeq : previous.currentSceneSeq,
     }));
     updateSessionPlayback(mode, nextCursorSeq);
+  }
+
+  function applyControlReceipt(
+    previous: ArenaSessionStoreSnapshot,
+    payload: ArenaControlPayload,
+    receipt: ActionIntentReceipt,
+  ): ArenaSessionStoreSnapshot {
+    if (!previous.session || !["accepted", "committed"].includes(receipt.state)) {
+      return {
+        ...previous,
+        latestActionReceipt: receipt,
+      };
+    }
+
+    const latestTimelineSeq =
+      previous.timeline.events.at(-1)?.seq ??
+      previous.currentSceneSeq ??
+      previous.session.playback.cursorEventSeq;
+    const stepTargetSeq =
+      receipt.relatedEventSeq ?? resolveStepTargetSeq(previous.timeline.events, previous.currentSceneSeq, payload.stepDelta);
+
+    let nextMode = previous.session.playback.mode;
+    let nextCursorSeq = previous.currentSceneSeq ?? previous.session.playback.cursorEventSeq;
+    let nextSpeed = previous.session.playback.speed;
+
+    switch (payload.commandType) {
+      case "pause":
+        nextMode = "paused";
+        break;
+      case "replay":
+        nextMode = "replay_playing";
+        break;
+      case "follow_tail":
+      case "back_to_tail":
+        nextMode = "live_tail";
+        nextCursorSeq = receipt.relatedEventSeq ?? latestTimelineSeq;
+        break;
+      case "seek_seq":
+        nextMode = "paused";
+        nextCursorSeq = receipt.relatedEventSeq ?? payload.targetSeq ?? nextCursorSeq;
+        break;
+      case "seek_end":
+        nextMode = "paused";
+        nextCursorSeq = receipt.relatedEventSeq ?? latestTimelineSeq;
+        break;
+      case "step":
+        nextMode = "paused";
+        nextCursorSeq = stepTargetSeq ?? nextCursorSeq;
+        break;
+      case "set_speed":
+        nextSpeed = payload.speed ?? nextSpeed;
+        break;
+    }
+
+    return {
+      ...previous,
+      currentSceneSeq: nextCursorSeq,
+      latestActionReceipt: receipt,
+      session: {
+        ...previous.session,
+        playback: {
+          ...previous.session.playback,
+          mode: nextMode,
+          cursorEventSeq: nextCursorSeq,
+          speed: nextSpeed,
+        },
+      },
+    };
   }
 
   async function setObserver(observer: ObserverRef): Promise<void> {
@@ -424,6 +536,40 @@ export function createArenaSessionStore(
     return receipt;
   }
 
+  async function submitControl(payload: ArenaControlPayload): Promise<ActionIntentReceipt> {
+    if (!state.sessionRequest) {
+      throw new Error("No session is loaded.");
+    }
+
+    setState((previous) => ({
+      ...previous,
+      latestActionReceipt: {
+        intentId: "pending-control",
+        state: "pending",
+      },
+    }));
+
+    try {
+      const receipt = await client.submitControl({
+        sessionId: state.sessionRequest.sessionId,
+        runId: state.sessionRequest.runId,
+        payload: payload as unknown as Record<string, unknown>,
+      });
+      setState((previous) => applyControlReceipt(previous, payload, receipt));
+      return receipt;
+    } catch (caughtError) {
+      setState((previous) => ({
+        ...previous,
+        latestActionReceipt: {
+          intentId: "rejected-control",
+          state: "rejected",
+          reason: toErrorMessage(caughtError),
+        },
+      }));
+      throw caughtError;
+    }
+  }
+
   async function submitActionWithFailureHandling(
     payload: Record<string, unknown>,
   ): Promise<ActionIntentReceipt> {
@@ -455,7 +601,9 @@ export function createArenaSessionStore(
     loadScene,
     setCurrentSceneSeq,
     setPlaybackMode,
+    setTimelineFilters,
     setObserver,
+    submitControl,
     submitAction: submitActionWithFailureHandling,
     clearLatestActionReceipt() {
       setState((previous) => ({
@@ -466,14 +614,40 @@ export function createArenaSessionStore(
   };
 }
 
-function timelineFromPage(page: TimelinePage): ArenaTimelineState {
+function timelineFromPage(
+  page: TimelinePage,
+  filters: TimelineFilterState,
+): ArenaTimelineState {
   return {
     status: "ready",
     events: [...page.events],
     nextAfterSeq: page.nextAfterSeq,
     hasMore: page.hasMore,
     limit: page.limit,
+    filters: { ...filters },
   };
+}
+
+function resolveStepTargetSeq(
+  events: TimelineEvent[],
+  currentSceneSeq: number | undefined,
+  stepDelta: number | undefined,
+): number | undefined {
+  if (currentSceneSeq === undefined || stepDelta === undefined) {
+    return currentSceneSeq;
+  }
+
+  const currentIndex = events.findIndex((event) => event.seq === currentSceneSeq);
+  if (currentIndex === -1) {
+    return currentSceneSeq;
+  }
+
+  const nextIndex = currentIndex + stepDelta;
+  if (nextIndex < 0 || nextIndex >= events.length) {
+    return currentSceneSeq;
+  }
+
+  return events[nextIndex]?.seq ?? currentSceneSeq;
 }
 
 function toErrorMessage(error: unknown): string {
