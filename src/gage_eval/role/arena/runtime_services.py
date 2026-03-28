@@ -220,11 +220,20 @@ class ArenaRuntimeServiceHub:
                     state="rejected",
                     reason=str(error),
                 )
-        else:
-            control_queue = getattr(action_server, "control_queue", None)
-            if control_queue is not None and hasattr(control_queue, "put"):
-                control_queue.put(normalized)
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="accepted",
+                reason="queued",
+            )
 
+        control_queue = getattr(action_server, "control_queue", None)
+        if control_queue is None or not hasattr(control_queue, "put"):
+            return ActionIntentReceipt(
+                intent_id=intent_id,
+                state="rejected",
+                reason="control_queue_not_available",
+            )
+        control_queue.put(normalized)
         return ActionIntentReceipt(
             intent_id=intent_id,
             state="accepted",

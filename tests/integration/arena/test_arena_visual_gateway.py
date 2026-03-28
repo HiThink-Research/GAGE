@@ -641,8 +641,8 @@ def test_arena_visual_gateway_routes_actions_into_runtime_queue_and_driver_consu
         }
         assert control_receipt_payload == {
             "intentId": "sample-human-1:intent-3",
-            "state": "accepted",
-            "reason": "queued",
+            "state": "rejected",
+            "reason": "control_queue_not_available",
         }
         action_server = runtime_hub.peek_action_server()
         assert action_server is not None

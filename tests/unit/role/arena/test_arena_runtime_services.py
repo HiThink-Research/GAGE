@@ -43,6 +43,12 @@ class _StubActionServer:
         self.stopped = True
 
 
+class _StubControlActionServer(_StubActionServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.control_queue: Queue[dict[str, object]] = Queue()
+
+
 class _StubWsHub:
     def __init__(self) -> None:
         self.registrations: list[Any] = []
@@ -145,9 +151,9 @@ def test_runtime_service_hub_routes_bindings_and_shutdown() -> None:
     assert hub.registered_displays() == set()
 
 
-def test_runtime_service_hub_submits_chat_and_control_messages() -> None:
+def test_runtime_service_hub_submits_chat_and_control_messages_with_control_sink() -> None:
     hub = ArenaRuntimeServiceHub(adapter_id="arena")
-    hub.ensure_action_server(_StubActionServer)
+    action_server = hub.ensure_action_server(_StubControlActionServer)
 
     chat_receipt = hub.submit_chat_message(
         "session-1",
@@ -162,3 +168,18 @@ def test_runtime_service_hub_submits_chat_and_control_messages() -> None:
 
     assert chat_receipt.state == "accepted"
     assert control_receipt.state == "accepted"
+    assert action_server.control_queue.get_nowait() == {"commandType": "pause"}
+
+
+def test_runtime_service_hub_rejects_control_command_when_control_sink_missing() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    hub.ensure_action_server(_StubActionServer)
+
+    control_receipt = hub.submit_control_command(
+        "session-1",
+        None,
+        {"commandType": "pause"},
+    )
+
+    assert control_receipt.state == "rejected"
+    assert control_receipt.reason == "control_queue_not_available"
