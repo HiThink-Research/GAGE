@@ -189,6 +189,7 @@ export function createArenaSessionStore(
         events: [],
         nextAfterSeq: undefined,
         hasMore: false,
+        filters: { ...DEFAULT_TIMELINE_FILTERS },
         error: undefined,
       },
     }));
@@ -540,6 +541,8 @@ export function createArenaSessionStore(
     if (!state.sessionRequest) {
       throw new Error("No session is loaded.");
     }
+    const requestVersion = sessionRequestVersion;
+    const requestContext = state.sessionRequest;
 
     setState((previous) => ({
       ...previous,
@@ -551,13 +554,27 @@ export function createArenaSessionStore(
 
     try {
       const receipt = await client.submitControl({
-        sessionId: state.sessionRequest.sessionId,
-        runId: state.sessionRequest.runId,
+        sessionId: requestContext.sessionId,
+        runId: requestContext.runId,
         payload: payload as unknown as Record<string, unknown>,
       });
+      if (
+        requestVersion !== sessionRequestVersion ||
+        state.sessionRequest?.sessionId !== requestContext.sessionId ||
+        state.sessionRequest?.runId !== requestContext.runId
+      ) {
+        return receipt;
+      }
       setState((previous) => applyControlReceipt(previous, payload, receipt));
       return receipt;
     } catch (caughtError) {
+      if (
+        requestVersion !== sessionRequestVersion ||
+        state.sessionRequest?.sessionId !== requestContext.sessionId ||
+        state.sessionRequest?.runId !== requestContext.runId
+      ) {
+        throw caughtError;
+      }
       setState((previous) => ({
         ...previous,
         latestActionReceipt: {

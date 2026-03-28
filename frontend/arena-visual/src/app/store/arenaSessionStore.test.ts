@@ -425,6 +425,92 @@ describe("arenaSessionStore", () => {
     });
   });
 
+  it("ignores a stale control receipt after the host switches to a newer session", async () => {
+    const staleControl = deferred<{
+      intentId: string;
+      state: "accepted";
+      relatedEventSeq: number;
+      reason: string;
+    }>();
+    const client = createStubClient({
+      submitControl: vi
+        .fn()
+        .mockImplementationOnce(() => staleControl.promise)
+        .mockResolvedValue({
+          intentId: "control-2",
+          state: "accepted",
+          relatedEventSeq: 4,
+          reason: "applied",
+        }),
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(buildSession("sample-1"))
+        .mockResolvedValueOnce(buildSession("sample-2")),
+      loadTimeline: vi
+        .fn()
+        .mockResolvedValueOnce(buildTimelinePage("sample-1", [1, 2]))
+        .mockResolvedValueOnce(buildTimelinePage("sample-2", [3, 4])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    const controlRequest = store.submitControl({
+      commandType: "seek_seq",
+      targetSeq: 9,
+    });
+    await store.loadSession({ sessionId: "sample-2" });
+
+    staleControl.resolve({
+      intentId: "control-1",
+      state: "accepted",
+      relatedEventSeq: 9,
+      reason: "seek_applied",
+    });
+    await controlRequest;
+
+    const state = store.getSnapshot();
+    expect(state.sessionRequest?.sessionId).toBe("sample-2");
+    expect(state.session?.sessionId).toBe("sample-2");
+    expect(state.currentSceneSeq).toBe(4);
+    expect(state.session?.playback.cursorEventSeq).toBe(0);
+    expect(state.latestActionReceipt).toBeUndefined();
+  });
+
+  it("resets timeline filters when loading a new session", async () => {
+    const client = createStubClient({
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(buildSession("sample-1"))
+        .mockResolvedValueOnce(buildSession("sample-2")),
+      loadTimeline: vi
+        .fn()
+        .mockResolvedValueOnce(buildTimelinePage("sample-1", [1, 2]))
+        .mockResolvedValueOnce(buildTimelinePage("sample-2", [3, 4])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    store.setTimelineFilters({
+      eventTypes: ["action_intent"],
+      severity: "warn",
+      humanIntentOnly: true,
+    });
+
+    const loading = store.loadSession({ sessionId: "sample-2" });
+    expect(store.getSnapshot().timeline.filters).toEqual({
+      eventTypes: [],
+      severity: "all",
+      humanIntentOnly: false,
+    });
+    await loading;
+
+    expect(store.getSnapshot().timeline.filters).toEqual({
+      eventTypes: [],
+      severity: "all",
+      humanIntentOnly: false,
+    });
+  });
+
   it("clears the synthetic pending receipt when action submission fails", async () => {
     const client = createStubClient({
       submitAction: vi.fn().mockRejectedValue(new Error("queue_unavailable")),
