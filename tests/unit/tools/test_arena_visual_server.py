@@ -12,6 +12,7 @@ from gage_eval.game_kits.board_game.tictactoe.visualization import (
     VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
 )
 from gage_eval.role.arena.types import GameResult
+from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
 from gage_eval.role.arena.visualization.http_server import ArenaVisualHTTPServer
 from gage_eval.role.arena.visualization.live_session import RecorderLiveSessionSource
@@ -508,6 +509,52 @@ def test_arena_visual_http_server_serves_registered_live_session_without_manifes
         assert str(primary_media["url"]).startswith("data:image/png;base64,")
         assert media_payload["transport"] == "http_pull"
         assert media_content == b"foo"
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_applies_replay_control_to_registered_live_session(
+    tmp_path: Path,
+) -> None:
+    recorder = _build_live_visual_recorder(session_id="sample-live-control")
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="http_pull",
+    )
+    service_hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    server = ArenaVisualHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        base_dir=tmp_path,
+        control_submitter=service_hub.submit_control_command,
+    )
+    service_hub.ensure_visualizer(lambda: server)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        session_url = (
+            f"http://{host}:{port}/arena_visual/sessions/sample-live-control?run_id=run-live"
+        )
+        control_url = (
+            f"http://{host}:{port}/arena_visual/sessions/sample-live-control/control?run_id=run-live"
+        )
+
+        before_payload = _get_json(session_url)
+        control_receipt = _post_json(control_url, {"commandType": "replay"})
+        after_payload = _get_json(session_url)
+
+        assert before_payload["playback"]["mode"] == "live_tail"
+        assert before_payload["playback"]["cursorEventSeq"] == 2
+        assert control_receipt == {
+            "intentId": "sample-live-control:intent-1",
+            "state": "accepted",
+            "relatedEventSeq": 1,
+            "reason": "playback_applied",
+        }
+        assert after_payload["playback"]["mode"] == "replay_playing"
+        assert after_payload["playback"]["cursorEventSeq"] == 1
     finally:
         server.stop()
 

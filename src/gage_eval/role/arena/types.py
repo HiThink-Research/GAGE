@@ -79,6 +79,7 @@ class GameResult:
     rule_profile: Optional[str] = None
     win_direction: Optional[str] = None
     line_length: Optional[int] = None
+    winning_line: Optional[Sequence[str]] = None
     replay_path: Optional[str] = None
     arena_trace: Sequence[dict[str, Any]] = field(default_factory=tuple)
 

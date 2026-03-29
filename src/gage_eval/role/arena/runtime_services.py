@@ -195,6 +195,16 @@ class ArenaRuntimeServiceHub:
     ) -> ActionIntentReceipt:
         normalized = _normalize_control_command(payload)
         intent_id = self._next_intent_id(session_id)
+        command = ControlCommand.from_dict(normalized)
+        live_receipt = _submit_live_playback_control(
+            visualizer=self.peek_visualizer(),
+            session_id=session_id,
+            run_id=run_id,
+            command=command,
+            intent_id=intent_id,
+        )
+        if live_receipt is not None:
+            return live_receipt
         action_server = self.peek_action_server()
         if action_server is None:
             return ActionIntentReceipt(
@@ -383,6 +393,34 @@ def _resolve_sample_route_error(action_server: Any, *, session_id: str) -> str |
         if error is not None:
             return str(error)
     return None
+
+
+def _submit_live_playback_control(
+    *,
+    visualizer: Any,
+    session_id: str,
+    run_id: str | None,
+    command: ControlCommand,
+    intent_id: str,
+) -> ActionIntentReceipt | None:
+    if visualizer is None:
+        return None
+    resolve_live_session = getattr(visualizer, "resolve_live_session", None)
+    if not callable(resolve_live_session):
+        return None
+    live_source = resolve_live_session(str(session_id), run_id=run_id)
+    if live_source is None:
+        return None
+    apply_control_command = getattr(live_source, "apply_control_command", None)
+    if not callable(apply_control_command):
+        return None
+    related_event_seq = apply_control_command(command)
+    return ActionIntentReceipt(
+        intent_id=intent_id,
+        state="accepted",
+        related_event_seq=related_event_seq,
+        reason="playback_applied",
+    )
 
 
 def _first_text(*values: Any) -> str | None:

@@ -25,6 +25,7 @@ from gage_eval.role.arena.visualization.contracts import (
     SeekSnapshotRecord,
     TimelineEvent,
     VisualSession,
+    ControlCommand,
 )
 
 
@@ -58,6 +59,9 @@ class ArenaVisualSessionRecorder:
     _scheduling_accepts_human_intent: bool = field(default=False, init=False, repr=False)
     _scheduling_active_actor_id: str | None = field(default=None, init=False, repr=False)
     _scheduling_window_id: str | None = field(default=None, init=False, repr=False)
+    _playback_cursor_ts: int = field(default=0, init=False, repr=False)
+    _playback_cursor_event_seq: int = field(default=0, init=False, repr=False)
+    _playback_speed: float = field(default=1.0, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
 
     @property
@@ -250,7 +254,7 @@ class ArenaVisualSessionRecorder:
                 game_id=self.game_id,
                 plugin_id=self.plugin_id,
                 lifecycle=self.lifecycle,
-                playback=PlaybackState(mode=self.playback_mode),
+                playback=self._build_playback_state_locked(),
                 observer=ObserverRef(
                     observer_id=self.observer_id,
                     observer_kind=self.observer_kind,
@@ -280,6 +284,39 @@ class ArenaVisualSessionRecorder:
                 snapshot_payloads=tuple(copy.deepcopy(self._snapshot_payloads)),
                 marker_index={key: tuple(value) for key, value in self._marker_index.items()},
             )
+
+    def apply_control_command(self, command: ControlCommand) -> int:
+        with self._lock:
+            current_seq = self._resolve_playback_cursor_event_seq_locked()
+            next_mode = self.playback_mode
+            next_seq = current_seq
+            next_speed = self._playback_speed
+
+            if command.command_type == "pause":
+                next_mode = "paused"
+            elif command.command_type == "replay":
+                next_mode = "replay_playing"
+                next_seq = self._head_playback_seq_locked()
+            elif command.command_type in {"follow_tail", "back_to_tail"}:
+                next_mode = "live_tail"
+                next_seq = self._tail_seq_locked()
+            elif command.command_type == "seek_seq":
+                next_mode = "paused"
+                next_seq = self._resolve_target_seq_locked(command.target_seq)
+            elif command.command_type == "seek_end":
+                next_mode = "paused"
+                next_seq = self._tail_seq_locked()
+            elif command.command_type == "step":
+                next_mode = "paused"
+                next_seq = self._step_cursor_seq_locked(current_seq, command.step_delta)
+            elif command.command_type == "set_speed":
+                next_speed = float(command.speed if command.speed is not None else next_speed)
+
+            self.playback_mode = next_mode
+            self._playback_speed = next_speed
+            self._playback_cursor_event_seq = next_seq
+            self._playback_cursor_ts = self._event_ts_for_seq_locked(next_seq)
+            return next_seq
 
     def persist(self, replay_path: str | Path) -> ArenaVisualSessionArtifacts:
         with self._lock:
@@ -401,7 +438,101 @@ class ArenaVisualSessionRecorder:
         self._marker_index[event.type].append(event.seq)
         if lifecycle is not None:
             self.lifecycle = lifecycle
+        if self.playback_mode == "live_tail":
+            self._playback_cursor_event_seq = event.seq
+            self._playback_cursor_ts = event.ts_ms
         return event
+
+    def _build_playback_state_locked(self) -> PlaybackState:
+        cursor_event_seq = self._resolve_playback_cursor_event_seq_locked()
+        return PlaybackState(
+            mode=self.playback_mode,
+            cursor_ts=self._event_ts_for_seq_locked(cursor_event_seq),
+            cursor_event_seq=cursor_event_seq,
+            speed=self._playback_speed,
+            can_seek=True,
+        )
+
+    def _resolve_playback_cursor_event_seq_locked(self) -> int:
+        if not self._events:
+            return 0
+        if self.playback_mode == "live_tail":
+            return self._tail_seq_locked()
+        if self._playback_cursor_event_seq <= 0:
+            return self._tail_seq_locked()
+        return self._resolve_target_seq_locked(self._playback_cursor_event_seq)
+
+    def _resolve_target_seq_locked(self, target_seq: int | None) -> int:
+        if not self._events:
+            return 0
+        if target_seq is None:
+            return self._tail_seq_locked()
+        selected = self._head_seq_locked()
+        normalized_target = int(target_seq)
+        for event in self._events:
+            if event.seq > normalized_target:
+                break
+            selected = event.seq
+        return selected
+
+    def _step_cursor_seq_locked(self, current_seq: int, step_delta: int | None) -> int:
+        if not self._events:
+            return 0
+        checkpoints = self._playback_checkpoint_seqs_locked()
+        if not checkpoints:
+            return self._resolve_target_seq_locked(current_seq)
+        normalized_current = self._resolve_target_seq_locked(current_seq)
+        normalized_delta = int(step_delta or 0)
+        if normalized_delta > 0:
+            for seq in checkpoints:
+                if seq > normalized_current:
+                    return seq
+            return checkpoints[-1]
+        if normalized_delta < 0:
+            for seq in reversed(checkpoints):
+                if seq < normalized_current:
+                    return seq
+            return checkpoints[0]
+        return normalized_current
+
+    def _head_playback_seq_locked(self) -> int:
+        checkpoints = self._playback_checkpoint_seqs_locked()
+        if checkpoints:
+            return checkpoints[0]
+        return self._head_seq_locked()
+
+    def _playback_checkpoint_seqs_locked(self) -> list[int]:
+        turn_based = [
+            int(event.seq)
+            for event in self._events
+            if event.type in {"decision_window_open", "result"}
+        ]
+        if turn_based:
+            return turn_based
+
+        generic = [
+            int(event.seq)
+            for event in self._events
+            if event.type in {"snapshot", "frame_ref", "result"}
+        ]
+        if generic:
+            return generic
+        return [int(event.seq) for event in self._events]
+
+    def _head_seq_locked(self) -> int:
+        return self._events[0].seq if self._events else 0
+
+    def _tail_seq_locked(self) -> int:
+        return self._events[-1].seq if self._events else 0
+
+    def _event_ts_for_seq_locked(self, seq: int) -> int:
+        normalized_seq = int(seq)
+        if normalized_seq <= 0:
+            return 0
+        for event in self._events:
+            if event.seq == normalized_seq:
+                return event.ts_ms
+        return 0
 
     def _build_summary(self) -> dict[str, Any]:
         summary: dict[str, Any] = {

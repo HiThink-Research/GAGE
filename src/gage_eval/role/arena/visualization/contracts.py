@@ -34,6 +34,7 @@ _CONTROL_COMMAND_TYPES = {
     "step",
     "set_speed",
     "back_to_tail",
+    "finish",
 }
 _CHAT_CHANNELS = {"table", "system", "private"}
 _SNAPSHOT_MODES = {"full", "delta", "media_ref"}
@@ -158,7 +159,7 @@ class ControlCommand:
 
     def __post_init__(self) -> None:
         _validate_choice(self.command_type, _CONTROL_COMMAND_TYPES, "command_type")
-        if self.command_type in {"follow_tail", "pause", "replay", "seek_end", "back_to_tail"}:
+        if self.command_type in {"follow_tail", "pause", "replay", "seek_end", "back_to_tail", "finish"}:
             if self.target_seq is not None:
                 raise ValueError(f"{self.command_type} does not allow target_seq")
             if self.step_delta is not None:

@@ -67,6 +67,7 @@ class GameSession:
     _visualization_browser_launched: bool = field(default=False, init=False, repr=False)
     _visualization_linger_s: float = field(default=0.0, init=False, repr=False)
     _visualization_linger_done: bool = field(default=False, init=False, repr=False)
+    _visualization_finish_gate: object | None = field(default=None, init=False, repr=False)
     _visual_artifacts_error: str | None = field(default=None, init=False, repr=False)
 
     @classmethod
@@ -283,6 +284,11 @@ class GameSession:
         self._visualization_linger_s = _resolve_linger_seconds(visualizer_config)
         self._visualization_launch_browser = bool(visualizer_config.get("launch_browser", False))
         if self._visualization_mode == "arena_visual":
+            from gage_eval.role.arena.visualization.live_session import ArenaVisualFinishGate
+
+            self._visualization_finish_gate = ArenaVisualFinishGate(
+                idle_timeout_s=self._visualization_linger_s
+            )
             visual_server = service_hub.ensure_visualizer(
                 lambda: _build_arena_visual_server(visualizer_config, service_hub=service_hub)
             )
@@ -305,6 +311,7 @@ class GameSession:
                         run_id=run_id,
                         visualization_spec=self.visualization_spec,
                         live_scene_scheme=_resolve_live_scene_scheme(visualizer_config),
+                        finish_gate=self._visualization_finish_gate,
                     )
                 )
             logger.info(
@@ -358,6 +365,13 @@ class GameSession:
         if linger_s <= 0.0:
             return
         self._visualization_linger_done = True
+        if self._visualization_mode == "arena_visual" and self._visualization_finish_gate is not None:
+            arm = getattr(self._visualization_finish_gate, "arm", None)
+            wait = getattr(self._visualization_finish_gate, "wait", None)
+            if callable(arm) and callable(wait):
+                arm()
+                wait()
+                return
         time.sleep(linger_s)
 
     def _require_player(self, player_id: str) -> BoundPlayer:

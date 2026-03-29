@@ -170,9 +170,14 @@ def _project_board_scene(
     event_payload: Any,
     visualization_spec: GameVisualizationSpec | None,
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], str | None]:
-    source = _build_projection_source(event_payload, snapshot_body)
+    source = _build_projection_source(snapshot_body, event_payload)
     if not source:
         source = {}
+    _apply_board_result_overrides(
+        source,
+        result_payloads=_collect_result_payloads(event_payload, snapshot_body),
+        snapshot_body=snapshot_body,
+    )
 
     coord_scheme = normalize_coord_scheme(
         str(
@@ -278,6 +283,105 @@ def _project_board_scene(
         },
     }
     return body, legal_actions, active_player_id
+
+
+def _collect_result_payloads(*payloads: Any) -> tuple[Mapping[str, Any], ...]:
+    collected: list[Mapping[str, Any]] = []
+    for payload in payloads:
+        if not isinstance(payload, Mapping):
+            continue
+        result = payload.get("result")
+        if isinstance(result, Mapping):
+            collected.append(dict(result))
+    return tuple(collected)
+
+
+def _apply_board_result_overrides(
+    source: dict[str, Any],
+    *,
+    result_payloads: Sequence[Mapping[str, Any]],
+    snapshot_body: Any,
+) -> None:
+    if not result_payloads:
+        return
+
+    final_board = _first_result_string(result_payloads, "final_board", "finalBoard")
+    if final_board is not None:
+        source["board_text"] = final_board
+
+    move_count = None
+    raw_move_count = _first_result_value(result_payloads, "move_count", "moveCount")
+    if raw_move_count is not None:
+        move_count = _coerce_int(raw_move_count, default=0)
+    if move_count is not None:
+        source["move_count"] = move_count
+
+    last_move = None
+    for result_payload in result_payloads:
+        last_move = _extract_result_last_move(result_payload)
+        if last_move is not None:
+            break
+    if last_move is None:
+        last_move = _extract_snapshot_trace_last_move(snapshot_body)
+    if last_move is not None:
+        source["last_move"] = last_move
+
+    winning_line = _first_result_value(result_payloads, "winning_line", "winningLine")
+    if winning_line is not None:
+        source["winning_line"] = winning_line
+
+
+def _extract_result_last_move(result_payload: Mapping[str, Any]) -> str | None:
+    for key in ("last_move", "lastMove"):
+        coord = _normalize_coord(result_payload.get(key))
+        if coord is not None:
+            return coord
+
+    move_log = result_payload.get("move_log")
+    if move_log is None:
+        move_log = result_payload.get("moveLog")
+    if isinstance(move_log, Sequence) and not isinstance(move_log, (str, bytes)):
+        for entry in reversed(move_log):
+            if not isinstance(entry, Mapping):
+                continue
+            if "__truncated__" in entry:
+                return None
+            coord = _normalize_coord(entry.get("coord") or entry.get("move"))
+            if coord is not None:
+                return coord
+    return None
+
+
+def _extract_snapshot_trace_last_move(snapshot_body: Any) -> str | None:
+    if not isinstance(snapshot_body, Mapping):
+        return None
+    arena_trace = snapshot_body.get("arenaTrace")
+    if not isinstance(arena_trace, Mapping):
+        return None
+    for key in ("action_applied", "action_raw"):
+        coord = _normalize_coord(arena_trace.get(key))
+        if coord is not None:
+            return coord
+    return None
+
+
+def _first_result_string(
+    result_payloads: Sequence[Mapping[str, Any]],
+    *keys: str,
+) -> str | None:
+    value = _first_result_value(result_payloads, *keys)
+    return _string_or_none(value)
+
+
+def _first_result_value(
+    result_payloads: Sequence[Mapping[str, Any]],
+    *keys: str,
+) -> Any:
+    for result_payload in result_payloads:
+        for key in keys:
+            if key in result_payload and result_payload.get(key) is not None:
+                return result_payload.get(key)
+    return None
 
 
 def _merge_mapping_payloads(*payloads: Any) -> dict[str, Any]:

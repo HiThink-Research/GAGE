@@ -2,16 +2,18 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: space_invaders_llm_visual_gamekit
+  name: tictactoe_human_visual_gamekit
   description: >
-    GameArena Space Invaders manual smoke config that binds one LLM player
-    through the visualization-ready GameKit PlayerDriver runtime and keeps the opponent deterministic.
+    GameArena Tic-Tac-Toe human-vs-LLM manual smoke config for the arena_visual
+    web app. The human player acts first and submits moves through the live
+    session action route while the opponent is driven by the local LMStudio
+    backend.
 
 datasets:
-  - dataset_id: space_invaders_gamekit_fixture_only
+  - dataset_id: tictactoe_gamekit_fixture_only
     loader: jsonl
     params:
-      path: tests/data/pettingzoo_atari_demo.jsonl
+      path: tests/data/Test_TicTacToe.jsonl
       streaming: false
 
 backends:
@@ -33,30 +35,31 @@ backends:
 custom:
   steps:
     - step: arena
-      adapter_id: space_invaders_llm_visual_gamekit_arena
+      adapter_id: tictactoe_human_visual_gamekit_arena
 
 role_adapters:
-  - adapter_id: space_invaders_llm_visual_gamekit_arena
+  - adapter_id: tictactoe_human_visual_gamekit_arena
     role_type: arena
     params:
-      game_kit: pettingzoo
-      env: space_invaders
+      game_kit: tictactoe
+      env: tictactoe_standard
       runtime_overrides:
-        include_raw_obs: true
-        use_action_meanings: true
+        coord_scheme: ROW_COL
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
       visualizer:
         enabled: true
-        title: GAGE Space Invaders Arena Visual
+        title: GAGE Tic-Tac-Toe Board
         launch_browser: true
         mode: arena_visual
-        live_scene_scheme: http_pull
         linger_after_finish_s: 15.0
       players:
-        - seat: pilot_0
-          player_id: pilot_alpha
+        - seat: x
+          player_id: X
+          player_kind: human
+        - seat: o
+          player_id: O
           player_kind: llm
           backend_id: local_qwen35_litellm_backend
-        - seat: pilot_1
-          player_id: pilot_beta
-          player_kind: dummy
-          actions: ["LEFT", "NOOP"]

@@ -6,6 +6,7 @@ from queue import Queue
 from typing import Any
 
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
+from gage_eval.role.arena.visualization.contracts import ControlCommand
 
 
 class _StubVisualizer:
@@ -63,6 +64,27 @@ class _StubWsHub:
 
     def stop(self) -> None:
         self.stopped = True
+
+
+class _StubLiveControlSource:
+    def __init__(self, related_event_seq: int = 0) -> None:
+        self.related_event_seq = int(related_event_seq)
+        self.commands: list[ControlCommand] = []
+
+    def apply_control_command(self, command: ControlCommand) -> int:
+        self.commands.append(command)
+        return self.related_event_seq
+
+
+class _StubLiveVisualizer(_StubVisualizer):
+    def __init__(self, live_source: _StubLiveControlSource | None = None) -> None:
+        super().__init__()
+        self.live_source = live_source
+        self.resolve_calls: list[tuple[str, str | None]] = []
+
+    def resolve_live_session(self, session_id: str, *, run_id: str | None = None) -> Any:
+        self.resolve_calls.append((session_id, run_id))
+        return self.live_source
 
 
 def test_runtime_service_hub_initializes_each_shared_service_once() -> None:
@@ -169,6 +191,24 @@ def test_runtime_service_hub_submits_chat_and_control_messages_with_control_sink
     assert chat_receipt.state == "accepted"
     assert control_receipt.state == "accepted"
     assert action_server.control_queue.get_nowait() == {"commandType": "pause"}
+
+
+def test_runtime_service_hub_routes_live_playback_control_to_visualizer() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    live_source = _StubLiveControlSource(related_event_seq=5)
+    visualizer = hub.ensure_visualizer(lambda: _StubLiveVisualizer(live_source))
+
+    control_receipt = hub.submit_control_command(
+        "session-1",
+        "run-live",
+        {"commandType": "replay"},
+    )
+
+    assert control_receipt.state == "accepted"
+    assert control_receipt.reason == "playback_applied"
+    assert control_receipt.related_event_seq == 5
+    assert visualizer.resolve_calls == [("session-1", "run-live")]
+    assert live_source.commands == [ControlCommand(command_type="replay")]
 
 
 def test_runtime_service_hub_rejects_control_command_when_control_sink_missing() -> None:

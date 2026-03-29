@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from gage_eval.role.arena.types import GameResult
+from gage_eval.role.arena.visualization.contracts import ControlCommand
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.arena.visualization.artifacts import to_bounded_json_safe, to_visual_json_safe
 
@@ -236,3 +237,111 @@ def test_to_visual_json_safe_preserves_inline_data_urls() -> None:
     assert bounded["view"]["image"]["data_url"] == data_url
     assert bounded["view"]["image"]["data"]["kind"] == "string"
     assert bounded["view"]["image"]["data"]["size"] == 12000
+
+
+def test_visual_session_recorder_steps_replay_across_stable_turn_checkpoints() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.tictactoe.board_v1",
+        game_id="tictactoe",
+        scheduling_family="turn",
+        session_id="sample-1",
+    )
+
+    recorder.record_decision_window_open(
+        ts_ms=1001,
+        step=0,
+        tick=0,
+        player_id="X",
+        observation={"board_text": "empty"},
+    )
+    recorder.record_action_intent(
+        ts_ms=1002,
+        step=0,
+        tick=0,
+        player_id="X",
+        action={"move": "1,1"},
+    )
+    recorder.record_action_committed(
+        ts_ms=1003,
+        step=0,
+        tick=0,
+        player_id="X",
+        action={"move": "1,1"},
+    )
+    recorder.record_decision_window_close(
+        ts_ms=1004,
+        step=0,
+        tick=0,
+        player_id="X",
+    )
+    recorder.record_snapshot(
+        ts_ms=1005,
+        step=1,
+        tick=1,
+        snapshot={"board_text": "stale-after-x"},
+    )
+    recorder.record_decision_window_open(
+        ts_ms=1006,
+        step=1,
+        tick=1,
+        player_id="O",
+        observation={"board_text": "x-applied"},
+    )
+    recorder.record_action_intent(
+        ts_ms=1007,
+        step=1,
+        tick=1,
+        player_id="O",
+        action={"move": "1,2"},
+    )
+    recorder.record_action_committed(
+        ts_ms=1008,
+        step=1,
+        tick=1,
+        player_id="O",
+        action={"move": "1,2"},
+    )
+    recorder.record_decision_window_close(
+        ts_ms=1009,
+        step=1,
+        tick=1,
+        player_id="O",
+    )
+    recorder.record_snapshot(
+        ts_ms=1010,
+        step=2,
+        tick=2,
+        snapshot={"board_text": "stale-after-o"},
+    )
+    recorder.record_result(
+        ts_ms=1011,
+        step=2,
+        tick=2,
+        result=GameResult(
+            winner="X",
+            result="win",
+            reason="three_in_row",
+            move_count=2,
+            illegal_move_count=0,
+            final_board="x-o-final",
+            move_log=[],
+        ),
+    )
+
+    replay_seq = recorder.apply_control_command(ControlCommand(command_type="replay"))
+    assert replay_seq == 1
+
+    step_one = recorder.apply_control_command(
+        ControlCommand(command_type="step", step_delta=1)
+    )
+    assert step_one == 6
+
+    step_two = recorder.apply_control_command(
+        ControlCommand(command_type="step", step_delta=1)
+    )
+    assert step_two == 11
+
+    step_three = recorder.apply_control_command(
+        ControlCommand(command_type="step", step_delta=1)
+    )
+    assert step_three == 11

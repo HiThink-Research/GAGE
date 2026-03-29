@@ -47,7 +47,8 @@ export interface ArenaControlPayload {
     | "seek_end"
     | "step"
     | "set_speed"
-    | "back_to_tail";
+    | "back_to_tail"
+    | "finish";
   targetSeq?: number;
   stepDelta?: -1 | 1;
   speed?: number;
@@ -81,6 +82,7 @@ export interface ArenaSessionStore {
   loadSession: (input: LoadSessionInput) => Promise<void>;
   loadMoreTimeline: (input?: LoadMoreTimelineInput) => Promise<void>;
   loadScene: (input: LoadSceneInput) => Promise<void>;
+  advanceReplayPlayback?: () => void;
   setCurrentSceneSeq: (seq: number) => void;
   setPlaybackMode: (mode: PlaybackMode) => void;
   setTimelineFilters: (filters: TimelineFilterState) => void;
@@ -97,6 +99,13 @@ const DEFAULT_TIMELINE_FILTERS: TimelineFilterState = {
   severity: "all",
   humanIntentOnly: false,
 };
+const LOCAL_PLAYBACK_FALLBACK_REASON = "local_playback_fallback";
+const LOCAL_PLAYBACK_UNAVAILABLE_REASONS = new Set([
+  "action_queue_not_available",
+  "control_queue_not_available",
+  "control_submitter_not_configured",
+  "sample_route_not_found",
+]);
 
 export function createArenaSessionStore(
   client: ArenaGatewayClient,
@@ -210,7 +219,12 @@ export function createArenaSessionStore(
         session,
         sceneStatus: "idle",
         currentSceneSeq:
-          lastEvent?.seq ?? (session.playback.cursorEventSeq > 0 ? session.playback.cursorEventSeq : undefined),
+          session.playback.mode === "live_tail"
+            ? lastEvent?.seq ??
+              (session.playback.cursorEventSeq > 0 ? session.playback.cursorEventSeq : undefined)
+            : session.playback.cursorEventSeq > 0
+              ? session.playback.cursorEventSeq
+              : lastEvent?.seq,
         timeline: timelineFromPage(timelinePage, previous.timeline.filters),
       }));
     } catch (caughtError) {
@@ -363,6 +377,41 @@ export function createArenaSessionStore(
     updateSessionPlayback(mode, nextCursorSeq);
   }
 
+  function advanceReplayPlayback(): void {
+    setState((previous) => {
+      if (!previous.session || previous.session.playback.mode !== "replay_playing") {
+        return previous;
+      }
+
+      const currentSeq = previous.currentSceneSeq ?? previous.session.playback.cursorEventSeq;
+      const nextSeq = resolveStepTargetSeq(previous.timeline.events, currentSeq, 1);
+      if (nextSeq === undefined || nextSeq === currentSeq) {
+        return {
+          ...previous,
+          session: {
+            ...previous.session,
+            playback: {
+              ...previous.session.playback,
+              mode: "paused",
+            },
+          },
+        };
+      }
+
+      return {
+        ...previous,
+        currentSceneSeq: nextSeq,
+        session: {
+          ...previous.session,
+          playback: {
+            ...previous.session.playback,
+            cursorEventSeq: nextSeq,
+          },
+        },
+      };
+    });
+  }
+
   function applyControlReceipt(
     previous: ArenaSessionStoreSnapshot,
     payload: ArenaControlPayload,
@@ -389,9 +438,11 @@ export function createArenaSessionStore(
     switch (payload.commandType) {
       case "pause":
         nextMode = "paused";
+        nextCursorSeq = receipt.relatedEventSeq ?? nextCursorSeq;
         break;
       case "replay":
         nextMode = "replay_playing";
+        nextCursorSeq = receipt.relatedEventSeq ?? previous.timeline.events[0]?.seq ?? nextCursorSeq;
         break;
       case "follow_tail":
       case "back_to_tail":
@@ -429,6 +480,99 @@ export function createArenaSessionStore(
         },
       },
     };
+  }
+
+  function applyLocalPlaybackFallback(
+    previous: ArenaSessionStoreSnapshot,
+    payload: ArenaControlPayload,
+    receipt: ActionIntentReceipt,
+  ): ArenaSessionStoreSnapshot {
+    if (!previous.session) {
+      return {
+        ...previous,
+        latestActionReceipt: receipt,
+      };
+    }
+
+    const headSeq = previous.timeline.events[0]?.seq;
+    const tailSeq =
+      previous.timeline.events.at(-1)?.seq ??
+      previous.currentSceneSeq ??
+      previous.session.playback.cursorEventSeq;
+    const currentSeq = previous.currentSceneSeq ?? previous.session.playback.cursorEventSeq;
+    let nextMode = previous.session.playback.mode;
+    let nextCursorSeq = currentSeq;
+    let nextSpeed = previous.session.playback.speed;
+
+    switch (payload.commandType) {
+      case "pause":
+        nextMode = "paused";
+        break;
+      case "replay":
+        nextMode = "replay_playing";
+        nextCursorSeq = headSeq ?? currentSeq;
+        break;
+      case "follow_tail":
+      case "back_to_tail":
+        nextMode = "live_tail";
+        nextCursorSeq = tailSeq;
+        break;
+      case "seek_end":
+        nextMode = "paused";
+        nextCursorSeq = tailSeq;
+        break;
+      case "seek_seq":
+        nextMode = "paused";
+        nextCursorSeq = payload.targetSeq ?? currentSeq;
+        break;
+      case "step":
+        nextMode = "paused";
+        nextCursorSeq =
+          resolveStepTargetSeq(previous.timeline.events, previous.currentSceneSeq, payload.stepDelta) ??
+          currentSeq;
+        break;
+      case "set_speed":
+        nextSpeed = payload.speed ?? nextSpeed;
+        break;
+    }
+
+    const fallbackReceipt: ActionIntentReceipt = {
+      intentId: receipt.intentId,
+      state: "accepted",
+      relatedEventSeq: nextCursorSeq,
+      reason: LOCAL_PLAYBACK_FALLBACK_REASON,
+    };
+
+    return {
+      ...previous,
+      currentSceneSeq: nextCursorSeq,
+      latestActionReceipt: fallbackReceipt,
+      session: {
+        ...previous.session,
+        playback: {
+          ...previous.session.playback,
+          mode: nextMode,
+          cursorEventSeq: nextCursorSeq,
+          speed: nextSpeed,
+        },
+      },
+    };
+  }
+
+  function shouldApplyLocalPlaybackFallback(
+    payload: ArenaControlPayload,
+    receipt: ActionIntentReceipt,
+  ): boolean {
+    if (receipt.state !== "rejected") {
+      return false;
+    }
+    if (!LOCAL_PLAYBACK_UNAVAILABLE_REASONS.has(receipt.reason ?? "")) {
+      return false;
+    }
+    if (payload.commandType === "finish") {
+      return false;
+    }
+    return payload.commandType !== "set_speed" || payload.speed !== undefined;
   }
 
   async function setObserver(observer: ObserverRef): Promise<void> {
@@ -620,6 +764,11 @@ export function createArenaSessionStore(
       ) {
         return receipt;
       }
+      if (shouldApplyLocalPlaybackFallback(payload, receipt)) {
+        const fallbackSnapshot = applyLocalPlaybackFallback(state, payload, receipt);
+        setState(fallbackSnapshot);
+        return fallbackSnapshot.latestActionReceipt ?? receipt;
+      }
       setState((previous) => applyControlReceipt(previous, payload, receipt));
       return receipt;
     } catch (caughtError) {
@@ -671,6 +820,7 @@ export function createArenaSessionStore(
     loadSession,
     loadMoreTimeline,
     loadScene,
+    advanceReplayPlayback,
     setCurrentSceneSeq,
     setPlaybackMode,
     setTimelineFilters,
@@ -709,18 +859,54 @@ function resolveStepTargetSeq(
   if (currentSceneSeq === undefined || stepDelta === undefined) {
     return currentSceneSeq;
   }
-
-  const currentIndex = events.findIndex((event) => event.seq === currentSceneSeq);
-  if (currentIndex === -1) {
+  const checkpoints = resolvePlaybackCheckpointSeqs(events);
+  if (checkpoints.length === 0) {
     return currentSceneSeq;
   }
 
-  const nextIndex = currentIndex + stepDelta;
-  if (nextIndex < 0 || nextIndex >= events.length) {
-    return currentSceneSeq;
+  if (stepDelta > 0) {
+    for (const seq of checkpoints) {
+      if (seq > currentSceneSeq) {
+        return seq;
+      }
+    }
+    return checkpoints.at(-1) ?? currentSceneSeq;
   }
 
-  return events[nextIndex]?.seq ?? currentSceneSeq;
+  if (stepDelta < 0) {
+    for (let index = checkpoints.length - 1; index >= 0; index -= 1) {
+      const seq = checkpoints[index];
+      if (seq < currentSceneSeq) {
+        return seq;
+      }
+    }
+    return checkpoints[0] ?? currentSceneSeq;
+  }
+
+  return currentSceneSeq;
+}
+
+function resolvePlaybackCheckpointSeqs(events: TimelineEvent[]): number[] {
+  const turnBasedCheckpoints = events
+    .filter((event) => event.type === "decision_window_open" || event.type === "result")
+    .map((event) => event.seq);
+  if (turnBasedCheckpoints.length > 0) {
+    return turnBasedCheckpoints;
+  }
+
+  const genericCheckpoints = events
+    .filter(
+      (event) =>
+        event.type === "snapshot" ||
+        event.type === "frame_ref" ||
+        event.type === "result",
+    )
+    .map((event) => event.seq);
+  if (genericCheckpoints.length > 0) {
+    return genericCheckpoints;
+  }
+
+  return events.map((event) => event.seq);
 }
 
 function toErrorMessage(error: unknown): string {

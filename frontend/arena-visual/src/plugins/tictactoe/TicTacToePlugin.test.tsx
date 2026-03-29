@@ -6,7 +6,7 @@ import tictactoeScene from "../../test/fixtures/tictactoe.visual.json";
 import { TicTacToePlugin } from "./TicTacToePlugin";
 
 describe("TicTacToePlugin", () => {
-  it("renders non-blank board state, winning cells, and blocks coord actions when input is closed", () => {
+  it("renders only the dedicated board stage inside the plugin and drops legacy board chrome", () => {
     const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -45,14 +45,13 @@ describe("TicTacToePlugin", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /tic-tac-toe board/i })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /board cell/i })).toHaveLength(9);
-    expect(screen.getByRole("grid", { name: /tic-tac-toe board/i })).toHaveTextContent("X");
-    expect(screen.getByRole("grid", { name: /tic-tac-toe board/i })).toHaveTextContent("O");
-    expect(screen.getByText(/active player: player_1/i)).toBeInTheDocument();
+    expect(screen.getByTestId("tictactoe-stage")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /tic-tac-toe board/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("X mark")).not.toBeInTheDocument();
+    expect(screen.queryByText("O mark")).not.toBeInTheDocument();
+    expect(screen.queryByText("Winning line")).not.toBeInTheDocument();
 
-    const winningCell = screen.getByRole("button", { name: /board cell 3,3/i });
-    expect(winningCell.getAttribute("data-winning-cell")).toBe("true");
+    expect(screen.getAllByRole("button", { name: /board cell/i })).toHaveLength(9);
 
     const actionButton = screen.getByRole("button", { name: /board cell 1,2/i });
     expect(actionButton).toBeDisabled();
@@ -60,7 +59,9 @@ describe("TicTacToePlugin", () => {
     expect(submitInput).not.toHaveBeenCalled();
   });
 
-  it("renders rich board chrome with player cards, coordinate rails, and board summary", () => {
+  it("submits a player coord from the dedicated stage when human input is enabled", () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
     render(
       <TicTacToePlugin
         session={{
@@ -76,13 +77,13 @@ describe("TicTacToePlugin", () => {
             canSeek: true
           },
           observer: {
-            observerId: "spectator-cam",
-            observerKind: "spectator"
+            observerId: "player_0",
+            observerKind: "player"
           },
           scheduling: {
             family: "turn",
-            phase: "completed",
-            acceptsHumanIntent: false,
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
             activeActorId: "player_1"
           },
           capabilities: {},
@@ -91,17 +92,20 @@ describe("TicTacToePlugin", () => {
         }}
         scene={tictactoeScene as VisualScene}
         submitAction={vi.fn()}
-        submitInput={vi.fn()}
+        submitInput={submitInput}
         mediaSubscribe={() => () => {}}
         isFallback={false}
       />,
     );
 
-    expect(screen.getByText("X mark")).toBeInTheDocument();
-    expect(screen.getByText("O mark")).toBeInTheDocument();
-    expect(screen.getByText("Winning line")).toBeInTheDocument();
-    expect(screen.getByText("1,1 -> 2,2 -> 3,3")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Board column 1")).toHaveLength(2);
-    expect(screen.getAllByLabelText("Board row 3")).toHaveLength(2);
+    const actionButton = screen.getByRole("button", { name: /board cell 1,2/i });
+    expect(actionButton).toBeEnabled();
+
+    fireEvent.click(actionButton);
+
+    expect(submitInput).toHaveBeenCalledWith({
+      playerId: "player_0",
+      coord: "1,2",
+    });
   });
 });

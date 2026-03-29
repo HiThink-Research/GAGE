@@ -81,7 +81,7 @@ describe("arenaSessionStore", () => {
     expect(state.status).toBe("ready");
     expect(state.session?.sessionId).toBe("sample-1");
     expect(state.timeline.events.map((event) => event.seq)).toEqual([1, 2]);
-    expect(state.currentSceneSeq).toBe(2);
+    expect(state.currentSceneSeq).toBe(5);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       "http://arena.local/arena_visual/sessions/sample-1",
@@ -374,6 +374,98 @@ describe("arenaSessionStore", () => {
     expect(state.currentSceneSeq).toBe(2);
   });
 
+  it("uses the playback cursor when loading a non-live-tail session", async () => {
+    const client = createStubClient({
+      loadSession: vi.fn().mockResolvedValue(
+        buildSession("sample-1", {
+          lifecycle: "live_ended",
+          playback: {
+            mode: "replay_playing",
+            cursorTs: 1000,
+            cursorEventSeq: 10,
+            speed: 1,
+            canSeek: true,
+          },
+        }),
+      ),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [5, 10, 15, 20])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+
+    const state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("replay_playing");
+    expect(state.currentSceneSeq).toBe(10);
+  });
+
+  it("advances replay playback locally until the tail and then pauses", async () => {
+    const store = createArenaSessionStore(createStubClient());
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.submitControl({
+      commandType: "replay",
+    });
+
+    store.advanceReplayPlayback?.();
+    let state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("replay_playing");
+    expect(state.currentSceneSeq).toBe(2);
+
+    store.advanceReplayPlayback?.();
+    state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("paused");
+    expect(state.currentSceneSeq).toBe(2);
+  });
+
+  it("advances replay playback across stable turn checkpoints instead of every raw event", async () => {
+    const client = createStubClient({
+      loadTimeline: vi.fn().mockResolvedValue(
+        buildTypedTimelinePage("sample-1", [
+          [1, "decision_window_open"],
+          [2, "action_intent"],
+          [3, "action_committed"],
+          [4, "decision_window_close"],
+          [5, "snapshot"],
+          [6, "decision_window_open"],
+          [7, "action_intent"],
+          [8, "action_committed"],
+          [9, "decision_window_close"],
+          [10, "snapshot"],
+          [11, "result"],
+        ]),
+      ),
+      submitControl: vi.fn().mockResolvedValue({
+        intentId: "control-1",
+        state: "accepted",
+        relatedEventSeq: 1,
+      }),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.submitControl({
+      commandType: "replay",
+    });
+
+    expect(store.getSnapshot().currentSceneSeq).toBe(1);
+
+    store.advanceReplayPlayback?.();
+    let state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("replay_playing");
+    expect(state.currentSceneSeq).toBe(6);
+
+    store.advanceReplayPlayback?.();
+    state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("replay_playing");
+    expect(state.currentSceneSeq).toBe(11);
+
+    store.advanceReplayPlayback?.();
+    state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("paused");
+    expect(state.currentSceneSeq).toBe(11);
+  });
+
   it("stores timeline filters and applies an accepted seek receipt to the current scene cursor", async () => {
     const client = createStubClient({
       submitControl: vi.fn().mockResolvedValue({
@@ -448,6 +540,160 @@ describe("arenaSessionStore", () => {
       relatedEventSeq: 9,
       reason: "seek_denied",
     });
+  });
+
+  it("falls back to local replay navigation when replay control is rejected because the control channel is unavailable", async () => {
+    const client = createStubClient({
+      submitControl: vi.fn().mockResolvedValue({
+        intentId: "control-3",
+        state: "rejected",
+        reason: "action_queue_not_available",
+      }),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [5, 10, 15, 20])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    expect(store.getSnapshot().currentSceneSeq).toBe(20);
+
+    await store.submitControl({
+      commandType: "replay",
+    });
+
+    const state = store.getSnapshot();
+    expect(state.currentSceneSeq).toBe(5);
+    expect(state.session?.playback.mode).toBe("replay_playing");
+    expect(state.session?.playback.cursorEventSeq).toBe(5);
+    expect(state.latestActionReceipt).toEqual({
+      intentId: "control-3",
+      state: "accepted",
+      relatedEventSeq: 5,
+      reason: "local_playback_fallback",
+    });
+  });
+
+  it("rewinds to the related event seq when replay control is accepted by the backend", async () => {
+    const client = createStubClient({
+      submitControl: vi.fn().mockResolvedValue({
+        intentId: "control-4",
+        state: "accepted",
+        relatedEventSeq: 5,
+        reason: "playback_applied",
+      }),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [5, 10, 15, 20])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    expect(store.getSnapshot().currentSceneSeq).toBe(20);
+
+    await store.submitControl({
+      commandType: "replay",
+    });
+
+    const state = store.getSnapshot();
+    expect(state.currentSceneSeq).toBe(5);
+    expect(state.session?.playback.mode).toBe("replay_playing");
+    expect(state.session?.playback.cursorEventSeq).toBe(5);
+    expect(state.latestActionReceipt).toEqual({
+      intentId: "control-4",
+      state: "accepted",
+      relatedEventSeq: 5,
+      reason: "playback_applied",
+    });
+  });
+
+  it("applies replay follow-up controls from backend receipts", async () => {
+    const submitControl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        intentId: "control-pause",
+        state: "accepted",
+        relatedEventSeq: 10,
+        reason: "playback_applied",
+      })
+      .mockResolvedValueOnce({
+        intentId: "control-speed",
+        state: "accepted",
+        relatedEventSeq: 10,
+        reason: "playback_applied",
+      })
+      .mockResolvedValueOnce({
+        intentId: "control-step",
+        state: "accepted",
+        relatedEventSeq: 15,
+        reason: "playback_applied",
+      })
+      .mockResolvedValueOnce({
+        intentId: "control-end",
+        state: "accepted",
+        relatedEventSeq: 20,
+        reason: "playback_applied",
+      })
+      .mockResolvedValueOnce({
+        intentId: "control-tail",
+        state: "accepted",
+        relatedEventSeq: 20,
+        reason: "playback_applied",
+      });
+    const client = createStubClient({
+      submitControl,
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [5, 10, 15, 20])),
+      loadSession: vi.fn().mockResolvedValue(
+        buildSession("sample-1", {
+          lifecycle: "live_ended",
+          playback: {
+            mode: "replay_playing",
+            cursorTs: 1000,
+            cursorEventSeq: 10,
+            speed: 1,
+            canSeek: true,
+          },
+        }),
+      ),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+
+    await store.submitControl({
+      commandType: "pause",
+    });
+    let state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("paused");
+    expect(state.currentSceneSeq).toBe(10);
+
+    await store.submitControl({
+      commandType: "set_speed",
+      speed: 2,
+    });
+    state = store.getSnapshot();
+    expect(state.session?.playback.speed).toBe(2);
+    expect(state.currentSceneSeq).toBe(10);
+
+    await store.submitControl({
+      commandType: "step",
+      stepDelta: 1,
+    });
+    state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("paused");
+    expect(state.currentSceneSeq).toBe(15);
+    expect(state.session?.playback.cursorEventSeq).toBe(15);
+
+    await store.submitControl({
+      commandType: "seek_end",
+    });
+    state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("paused");
+    expect(state.currentSceneSeq).toBe(20);
+
+    await store.submitControl({
+      commandType: "back_to_tail",
+    });
+    state = store.getSnapshot();
+    expect(state.session?.playback.mode).toBe("live_tail");
+    expect(state.currentSceneSeq).toBe(20);
+    expect(state.session?.playback.cursorEventSeq).toBe(20);
   });
 
   it("ignores a stale control receipt after the host switches to a newer session", async () => {
@@ -765,6 +1011,25 @@ function buildTimelinePage(sessionId: string, seqs: number[]): TimelinePage {
       tsMs: 1000 + seq,
       type: "snapshot",
       label: `snapshot-${seq}`,
+    })),
+  };
+}
+
+function buildTypedTimelinePage(
+  sessionId: string,
+  entries: Array<[number, TimelinePage["events"][number]["type"]]>,
+): TimelinePage {
+  return {
+    sessionId,
+    afterSeq: null,
+    nextAfterSeq: entries.at(-1)?.[0] ?? null,
+    limit: 50,
+    hasMore: false,
+    events: entries.map(([seq, type]) => ({
+      seq,
+      tsMs: 1000 + seq,
+      type,
+      label: `${type}-${seq}`,
     })),
   };
 }

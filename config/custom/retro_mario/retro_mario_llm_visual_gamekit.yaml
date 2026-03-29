@@ -53,7 +53,7 @@ role_adapters:
         launch_browser: true
         mode: arena_visual
         live_scene_scheme: http_pull
-        linger_after_finish_s: 3.0
+        linger_after_finish_s: 15.0
       players:
         - seat: player_0
           player_id: mario

@@ -149,3 +149,235 @@ def test_board_projection_prefers_visual_session_observer_override() -> None:
     )
 
     assert scene.body["status"]["observerPlayerId"] == "White"
+
+
+def test_board_projection_uses_result_final_board_for_terminal_result_events() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="ttt-result",
+            game_id="tictactoe",
+            plugin_id=TICTACTOE_VISUALIZATION_SPEC.plugin_id,
+        ),
+        event=TimelineEvent(
+            seq=26,
+            ts_ms=1026,
+            type="result",
+            label="result",
+            payload={
+                "result": {
+                    "winner": "X",
+                    "result": "win",
+                    "reason": "three_in_row",
+                    "move_count": 5,
+                    "final_board": "   1 2 3\n 3 . . X\n 2 . X .\n 1 X O O",
+                    "winning_line": ["1,1", "2,2", "3,3"],
+                    "move_log": [
+                        {"index": 1, "player": "X", "coord": "1,1", "row": 0, "col": 0},
+                        {"index": 2, "player": "O", "coord": "1,2", "row": 0, "col": 1},
+                        {"index": 3, "player": "X", "coord": "2,2", "row": 1, "col": 1},
+                        {"index": 4, "player": "O", "coord": "1,3", "row": 0, "col": 2},
+                        {"index": 5, "player": "X", "coord": "3,3", "row": 2, "col": 2},
+                    ],
+                }
+            },
+        ),
+        snapshot_body={
+            "step": 5,
+            "tick": 5,
+            "observation": {
+                "board_text": "   1 2 3\n 3 . . .\n 2 . X .\n 1 X O O",
+                "legal_moves": ["2,1", "2,3", "3,1", "3,2", "3,3"],
+                "active_player": "X",
+                "last_move": "1,3",
+                "metadata": {
+                    "board_size": 3,
+                    "win_len": 3,
+                    "move_count": 4,
+                    "player_id": "X",
+                    "player_ids": ["X", "O"],
+                    "player_names": {"X": "X", "O": "O"},
+                    "coord_scheme": "ROW_COL",
+                    "winning_line": None,
+                    "last_move": "1,3",
+                },
+            },
+            "result": {
+                "winner": "X",
+                "result": "win",
+                "reason": "three_in_row",
+                "move_count": 5,
+                "final_board": "   1 2 3\n 3 . . X\n 2 . X .\n 1 X O O",
+                "winning_line": ["1,1", "2,2", "3,3"],
+                "move_log": [
+                    {"index": 1, "player": "X", "coord": "1,1", "row": 0, "col": 0},
+                    {"index": 2, "player": "O", "coord": "1,2", "row": 0, "col": 1},
+                    {"index": 3, "player": "X", "coord": "2,2", "row": 1, "col": 1},
+                    {"index": 4, "player": "O", "coord": "1,3", "row": 0, "col": 2},
+                    {"index": 5, "player": "X", "coord": "3,3", "row": 2, "col": 2},
+                ],
+            },
+        },
+        visualization_spec=TICTACTOE_VISUALIZATION_SPEC,
+    )
+
+    cells = {cell["coord"]: cell for cell in scene.body["board"]["cells"]}
+
+    assert cells["3,3"]["occupant"] == "X"
+    assert cells["1,1"]["isWinningCell"] is True
+    assert cells["2,2"]["isWinningCell"] is True
+    assert cells["3,3"]["isWinningCell"] is True
+    assert scene.body["status"]["moveCount"] == 5
+    assert scene.body["status"]["lastMove"] == "3,3"
+    assert scene.body["status"]["winningLine"] == ["1,1", "2,2", "3,3"]
+
+
+def test_board_projection_recovers_terminal_last_move_from_full_snapshot_result() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="ttt-result-truncated",
+            game_id="tictactoe",
+            plugin_id=TICTACTOE_VISUALIZATION_SPEC.plugin_id,
+        ),
+        event=TimelineEvent(
+            seq=46,
+            ts_ms=1046,
+            type="result",
+            label="result",
+            payload={
+                "step": 9,
+                "tick": 9,
+                "result": {
+                    "winner": "X",
+                    "result": "win",
+                    "reason": "three_in_row",
+                    "move_count": 9,
+                    "final_board": "   1 2 3\n 3 X X X\n 2 X O O\n 1 X O O",
+                    "move_log": [
+                        {"index": 1, "player": "X", "coord": "1,1", "row": 0, "col": 0},
+                        {"index": 2, "player": "O", "coord": "1,2", "row": 0, "col": 1},
+                        {"index": 3, "player": "X", "coord": "3,3", "row": 2, "col": 2},
+                        {"index": 4, "player": "O", "coord": "1,3", "row": 0, "col": 2},
+                        {"index": 5, "player": "X", "coord": "2,1", "row": 1, "col": 0},
+                        {"index": 6, "player": "O", "coord": "2,2", "row": 1, "col": 1},
+                        {"index": 7, "player": "X", "coord": "3,2", "row": 2, "col": 1},
+                        {"index": 8, "player": "O", "coord": "2,3", "row": 1, "col": 2},
+                        {"__truncated__": 1},
+                    ],
+                },
+            },
+        ),
+        snapshot_body={
+            "step": 9,
+            "tick": 9,
+            "playerId": None,
+            "observation": {
+                "board_text": "   1 2 3\n 3 . X X\n 2 X O O\n 1 X O O",
+                "legal_moves": ["3,1"],
+                "active_player": "X",
+                "last_move": "2,3",
+                "metadata": {
+                    "board_size": 3,
+                    "win_len": 3,
+                    "move_count": 8,
+                    "player_id": "X",
+                    "player_ids": ["X", "O"],
+                    "player_names": {"X": "X", "O": "O"},
+                    "coord_scheme": "ROW_COL",
+                    "winning_line": None,
+                    "last_move": "2,3",
+                },
+            },
+            "arenaTrace": {
+                "step_index": 8,
+                "trace_state": "done",
+                "timestamp": 1774764561126,
+                "player_id": "X",
+                "action_raw": "3,1",
+                "action_applied": "3,1",
+            },
+            "result": {
+                "winner": "X",
+                "result": "win",
+                "reason": "three_in_row",
+                "move_count": 9,
+                "illegal_move_count": 0,
+                "final_board": "   1 2 3\n 3 X X X\n 2 X O O\n 1 X O O",
+                "move_log": [
+                    {"index": 1, "player": "X", "coord": "1,1", "row": 0, "col": 0},
+                    {"index": 2, "player": "O", "coord": "1,2", "row": 0, "col": 1},
+                    {"index": 3, "player": "X", "coord": "3,3", "row": 2, "col": 2},
+                    {"index": 4, "player": "O", "coord": "1,3", "row": 0, "col": 2},
+                    {"index": 5, "player": "X", "coord": "2,1", "row": 1, "col": 0},
+                    {"index": 6, "player": "O", "coord": "2,2", "row": 1, "col": 1},
+                    {"index": 7, "player": "X", "coord": "3,2", "row": 2, "col": 1},
+                    {"index": 8, "player": "O", "coord": "2,3", "row": 1, "col": 2},
+                    {"index": 9, "player": "X", "coord": "3,1", "row": 2, "col": 0},
+                ],
+            },
+        },
+        visualization_spec=TICTACTOE_VISUALIZATION_SPEC,
+    )
+
+    cells = {cell["coord"]: cell for cell in scene.body["board"]["cells"]}
+
+    assert cells["3,1"]["occupant"] == "X"
+    assert scene.body["status"]["moveCount"] == 9
+    assert scene.body["status"]["lastMove"] == "3,1"
+
+
+def test_board_projection_prefers_live_event_observation_over_stale_snapshot_body() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="ttt-live-human",
+            game_id="tictactoe",
+            plugin_id=TICTACTOE_VISUALIZATION_SPEC.plugin_id,
+        ),
+        event=TimelineEvent(
+            seq=11,
+            ts_ms=1011,
+            type="decision_window_open",
+            label="decision_window_open",
+            payload={
+                "playerId": "X",
+                "observation": {
+                    "board_text": "   1 2 3\n 3 . . .\n 2 . X .\n 1 O . .",
+                    "legal_moves": ["1,2", "1,3", "2,1", "2,3", "3,1", "3,2", "3,3"],
+                    "active_player": "X",
+                    "last_move": "1,1",
+                    "metadata": {
+                        "move_count": 2,
+                        "player_id": "X",
+                        "player_ids": ["X", "O"],
+                        "player_names": {"X": "X", "O": "O"},
+                        "coord_scheme": "ROW_COL",
+                        "winning_line": None,
+                    },
+                },
+            },
+        ),
+        snapshot_body={
+            "observation": {
+                "board_text": "   1 2 3\n 3 . . .\n 2 . X .\n 1 . . .",
+                "legal_moves": ["1,1", "1,2", "1,3", "2,1", "2,3", "3,1", "3,2", "3,3"],
+                "active_player": "O",
+                "last_move": "2,2",
+                "metadata": {
+                    "move_count": 1,
+                    "player_id": "O",
+                    "player_ids": ["X", "O"],
+                    "player_names": {"X": "X", "O": "O"},
+                    "coord_scheme": "ROW_COL",
+                    "winning_line": None,
+                },
+            }
+        },
+        visualization_spec=TICTACTOE_VISUALIZATION_SPEC,
+    )
+
+    cells = {cell["coord"]: cell for cell in scene.body["board"]["cells"]}
+
+    assert cells["1,1"]["occupant"] == "O"
+    assert cells["2,2"]["occupant"] == "X"
+    assert scene.body["status"]["activePlayerId"] == "X"
+    assert scene.body["status"]["moveCount"] == 2
+    assert scene.body["status"]["lastMove"] == "1,1"

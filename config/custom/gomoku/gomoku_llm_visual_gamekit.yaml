@@ -51,7 +51,7 @@ role_adapters:
         title: GAGE Gomoku Board
         launch_browser: true
         mode: arena_visual
-        linger_after_finish_s: 3.0
+        linger_after_finish_s: 15.0
       players:
         - seat: black
           player_id: Black

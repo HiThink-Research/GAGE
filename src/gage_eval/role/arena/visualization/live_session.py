@@ -5,7 +5,8 @@ import binascii
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from threading import RLock
+from threading import Condition, RLock
+import time
 from typing import Protocol
 from urllib.parse import quote, unquote, unquote_to_bytes
 
@@ -15,6 +16,7 @@ from gage_eval.role.arena.visualization.assembly import (
     collect_scene_media_refs,
 )
 from gage_eval.role.arena.visualization.contracts import (
+    ControlCommand,
     MediaSourceRef,
     ObserverRef,
     TimelineEvent,
@@ -64,6 +66,59 @@ class ArenaVisualLiveSessionSource(Protocol):
 
     def load_stream_frame(self, media_id: str) -> tuple[bytes, str | None] | None: ...
 
+    def apply_control_command(self, command: ControlCommand) -> int: ...
+
+
+class ArenaVisualFinishGate:
+    def __init__(self, *, idle_timeout_s: float) -> None:
+        self._idle_timeout_s = max(0.0, float(idle_timeout_s))
+        self._condition = Condition()
+        self._armed = False
+        self._manual_finish_required = False
+        self._finished = False
+        self._deadline_monotonic = 0.0
+
+    def arm(self) -> None:
+        with self._condition:
+            if self._armed:
+                return
+            self._armed = True
+            if self._idle_timeout_s <= 0.0:
+                self._finished = True
+            else:
+                self._deadline_monotonic = time.monotonic() + self._idle_timeout_s
+            self._condition.notify_all()
+
+    def wait(self) -> None:
+        with self._condition:
+            while True:
+                if not self._armed or self._finished:
+                    return
+                if self._manual_finish_required:
+                    self._condition.wait()
+                    continue
+                remaining_s = self._deadline_monotonic - time.monotonic()
+                if remaining_s <= 0.0:
+                    self._finished = True
+                    return
+                self._condition.wait(timeout=remaining_s)
+
+    def record_control_interaction(self) -> bool:
+        with self._condition:
+            if not self._armed or self._finished:
+                return False
+            self._manual_finish_required = True
+            self._condition.notify_all()
+            return True
+
+    def finish(self) -> bool:
+        with self._condition:
+            if not self._armed or self._finished:
+                return False
+            self._finished = True
+            self._condition.notify_all()
+            return True
+
 
 @dataclass(frozen=True, slots=True)
 class RecorderLiveSessionSource:
@@ -71,6 +126,7 @@ class RecorderLiveSessionSource:
     run_id: str | None = None
     visualization_spec: GameVisualizationSpec | None = None
     live_scene_scheme: str = "http_pull"
+    finish_gate: ArenaVisualFinishGate | None = None
 
     def __post_init__(self) -> None:
         if self.live_scene_scheme not in _SUPPORTED_LIVE_SCENE_SCHEMES:
@@ -163,6 +219,15 @@ class RecorderLiveSessionSource:
             return None
         content, mime_type = payload
         return _encode_low_latency_frame(content=content, mime_type=mime_type)
+
+    def apply_control_command(self, command: ControlCommand) -> int:
+        if command.command_type == "finish":
+            if self.finish_gate is not None:
+                self.finish_gate.finish()
+            return self.recorder.export_live_state().visual_session.playback.cursor_event_seq
+        if self.finish_gate is not None:
+            self.finish_gate.record_control_interaction()
+        return self.recorder.apply_control_command(command)
 
     def _load_raw_scene(
         self,
@@ -461,6 +526,7 @@ def _decode_data_url(url: str) -> tuple[bytes, str | None]:
 
 
 __all__ = [
+    "ArenaVisualFinishGate",
     "ArenaVisualLiveRegistry",
     "ArenaVisualLiveSessionSource",
     "RecorderLiveSessionSource",

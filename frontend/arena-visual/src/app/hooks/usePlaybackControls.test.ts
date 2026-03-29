@@ -52,4 +52,18 @@ describe("usePlaybackControls", () => {
       commandType: "back_to_tail",
     });
   });
+
+  it("submits the explicit finish command through the store", async () => {
+    const store = {
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn(),
+    } as unknown as ArenaSessionStore;
+
+    const controls = usePlaybackControls(store);
+    await controls.finish();
+
+    expect(store.submitControl).toHaveBeenCalledWith({
+      commandType: "finish",
+    });
+  });
 });

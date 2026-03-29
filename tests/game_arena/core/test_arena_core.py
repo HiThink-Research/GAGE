@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +24,7 @@ from gage_eval.role.arena.support.workflow import GameSupportWorkflow
 from gage_eval.role.arena.types import ArenaAction
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.core.players import PlayerBindingSpec
+from gage_eval.role.arena.visualization.contracts import ControlCommand
 from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
     DuelMap01Environment,
 )
@@ -772,6 +775,143 @@ def test_game_session_registers_live_arena_visual_source_before_finalize(
     assert getattr(live_source, "live_scene_scheme") == "http_pull"
     assert getattr(live_source, "visualization_spec") is resolved.visualization_spec
     assert browser_calls == ["http://127.0.0.1:5810/sessions/sample-live-3?run_id=run-live-3"]
+
+
+def test_game_session_arena_visual_requires_explicit_finish_after_post_end_interaction(
+    monkeypatch,
+) -> None:
+    class _StubArenaVisualServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.live_sources: list[object] = []
+
+        def start(self) -> None:
+            self.started = True
+
+        def stop(self) -> None:
+            self.started = False
+
+        def build_viewer_url(self, session_id: str, *, run_id: str | None = None) -> str:
+            suffix = "" if run_id is None else f"?run_id={run_id}"
+            return f"http://127.0.0.1:5810/sessions/{session_id}{suffix}"
+
+        def register_live_session(self, source: object) -> None:
+            self.live_sources.append(source)
+
+    class _StubRuntimeServiceHub:
+        def __init__(self) -> None:
+            self.visualizer = _StubArenaVisualServer()
+
+        def ensure_visualizer(self, factory):
+            _ = factory
+            return self.visualizer
+
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def observe(self, player):
+            return {
+                "board_text": f"board:{player}",
+                "legal_moves": ["A1"],
+                "active_player": "alpha",
+            }
+
+        def apply(self, action):
+            del action
+            self._terminal = True
+            return None
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner="alpha",
+                result=result,
+                reason=reason,
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"player": "alpha", "move": "A1"}],
+            )
+
+    runtime_hub = _StubRuntimeServiceHub()
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.webbrowser.open",
+        lambda url: True,
+    )
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session._build_arena_visual_server",
+        lambda config, *, service_hub: runtime_hub.visualizer,
+    )
+
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={
+                "env_factory": (
+                    lambda *, sample, resolved, resources, player_specs: FakeEnvironment()
+                )
+            },
+        ),
+        scheduler=TurnScheduler(binding_id="turn/default"),
+        resource_spec={},
+        player_bindings=(),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=None,
+        visualization_spec=SimpleNamespace(
+            plugin_id="arena.visualization.gomoku.board_v1",
+            game_id="gomoku",
+            observer_schema={"supported_modes": ["global", "player"]},
+            visual_kind="board",
+        ),
+    )
+
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        resolved,
+        resources={},
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-live-finish",
+            trace=SimpleNamespace(run_id="run-live-finish", sample_id="sample-live-finish"),
+            visualizer_config={
+                "enabled": True,
+                "launch_browser": True,
+                "mode": "arena_visual",
+                "live_scene_scheme": "http_pull",
+                "linger_after_finish_s": 0.05,
+                "port": 5810,
+            },
+            runtime_service_hub=runtime_hub,
+        ),
+    )
+    session.observe()
+    session.apply(ArenaAction(player="alpha", move="A1", raw="A1"))
+
+    finalize_thread = threading.Thread(target=session.finalize, daemon=True)
+    started_at = time.monotonic()
+    finalize_thread.start()
+
+    assert len(runtime_hub.visualizer.live_sources) == 1
+    live_source = runtime_hub.visualizer.live_sources[0]
+    time.sleep(0.02)
+    getattr(live_source, "apply_control_command")(ControlCommand(command_type="replay"))
+
+    finalize_thread.join(timeout=0.15)
+    assert finalize_thread.is_alive() is True
+
+    getattr(live_source, "apply_control_command")(ControlCommand(command_type="finish"))
+    finalize_thread.join(timeout=1.0)
+
+    assert finalize_thread.is_alive() is False
+    assert time.monotonic() - started_at >= 0.05
 
 def test_game_session_records_action_trace_fields_for_illegal_result() -> None:
     class FakeEnvironment:

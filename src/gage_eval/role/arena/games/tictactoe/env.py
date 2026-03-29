@@ -376,16 +376,18 @@ class TicTacToeArenaEnvironment:
             return self._handle_illegal(action, reason=move_result.reason or "illegal_move")
 
         self._last_move = move_result.move.coord if move_result.move else None
-        self._refresh_last_frame()
 
         # STEP 2: Check for terminal conditions.
+        if move_result.winner:
+            win_line = self._core.winning_line() or []
+            if win_line:
+                self._winning_line_coords = [
+                    self._core.index_to_coord(row, col) for row, col in win_line
+                ]
+
+        self._refresh_last_frame()
+
         if move_result.winner or move_result.is_draw:
-            if move_result.winner:
-                win_line = self._core.winning_line() or []
-                if win_line:
-                    self._winning_line_coords = [
-                        self._core.index_to_coord(row, col) for row, col in win_line
-                    ]
             self._final_result = self.build_result(
                 result="win" if move_result.winner else "draw",
                 reason=move_result.reason,
@@ -430,6 +432,7 @@ class TicTacToeArenaEnvironment:
             illegal_move_count=self._core.illegal_move_count,
             final_board=final_board,
             move_log=move_log,
+            winning_line=list(self._winning_line_coords) if self._winning_line_coords else None,
         )
 
     def _handle_illegal(self, action: ArenaAction, *, reason: str) -> Optional[GameResult]:

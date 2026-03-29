@@ -1,11 +1,10 @@
 import type { ArenaPluginRenderProps } from "../sdk/contracts";
-import { BoardGrid } from "../board/BoardGrid";
 import {
-  formatBoardActorLabel,
   readBoardScene,
   readLegalCoords,
   resolveBoardActorId,
 } from "../board/boardScene";
+import { TicTacToeBoard } from "./TicTacToeBoard";
 
 export function TicTacToePlugin({
   session,
@@ -26,18 +25,10 @@ export function TicTacToePlugin({
 
   const legalCoords = readLegalCoords(scene);
   const resolvedActorId = resolveBoardActorId(session, scene, boardScene);
-  const actorLabel = formatBoardActorLabel(session, boardScene.players, resolvedActorId);
 
   return (
-    <BoardGrid
-      variant="tictactoe"
-      gameLabel="Tic-Tac-Toe"
-      actorLabel={actorLabel}
-      boardSize={boardScene.board.size}
-      coordScheme={boardScene.board.coordScheme}
-      cells={boardScene.board.cells}
-      players={boardScene.players}
-      status={boardScene.status}
+    <TicTacToeBoard
+      board={boardScene.board}
       legalCoords={legalCoords}
       canSubmitMoves={session.scheduling.acceptsHumanIntent}
       onSubmitMove={(coord) => {
