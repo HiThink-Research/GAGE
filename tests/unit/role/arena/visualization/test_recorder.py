@@ -214,9 +214,10 @@ def test_visual_session_recorder_bounds_heavy_snapshot_payloads() -> None:
     assert bounded["board_text"] == "demo-board"
     assert bounded["raw_obs"]["kind"] == "mapping"
     assert bounded["raw_obs"]["size"] == 2
-    assert bounded["message"].endswith("...<len=800>")
-    assert bounded["nested"]["frames"]["kind"] == "sequence"
-    assert bounded["nested"]["frames"]["size"] == 1
+    assert bounded["message"] == payload["message"]
+    assert bounded["nested"]["frames"][0]["blob"]["kind"] == "bytes"
+    assert bounded["nested"]["frames"][0]["blob"]["size"] == 1024
+    assert to_bounded_json_safe(payload)["message"].endswith("...<len=800>")
     assert to_bounded_json_safe(payload)["raw_obs"]["kind"] == "mapping"
 
 

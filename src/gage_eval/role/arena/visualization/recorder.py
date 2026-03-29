@@ -16,7 +16,7 @@ from gage_eval.role.arena.visualization.artifacts import (
     ArenaVisualSessionArtifacts,
     build_visual_session_manifest,
     to_bounded_json_safe,
-    to_visual_json_safe,
+    to_scene_json_safe,
 )
 from gage_eval.role.arena.visualization.contracts import (
     ObserverRef,
@@ -100,7 +100,7 @@ class ArenaVisualSessionRecorder:
                     "tick": int(tick),
                     "playerId": str(player_id),
                     "windowId": window_id,
-                    "observation": to_bounded_json_safe(observation),
+                    "observation": to_scene_json_safe(observation),
                 },
             )
 
@@ -128,7 +128,7 @@ class ArenaVisualSessionRecorder:
                     "playerId": str(player_id),
                     "intentId": intent_id,
                     "action": to_bounded_json_safe(action),
-                    "observation": to_bounded_json_safe(observation),
+                    "observation": to_scene_json_safe(observation),
                 },
             )
 
@@ -157,7 +157,7 @@ class ArenaVisualSessionRecorder:
                     "playerId": str(player_id),
                     "action": to_bounded_json_safe(action),
                     "traceEntry": to_bounded_json_safe(trace_entry),
-                    "result": to_bounded_json_safe(result),
+                    "result": to_scene_json_safe(result),
                 },
             )
 
@@ -209,7 +209,7 @@ class ArenaVisualSessionRecorder:
                     "step": int(step),
                     "tick": int(tick),
                     "anchor": bool(anchor),
-                    "snapshot": to_bounded_json_safe(snapshot),
+                    "snapshot": to_scene_json_safe(snapshot),
                 },
             )
             if anchor:
@@ -218,7 +218,7 @@ class ArenaVisualSessionRecorder:
                         "seq": event.seq,
                         "tsMs": event.ts_ms,
                         "label": label,
-                        "snapshot": to_visual_json_safe(snapshot),
+                        "snapshot": to_scene_json_safe(snapshot),
                     }
                 )
             return event
@@ -243,7 +243,7 @@ class ArenaVisualSessionRecorder:
                 payload={
                     "step": int(step),
                     "tick": int(tick),
-                    "result": to_bounded_json_safe(result),
+                    "result": to_scene_json_safe(result),
                 },
             )
 

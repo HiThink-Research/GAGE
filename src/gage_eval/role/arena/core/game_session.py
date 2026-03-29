@@ -31,7 +31,7 @@ from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
-from gage_eval.role.arena.visualization.artifacts import to_visual_json_safe
+from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.replay_schema_writer import update_replay_manifest_visual_session_ref
 
@@ -1004,7 +1004,7 @@ def _normalize_frame_payload(payload: object) -> dict[str, Any]:
 
 
 def _visual_payload_snapshot(payload: object | None) -> object | None:
-    return to_visual_json_safe(payload)
+    return to_scene_json_safe(payload)
 
 
 def _build_display_id(

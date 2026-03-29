@@ -161,8 +161,16 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: /demo-session/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /live tail/i }));
     fireEvent.click(screen.getByRole("button", { name: /step \+1/i }));
+
+    await waitFor(() => {
+      expect(store.submitControl).toHaveBeenNthCalledWith(1, {
+        commandType: "step",
+        stepDelta: 1,
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /live tail/i }));
     fireEvent.change(screen.getByLabelText(/observer view/i), {
       target: { value: "global" },
     });
@@ -174,12 +182,8 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /send chat/i }));
 
     await waitFor(() => {
-      expect(store.submitControl).toHaveBeenNthCalledWith(1, {
-        commandType: "follow_tail",
-      });
       expect(store.submitControl).toHaveBeenNthCalledWith(2, {
-        commandType: "step",
-        stepDelta: 1,
+        commandType: "follow_tail",
       });
       expect(store.setObserver).toHaveBeenCalledWith({
         observerId: "",

@@ -1,11 +1,10 @@
 import type { ArenaPluginRenderProps } from "../sdk/contracts";
-import { BoardGrid } from "../board/BoardGrid";
 import {
-  formatBoardActorLabel,
   readBoardScene,
   readLegalCoords,
   resolveBoardActorId,
 } from "../board/boardScene";
+import { GomokuBoard } from "./GomokuBoard";
 
 interface GomokuInputEvent {
   playerId: string;
@@ -31,19 +30,12 @@ export function GomokuPlugin({
 
   const legalCoords = readLegalCoords(scene);
   const resolvedActorId = resolveBoardActorId(session, scene, boardScene);
-  const actorLabel = formatBoardActorLabel(session, boardScene.players, resolvedActorId);
 
   return (
-    <BoardGrid
-      variant="gomoku"
-      gameLabel="Gomoku"
-      actorLabel={actorLabel}
-      boardSize={boardScene.board.size}
-      coordScheme={boardScene.board.coordScheme}
-      cells={boardScene.board.cells}
-      players={boardScene.players}
-      status={boardScene.status}
+    <GomokuBoard
+      board={boardScene.board}
       legalCoords={legalCoords}
+      winningLine={boardScene.status.winningLine}
       canSubmitMoves={session.scheduling.acceptsHumanIntent}
       onSubmitMove={(coord) => {
         if (!resolvedActorId) {

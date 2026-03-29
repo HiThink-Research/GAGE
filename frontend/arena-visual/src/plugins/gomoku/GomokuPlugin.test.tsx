@@ -6,7 +6,60 @@ import gomokuScene from "../../test/fixtures/gomoku.visual.json";
 import { GomokuPlugin } from "./GomokuPlugin";
 
 describe("GomokuPlugin", () => {
-  it("renders a visible board, highlights the last move, and submits coord intents", () => {
+  it("renders only the dedicated gomoku board stage inside the plugin and drops legacy board chrome", () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <GomokuPlugin
+        session={{
+          sessionId: "gomoku-sample",
+          gameId: "gomoku",
+          pluginId: "arena.visualization.gomoku.board_v1",
+          lifecycle: "closed",
+          playback: {
+            mode: "paused",
+            cursorTs: 1005,
+            cursorEventSeq: 5,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "",
+            observerKind: "spectator",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "completed",
+            acceptsHumanIntent: false,
+            activeActorId: "White",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={gomokuScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByTestId("gomoku-stage")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /gomoku board/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Black stone")).not.toBeInTheDocument();
+    expect(screen.queryByText("White stone")).not.toBeInTheDocument();
+    expect(screen.queryByText("Winning line")).not.toBeInTheDocument();
+
+    expect(screen.getAllByRole("button", { name: /board cell/i })).toHaveLength(9);
+
+    const actionButton = screen.getByRole("button", { name: /board cell b1/i });
+    expect(actionButton).toBeDisabled();
+    fireEvent.click(actionButton);
+    expect(submitInput).not.toHaveBeenCalled();
+  });
+
+  it("submits a player coord from the dedicated stage when human input is enabled", () => {
     const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -21,21 +74,21 @@ describe("GomokuPlugin", () => {
             cursorTs: 1005,
             cursorEventSeq: 5,
             speed: 1,
-            canSeek: true
+            canSeek: true,
           },
           observer: {
             observerId: "Black",
-            observerKind: "player"
+            observerKind: "player",
           },
           scheduling: {
             family: "turn",
             phase: "waiting_for_intent",
             acceptsHumanIntent: true,
-            activeActorId: "White"
+            activeActorId: "White",
           },
           capabilities: {},
           summary: {},
-          timeline: {}
+          timeline: {},
         }}
         scene={gomokuScene as VisualScene}
         submitAction={vi.fn()}
@@ -45,64 +98,14 @@ describe("GomokuPlugin", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /gomoku board/i })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /board cell/i })).toHaveLength(9);
-    expect(screen.getByRole("grid", { name: /gomoku board/i })).toHaveTextContent("B");
-    expect(screen.getByRole("grid", { name: /gomoku board/i })).toHaveTextContent("W");
-    expect(screen.getByText(/observer: black/i)).toBeInTheDocument();
+    const actionButton = screen.getByRole("button", { name: /board cell b1/i });
+    expect(actionButton).toBeEnabled();
 
-    const lastMoveCell = screen.getByRole("button", { name: /board cell b2/i });
-    expect(lastMoveCell.getAttribute("data-last-move")).toBe("true");
+    fireEvent.click(actionButton);
 
-    fireEvent.click(screen.getByRole("button", { name: /board cell b1/i }));
     expect(submitInput).toHaveBeenCalledWith({
       playerId: "Black",
       coord: "B1",
     });
-  });
-
-  it("renders rich board chrome with player cards, coordinate rails, and board summary", () => {
-    render(
-      <GomokuPlugin
-        session={{
-          sessionId: "gomoku-sample",
-          gameId: "gomoku",
-          pluginId: "arena.visualization.gomoku.board_v1",
-          lifecycle: "live_running",
-          playback: {
-            mode: "paused",
-            cursorTs: 1005,
-            cursorEventSeq: 5,
-            speed: 1,
-            canSeek: true
-          },
-          observer: {
-            observerId: "Black",
-            observerKind: "player"
-          },
-          scheduling: {
-            family: "turn",
-            phase: "waiting_for_intent",
-            acceptsHumanIntent: true,
-            activeActorId: "White"
-          },
-          capabilities: {},
-          summary: {},
-          timeline: {}
-        }}
-        scene={gomokuScene as VisualScene}
-        submitAction={vi.fn()}
-        submitInput={vi.fn()}
-        mediaSubscribe={() => () => {}}
-        isFallback={false}
-      />,
-    );
-
-    expect(screen.getByText("Black stone")).toBeInTheDocument();
-    expect(screen.getByText("White stone")).toBeInTheDocument();
-    expect(screen.getByText("Winning line")).toBeInTheDocument();
-    expect(screen.getByText("A1 -> B2")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Board column A")).toHaveLength(2);
-    expect(screen.getAllByLabelText("Board row 3")).toHaveLength(2);
   });
 });

@@ -11,6 +11,8 @@ from gage_eval.game_kits.board_game.gomoku.visualization import (
 from gage_eval.game_kits.board_game.tictactoe.visualization import (
     VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
 )
+from gage_eval.role.arena.core.game_session import _visual_payload_snapshot
+from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
@@ -745,6 +747,39 @@ def test_binary_stream_live_scene_versions_media_id_per_scene_seq() -> None:
     assert first_scene.media.primary.media_id != second_scene.media.primary.media_id
     assert live_source.load_media_content(first_scene.media.primary.media_id) == (b"foo", "image/png")
     assert live_source.load_media_content(second_scene.media.primary.media_id) == (b"foo", "image/png")
+
+
+def test_live_gomoku_scene_preserves_full_15x15_board_and_legal_actions() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=GOMOKU_VISUALIZATION_SPEC.plugin_id,
+        game_id="gomoku",
+        scheduling_family="turn",
+        session_id="gomoku-live",
+    )
+    observation = GomokuArenaEnvironment(board_size=15, win_len=5, obs_image=True).observe("Black")
+
+    recorder.record_decision_window_open(
+        ts_ms=2001,
+        step=1,
+        tick=0,
+        player_id="Black",
+        observation=_visual_payload_snapshot(observation),
+    )
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        visualization_spec=GOMOKU_VISUALIZATION_SPEC,
+    )
+
+    scene = live_source.load_scene(seq=1)
+
+    assert scene is not None
+    assert scene.body["board"]["size"] == 15
+    assert len(scene.body["board"]["cells"]) == 225
+    assert len(scene.legal_actions) == 225
+    assert scene.legal_actions[0]["coord"] == "A1"
+    assert scene.legal_actions[-1]["coord"] == "O15"
 
 
 def test_arena_visual_http_server_serves_frontend_shell_and_assets(tmp_path: Path) -> None:

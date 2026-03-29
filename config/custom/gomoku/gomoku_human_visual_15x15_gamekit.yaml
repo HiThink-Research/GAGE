@@ -2,10 +2,12 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: gomoku_llm_visual_gamekit
+  name: gomoku_human_visual_15x15_gamekit
   description: >
-    GameArena Gomoku manual smoke config that binds one LLM player through
-    the visualization-ready GameKit PlayerDriver runtime and keeps the opponent deterministic.
+    GameArena Gomoku standard-board human-vs-LLM manual config for the
+    arena_visual web app. The human player acts first on a standard 15x15
+    board while the opponent is driven by the local LMStudio backend through
+    the visualization-ready GameKit PlayerDriver runtime.
 
 datasets:
   - dataset_id: gomoku_gamekit_fixture_only
@@ -33,32 +35,36 @@ backends:
 custom:
   steps:
     - step: arena
-      adapter_id: gomoku_llm_visual_gamekit_arena
+      adapter_id: gomoku_human_visual_15x15_gamekit_arena
 
 role_adapters:
-  - adapter_id: gomoku_llm_visual_gamekit_arena
+  - adapter_id: gomoku_human_visual_15x15_gamekit_arena
     role_type: arena
     params:
       game_kit: gomoku
       env: gomoku_standard
       runtime_overrides:
-        board_size: 3
-        win_len: 3
+        board_size: 15
+        win_len: 5
+        max_turns: 225
         coord_scheme: A1
         obs_image: true
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
       visualizer:
         enabled: true
         title: GAGE Gomoku Board
         launch_browser: true
         mode: arena_visual
-        port: 5804
+        port: 5805
         linger_after_finish_s: 15.0
       players:
         - seat: black
           player_id: Black
-          player_kind: llm
-          backend_id: local_qwen35_litellm_backend
+          player_kind: human
         - seat: white
           player_id: White
-          player_kind: dummy
-          actions: ["B1", "B2"]
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend

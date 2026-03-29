@@ -66,6 +66,9 @@ _MAX_BOUNDED_STRING = 256
 _MAX_VISUAL_DEPTH = 8
 _MAX_VISUAL_ITEMS = 64
 _MAX_VISUAL_STRING = 8192
+_MAX_SCENE_DEPTH = 8
+_MAX_SCENE_ITEMS = 512
+_MAX_SCENE_STRING = 32768
 _DATA_URL_KEYS = {"data_url", "dataurl", "url"}
 
 
@@ -92,6 +95,23 @@ def to_visual_json_safe(
     max_depth: int = _MAX_VISUAL_DEPTH,
     max_items: int = _MAX_VISUAL_ITEMS,
     max_string: int = _MAX_VISUAL_STRING,
+) -> Any:
+    return _bounded_json_safe(
+        value,
+        depth=0,
+        max_depth=max_depth,
+        max_items=max_items,
+        max_string=max_string,
+        heavy_key_names=_VISUAL_HEAVY_KEY_NAMES,
+    )
+
+
+def to_scene_json_safe(
+    value: Any,
+    *,
+    max_depth: int = _MAX_SCENE_DEPTH,
+    max_items: int = _MAX_SCENE_ITEMS,
+    max_string: int = _MAX_SCENE_STRING,
 ) -> Any:
     return _bounded_json_safe(
         value,
