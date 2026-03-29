@@ -30,6 +30,7 @@ export function DoudizhuPlugin({
 
   return (
     <TableLayout
+      variant="doudizhu"
       gameLabel="Doudizhu"
       actorLabel={actorLabel}
       tableScene={tableScene}

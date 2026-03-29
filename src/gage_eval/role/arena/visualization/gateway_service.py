@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,9 @@ from gage_eval.role.arena.visualization.contracts import (
     VisualScene,
     VisualSession,
 )
+
+VisualizationSpecResolver = Callable[[VisualSession], GameVisualizationSpec | None]
+_UNSET = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,11 +46,18 @@ class _LoadedVisualSession:
 
 
 class ArenaVisualGatewayQueryService:
-    def __init__(self, *, visualization_spec: GameVisualizationSpec | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        visualization_spec: GameVisualizationSpec | None = None,
+        visualization_spec_resolver: VisualizationSpecResolver | None = None,
+    ) -> None:
         self._visualization_spec = visualization_spec
+        self._visualization_spec_resolver = visualization_spec_resolver
         self._session_cache: dict[Path, _LoadedVisualSession] = {}
-        self._scene_cache: dict[tuple[Path, int, str, str], VisualScene] = {}
+        self._scene_cache: dict[tuple[Path, int, str, str, str], VisualScene] = {}
         self._media_cache: dict[Path, dict[str, MediaSourceRef]] = {}
+        self._resolved_visualization_specs: dict[Path, GameVisualizationSpec | None] = {}
 
     def load_session(
         self,
@@ -97,11 +107,13 @@ class ArenaVisualGatewayQueryService:
     ) -> VisualScene | None:
         bundle = self._load_bundle(manifest_path)
         visual_session = self._session_for_observer(bundle.visual_session, observer=observer)
+        visualization_spec = self._resolve_visualization_spec(bundle)
         cache_key = (
             bundle.manifest_path,
             int(seq),
             visual_session.observer.observer_kind,
             visual_session.observer.observer_id,
+            "" if visualization_spec is None else visualization_spec.spec_id,
         )
         cached = self._scene_cache.get(cache_key)
         if cached is not None:
@@ -125,11 +137,27 @@ class ArenaVisualGatewayQueryService:
             event=event,
             snapshot_anchor=snapshot_anchor,
             snapshot_body=snapshot_body,
-            visualization_spec=self._visualization_spec,
+            visualization_spec=visualization_spec,
         )
         self._scene_cache[cache_key] = scene
         self._cache_media_refs(bundle.manifest_path, scene)
         return scene
+
+    def _resolve_visualization_spec(
+        self,
+        bundle: _LoadedVisualSession,
+    ) -> GameVisualizationSpec | None:
+        cached = self._resolved_visualization_specs.get(bundle.manifest_path, _UNSET)
+        if cached is not _UNSET:
+            return cached
+
+        resolved: GameVisualizationSpec | None = None
+        if self._visualization_spec_resolver is not None:
+            resolved = self._visualization_spec_resolver(bundle.visual_session)
+        if resolved is None:
+            resolved = self._visualization_spec
+        self._resolved_visualization_specs[bundle.manifest_path] = resolved
+        return resolved
 
     def lookup_marker(self, manifest_path: str | Path, marker: str) -> tuple[int, ...]:
         bundle = self._load_bundle(manifest_path)
@@ -411,3 +439,46 @@ class ArenaVisualGatewayQueryService:
     def _cache_media_refs(self, manifest_path: Path, scene: VisualScene) -> None:
         media_cache = self._media_cache.setdefault(manifest_path, {})
         media_cache.update(collect_scene_media_refs(scene))
+
+
+def resolve_registered_visualization_spec(
+    visual_session: VisualSession,
+    *,
+    registry_view: Any | None = None,
+) -> GameVisualizationSpec | None:
+    from gage_eval.game_kits.registry import GameKitRegistry
+    from gage_eval.game_kits.visualization_specs import VisualizationSpecRegistry
+    from gage_eval.registry import registry
+
+    active_registry = registry if registry_view is None else registry_view
+    spec_registry = VisualizationSpecRegistry(registry_view=active_registry)
+
+    plugin_id = str(getattr(visual_session, "plugin_id", "") or "").strip()
+    if plugin_id:
+        for entry in active_registry.list("visualization_specs"):
+            spec = spec_registry.build(entry.name)
+            if spec.plugin_id == plugin_id:
+                return spec
+
+    game_id = str(getattr(visual_session, "game_id", "") or "").strip()
+    if not game_id:
+        return None
+
+    try:
+        game_kit = GameKitRegistry(registry_view=active_registry).build(game_id)
+    except (KeyError, TypeError):
+        return None
+    spec_id = str(game_kit.visualization_spec or "").strip()
+    if not spec_id:
+        return None
+    try:
+        return spec_registry.build(spec_id)
+    except (KeyError, TypeError):
+        return None
+
+
+__all__ = [
+    "ArenaVisualGatewayQueryService",
+    "TimelinePage",
+    "resolve_registered_visualization_spec",
+]

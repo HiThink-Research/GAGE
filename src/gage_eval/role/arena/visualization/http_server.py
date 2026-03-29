@@ -16,7 +16,10 @@ from urllib.parse import parse_qs, quote, unquote, unquote_to_bytes, urlparse
 from loguru import logger
 
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt, ObserverRef
-from gage_eval.role.arena.visualization.gateway_service import ArenaVisualGatewayQueryService
+from gage_eval.role.arena.visualization.gateway_service import (
+    ArenaVisualGatewayQueryService,
+    resolve_registered_visualization_spec,
+)
 from gage_eval.role.arena.visualization.live_session import (
     ArenaVisualLiveRegistry,
     ArenaVisualLiveSessionSource,
@@ -746,7 +749,9 @@ class ArenaVisualHTTPServer:
         self._base_dir = Path(base_dir).expanduser().resolve()
         resolved_app_dir = _default_app_dir() if app_dir is None else Path(app_dir).expanduser().resolve()
         self._app_dir = resolved_app_dir if resolved_app_dir.exists() else None
-        self._query_service = query_service or ArenaVisualGatewayQueryService()
+        self._query_service = query_service or ArenaVisualGatewayQueryService(
+            visualization_spec_resolver=resolve_registered_visualization_spec
+        )
         self._manifest_resolver = manifest_resolver or build_session_manifest_resolver(self._base_dir)
         self._live_registry = live_registry or ArenaVisualLiveRegistry()
         self._action_submitter = action_submitter

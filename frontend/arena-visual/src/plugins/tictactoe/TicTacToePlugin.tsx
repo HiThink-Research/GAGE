@@ -30,11 +30,14 @@ export function TicTacToePlugin({
 
   return (
     <BoardGrid
+      variant="tictactoe"
       gameLabel="Tic-Tac-Toe"
       actorLabel={actorLabel}
       boardSize={boardScene.board.size}
+      coordScheme={boardScene.board.coordScheme}
       cells={boardScene.board.cells}
       players={boardScene.players}
+      status={boardScene.status}
       legalCoords={legalCoords}
       canSubmitMoves={session.scheduling.acceptsHumanIntent}
       onSubmitMove={(coord) => {

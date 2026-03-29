@@ -51,9 +51,8 @@ export function SessionPage() {
         <p className="eyebrow">Session Workspace</p>
         <h1>{sessionId ?? "Unknown session"}</h1>
         <p className="hero-copy">
-          The host store, gateway client, and plugin registry are now wired.
-          The next slices will swap these placeholder surfaces for real game
-          renderers.
+          The arena host is rendering the active plugin, synchronized timeline,
+          shared controls, and observer-aware inspector for this session.
         </p>
       </section>
 

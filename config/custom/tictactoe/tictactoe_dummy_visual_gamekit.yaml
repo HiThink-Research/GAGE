@@ -1,0 +1,45 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: tictactoe_dummy_visual_gamekit
+  description: >
+    GameArena Tic-Tac-Toe manual smoke config that keeps both seats deterministic
+    while exercising the arena_visual runtime and browser host.
+
+datasets:
+  - dataset_id: tictactoe_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_TicTacToe.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: tictactoe_dummy_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: tictactoe_dummy_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: tictactoe
+      env: tictactoe_standard
+      runtime_overrides:
+        coord_scheme: ROW_COL
+      visualizer:
+        enabled: true
+        title: GAGE Tic-Tac-Toe Board
+        launch_browser: true
+        mode: arena_visual
+        port: 5802
+        linger_after_finish_s: 15.0
+      players:
+        - seat: x
+          player_id: X
+          player_kind: dummy
+          actions: ["1,1", "2,2", "3,3"]
+        - seat: o
+          player_id: O
+          player_kind: dummy
+          actions: ["1,2", "1,3"]

@@ -35,11 +35,14 @@ export function GomokuPlugin({
 
   return (
     <BoardGrid
+      variant="gomoku"
       gameLabel="Gomoku"
       actorLabel={actorLabel}
       boardSize={boardScene.board.size}
+      coordScheme={boardScene.board.coordScheme}
       cells={boardScene.board.cells}
       players={boardScene.players}
+      status={boardScene.status}
       legalCoords={legalCoords}
       canSubmitMoves={session.scheduling.acceptsHumanIntent}
       onSubmitMove={(coord) => {

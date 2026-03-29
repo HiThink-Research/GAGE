@@ -1,5 +1,20 @@
 import type { VisualScene, VisualSession } from "../../gateway/types";
 
+const mahjongTileAssetModules = import.meta.glob(
+  "../../../../rlcard-showdown/src/assets/mahjong/*.svg",
+  {
+    eager: true,
+    import: "default",
+  },
+) as Record<string, string>;
+
+const mahjongTileAssets = Object.fromEntries(
+  Object.entries(mahjongTileAssetModules).map(([path, url]) => {
+    const fileName = path.split("/").pop() ?? path;
+    return [fileName.replace(".svg", ""), url];
+  }),
+);
+
 export interface TableHand {
   isVisible: boolean;
   cards: string[];
@@ -16,6 +31,11 @@ export interface TableSeat {
   playedCards: string[];
   publicNotes: string[];
   hand: TableHand;
+}
+
+interface TableChatEntry {
+  playerId: string;
+  text: string;
 }
 
 export interface TableSceneData {
@@ -35,9 +55,15 @@ export interface TableSceneData {
     lastMove: string | null;
     landlordId: string | null;
   };
+  panels: {
+    chatLog: TableChatEntry[];
+  };
 }
 
+export type TableVariant = "doudizhu" | "mahjong";
+
 interface TableLayoutProps {
+  variant: TableVariant;
   gameLabel: string;
   actorLabel: string;
   tableScene: TableSceneData;
@@ -86,6 +112,19 @@ function readHand(value: unknown): TableHand {
   };
 }
 
+function readChatLog(value: unknown): TableChatEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(isRecord)
+    .map((entry) => ({
+      playerId: readString(entry.playerId) ?? "system",
+      text: readString(entry.text) ?? "",
+    }))
+    .filter((entry) => entry.text !== "");
+}
+
 export function readTableScene(scene?: VisualScene): TableSceneData | null {
   if (!scene || scene.kind !== "table" || !isRecord(scene.body)) {
     return null;
@@ -113,6 +152,7 @@ export function readTableScene(scene?: VisualScene): TableSceneData | null {
 
   const center = table.center;
   const status = isRecord(body.status) ? body.status : {};
+  const panels = isRecord(body.panels) ? body.panels : {};
 
   return {
     table: {
@@ -130,6 +170,9 @@ export function readTableScene(scene?: VisualScene): TableSceneData | null {
       moveCount: readNumber(status.moveCount),
       lastMove: readString(status.lastMove),
       landlordId: readString(status.landlordId),
+    },
+    panels: {
+      chatLog: readChatLog(panels.chatLog),
     },
   };
 }
@@ -185,20 +228,220 @@ export function formatTableActorLabel(
   return "Active player: waiting";
 }
 
-function renderHandSummary(hand: TableHand): string {
-  if (hand.isVisible && hand.cards.length > 0) {
-    return hand.cards.join(" ");
+function resolveSeatAnchor(layout: string, seatId: string, index: number): "top" | "right" | "bottom" | "left" {
+  const normalizedSeatId = seatId.trim().toLowerCase();
+  if (layout === "three-seat") {
+    if (normalizedSeatId === "bottom") {
+      return "bottom";
+    }
+    if (normalizedSeatId === "left") {
+      return "left";
+    }
+    if (normalizedSeatId === "right") {
+      return "right";
+    }
+    return ["bottom", "left", "right"][index % 3] as "bottom" | "left" | "right";
   }
-  if (!hand.isVisible && hand.maskedCount > 0) {
-    return `Hidden hand · ${hand.maskedCount} cards`;
+
+  if (normalizedSeatId === "south" || normalizedSeatId === "bottom") {
+    return "bottom";
   }
-  if (!hand.isVisible) {
-    return "Hidden hand";
+  if (normalizedSeatId === "west" || normalizedSeatId === "left") {
+    return "left";
   }
-  return "No cards";
+  if (normalizedSeatId === "north" || normalizedSeatId === "top") {
+    return "top";
+  }
+  if (normalizedSeatId === "east" || normalizedSeatId === "right") {
+    return "right";
+  }
+  return ["bottom", "right", "top", "left"][index % 4] as "bottom" | "right" | "top" | "left";
+}
+
+function isMahjongTileCode(value: string): boolean {
+  const normalized = value.trim();
+  return /^[BCD][1-9]$/i.test(normalized) || /^(East|South|West|North|Green|Red|White)$/i.test(normalized);
+}
+
+function isDoudizhuJoker(card: string): boolean {
+  return card === "BJ" || card === "RJ" || card === "B" || card === "R";
+}
+
+function isDoudizhuRed(card: string): boolean {
+  return card.startsWith("H") || card.startsWith("D") || card === "RJ" || card === "R";
+}
+
+function resolveDoudizhuCardLabel(card: string): string {
+  if (card === "BJ") {
+    return "Black Joker";
+  }
+  if (card === "RJ") {
+    return "Red Joker";
+  }
+  return card;
+}
+
+function resolveDoudizhuRank(card: string): string {
+  if (card.length === 1) {
+    return card.toUpperCase();
+  }
+  if (isDoudizhuJoker(card)) {
+    return card.startsWith("R") ? "RJ" : "BJ";
+  }
+  return card.slice(-1).toUpperCase();
+}
+
+function resolveDoudizhuSuit(card: string): string {
+  if (card.length === 1 || isDoudizhuJoker(card)) {
+    return "";
+  }
+  const suit = card.charAt(0).toUpperCase();
+  if (suit === "H") {
+    return "♥";
+  }
+  if (suit === "D") {
+    return "♦";
+  }
+  if (suit === "S") {
+    return "♠";
+  }
+  if (suit === "C") {
+    return "♣";
+  }
+  return "";
+}
+
+function DoudizhuCard({
+  card,
+  faceDown = false,
+}: {
+  card: string;
+  faceDown?: boolean;
+}) {
+  if (faceDown) {
+    return <div className="table-card table-card--back" aria-hidden="true" />;
+  }
+
+  const rank = resolveDoudizhuRank(card);
+  const suit = resolveDoudizhuSuit(card);
+  const className = [
+    "table-card",
+    isDoudizhuJoker(card) ? "table-card--joker" : "",
+    isDoudizhuRed(card) ? "table-card--red" : "table-card--black",
+  ]
+    .filter((name) => name !== "")
+    .join(" ");
+
+  return (
+    <div className={className} aria-label={`Doudizhu card ${resolveDoudizhuCardLabel(card)}`}>
+      <span className="table-card__rank">{rank}</span>
+      <span className="table-card__suit">{suit || "•"}</span>
+    </div>
+  );
+}
+
+function MahjongTile({
+  tile,
+  hidden = false,
+}: {
+  tile: string;
+  hidden?: boolean;
+}) {
+  const assetKey = hidden ? "Back" : tile;
+  const src = mahjongTileAssets[assetKey] ?? null;
+
+  return (
+    <div
+      className={`table-tile ${hidden ? "table-tile--back" : ""}`}
+      aria-hidden={hidden ? "true" : undefined}
+    >
+      {src ? (
+        <>
+          <img src={src} alt={tile} />
+          <span className="table-visually-hidden">{tile}</span>
+        </>
+      ) : (
+        <span>{hidden ? "🀫" : tile}</span>
+      )}
+    </div>
+  );
+}
+
+function renderMaskedStack(
+  variant: TableVariant,
+  maskedCount: number,
+) {
+  const previewCount = Math.min(Math.max(maskedCount, 1), 3);
+  return (
+    <div className="table-stack table-stack--masked">
+      {Array.from({ length: previewCount }, (_, index) =>
+        variant === "doudizhu" ? (
+          <DoudizhuCard key={`back-${index}`} card="Back" faceDown={true} />
+        ) : (
+          <MahjongTile key={`back-${index}`} tile="Back" hidden={true} />
+        ),
+      )}
+      <p className="table-stack__caption">
+        {maskedCount > 0 ? `Hidden hand · ${maskedCount} cards` : "Hidden hand"}
+      </p>
+    </div>
+  );
+}
+
+function renderVisibleStack(
+  variant: TableVariant,
+  cards: string[],
+) {
+  if (cards.length === 0) {
+    return <p className="table-stack__caption">No cards</p>;
+  }
+
+  return (
+    <div className={`table-stack table-stack--${variant}`}>
+      {cards.map((card, index) =>
+        variant === "doudizhu" ? (
+          <DoudizhuCard key={`${card}-${index}`} card={card} />
+        ) : (
+          <MahjongTile key={`${card}-${index}`} tile={card} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function renderSeatHand(seat: TableSeat, variant: TableVariant) {
+  if (!seat.hand.isVisible) {
+    return renderMaskedStack(variant, seat.hand.maskedCount);
+  }
+  return renderVisibleStack(variant, seat.hand.cards);
+}
+
+function renderSeatPlayed(seat: TableSeat, variant: TableVariant) {
+  if (seat.playedCards.length === 0) {
+    return <p className="table-seat__placeholder">No public cards</p>;
+  }
+  return renderVisibleStack(variant, seat.playedCards);
+}
+
+function renderCenterCards(cards: string[], variant: TableVariant) {
+  if (cards.length === 0) {
+    return <p className="table-seat__placeholder">No center cards</p>;
+  }
+  return renderVisibleStack(variant, cards);
+}
+
+function renderActionVisual(actionText: string, variant: TableVariant) {
+  if (variant === "mahjong" && isMahjongTileCode(actionText)) {
+    return <MahjongTile tile={actionText} />;
+  }
+  if (variant === "doudizhu" && actionText.toLowerCase() !== "pass") {
+    return <DoudizhuCard card={actionText} />;
+  }
+  return <span className="table-layout__action-text">{actionText}</span>;
 }
 
 export function TableLayout({
+  variant,
   gameLabel,
   actorLabel,
   tableScene,
@@ -206,88 +449,162 @@ export function TableLayout({
   canSubmitActions,
   onSubmitAction,
 }: TableLayoutProps) {
-  const tableClassName = [
+  const surfaceClassName = [
     "table-layout-surface",
+    `table-layout-surface--${variant}`,
     `table-layout-surface--${tableScene.table.layout}`,
-  ].join(" ");
+  ]
+    .filter((name) => name !== "")
+    .join(" ");
+  const boardClassName = [
+    "table-layout__board",
+    `table-layout__board--${variant}`,
+    `table-layout__board--${tableScene.table.layout}`,
+  ]
+    .filter((name) => name !== "")
+    .join(" ");
 
   return (
-    <section className={tableClassName}>
+    <section className={surfaceClassName}>
       <div className="table-layout__header">
-        <p className="eyebrow">Table</p>
+        <div>
+          <p className="eyebrow">Table</p>
+          <h2 className="table-layout__title">{gameLabel} table</h2>
+        </div>
         <p className="table-layout__actor-label">{actorLabel}</p>
       </div>
-      <h2 className="table-layout__title">{gameLabel} table</h2>
 
-      <div className="table-layout__grid">
-        {tableScene.table.seats.map((seat) => {
-          const seatClassName = [
-            "table-seat",
-            seat.isActive ? "table-seat--active" : "",
-            seat.isObserver ? "table-seat--observer" : "",
-          ]
-            .filter((name) => name !== "")
-            .join(" ");
+      <div className="table-layout__layout">
+        <div className={boardClassName}>
+          {tableScene.table.seats.map((seat, index) => {
+            const anchor = resolveSeatAnchor(tableScene.table.layout, seat.seatId, index);
+            const seatClassName = [
+              "table-seat",
+              `table-seat--${variant}`,
+              `table-seat--${anchor}`,
+              seat.isActive ? "table-seat--active" : "",
+              seat.isObserver ? "table-seat--observer" : "",
+            ]
+              .filter((name) => name !== "")
+              .join(" ");
 
-          return (
-            <article key={seat.playerId} className={seatClassName}>
-              <header className="table-seat__header">
-                <div>
-                  <p className="table-seat__name">{seat.playerName}</p>
-                  <p className="table-seat__meta">{seat.seatId}</p>
+            return (
+              <article
+                key={seat.playerId}
+                className={seatClassName}
+                aria-label={`Table seat ${seat.seatId}`}
+              >
+                <header className="table-seat__header">
+                  <div>
+                    <p className="table-seat__name">{seat.playerName}</p>
+                    <p className="table-seat__meta">{seat.seatId}</p>
+                  </div>
+                  {seat.role ? <span className="table-seat__badge">{seat.role}</span> : null}
+                </header>
+
+                <div className="table-seat__zone" data-testid={`seat-${seat.playerId}-hand`}>
+                  {renderSeatHand(seat, variant)}
                 </div>
-                {seat.role ? <span className="table-seat__badge">{seat.role}</span> : null}
-              </header>
 
-              <div
-                className="table-seat__hand"
-                data-testid={`seat-${seat.playerId}-hand`}
-              >
-                {renderHandSummary(seat.hand)}
-              </div>
+                <div className="table-seat__zone table-seat__zone--played">
+                  {renderSeatPlayed(seat, variant)}
+                </div>
 
-              <div className="table-seat__played">
-                {seat.playedCards.length > 0 ? seat.playedCards.join(" ") : "No public cards"}
-              </div>
+                <div className="table-seat__notes" data-testid={`seat-${seat.playerId}-notes`}>
+                  {seat.publicNotes.length > 0 ? (
+                    <div className="table-seat__note-list">
+                      {seat.publicNotes.map((note) => (
+                        <span key={note} className="table-seat__note-chip">
+                          {note}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    "No notes"
+                  )}
+                </div>
+              </article>
+            );
+          })}
 
-              <div
-                className="table-seat__notes"
-                data-testid={`seat-${seat.playerId}-notes`}
-              >
-                {seat.publicNotes.length > 0 ? seat.publicNotes.join(" · ") : "No notes"}
-              </div>
-            </article>
-          );
-        })}
-      </div>
-
-      <section className="table-layout__center">
-        <p className="table-layout__center-label">{tableScene.table.center.label}</p>
-        <div className="table-layout__center-cards" data-testid="table-center-cards">
-          {tableScene.table.center.cards.length > 0
-            ? tableScene.table.center.cards.join(" ")
-            : "No center cards"}
+          <section className={`table-layout__center table-layout__center--${variant}`}>
+            <p className="table-layout__center-label">{tableScene.table.center.label}</p>
+            <div className="table-layout__center-cards" data-testid="table-center-cards">
+              {renderCenterCards(tableScene.table.center.cards, variant)}
+            </div>
+            <div className="table-layout__center-meta">
+              {tableScene.status.landlordId ? (
+                <span className="table-layout__pill">Landlord: {tableScene.status.landlordId}</span>
+              ) : null}
+              {tableScene.status.lastMove ? (
+                <span className="table-layout__pill">Last move: {tableScene.status.lastMove}</span>
+              ) : null}
+            </div>
+          </section>
         </div>
-        {tableScene.table.center.history.length > 0 ? (
-          <div className="table-layout__history">
-            {tableScene.table.center.history.join(" · ")}
-          </div>
-        ) : null}
-      </section>
+
+        <aside className="table-layout__sidebar">
+          <section className="table-layout__summary">
+            <p className="eyebrow">Snapshot</p>
+            <dl className="table-layout__summary-list">
+              <div>
+                <dt>Move count</dt>
+                <dd>{tableScene.status.moveCount}</dd>
+              </div>
+              <div>
+                <dt>Active player</dt>
+                <dd>{tableScene.status.activePlayerId ?? "Waiting"}</dd>
+              </div>
+              <div>
+                <dt>Observer</dt>
+                <dd>{tableScene.status.observerPlayerId ?? "Spectator"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section className="table-layout__panel">
+            <p className="table-layout__panel-title">History</p>
+            <div className="table-layout__panel-body">
+              {tableScene.table.center.history.length > 0 ? (
+                tableScene.table.center.history.map((entry) => (
+                  <p key={entry}>{entry}</p>
+                ))
+              ) : (
+                <p>No history yet</p>
+              )}
+            </div>
+          </section>
+
+          <section className="table-layout__panel">
+            <p className="table-layout__panel-title">Table talk</p>
+            <div className="table-layout__panel-body">
+              {tableScene.panels.chatLog.length > 0 ? (
+                tableScene.panels.chatLog.map((entry, index) => (
+                  <p key={`${entry.playerId}-${index}`}>
+                    <strong>{entry.playerId}</strong>: {entry.text}
+                  </p>
+                ))
+              ) : (
+                <p>No table talk</p>
+              )}
+            </div>
+          </section>
+        </aside>
+      </div>
 
       <div className="table-layout__actions">
         {actionTexts.map((actionText) => (
           <button
             key={actionText}
             type="button"
-            className="table-layout__action-chip"
+            className={`table-layout__action-chip table-layout__action-chip--${variant}`}
             aria-label={`Play ${actionText}`}
             disabled={!canSubmitActions}
             onClick={() => {
               onSubmitAction(actionText);
             }}
           >
-            {actionText}
+            {renderActionVisual(actionText, variant)}
           </button>
         ))}
       </div>

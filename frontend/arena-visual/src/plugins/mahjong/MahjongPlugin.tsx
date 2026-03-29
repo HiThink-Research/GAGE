@@ -30,6 +30,7 @@ export function MahjongPlugin({
 
   return (
     <TableLayout
+      variant="mahjong"
       gameLabel="Mahjong"
       actorLabel={actorLabel}
       tableScene={tableScene}

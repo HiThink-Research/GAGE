@@ -58,4 +58,49 @@ describe("DoudizhuPlugin", () => {
       actionText: "pass",
     });
   });
+
+  it("renders a rich table with anchored seats, card blocks, and history panels", () => {
+    render(
+      <DoudizhuPlugin
+        session={{
+          sessionId: "doudizhu-sample",
+          gameId: "doudizhu",
+          pluginId: "arena.visualization.doudizhu.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "paused",
+            cursorTs: 1007,
+            cursorEventSeq: 7,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={doudizhuScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByLabelText("Table seat bottom")).toBeInTheDocument();
+    expect(screen.getByLabelText("Table seat left")).toBeInTheDocument();
+    expect(screen.getByText("landlord")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Doudizhu card 3").length).toBeGreaterThan(0);
+    expect(screen.getByText("player_0: 3")).toBeInTheDocument();
+    expect(screen.getByText(/watch this/i)).toBeInTheDocument();
+  });
 });

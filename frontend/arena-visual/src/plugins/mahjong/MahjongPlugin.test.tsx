@@ -57,4 +57,48 @@ describe("MahjongPlugin", () => {
     fireEvent.click(playButton);
     expect(submitInput).not.toHaveBeenCalled();
   });
+
+  it("renders a rich table with compass seats, tile art, and meld panels", () => {
+    render(
+      <MahjongPlugin
+        session={{
+          sessionId: "mahjong-sample",
+          gameId: "mahjong",
+          pluginId: "arena.visualization.mahjong.table_v1",
+          lifecycle: "closed",
+          playback: {
+            mode: "paused",
+            cursorTs: 1009,
+            cursorEventSeq: 9,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "",
+            observerKind: "spectator",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "completed",
+            acceptsHumanIntent: false,
+            activeActorId: "east",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={mahjongScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByLabelText("Table seat east")).toBeInTheDocument();
+    expect(screen.getByLabelText("Table seat south")).toBeInTheDocument();
+    expect(screen.getByText("Discards")).toBeInTheDocument();
+    expect(screen.getAllByAltText("B1").length).toBeGreaterThan(0);
+    expect(screen.getByText("Pong C3")).toBeInTheDocument();
+  });
 });

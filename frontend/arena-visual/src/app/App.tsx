@@ -9,8 +9,8 @@ function HostHome() {
         <p className="eyebrow">Independent Arena Workspace</p>
         <h1>Arena Visual Host</h1>
         <p className="hero-copy">
-          Open a session artifact to start exploring runs, frames, and
-          diagnostics from a dedicated visual workspace.
+          Open a live or recorded session to inspect timelines, rich game
+          stages, observer views, and action diagnostics from one workspace.
         </p>
       </section>
 
@@ -18,15 +18,15 @@ function HostHome() {
         <article className="panel-card">
           <h2>Recent Sessions</h2>
           <p>
-            Task 7 will connect the session list, storage, and gateway-backed
-            metadata.
+            Session artifacts can be opened directly through their viewer URLs
+            while the host shell grows toward a browsable session index.
           </p>
         </article>
         <article className="panel-card">
           <h2>Workspace Regions</h2>
           <p>
-            The stage, timeline, and inspector panels will land here once the
-            data layer is wired in.
+            Stage, timeline, controls, and shared inspector panels already run
+            through the unified arena gateway and plugin host.
           </p>
         </article>
       </section>
@@ -40,7 +40,7 @@ export function App() {
       <header className="app-shell__header">
         <div>
           <p className="eyebrow">Arena Visual</p>
-          <p className="app-shell__title">Host shell scaffold</p>
+          <p className="app-shell__title">Unified session workspace</p>
         </div>
         <nav className="app-shell__nav" aria-label="Primary">
           <NavLink
@@ -58,7 +58,7 @@ export function App() {
               isActive ? "app-shell__nav-link is-active" : "app-shell__nav-link"
             }
           >
-            Session stub
+            Demo session
           </NavLink>
         </nav>
       </header>

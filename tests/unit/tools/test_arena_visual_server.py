@@ -5,6 +5,12 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from gage_eval.game_kits.board_game.gomoku.visualization import (
+    VISUALIZATION_SPEC as GOMOKU_VISUALIZATION_SPEC,
+)
+from gage_eval.game_kits.board_game.tictactoe.visualization import (
+    VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
+)
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
 from gage_eval.role.arena.visualization.http_server import ArenaVisualHTTPServer
@@ -244,6 +250,43 @@ def _build_repeated_live_visual_recorder(
     return recorder
 
 
+def _persist_runtime_style_board_session(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    game_id: str,
+    plugin_id: str,
+    snapshot_body: dict[str, object],
+) -> Path:
+    replay_path = tmp_path / "runs" / session_id / "replays" / session_id / "replay.json"
+    replay_path.parent.mkdir(parents=True, exist_ok=True)
+    replay_path.write_text(
+        json.dumps({"schema": "gage_replay/v1", "artifacts": {}}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=plugin_id,
+        game_id=game_id,
+        scheduling_family="turn",
+        session_id=session_id,
+    )
+    recorder.record_snapshot(
+        ts_ms=1005,
+        step=int(snapshot_body.get("step", 1) or 1),
+        tick=int(snapshot_body.get("tick", 1) or 1),
+        snapshot=snapshot_body,
+        anchor=True,
+    )
+    recorder.record_result(
+        ts_ms=1006,
+        step=int(snapshot_body.get("step", 1) or 1),
+        tick=int(snapshot_body.get("tick", 1) or 1),
+        result={"result": "completed", "reason": "terminal"},
+    )
+    return recorder.persist(replay_path).manifest_path
+
+
 def test_arena_visual_http_server_serves_session_timeline_scene_media_and_markers(tmp_path: Path) -> None:
     _persist_visual_session(tmp_path)
     submitted_actions: list[tuple[str, str | None, dict[str, object]]] = []
@@ -465,6 +508,94 @@ def test_arena_visual_http_server_serves_registered_live_session_without_manifes
         assert str(primary_media["url"]).startswith("data:image/png;base64,")
         assert media_payload["transport"] == "http_pull"
         assert media_content == b"foo"
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_resolves_visualization_spec_per_recorded_session(tmp_path: Path) -> None:
+    _persist_runtime_style_board_session(
+        tmp_path,
+        session_id="gomoku-runtime",
+        game_id="gomoku",
+        plugin_id=GOMOKU_VISUALIZATION_SPEC.plugin_id,
+        snapshot_body={
+            "step": 5,
+            "tick": 5,
+            "playerId": None,
+            "observation": {
+                "board_text": "   A B C\n 3 . . .\n 2 . W .\n 1 B . .",
+                "legal_moves": ["B1", "C1", "A3"],
+                "active_player": "White",
+                "last_move": "B2",
+                "metadata": {
+                    "board_size": 3,
+                    "move_count": 2,
+                    "player_id": "Black",
+                    "player_ids": ["Black", "White"],
+                    "player_names": {"Black": "Black", "White": "White"},
+                    "coord_scheme": "A1",
+                    "winning_line": ["A1", "B2"],
+                },
+                "legal_actions": {"items": ["B1", "C1", "A3"]},
+                "context": {"mode": "turn", "step": 5},
+            },
+            "arenaTrace": None,
+            "result": None,
+        },
+    )
+    _persist_runtime_style_board_session(
+        tmp_path,
+        session_id="tictactoe-runtime",
+        game_id="tictactoe",
+        plugin_id=TICTACTOE_VISUALIZATION_SPEC.plugin_id,
+        snapshot_body={
+            "step": 3,
+            "tick": 3,
+            "playerId": None,
+            "observation": {
+                "board_text": "   1 2 3\n 3 . . .\n 2 . O .\n 1 X . .",
+                "legal_moves": ["1,2", "1,3", "3,1"],
+                "active_player": "player_1",
+                "last_move": "2,2",
+                "metadata": {
+                    "board_size": 3,
+                    "move_count": 2,
+                    "player_id": "player_0",
+                    "player_ids": ["player_0", "player_1"],
+                    "player_names": {"player_0": "Alpha", "player_1": "Beta"},
+                    "coord_scheme": "ROW_COL",
+                    "winning_line": ["1,1", "2,2", "3,3"],
+                },
+                "legal_actions": {"items": ["1,2", "1,3", "3,1"]},
+                "context": {"mode": "turn", "step": 3},
+            },
+            "arenaTrace": None,
+            "result": None,
+        },
+    )
+
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.start()
+    try:
+        host, port = server.server_address
+        gomoku_scene = _get_json(f"http://{host}:{port}/arena_visual/sessions/gomoku-runtime/scene?seq=2")
+        tictactoe_scene = _get_json(f"http://{host}:{port}/arena_visual/sessions/tictactoe-runtime/scene?seq=2")
+
+        gomoku_cells = {cell["coord"]: cell for cell in gomoku_scene["body"]["board"]["cells"]}
+        assert gomoku_cells["A1"]["occupant"] == "B"
+        assert gomoku_cells["A1"]["playerId"] == "Black"
+        assert gomoku_scene["body"]["players"] == [
+            {"playerId": "Black", "playerName": "Black", "token": "B"},
+            {"playerId": "White", "playerName": "White", "token": "W"},
+        ]
+
+        tictactoe_cells = {cell["coord"]: cell for cell in tictactoe_scene["body"]["board"]["cells"]}
+        assert tictactoe_cells["1,1"]["occupant"] == "X"
+        assert tictactoe_cells["1,1"]["playerId"] == "player_0"
+        assert tictactoe_scene["body"]["players"] == [
+            {"playerId": "player_0", "playerName": "Alpha", "token": "X"},
+            {"playerId": "player_1", "playerName": "Beta", "token": "O"},
+        ]
     finally:
         server.stop()
 

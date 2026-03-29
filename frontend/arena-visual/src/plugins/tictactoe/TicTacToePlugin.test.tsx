@@ -59,4 +59,49 @@ describe("TicTacToePlugin", () => {
     fireEvent.click(actionButton);
     expect(submitInput).not.toHaveBeenCalled();
   });
+
+  it("renders rich board chrome with player cards, coordinate rails, and board summary", () => {
+    render(
+      <TicTacToePlugin
+        session={{
+          sessionId: "ttt-sample",
+          gameId: "tictactoe",
+          pluginId: "arena.visualization.tictactoe.board_v1",
+          lifecycle: "closed",
+          playback: {
+            mode: "paused",
+            cursorTs: 1003,
+            cursorEventSeq: 3,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "spectator-cam",
+            observerKind: "spectator"
+          },
+          scheduling: {
+            family: "turn",
+            phase: "completed",
+            acceptsHumanIntent: false,
+            activeActorId: "player_1"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={tictactoeScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByText("X mark")).toBeInTheDocument();
+    expect(screen.getByText("O mark")).toBeInTheDocument();
+    expect(screen.getByText("Winning line")).toBeInTheDocument();
+    expect(screen.getByText("1,1 -> 2,2 -> 3,3")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Board column 1")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Board row 3")).toHaveLength(2);
+  });
 });

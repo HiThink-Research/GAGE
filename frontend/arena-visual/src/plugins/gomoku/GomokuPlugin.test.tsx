@@ -60,4 +60,49 @@ describe("GomokuPlugin", () => {
       coord: "B1",
     });
   });
+
+  it("renders rich board chrome with player cards, coordinate rails, and board summary", () => {
+    render(
+      <GomokuPlugin
+        session={{
+          sessionId: "gomoku-sample",
+          gameId: "gomoku",
+          pluginId: "arena.visualization.gomoku.board_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "paused",
+            cursorTs: 1005,
+            cursorEventSeq: 5,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "Black",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "White"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={gomokuScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByText("Black stone")).toBeInTheDocument();
+    expect(screen.getByText("White stone")).toBeInTheDocument();
+    expect(screen.getByText("Winning line")).toBeInTheDocument();
+    expect(screen.getByText("A1 -> B2")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Board column A")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Board row 3")).toHaveLength(2);
+  });
 });

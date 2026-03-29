@@ -139,7 +139,7 @@ describe("App", () => {
       screen.getByRole("heading", { name: /arena visual host/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/open a session artifact to start exploring/i),
+      screen.getByText(/open a live or recorded session to inspect timelines/i),
     ).toBeInTheDocument();
   });
 
@@ -153,7 +153,7 @@ describe("App", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("link", { name: /session stub/i }));
+    fireEvent.click(screen.getByRole("link", { name: /demo session/i }));
 
     await waitFor(() => {
       expect(store.loadSession).toHaveBeenCalledWith({ sessionId: "demo-session" });

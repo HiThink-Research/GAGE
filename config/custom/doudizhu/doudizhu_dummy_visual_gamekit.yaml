@@ -1,0 +1,47 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: doudizhu_dummy_visual_gamekit
+  description: >
+    GameArena 斗地主 manual smoke config that keeps every seat deterministic
+    while exercising the arena_visual runtime and browser host.
+
+datasets:
+  - dataset_id: doudizhu_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Doudizhu_GameKit.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: doudizhu_dummy_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: doudizhu_dummy_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: doudizhu
+      env: classic_3p
+      visualizer:
+        enabled: true
+        title: GAGE Doudizhu Replay
+        launch_browser: true
+        mode: arena_visual
+        port: 5803
+        linger_after_finish_s: 15.0
+      players:
+        - seat: landlord
+          player_id: landlord
+          player_kind: dummy
+          actions: ["3", "4"]
+        - seat: farmer_left
+          player_id: farmer_left
+          player_kind: dummy
+          actions: ["pass"]
+        - seat: farmer_right
+          player_id: farmer_right
+          player_kind: dummy
+          actions: ["pass"]
