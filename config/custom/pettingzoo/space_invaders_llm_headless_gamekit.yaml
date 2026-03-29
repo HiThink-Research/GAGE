@@ -41,12 +41,16 @@ role_adapters:
     params:
       game_kit: pettingzoo
       env: space_invaders
+      runtime_overrides:
+        backend_mode: dummy
+        include_raw_obs: true
+        use_action_meanings: true
       players:
         - seat: pilot_0
-          player_id: pilot_alpha
+          player_id: pilot_0
           player_kind: llm
           backend_id: local_qwen35_litellm_backend
         - seat: pilot_1
-          player_id: pilot_beta
+          player_id: pilot_1
           player_kind: dummy
           actions: ["LEFT", "NOOP"]

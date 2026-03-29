@@ -25,6 +25,7 @@ from gage_eval.role.arena.types import ArenaAction
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.core.players import PlayerBindingSpec
 from gage_eval.role.arena.visualization.contracts import ControlCommand
+from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
     DuelMap01Environment,
 )
@@ -924,6 +925,7 @@ def test_game_session_arena_visual_requires_explicit_finish_after_post_end_inter
     assert len(runtime_hub.visualizer.live_sources) == 1
     live_source = runtime_hub.visualizer.live_sources[0]
     time.sleep(0.02)
+    assert getattr(live_source, "load_session")().lifecycle == "live_ended"
     getattr(live_source, "apply_control_command")(ControlCommand(command_type="replay"))
 
     finalize_thread.join(timeout=0.15)
@@ -1030,6 +1032,55 @@ def test_game_session_advance_uses_environment_reported_progress() -> None:
     session.advance()
     assert session.tick == 1
     assert session.step == 1
+
+
+def test_game_session_advance_records_fresh_visual_snapshot_from_environment_frame() -> None:
+    class FakeEnvironment:
+        def consume_session_progress_delta(self) -> int:
+            return 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "active_player_id": "pilot_1",
+                "board_text": "fresh frame state",
+                "legal_actions": {"items": ["RIGHT"]},
+                "last_move": "RIGHT",
+                "reward": 1.0,
+                "move_count": 1,
+                "metadata": {"reward": 1.0, "last_move": "RIGHT"},
+            }
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.pettingzoo.frame_v1",
+        game_id="pettingzoo",
+        scheduling_family="agent_cycle",
+        session_id="sample-visual-snapshot",
+        visual_kind="frame",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="pettingzoo", env="space_invaders"),
+        environment=FakeEnvironment(),
+        visual_recorder=recorder,
+    )
+    session._last_observation = {  # noqa: SLF001
+        "board_text": "stale observation state",
+        "active_player": "pilot_0",
+        "legal_actions": {"items": ["NOOP"]},
+        "view": {"text": "stale observation state"},
+        "context": {"step": 0},
+    }
+
+    session.advance()
+
+    snapshot = recorder.export_live_state().snapshot_payloads[0]["snapshot"]
+    observation = snapshot["observation"]
+
+    assert observation["board_text"] == "fresh frame state"
+    assert observation["active_player"] == "pilot_1"
+    assert observation["legal_actions"] == {"items": ["RIGHT"]}
 
 
 def test_vizdoom_realtime_session_max_steps_counts_backend_flush_rounds() -> None:

@@ -26,6 +26,8 @@ role_adapters:
     params:
       game_kit: pettingzoo
       env: space_invaders
+      runtime_overrides:
+        backend_mode: dummy
       players:
         - seat: pilot_0
           player_id: pilot_alpha

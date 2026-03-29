@@ -395,18 +395,28 @@ def _merge_mapping_payloads(*payloads: Any) -> dict[str, Any]:
 
 def _build_projection_source(*payloads: Any) -> dict[str, Any]:
     source = _merge_mapping_payloads(*payloads)
-    observation = _mapping_or_empty(source.get("observation"))
-    if observation:
-        source.update(dict(observation))
+    observation_layers = _flatten_observation_layers(source.get("observation"))
+    for observation_layer in observation_layers:
+        source.update(dict(observation_layer))
+    observation = observation_layers[-1] if observation_layers else {}
     metadata = _mapping_or_empty(source.get("metadata"))
     if not metadata:
-        metadata = _mapping_or_empty(observation.get("metadata"))
+        for observation_layer in reversed(observation_layers):
+            metadata = _mapping_or_empty(observation_layer.get("metadata"))
+            if metadata:
+                break
     context = _mapping_or_empty(source.get("context"))
     if not context:
-        context = _mapping_or_empty(observation.get("context"))
+        for observation_layer in reversed(observation_layers):
+            context = _mapping_or_empty(observation_layer.get("context"))
+            if context:
+                break
     view = _mapping_or_empty(source.get("view"))
     if not view:
-        view = _mapping_or_empty(observation.get("view"))
+        for observation_layer in reversed(observation_layers):
+            view = _mapping_or_empty(observation_layer.get("view"))
+            if view:
+                break
 
     _merge_defaults(source, observation)
     _merge_defaults(source, metadata)
@@ -420,6 +430,18 @@ def _build_projection_source(*payloads: Any) -> dict[str, Any]:
     if view:
         source["view"] = view
     return source
+
+
+def _flatten_observation_layers(value: Any) -> tuple[dict[str, Any], ...]:
+    layers: list[dict[str, Any]] = []
+    current = _mapping_or_empty(value)
+    while current:
+        layers.append(current)
+        nested = _mapping_or_empty(current.get("observation"))
+        if not nested:
+            break
+        current = nested
+    return tuple(layers)
 
 
 def _merge_defaults(target: dict[str, Any], payload: Mapping[str, Any]) -> None:

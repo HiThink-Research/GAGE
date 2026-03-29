@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { VisualScene, VisualSession } from "../../gateway/types";
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
@@ -212,6 +213,22 @@ function resolveImageClassName(fit: string): string {
     : "frame-surface__image frame-surface__image--contain";
 }
 
+function resolveViewportStyle(viewport: FrameViewport | null): CSSProperties {
+  if (!viewport) {
+    return {
+      width: "min(100%, 26rem)",
+      maxWidth: "100%",
+    };
+  }
+
+  const scaledWidth = Math.min(Math.max(Math.round(viewport.width * 2.25), 320), 560);
+  return {
+    width: "min(100%, 26rem)",
+    maxWidth: `${scaledWidth}px`,
+    aspectRatio: `${viewport.width} / ${viewport.height}`,
+  };
+}
+
 export function FrameSurface({
   gameLabel,
   session,
@@ -243,6 +260,7 @@ export function FrameSurface({
   });
   const imageClassName = resolveImageClassName(frameScene.frame.fit);
   const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
+  const viewportStyle = resolveViewportStyle(frameScene.frame.viewport);
 
   return (
     <section className="frame-surface">
@@ -255,7 +273,11 @@ export function FrameSurface({
         <p className="frame-surface__subtitle">{frameScene.frame.subtitle}</p>
       ) : null}
 
-      <div className="frame-surface__viewport" data-testid="frame-surface-viewport">
+      <div
+        className="frame-surface__viewport"
+        data-testid="frame-surface-viewport"
+        style={viewportStyle}
+      >
         {imageSrc ? (
           <img
             alt={frameScene.frame.altText}

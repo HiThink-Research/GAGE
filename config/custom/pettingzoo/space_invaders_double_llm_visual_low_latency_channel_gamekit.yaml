@@ -2,10 +2,11 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: space_invaders_llm_visual_gamekit
+  name: space_invaders_double_llm_visual_low_latency_channel_gamekit
   description: >
-    GameArena Space Invaders manual smoke config that binds one LLM player
-    through the visualization-ready GameKit PlayerDriver runtime and keeps the opponent deterministic.
+    GameArena Space Invaders visual smoke config that binds both pilot seats
+    to the local LiteLLM backend while exercising the arena_visual web app
+    over the low_latency_channel live scene path.
 
 datasets:
   - dataset_id: space_invaders_gamekit_fixture_only
@@ -33,16 +34,17 @@ backends:
 custom:
   steps:
     - step: arena
-      adapter_id: space_invaders_llm_visual_gamekit_arena
+      adapter_id: space_invaders_double_llm_visual_low_latency_channel_gamekit_arena
 
 role_adapters:
-  - adapter_id: space_invaders_llm_visual_gamekit_arena
+  - adapter_id: space_invaders_double_llm_visual_low_latency_channel_gamekit_arena
     role_type: arena
     params:
       game_kit: pettingzoo
       env: space_invaders
       runtime_overrides:
         backend_mode: real
+        max_cycles: 32
         include_raw_obs: true
         use_action_meanings: true
       visualizer:
@@ -50,7 +52,8 @@ role_adapters:
         title: GAGE Space Invaders Arena Visual
         launch_browser: true
         mode: arena_visual
-        live_scene_scheme: http_pull
+        port: 5807
+        live_scene_scheme: low_latency_channel
         linger_after_finish_s: 15.0
       players:
         - seat: pilot_0
@@ -59,5 +62,5 @@ role_adapters:
           backend_id: local_qwen35_litellm_backend
         - seat: pilot_1
           player_id: pilot_1
-          player_kind: dummy
-          actions: ["LEFT", "NOOP"]
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend

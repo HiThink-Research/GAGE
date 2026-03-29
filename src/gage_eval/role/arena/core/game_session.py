@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import inspect
+import io
 import os
 import shutil
 import subprocess
@@ -34,6 +36,11 @@ from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecord
 from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.replay_schema_writer import update_replay_manifest_visual_session_ref
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
 
 if TYPE_CHECKING:
     from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
@@ -565,7 +572,12 @@ class GameSession:
                 "step": self.step,
                 "tick": self.tick,
                 "playerId": self._current_trace_entry.get("player_id") if self._current_trace_entry else None,
-                "observation": _visual_payload_snapshot(self._last_observation),
+                "observation": _build_visual_snapshot_observation(
+                    environment=self.environment,
+                    fallback_observation=self._last_observation,
+                    tick=self.tick,
+                    step=self.step,
+                ),
                 "arenaTrace": _visual_payload_snapshot(self.arena_trace[-1]) if self.arena_trace else None,
                 "result": _visual_payload_snapshot(self.final_result),
             },
@@ -1021,6 +1033,191 @@ def _normalize_frame_payload(payload: object) -> dict[str, Any]:
 
 def _visual_payload_snapshot(payload: object | None) -> object | None:
     return to_scene_json_safe(payload)
+
+
+def _build_visual_snapshot_observation(
+    *,
+    environment: object | None,
+    fallback_observation: object | None,
+    tick: int,
+    step: int,
+) -> object | None:
+    fallback_snapshot = _visual_payload_snapshot(fallback_observation)
+    frame_payload = _load_environment_frame_payload(environment)
+    if frame_payload is None:
+        return fallback_snapshot
+
+    observation: dict[str, Any] = {}
+    if isinstance(fallback_snapshot, Mapping):
+        observation.update(dict(fallback_snapshot))
+
+    active_player = (
+        _string_or_none(frame_payload.get("active_player_id"))
+        or _string_or_none(frame_payload.get("actor"))
+        or _string_or_none(frame_payload.get("active_player"))
+        or _string_or_none(observation.get("active_player"))
+    )
+    if active_player is not None:
+        observation["active_player"] = active_player
+
+    board_text = _string_or_none(frame_payload.get("board_text")) or _string_or_none(
+        observation.get("board_text")
+    )
+    if board_text is not None:
+        observation["board_text"] = board_text
+
+    last_move = _string_or_none(frame_payload.get("last_move")) or _string_or_none(
+        observation.get("last_move")
+    )
+    if last_move is not None:
+        observation["last_move"] = last_move
+
+    reward = frame_payload.get("reward")
+    if reward is not None:
+        observation["reward"] = reward
+
+    move_count = _coerce_int(frame_payload.get("move_count"))
+    if move_count is not None:
+        observation["move_count"] = move_count
+
+    metadata = _merge_snapshot_mapping(observation.get("metadata"), frame_payload.get("metadata"))
+    if reward is not None:
+        metadata.setdefault("reward", reward)
+    if last_move is not None:
+        metadata.setdefault("last_move", last_move)
+    if active_player is not None:
+        metadata.setdefault("player_id", active_player)
+    if metadata:
+        observation["metadata"] = metadata
+
+    legal_actions = frame_payload.get("legal_actions")
+    if isinstance(legal_actions, Mapping):
+        observation["legal_actions"] = dict(legal_actions)
+    else:
+        legal_moves = _coerce_string_sequence(frame_payload.get("legal_moves"))
+        if legal_moves:
+            observation["legal_moves"] = legal_moves
+            observation["legal_actions"] = {"items": legal_moves}
+
+    context = _merge_snapshot_mapping(observation.get("context"), None)
+    frame_tick = _coerce_int(frame_payload.get("tick"))
+    frame_step = _coerce_int(frame_payload.get("step"))
+    context["tick"] = frame_tick if frame_tick is not None else int(tick)
+    if move_count is not None:
+        context["step"] = move_count
+    elif frame_step is not None:
+        context["step"] = frame_step
+    else:
+        context["step"] = int(step)
+    if context:
+        observation["context"] = context
+
+    view = _merge_snapshot_mapping(observation.get("view"), frame_payload.get("view"))
+    if board_text is not None:
+        view.setdefault("text", board_text)
+    image_payload = _resolve_frame_image_payload(frame_payload)
+    if image_payload is not None:
+        view["image"] = image_payload
+    if view:
+        observation["view"] = view
+
+    return observation
+
+
+def _load_environment_frame_payload(environment: object | None) -> Mapping[str, Any] | None:
+    if environment is None:
+        return None
+    getter = getattr(environment, "get_last_frame", None)
+    if not callable(getter):
+        return None
+    try:
+        payload = getter()
+    except Exception:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    return payload
+
+
+def _merge_snapshot_mapping(primary: object | None, secondary: object | None) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    if isinstance(primary, Mapping):
+        merged.update(dict(primary))
+    if isinstance(secondary, Mapping):
+        merged.update(dict(secondary))
+    return merged
+
+
+def _coerce_string_sequence(value: object | None) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [text for item in value if (text := str(item).strip())]
+
+
+def _coerce_int(value: object | None) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _string_or_none(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _resolve_frame_image_payload(frame_payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    view_payload = frame_payload.get("view")
+    if isinstance(view_payload, Mapping):
+        image_payload = view_payload.get("image")
+        if isinstance(image_payload, Mapping):
+            data_url = _string_or_none(image_payload.get("data_url") or image_payload.get("dataUrl"))
+            if data_url is not None:
+                return dict(image_payload)
+
+    rgb_frame = frame_payload.get("_rgb")
+    if rgb_frame is None:
+        for key in ("rgb", "rgb_array", "frame_rgb"):
+            if frame_payload.get(key) is not None:
+                rgb_frame = frame_payload.get(key)
+                break
+    if rgb_frame is None:
+        return None
+
+    data_url = _encode_frame_data_url(rgb_frame)
+    if data_url is None:
+        return None
+
+    image_payload: dict[str, Any] = {"data_url": data_url}
+    shape = getattr(rgb_frame, "shape", None)
+    if isinstance(shape, (list, tuple)):
+        try:
+            image_payload["shape"] = [int(dim) for dim in shape]
+        except Exception:
+            pass
+    dtype = getattr(rgb_frame, "dtype", None)
+    if dtype is not None:
+        image_payload["dtype"] = str(dtype)
+    return image_payload
+
+
+def _encode_frame_data_url(frame: object) -> str | None:
+    if Image is None:
+        return None
+    try:
+        image = Image.fromarray(frame)
+        if image.mode not in {"RGB", "RGBA", "L"}:
+            image = image.convert("RGB")
+        elif image.mode == "RGBA":
+            image = image.convert("RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG", optimize=True)
+    except Exception:
+        return None
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def _build_display_id(

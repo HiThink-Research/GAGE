@@ -1325,7 +1325,7 @@ select {
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 18rem;
+  margin-inline: auto;
   overflow: hidden;
   border-radius: var(--radius-md);
   border: 1px solid rgba(46, 90, 69, 0.12);
@@ -1335,20 +1335,26 @@ select {
 }
 
 .frame-surface__image {
+  display: block;
   width: 100%;
-  height: 100%;
-  min-height: 18rem;
 }
 
 .frame-surface__image--contain {
   object-fit: contain;
+  height: auto;
+  max-height: min(70vh, 30rem);
 }
 
 .frame-surface__image--cover {
   object-fit: cover;
+  height: min(70vh, 30rem);
 }
 
 .frame-surface__fallback {
+  display: grid;
+  place-items: center;
+  min-height: 16rem;
+  width: 100%;
   color: rgba(245, 247, 241, 0.84);
 }
 

@@ -55,6 +55,7 @@ describe("PettingZooPlugin", () => {
     );
 
     await waitFor(() => expect(screen.getByTestId("frame-status-line")).toHaveTextContent("Tick 3"));
+    expect(screen.getByTestId("frame-surface-viewport")).toHaveStyle("width: min(100%, 26rem)");
     expect(screen.getByText("Space Invaders wave 3")).toBeInTheDocument();
 
     rerender(

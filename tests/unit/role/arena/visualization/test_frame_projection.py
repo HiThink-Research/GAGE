@@ -237,3 +237,70 @@ def test_retro_frame_projection_uses_single_player_status_and_controls() -> None
         {"id": "right", "label": "Move Right", "text": "Move Right", "hold_ticks": 6},
         {"id": "right_jump", "label": "Right + Jump", "text": "Right + Jump", "hold_ticks": 6},
     )
+
+
+def test_pettingzoo_frame_projection_unwraps_snapshot_observation_from_intent_event() -> None:
+    snapshot = {
+        "step": 3,
+        "tick": 3,
+        "move_count": 3,
+        "stream_id": "arena",
+        "last_move": "FIRE",
+        "observation": {
+            "board_text": "Space Invaders wave 3",
+            "active_player": "pilot_0",
+            "legal_moves": ["NOOP", "LEFT", "FIRE"],
+            "metadata": {
+                "env_id": "pettingzoo.atari.space_invaders_v2",
+                "player_id": "pilot_0",
+                "reward": 1.5,
+            },
+            "view": {
+                "text": "Space Invaders wave 3",
+            },
+            "context": {
+                "mode": "turn",
+                "step": 3,
+            },
+        },
+        "media": {
+            "primary": {
+                "mediaId": "pz-frame-3",
+                "transport": "artifact_ref",
+                "mimeType": "image/png",
+                "url": "frames/pz-frame-3.png",
+            }
+        },
+    }
+
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="pettingzoo-sample",
+            game_id="pettingzoo",
+            plugin_id=PETTINGZOO_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="pilot_0", observer_kind="player"),
+        ),
+        event=TimelineEvent(
+            seq=12,
+            ts_ms=2012,
+            type="action_intent",
+            label="action_intent",
+            payload={
+                "step": 3,
+                "tick": 3,
+                "playerId": "pilot_0",
+                "action": {"move": "FIRE"},
+                # Recorder action_intent events can wrap the full frame snapshot here.
+                "observation": snapshot,
+            },
+        ),
+        snapshot_body=snapshot,
+        visualization_spec=PETTINGZOO_VISUALIZATION_SPEC,
+    )
+
+    assert scene.body["status"]["activePlayerId"] == "pilot_0"
+    assert scene.legal_actions == (
+        {"id": "NOOP", "label": "NOOP", "text": "NOOP"},
+        {"id": "LEFT", "label": "LEFT", "text": "LEFT"},
+        {"id": "FIRE", "label": "FIRE", "text": "FIRE"},
+    )

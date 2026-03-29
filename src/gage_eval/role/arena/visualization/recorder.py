@@ -6,7 +6,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -369,8 +369,7 @@ class ArenaVisualSessionRecorder:
                 encoding="utf-8",
             )
 
-            self.lifecycle = "closed"
-            visual_session = self.build_visual_session()
+            visual_session = replace(self.build_visual_session(), lifecycle="closed")
             manifest_payload, index_payload = build_visual_session_manifest(
                 layout=layout,
                 visual_session=visual_session,
