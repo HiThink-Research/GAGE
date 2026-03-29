@@ -33,7 +33,11 @@ class _StubDoudizhuCore:
         self._terminal = False
         self._step_index = 0
         self._winner = None
-        self._hands = {0: "34", 1: "67", 2: "89"}
+        self._hands = {
+            0: "33456789TJQKABR22",
+            1: "55667789TJQKA2BR3",
+            2: "44778899TJQKA22BR",
+        }
         self._played_cards = {0: "", 1: "", 2: ""}
         self._trace: list[dict[str, Any]] = []
 

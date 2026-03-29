@@ -29,7 +29,29 @@
           "isObserver": true,
           "playedCards": ["3"],
           "publicNotes": [],
-          "hand": { "isVisible": true, "cards": ["3", "4"], "maskedCount": 0 }
+          "hand": {
+            "isVisible": true,
+            "cards": [
+              "3",
+              "4",
+              "5",
+              "6",
+              "7",
+              "8",
+              "9",
+              "10",
+              "J",
+              "Q",
+              "K",
+              "A",
+              "2",
+              "2",
+              "BlackJoker",
+              "RedJoker",
+              "3"
+            ],
+            "maskedCount": 0
+          }
         },
         {
           "seatId": "left",
@@ -40,7 +62,7 @@
           "isObserver": false,
           "playedCards": [],
           "publicNotes": [],
-          "hand": { "isVisible": false, "cards": [], "maskedCount": 2 }
+          "hand": { "isVisible": false, "cards": [], "maskedCount": 17 }
         },
         {
           "seatId": "right",
@@ -51,12 +73,12 @@
           "isObserver": false,
           "playedCards": [],
           "publicNotes": [],
-          "hand": { "isVisible": false, "cards": [], "maskedCount": 2 }
+          "hand": { "isVisible": false, "cards": [], "maskedCount": 17 }
         }
       ],
       "center": {
         "label": "Seen cards",
-        "cards": ["3"],
+        "cards": ["3", "4", "5"],
         "history": ["player_0: 3"]
       }
     },

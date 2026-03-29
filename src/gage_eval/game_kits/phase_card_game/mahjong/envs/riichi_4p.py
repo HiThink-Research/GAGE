@@ -23,6 +23,75 @@ _ACTION_ID_TO_RAW = {
     3: "winds-east",
     4: "dragons-red",
 }
+_INITIAL_HANDS = {
+    0: [
+        "bamboo-1",
+        "bamboo-2",
+        "bamboo-3",
+        "bamboo-4",
+        "bamboo-5",
+        "bamboo-9",
+        "characters-3",
+        "characters-4",
+        "characters-5",
+        "dots-2",
+        "dots-3",
+        "dots-4",
+        "winds-south",
+        "dragons-green",
+    ],
+    1: [
+        "bamboo-2",
+        "bamboo-3",
+        "bamboo-4",
+        "characters-2",
+        "characters-3",
+        "characters-4",
+        "characters-5",
+        "dots-5",
+        "dots-6",
+        "dots-7",
+        "winds-north",
+        "dragons-green",
+        "dragons-white",
+    ],
+    2: [
+        "bamboo-5",
+        "bamboo-6",
+        "bamboo-7",
+        "characters-6",
+        "characters-7",
+        "characters-8",
+        "dots-2",
+        "dots-3",
+        "dots-4",
+        "dots-8",
+        "dots-9",
+        "winds-west",
+        "dragons-white",
+    ],
+    3: [
+        "bamboo-6",
+        "bamboo-7",
+        "bamboo-8",
+        "characters-1",
+        "characters-2",
+        "characters-3",
+        "dots-6",
+        "dots-7",
+        "dots-8",
+        "winds-south",
+        "winds-west",
+        "winds-north",
+        "dragons-green",
+    ],
+}
+_TURN_DRAWS = {
+    1: "characters-1",
+    2: "dots-1",
+    3: "winds-east",
+    4: "dragons-red",
+}
 
 class _StubMahjongParser(StandardMahjongParser):
     def __init__(
@@ -51,10 +120,7 @@ class _StubMahjongCore:
         self._step_index = 0
         self._winner = None
         self._hands = {
-            0: ["bamboo-1", "dragons-red"],
-            1: ["characters-1"],
-            2: ["dots-1"],
-            3: ["winds-east"],
+            player_id: list(hand) for player_id, hand in _INITIAL_HANDS.items()
         }
         self._table: list[str] = []
 
@@ -77,6 +143,9 @@ class _StubMahjongCore:
             self._winner = 0
             return
         self._active_player = self._step_index % self.num_players
+        draw_tile = _TURN_DRAWS.get(self._step_index)
+        if draw_tile is not None:
+            self._hands[self._active_player].append(draw_tile)
 
     def get_active_player_id(self) -> int:
         return self._active_player

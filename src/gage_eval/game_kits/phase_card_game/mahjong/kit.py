@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.phase_card_game.mahjong.envs.riichi_4p import (
     build_riichi_4p_environment,
 )
+from gage_eval.game_kits.phase_card_game.mahjong.envs.riichi_4p_real import (
+    build_riichi_4p_real_environment,
+)
 from gage_eval.game_kits.phase_card_game.mahjong.visualization import (
     VISUALIZATION_SPEC_ID,
 )
@@ -31,6 +34,15 @@ def build_mahjong_game_kit() -> GameKit:
                 defaults={
                     "env_factory": build_riichi_4p_environment,
                     "replay_filename": "mahjong_riichi_4p_replay.json",
+                },
+            ),
+            EnvSpec(
+                env_id="riichi_4p_real",
+                kit_id="mahjong",
+                resource_spec={"env_id": "riichi_4p_real", "family": "mahjong"},
+                defaults={
+                    "env_factory": build_riichi_4p_real_environment,
+                    "replay_filename": "mahjong_riichi_4p_real_replay.json",
                 },
             ),
         ),

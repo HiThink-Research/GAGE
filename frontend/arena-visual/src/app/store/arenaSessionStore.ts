@@ -80,6 +80,7 @@ export interface ArenaSessionStore {
   getSnapshot: () => ArenaSessionStoreSnapshot;
   subscribe: (listener: StoreListener) => () => void;
   loadSession: (input: LoadSessionInput) => Promise<void>;
+  refreshSession?: () => Promise<void>;
   loadMoreTimeline: (input?: LoadMoreTimelineInput) => Promise<void>;
   loadScene: (input: LoadSceneInput) => Promise<void>;
   advanceReplayPlayback?: () => void;
@@ -113,6 +114,8 @@ export function createArenaSessionStore(
   const listeners = new Set<StoreListener>();
   let sessionRequestVersion = 0;
   let sceneRequestVersion = 0;
+  let sessionRefreshPromise: Promise<void> | null = null;
+  let sessionRefreshToken = 0;
   let state: ArenaSessionStoreSnapshot = {
     status: "idle",
     sceneStatus: "idle",
@@ -179,6 +182,96 @@ export function createArenaSessionStore(
     }));
   }
 
+  function resolveSceneCursorForSession(
+    previous: ArenaSessionStoreSnapshot,
+    session: VisualSession,
+  ): number | undefined {
+    const latestTimelineSeq = previous.timeline.events.at(-1)?.seq;
+    if (previous.currentSceneSeq === undefined) {
+      if (session.playback.mode === "live_tail") {
+        return latestTimelineSeq ??
+          (session.playback.cursorEventSeq > 0 ? session.playback.cursorEventSeq : undefined);
+      }
+      return session.playback.cursorEventSeq > 0
+        ? session.playback.cursorEventSeq
+        : latestTimelineSeq;
+    }
+
+    if (session.playback.mode !== "live_tail") {
+      return previous.currentSceneSeq;
+    }
+
+    const candidates = [previous.currentSceneSeq];
+    if (latestTimelineSeq !== undefined) {
+      candidates.push(latestTimelineSeq);
+    }
+    if (session.playback.cursorEventSeq > 0) {
+      candidates.push(session.playback.cursorEventSeq);
+    }
+    return Math.max(...candidates);
+  }
+
+  async function refreshSession(): Promise<void> {
+    if (!state.sessionRequest) {
+      return;
+    }
+    if (sessionRefreshPromise) {
+      return sessionRefreshPromise;
+    }
+
+    const requestVersion = sessionRequestVersion;
+    const refreshToken = ++sessionRefreshToken;
+    const requestContext = state.sessionRequest;
+    const pendingRefresh = (async () => {
+      try {
+        const session = await client.loadSession({
+          sessionId: requestContext.sessionId,
+          runId: requestContext.runId,
+          observer: requestContext.observer,
+        });
+        if (
+          requestVersion !== sessionRequestVersion ||
+          state.sessionRequest?.sessionId !== requestContext.sessionId ||
+          state.sessionRequest?.runId !== requestContext.runId
+        ) {
+          return;
+        }
+        setState((previous) => ({
+          ...previous,
+          status: "ready",
+          sessionRequest: {
+            sessionId: requestContext.sessionId,
+            runId: requestContext.runId,
+            observer: session.observer,
+          },
+          session,
+          currentSceneSeq: resolveSceneCursorForSession(previous, session),
+          error: undefined,
+        }));
+      } catch (caughtError) {
+        if (
+          requestVersion !== sessionRequestVersion ||
+          state.sessionRequest?.sessionId !== requestContext.sessionId ||
+          state.sessionRequest?.runId !== requestContext.runId
+        ) {
+          return;
+        }
+        setState((previous) => ({
+          ...previous,
+          error: toErrorMessage(caughtError),
+        }));
+        throw caughtError;
+      } finally {
+        if (sessionRefreshToken === refreshToken) {
+          sessionRefreshPromise = null;
+        }
+      }
+    })();
+
+    sessionRefreshPromise = pendingRefresh;
+    return pendingRefresh;
+  }
+
   async function loadSession({ sessionId, runId, observer }: LoadSessionInput): Promise<void> {
     sessionRequestVersion += 1;
     sceneRequestVersion += 1;
@@ -216,6 +309,11 @@ export function createArenaSessionStore(
       setState((previous) => ({
         ...previous,
         status: "ready",
+        sessionRequest: {
+          sessionId,
+          runId,
+          observer: session.observer,
+        },
         session,
         sceneStatus: "idle",
         currentSceneSeq:
@@ -678,6 +776,9 @@ export function createArenaSessionStore(
       ...previous,
       latestActionReceipt: receipt,
     }));
+    if (["accepted", "committed"].includes(receipt.state)) {
+      await refreshSession().catch(() => {});
+    }
     return receipt;
   }
 
@@ -818,6 +919,7 @@ export function createArenaSessionStore(
       };
     },
     loadSession,
+    refreshSession,
     loadMoreTimeline,
     loadScene,
     advanceReplayPlayback,

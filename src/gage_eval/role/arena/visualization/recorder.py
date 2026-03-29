@@ -85,10 +85,11 @@ class ArenaVisualSessionRecorder:
         player_id: str,
         observation: Any = None,
         window_id: str | None = None,
+        accepts_human_intent: bool = True,
     ) -> TimelineEvent:
         with self._lock:
             self._scheduling_phase = "waiting_for_intent"
-            self._scheduling_accepts_human_intent = True
+            self._scheduling_accepts_human_intent = bool(accepts_human_intent)
             self._scheduling_active_actor_id = str(player_id)
             self._scheduling_window_id = window_id
             return self._record_event(

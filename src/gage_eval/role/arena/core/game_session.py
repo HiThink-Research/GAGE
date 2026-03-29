@@ -490,12 +490,17 @@ class GameSession:
         recorder = self.visual_recorder
         if recorder is None:
             return
+        player = next(
+            (candidate for candidate in self.player_specs if candidate.player_id == player_id),
+            None,
+        )
         recorder.record_decision_window_open(
             ts_ms=wall_clock_ms(),
             step=self.step,
             tick=self.tick,
             player_id=player_id,
             observation=_visual_payload_snapshot(observation),
+            accepts_human_intent=bool(player and player.player_kind == "human"),
         )
 
     def _record_visual_action_committed(
@@ -685,13 +690,23 @@ def _build_visual_recorder(
             session_id = getattr(invocation_context.trace, "sample_id", None)
     if not session_id:
         session_id = f"{sample.game_kit}:{sample.env or 'default'}"
+    observer_modes = _resolve_visual_observer_modes(visualization_spec)
+    observer_id = ""
+    observer_kind = "spectator"
+    human_player_ids = _collect_human_player_ids(resolved)
+    if len(human_player_ids) == 1 and "player" in observer_modes:
+        observer_id = human_player_ids[0]
+        observer_kind = "player"
+
     return ArenaVisualSessionRecorder(
         plugin_id=str(plugin_id or "arena"),
         game_id=str(game_id or sample.game_kit or "arena"),
         scheduling_family=_resolve_scheduler_family(sample=sample, resolved=resolved),
         session_id=str(session_id),
-        observer_modes=_resolve_visual_observer_modes(visualization_spec),
+        observer_modes=observer_modes,
         visual_kind=_resolve_visual_kind(visualization_spec),
+        observer_id=observer_id,
+        observer_kind=observer_kind,
     )
 
 
@@ -830,9 +845,10 @@ def _build_action_server(invocation_context: GameArenaInvocationContext) -> Any:
     from gage_eval.tools.action_server import ActionQueueServer
 
     config = dict(invocation_context.human_input_config or {})
+    port_value = config.get("port")
     server = ActionQueueServer(
         host=str(config.get("host") or "127.0.0.1"),
-        port=int(config.get("port") or 8001),
+        port=8001 if port_value is None else int(port_value),
         allow_origin=str(config.get("allow_origin") or "*"),
     )
     start = getattr(server, "start", None)

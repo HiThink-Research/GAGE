@@ -234,6 +234,30 @@ describe("arenaSessionStore", () => {
         reason: "queued",
       }),
     );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        sessionId: "sample-1",
+        gameId: "gomoku",
+        pluginId: "arena.visualization.gomoku.board_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 1006,
+          cursorEventSeq: 6,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: { observerId: "host", observerKind: "global" },
+        scheduling: {
+          family: "turn",
+          phase: "advancing",
+          acceptsHumanIntent: false,
+        },
+        capabilities: {},
+        summary: {},
+        timeline: { eventCount: 3 },
+      }),
+    );
 
     const client = createArenaGatewayClient({ baseUrl: "http://arena.local" });
     const store = createArenaSessionStore(client);
@@ -250,12 +274,131 @@ describe("arenaSessionStore", () => {
       relatedEventSeq: 6,
       reason: "queued",
     });
-    expect(fetchMock).toHaveBeenLastCalledWith(
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
       "http://arena.local/arena_visual/sessions/sample-1/actions",
       expect.objectContaining({
         method: "POST",
       }),
     );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://arena.local/arena_visual/sessions/sample-1?observer_kind=global&observer_id=host",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("refreshes the live session in place without discarding timeline state", async () => {
+    const client = createStubClient({
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(buildSession("sample-1"))
+        .mockResolvedValueOnce(
+          buildSession("sample-1", {
+            lifecycle: "live_ended",
+            playback: {
+              mode: "live_tail",
+              cursorTs: 1005,
+              cursorEventSeq: 5,
+              speed: 1,
+              canSeek: true,
+            },
+            scheduling: {
+              family: "turn",
+              phase: "completed",
+              acceptsHumanIntent: false,
+            },
+          }),
+        ),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [1, 2])),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.refreshSession?.();
+
+    const state = store.getSnapshot();
+    expect(state.timeline.events.map((event) => event.seq)).toEqual([1, 2]);
+    expect(state.session?.lifecycle).toBe("live_ended");
+    expect(state.session?.scheduling.acceptsHumanIntent).toBe(false);
+    expect(state.session?.scheduling.phase).toBe("completed");
+  });
+
+  it("adopts the server-selected observer for later scene loads", async () => {
+    const client = createStubClient({
+      loadSession: vi.fn().mockResolvedValue(
+        buildSession("sample-1", {
+          observer: {
+            observerId: "east",
+            observerKind: "player",
+          },
+        }),
+      ),
+      loadScene: vi.fn().mockResolvedValue(
+        buildScene(2, {
+          observerPlayerId: "east",
+        }),
+      ),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.loadScene({ seq: 2 });
+
+    expect(store.getSnapshot().sessionRequest?.observer).toEqual({
+      observerId: "east",
+      observerKind: "player",
+    });
+    expect(client.loadScene).toHaveBeenCalledWith({
+      sessionId: "sample-1",
+      runId: undefined,
+      seq: 2,
+      observer: {
+        observerId: "east",
+        observerKind: "player",
+      },
+    });
+  });
+
+  it("refreshes session scheduling after an accepted action receipt", async () => {
+    const client = createStubClient({
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(buildSession("sample-1"))
+        .mockResolvedValueOnce(
+          buildSession("sample-1", {
+            scheduling: {
+              family: "turn",
+              phase: "advancing",
+              acceptsHumanIntent: false,
+              activeActorId: "player_1",
+            },
+          }),
+        ),
+      submitAction: vi.fn().mockResolvedValue({
+        intentId: "intent-2",
+        state: "accepted",
+        relatedEventSeq: 6,
+        reason: "queued",
+      }),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.submitAction({
+      playerId: "player_0",
+      action: { move: "play_card", card: "3" },
+    });
+
+    const state = store.getSnapshot();
+    expect(state.latestActionReceipt).toEqual({
+      intentId: "intent-2",
+      state: "accepted",
+      relatedEventSeq: 6,
+      reason: "queued",
+    });
+    expect(state.session?.scheduling.acceptsHumanIntent).toBe(false);
+    expect(state.session?.scheduling.phase).toBe("advancing");
+    expect(state.session?.scheduling.activeActorId).toBe("player_1");
   });
 
   it("clears stale session data immediately when a new session starts loading", async () => {

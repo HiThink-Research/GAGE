@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import gomokuScene from "../../test/fixtures/gomoku.visual.json";
+import doudizhuScene from "../../test/fixtures/doudizhu.visual.json";
 import type { VisualScene } from "../../gateway/types";
 import type { ArenaSessionStore, ArenaSessionStoreSnapshot } from "../store/arenaSessionStore";
 import { SessionPage } from "./SessionPage";
@@ -63,6 +64,7 @@ describe("SessionPage", () => {
           };
         },
         loadSession: vi.fn().mockResolvedValue(undefined),
+        refreshSession: vi.fn().mockResolvedValue(undefined),
         loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
         loadScene: vi.fn().mockResolvedValue(undefined),
         advanceReplayPlayback: vi.fn(),
@@ -258,6 +260,92 @@ describe("SessionPage", () => {
     });
   });
 
+  it("switches dense card-table sessions into the wide-stage arena layout", async () => {
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-card",
+      },
+      session: {
+        sessionId: "sample-card",
+        gameId: "doudizhu",
+        pluginId: "arena.visualization.doudizhu.table_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "paused",
+          cursorTs: 1007,
+          cursorEventSeq: 7,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "player_0",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "turn",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+          activeActorId: "player_0",
+        },
+        capabilities: {
+          observerModes: ["player", "global"],
+        },
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: doudizhuScene as VisualScene,
+      currentSceneSeq: 7,
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    } as unknown as ArenaSessionStore);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    const view = render(
+      <MemoryRouter initialEntries={["/sessions/sample-card"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(view.container.querySelector(".arena-layout")).toHaveClass(
+      "arena-layout--wide-stage",
+    );
+  });
+
   it("threads run_id from the URL query into the session load request", async () => {
     const loadSession = vi.fn().mockResolvedValue(undefined);
     const snapshot: ArenaSessionStoreSnapshot = {
@@ -317,6 +405,7 @@ describe("SessionPage", () => {
     vi.useFakeTimers();
     const loadSession = vi.fn().mockResolvedValue(undefined);
     const loadMoreTimeline = vi.fn().mockResolvedValue(undefined);
+    const refreshSession = vi.fn().mockResolvedValue(undefined);
     const snapshot: ArenaSessionStoreSnapshot = {
       status: "ready",
       sessionRequest: {
@@ -368,6 +457,7 @@ describe("SessionPage", () => {
       getSnapshot: () => snapshot,
       subscribe: () => () => {},
       loadSession,
+      refreshSession,
       loadMoreTimeline,
       loadScene: vi.fn().mockResolvedValue(undefined),
       setCurrentSceneSeq: vi.fn(),
@@ -401,6 +491,7 @@ describe("SessionPage", () => {
     await vi.advanceTimersByTimeAsync(1200);
 
     expect(loadMoreTimeline).toHaveBeenCalled();
+    expect(refreshSession).toHaveBeenCalled();
   });
 
   it("ticks replay playback forward while the session is replaying", async () => {

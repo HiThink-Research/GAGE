@@ -1,0 +1,75 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: doudizhu_human_visual_acceptance_gamekit
+  description: >
+    GameArena Doudizhu real human-vs-LLM acceptance config for manual
+    arena_visual verification. This uses the RLCard-backed classic_3p_real
+    environment and a dedicated visualizer port so the full table, live input,
+    and replay handoff can be checked without reusing the default smoke
+    session.
+
+datasets:
+  - dataset_id: doudizhu_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Doudizhu_GameKit.jsonl
+      streaming: false
+
+backends:
+  - backend_id: local_qwen35_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: http://127.0.0.1:1234/v1
+      api_key: lmstudio
+      model: qwen/qwen3.5-9b
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 96
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: doudizhu_human_visual_acceptance_gamekit_arena
+
+role_adapters:
+  - adapter_id: doudizhu_human_visual_acceptance_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: doudizhu
+      env: classic_3p_real
+      runtime_overrides:
+        replay_live: true
+        illegal_policy:
+          retry: 0
+          on_fail: random
+        start_player_id: player_0
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE Doudizhu Acceptance Table
+        launch_browser: true
+        mode: arena_visual
+        port: 5814
+        linger_after_finish_s: 15.0
+      players:
+        - seat: landlord
+          player_id: player_0
+          player_kind: human
+        - seat: farmer_left
+          player_id: player_1
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend
+        - seat: farmer_right
+          player_id: player_2
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend

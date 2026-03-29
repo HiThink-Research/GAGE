@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -395,6 +396,8 @@ def _merge_mapping_payloads(*payloads: Any) -> dict[str, Any]:
 def _build_projection_source(*payloads: Any) -> dict[str, Any]:
     source = _merge_mapping_payloads(*payloads)
     observation = _mapping_or_empty(source.get("observation"))
+    if observation:
+        source.update(dict(observation))
     metadata = _mapping_or_empty(source.get("metadata"))
     if not metadata:
         metadata = _mapping_or_empty(observation.get("metadata"))
@@ -757,7 +760,11 @@ def _project_table_scene(
     event_payload: Any,
     visualization_spec: GameVisualizationSpec | None,
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], str | None]:
-    source = _build_projection_source(event_payload, snapshot_body)
+    source = _build_projection_source(snapshot_body, event_payload)
+    _apply_table_result_overrides(
+        source,
+        result_payloads=_collect_result_payloads(event_payload, snapshot_body),
+    )
     public_state = _mapping_or_empty(source.get("public_state"))
     private_state = _mapping_or_empty(source.get("private_state"))
     ui_state = _mapping_or_empty(source.get("ui_state"))
@@ -795,6 +802,14 @@ def _project_table_scene(
         or source.get("game_id")
         or visual_session.game_id
     )
+    if table_game == "doudizhu":
+        _apply_doudizhu_result_move_overrides(
+            source,
+            player_ids=player_ids,
+            result_payloads=_collect_result_payloads(event_payload, snapshot_body),
+        )
+        public_state = _mapping_or_empty(source.get("public_state"))
+        private_state = _mapping_or_empty(source.get("private_state"))
 
     if table_game == "doudizhu":
         table_payload = _project_doudizhu_table(
@@ -839,6 +854,229 @@ def _project_table_scene(
     return body, legal_actions, active_player_id
 
 
+def _apply_table_result_overrides(
+    source: dict[str, Any],
+    *,
+    result_payloads: Sequence[Mapping[str, Any]],
+) -> None:
+    if not result_payloads:
+        return
+
+    final_board = _first_result_string(result_payloads, "final_board", "finalBoard")
+    if final_board is not None:
+        source["board_text"] = final_board
+        parsed_state = _parse_structured_table_board_text(final_board)
+        for key in ("public_state", "private_state", "ui_state", "chat_log", "legal_moves"):
+            if key in parsed_state:
+                source[key] = parsed_state[key]
+
+    raw_move_count = _first_result_value(result_payloads, "move_count", "moveCount")
+    if raw_move_count is not None:
+        source["move_count"] = _coerce_int(raw_move_count, default=0)
+
+    last_move = None
+    for result_payload in result_payloads:
+        last_move = _extract_result_table_last_move(result_payload)
+        if last_move is not None:
+            break
+    if last_move is not None:
+        source["last_move"] = last_move
+
+
+def _parse_structured_table_board_text(board_text: str) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    lines = [line.rstrip() for line in board_text.splitlines()]
+    index = 0
+    section_keys = {
+        "Public State:": "public_state",
+        "Private State:": "private_state",
+        "Chat Log:": "chat_log",
+        "UI_STATE_JSON:": "ui_state",
+    }
+
+    while index < len(lines):
+        line = lines[index].strip()
+        target_key = section_keys.get(line)
+        if target_key is not None:
+            index += 1
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            if index < len(lines):
+                try:
+                    parsed[target_key] = json.loads(lines[index].strip())
+                except Exception:
+                    pass
+        elif line.startswith("Legal Moves (preview):"):
+            preview = line.split(":", 1)[1].strip()
+            if preview.lower() == "none" or preview == "":
+                parsed["legal_moves"] = []
+            else:
+                parsed["legal_moves"] = [
+                    item.strip()
+                    for item in preview.split(",")
+                    if item.strip()
+                ]
+        index += 1
+
+    return parsed
+
+
+def _extract_result_table_last_move(result_payload: Mapping[str, Any]) -> str | None:
+    for key in ("last_move", "lastMove"):
+        value = _string_or_none(result_payload.get(key))
+        if value is not None:
+            return value
+
+    move_log = result_payload.get("move_log")
+    if move_log is None:
+        move_log = result_payload.get("moveLog")
+    if isinstance(move_log, Sequence) and not isinstance(move_log, (str, bytes)):
+        for entry in reversed(move_log):
+            if not isinstance(entry, Mapping):
+                continue
+            if "__truncated__" in entry:
+                return None
+            for key in ("action_card", "action_text", "move", "action"):
+                value = _string_or_none(entry.get(key))
+                if value is not None:
+                    return value
+    return None
+
+
+def _apply_doudizhu_result_move_overrides(
+    source: dict[str, Any],
+    *,
+    player_ids: Sequence[str],
+    result_payloads: Sequence[Mapping[str, Any]],
+) -> None:
+    public_state = _mapping_or_empty(source.get("public_state"))
+    private_state = _mapping_or_empty(source.get("private_state"))
+    move_log = _extract_result_move_log(result_payloads)
+    if not move_log or not public_state:
+        return
+
+    existing_trace = public_state.get("trace")
+    applied_count = len(existing_trace) if isinstance(existing_trace, Sequence) and not isinstance(existing_trace, (str, bytes)) else 0
+    pending_entries = move_log[applied_count:]
+    if not pending_entries:
+        return
+
+    normalized_player_ids = list(player_ids)
+    if not normalized_player_ids:
+        normalized_player_ids = _normalize_player_ids(source.get("player_ids"), source.get("player_names"))
+    player_index_lookup = {
+        player_id: index
+        for index, player_id in enumerate(normalized_player_ids)
+    }
+    card_counts = {
+        str(player_id): _coerce_int(count, default=0)
+        for player_id, count in _mapping_or_empty(public_state.get("num_cards_left")).items()
+    }
+    played_cards = _normalize_played_cards(public_state.get("played_cards"))
+    seen_cards = _normalize_string_list(public_state.get("seen_cards"))
+    trace_entries = list(existing_trace) if isinstance(existing_trace, Sequence) and not isinstance(existing_trace, (str, bytes)) else []
+    private_self_id = _string_or_none(private_state.get("self_id"))
+    private_hand = _normalize_string_list(private_state.get("current_hand"))
+
+    for entry in pending_entries:
+        player_id = _string_or_none(entry.get("player_id") or entry.get("playerId"))
+        action_text = _string_or_none(
+            entry.get("action_text")
+            or entry.get("actionText")
+            or entry.get("move")
+            or entry.get("action")
+        )
+        if player_id is None or action_text is None:
+            continue
+
+        trace_entry: dict[str, Any] = {"player_id": player_id, "move": action_text}
+        player_index = player_index_lookup.get(player_id)
+        if player_index is not None:
+            trace_entry["player_idx"] = player_index
+        trace_entries.append(trace_entry)
+
+        if action_text.lower() == "pass":
+            continue
+
+        cards = _split_doudizhu_action_cards(action_text)
+        played_cards[player_id] = cards
+        seen_cards.extend(cards)
+        if player_id in card_counts:
+            card_counts[player_id] = max(0, card_counts[player_id] - len(cards))
+        if private_self_id == player_id and private_hand:
+            private_hand = _remove_doudizhu_cards_from_hand(private_hand, cards)
+
+    public_state["played_cards"] = [
+        {
+            "player_id": player_id,
+            "cards": played_cards.get(player_id, []),
+        }
+        for player_id in normalized_player_ids
+    ]
+    public_state["seen_cards"] = seen_cards
+    public_state["trace"] = trace_entries
+    if card_counts:
+        public_state["num_cards_left"] = card_counts
+    if private_self_id is not None:
+        private_state["current_hand"] = private_hand
+        private_state["current_hand_text"] = ", ".join(private_hand)
+
+    source["public_state"] = public_state
+    source["private_state"] = private_state
+
+
+def _extract_result_move_log(
+    result_payloads: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    for result_payload in result_payloads:
+        move_log = result_payload.get("move_log")
+        if move_log is None:
+            move_log = result_payload.get("moveLog")
+        if isinstance(move_log, Sequence) and not isinstance(move_log, (str, bytes)):
+            normalized = [
+                entry
+                for entry in move_log
+                if isinstance(entry, Mapping) and "__truncated__" not in entry
+            ]
+            if normalized:
+                return normalized
+    return []
+
+
+def _split_doudizhu_action_cards(action_text: str) -> list[str]:
+    normalized = str(action_text).strip()
+    if not normalized or normalized.lower() == "pass":
+        return []
+    cards: list[str] = []
+    index = 0
+    while index < len(normalized):
+        token = normalized[index]
+        if token == "1" and index + 1 < len(normalized) and normalized[index + 1] == "0":
+            cards.append("10")
+            index += 2
+            continue
+        cards.append(token.upper())
+        index += 1
+    return cards
+
+
+def _remove_doudizhu_cards_from_hand(hand: Sequence[str], cards: Sequence[str]) -> list[str]:
+    remaining = [str(card) for card in hand]
+    for card in cards:
+        target = str(card).upper()
+        match_index = next(
+            (
+                index
+                for index, hand_card in enumerate(remaining)
+                if hand_card.upper() == target or hand_card.upper().endswith(target)
+            ),
+            None,
+        )
+        if match_index is not None:
+            remaining.pop(match_index)
+    return remaining
+
+
 def _project_frame_scene(
     *,
     visual_session: VisualSession,
@@ -846,7 +1084,7 @@ def _project_frame_scene(
     event_payload: Any,
     visualization_spec: GameVisualizationSpec | None,
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], str | None, tuple[dict[str, Any], ...]]:
-    source = _build_projection_source(event_payload, snapshot_body)
+    source = _build_projection_source(snapshot_body, event_payload)
     observation = _mapping_or_empty(source.get("observation"))
     view = _mapping_or_empty(source.get("view"))
     if not view:
@@ -1012,6 +1250,10 @@ def _project_mahjong_table(
     visualization_spec: GameVisualizationSpec | None,
 ) -> dict[str, Any]:
     private_hand = _normalize_string_list(private_state.get("hand"))
+    card_counts = {
+        str(player_id): _coerce_int(count, default=0)
+        for player_id, count in _mapping_or_empty(public_state.get("num_cards_left")).items()
+    }
     melds = _mapping_or_empty(public_state.get("melds"))
     seats: list[dict[str, Any]] = []
     for player_id in player_ids:
@@ -1020,7 +1262,11 @@ def _project_mahjong_table(
             observer_player_id=observer_player_id,
             player_id=player_id,
         )
-        masked_count = len(private_hand) if player_id == private_view_player_id and private_hand else 0
+        masked_count = card_counts.get(player_id)
+        if masked_count is None and player_id == private_view_player_id and private_hand:
+            masked_count = len(private_hand)
+        if masked_count is None:
+            masked_count = 0
         public_notes = _normalize_string_list(melds.get(player_id))
         seats.append(
             {
@@ -1355,6 +1601,8 @@ def _resolve_table_private_view_player(
 ) -> str | None:
     return (
         _string_or_none(private_state.get("self_id"))
+        or _string_or_none(source.get("player_id"))
+        or _string_or_none(source.get("playerId"))
         or _extract_observer_player(source)
     )
 

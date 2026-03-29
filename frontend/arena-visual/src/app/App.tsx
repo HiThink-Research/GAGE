@@ -1,4 +1,4 @@
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 
 import { SessionPage } from "./routes/SessionPage";
 
@@ -35,8 +35,16 @@ function HostHome() {
 }
 
 export function App() {
+  const location = useLocation();
+  const className = [
+    "app-shell",
+    location.pathname.startsWith("/sessions/") ? "app-shell--session" : "",
+  ]
+    .filter((value) => value !== "")
+    .join(" ");
+
   return (
-    <div className="app-shell">
+    <div className={className}>
       <header className="app-shell__header">
         <div>
           <p className="eyebrow">Arena Visual</p>

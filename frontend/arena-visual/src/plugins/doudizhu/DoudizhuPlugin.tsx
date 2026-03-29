@@ -1,11 +1,10 @@
 import type { ArenaPluginRenderProps } from "../sdk/contracts";
 import {
-  formatTableActorLabel,
   readTableActionTexts,
   readTableScene,
   resolveTableActorId,
-  TableLayout,
 } from "../table/TableLayout";
+import { DoudizhuTable } from "./DoudizhuTable";
 
 export function DoudizhuPlugin({
   session,
@@ -26,13 +25,9 @@ export function DoudizhuPlugin({
 
   const actionTexts = readTableActionTexts(scene);
   const resolvedActorId = resolveTableActorId(session, scene, tableScene);
-  const actorLabel = formatTableActorLabel(session, resolvedActorId);
 
   return (
-    <TableLayout
-      variant="doudizhu"
-      gameLabel="Doudizhu"
-      actorLabel={actorLabel}
+    <DoudizhuTable
       tableScene={tableScene}
       actionTexts={actionTexts}
       canSubmitActions={session.scheduling.acceptsHumanIntent}

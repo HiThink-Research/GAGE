@@ -159,6 +159,8 @@ describe("App", () => {
       expect(store.loadSession).toHaveBeenCalledWith({ sessionId: "demo-session" });
     });
 
+    expect(document.querySelector(".app-shell")).toHaveClass("app-shell--session");
+
     expect(screen.getByRole("heading", { name: /demo-session/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /step \+1/i }));

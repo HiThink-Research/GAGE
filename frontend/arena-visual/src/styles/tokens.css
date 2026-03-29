@@ -36,4 +36,5 @@
   --shadow-panel: 0 12px 24px rgba(34, 49, 41, 0.08);
 
   --content-width: 1100px;
+  --content-width-session: 1600px;
 }

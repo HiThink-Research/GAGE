@@ -180,6 +180,29 @@ class MahjongArena:
 
         return self._core.get_all_hands()
 
+    def _build_public_hand_counts(self) -> dict[str, int]:
+        hands = self.get_all_hands()
+        if not isinstance(hands, dict):
+            return {}
+
+        counts: dict[str, int] = {}
+        for raw_player_index, hand in hands.items():
+            try:
+                player_index = int(raw_player_index)
+            except Exception:
+                continue
+            player_id = self._player_id_map.get(player_index)
+            if player_id is None:
+                continue
+            if isinstance(hand, dict):
+                concealed_hand = hand.get("hand")
+                if isinstance(concealed_hand, Sequence) and not isinstance(concealed_hand, (str, bytes)):
+                    counts[player_id] = len(concealed_hand)
+                    continue
+            if isinstance(hand, Sequence) and not isinstance(hand, (str, bytes)):
+                counts[player_id] = len(hand)
+        return counts
+
     def get_active_player(self) -> str:
         """Return the active player identifier."""
 
@@ -200,6 +223,12 @@ class MahjongArena:
             raw_obs,
             legal_action_ids,
         )
+        hand_counts = self._build_public_hand_counts()
+        if hand_counts:
+            public_state = {
+                **public_state,
+                "num_cards_left": hand_counts,
+            }
         chat_log = [] if self._chat_mode == "off" else list(self._chat_log)
         board_text = self._format_board_text(
             public_state,

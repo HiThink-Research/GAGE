@@ -43,7 +43,7 @@ class StandardMahjongFormatter(MahjongFormatter):
         }
 
         private_state = {
-            "hand": sorted(hand_cards),
+            "hand": list(hand_cards),
             "hand_raw": [str(c) for c in raw_hand],
         }
 

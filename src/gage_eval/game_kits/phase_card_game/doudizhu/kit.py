@@ -4,6 +4,9 @@ from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.phase_card_game.doudizhu.envs.classic_3p import (
     build_classic_3p_environment,
 )
+from gage_eval.game_kits.phase_card_game.doudizhu.envs.classic_3p_real import (
+    build_classic_3p_real_environment,
+)
 from gage_eval.game_kits.phase_card_game.doudizhu.visualization import (
     VISUALIZATION_SPEC_ID,
 )
@@ -31,6 +34,15 @@ def build_doudizhu_game_kit() -> GameKit:
                 defaults={
                     "env_factory": build_classic_3p_environment,
                     "replay_filename": "doudizhu_classic_3p_replay.json",
+                },
+            ),
+            EnvSpec(
+                env_id="classic_3p_real",
+                kit_id="doudizhu",
+                resource_spec={"env_id": "classic_3p_real", "family": "doudizhu"},
+                defaults={
+                    "env_factory": build_classic_3p_real_environment,
+                    "replay_filename": "doudizhu_classic_3p_real_replay.json",
                 },
             ),
         ),

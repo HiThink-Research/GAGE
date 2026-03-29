@@ -105,6 +105,30 @@ def test_visual_session_recorder_persists_timeline_manifest_snapshot_and_markers
     assert snapshot_payload["seq"] == 5
 
 
+def test_visual_session_recorder_can_mark_non_human_decision_windows_as_non_interactive() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.doudizhu.table_v1",
+        game_id="doudizhu",
+        scheduling_family="turn",
+        session_id="sample-1",
+    )
+
+    recorder.record_decision_window_open(
+        ts_ms=1001,
+        step=1,
+        tick=1,
+        player_id="farmer_right",
+        observation={"legal_moves": ["pass"]},
+        accepts_human_intent=False,
+    )
+
+    session = recorder.build_visual_session()
+
+    assert session.scheduling.phase == "waiting_for_intent"
+    assert session.scheduling.accepts_human_intent is False
+    assert session.scheduling.active_actor_id == "farmer_right"
+
+
 def test_visual_session_recorder_persists_seek_snapshot_index(tmp_path: Path) -> None:
     replay_path = tmp_path / "runs" / "run-1" / "replays" / "sample-1" / "replay.json"
     recorder = ArenaVisualSessionRecorder(

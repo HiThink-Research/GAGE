@@ -48,6 +48,10 @@ select {
   gap: var(--space-lg);
 }
 
+.app-shell--session {
+  width: min(100%, var(--content-width-session));
+}
+
 .app-shell__header {
   display: flex;
   align-items: center;
@@ -159,6 +163,10 @@ select {
 .arena-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.8fr);
+  grid-template-areas:
+    "controls controls"
+    "stage side"
+    "timeline side";
   gap: var(--space-lg);
 }
 
@@ -179,12 +187,40 @@ select {
 }
 
 .arena-layout__controls {
+  grid-area: controls;
+}
+
+.arena-layout__stage {
+  grid-area: stage;
+}
+
+.arena-layout__side-panel {
+  grid-area: side;
+}
+
+.arena-layout__timeline {
+  grid-area: timeline;
+}
+
+.arena-layout__controls {
   grid-column: 1 / -1;
 }
 
 .arena-layout__stage {
   padding: clamp(1rem, 3vw, 1.5rem);
   min-height: 21rem;
+}
+
+.arena-layout--wide-stage {
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  grid-template-areas:
+    "controls controls"
+    "stage stage"
+    "timeline side";
+}
+
+.arena-layout--wide-stage .arena-layout__stage {
+  padding: clamp(0.9rem, 1.8vw, 1.2rem);
 }
 
 .control-bar {
@@ -1481,6 +1517,11 @@ select {
 
   .arena-layout {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "controls"
+      "stage"
+      "side"
+      "timeline";
   }
 
   .plugin-stage-card__meta {

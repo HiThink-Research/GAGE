@@ -8,7 +8,7 @@ import pytest
 
 from gage_eval.role.arena.core.arena_core import GameArenaCore
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
-from gage_eval.role.arena.core.game_session import GameSession
+from gage_eval.role.arena.core.game_session import GameSession, _build_action_server
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.schedulers.turn import TurnScheduler
@@ -294,6 +294,10 @@ def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up(
         player_driver_registry=PlayerDriverRegistry(),
         observation_workflow=None,
         support_workflow=None,
+        visualization_spec=SimpleNamespace(
+            plugin_id="arena.visualization.gomoku.board_v1",
+            observer_schema={"supported_modes": ["player", "global"]},
+        ),
     )
 
     session = GameSession.from_resolved(
@@ -318,11 +322,29 @@ def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up(
     assert seen_invocation_contexts[0].player_action_queues["Human"] is action_router.queue_for("Human")
     assert session.invocation_context is not None
     assert session.invocation_context.player_action_queues["Human"] is action_router.queue_for("Human")
+    assert session.visual_recorder is not None
+    assert session.visual_recorder.observer_kind == "player"
+    assert session.visual_recorder.observer_id == "Human"
 
     session.finalize()
 
     assert runtime_hub.clear_calls == [("sample-human-1", runtime_hub.action_server)]
     assert runtime_hub.action_server.unregister_calls == ["sample-human-1"]
+
+
+def test_build_action_server_respects_explicit_ephemeral_port() -> None:
+    server = _build_action_server(
+        GameArenaInvocationContext(
+            adapter_id="arena",
+            human_input_config={"enabled": True, "host": "127.0.0.1", "port": 0},
+        )
+    )
+
+    try:
+        assert server._port == 0
+        assert server._server.server_address[1] > 0
+    finally:
+        server.stop()
 
 
 def test_game_session_support_hooks_can_rewrite_action_through_real_runtime_path() -> None:

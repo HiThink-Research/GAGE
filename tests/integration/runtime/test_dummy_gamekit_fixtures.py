@@ -70,3 +70,13 @@ def test_dummy_gamekit_configs_use_matching_fixture_samples(
     assert "win_len" not in metadata
     assert "coord_scheme" not in metadata
 
+
+def test_doudizhu_dummy_stub_keeps_richer_smoke_hands() -> None:
+    from gage_eval.game_kits.phase_card_game.doudizhu.envs.classic_3p import _StubDoudizhuCore
+
+    core = _StubDoudizhuCore()
+
+    observation = core.get_observation(0)
+
+    assert len(observation["current_hand"]) >= 17
+    assert sum(observation["num_cards_left"]) >= 51

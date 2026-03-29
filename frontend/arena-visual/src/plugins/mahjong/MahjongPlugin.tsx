@@ -1,11 +1,10 @@
 import type { ArenaPluginRenderProps } from "../sdk/contracts";
 import {
-  formatTableActorLabel,
   readTableActionTexts,
   readTableScene,
   resolveTableActorId,
-  TableLayout,
 } from "../table/TableLayout";
+import { MahjongTable } from "./MahjongTable";
 
 export function MahjongPlugin({
   session,
@@ -26,13 +25,9 @@ export function MahjongPlugin({
 
   const actionTexts = readTableActionTexts(scene);
   const resolvedActorId = resolveTableActorId(session, scene, tableScene);
-  const actorLabel = formatTableActorLabel(session, resolvedActorId);
 
   return (
-    <TableLayout
-      variant="mahjong"
-      gameLabel="Mahjong"
-      actorLabel={actorLabel}
+    <MahjongTable
       tableScene={tableScene}
       actionTexts={actionTexts}
       canSubmitActions={session.scheduling.acceptsHumanIntent}

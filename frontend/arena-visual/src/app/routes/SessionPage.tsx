@@ -24,6 +24,7 @@ import { TimelineView } from "../../ui/timeline/TimelineView";
 const LIVE_TIMELINE_POLL_MS = 300;
 const POST_LIVE_AUTO_FINISH_MS = 15000;
 const REPLAY_TICK_BASE_MS = 800;
+const WIDE_STAGE_GAMES = new Set(["mahjong", "doudizhu"]);
 
 function isAcceptedReceipt(receipt: ActionIntentReceipt | undefined): boolean {
   return receipt !== undefined && ["accepted", "committed"].includes(receipt.state);
@@ -46,6 +47,11 @@ export function SessionPage() {
   );
   const [store] = useState(() => createArenaSessionStore(client));
   const [mediaResolver] = useState(() => createArenaMediaResolver(client));
+  const sessionGameId = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.session?.gameId ?? snapshot.scene?.gameId ?? "",
+  );
+  const arenaLayoutMode = WIDE_STAGE_GAMES.has(sessionGameId) ? "wide-stage" : "default";
 
   return (
     <main className="app-shell__body">
@@ -65,6 +71,7 @@ export function SessionPage() {
       </section>
 
       <ArenaLayout
+        layoutMode={arenaLayoutMode}
         controls={<SessionControls store={store} />}
         stage={<SessionStage mediaResolver={mediaResolver} store={store} />}
         timeline={<SessionTimeline store={store} />}
@@ -137,7 +144,10 @@ function SessionRuntimeEffects({
       ) {
         return;
       }
-      void store.loadMoreTimeline().catch(() => {});
+      void Promise.allSettled([
+        store.loadMoreTimeline(),
+        store.refreshSession?.() ?? Promise.resolve(),
+      ]);
     }, LIVE_TIMELINE_POLL_MS);
 
     return () => {

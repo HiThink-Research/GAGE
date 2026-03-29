@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,7 +9,18 @@ import doudizhuScene from "../../test/fixtures/doudizhu.visual.json";
 import { DoudizhuPlugin } from "./DoudizhuPlugin";
 
 describe("DoudizhuPlugin", () => {
-  it("renders a non-blank table, masks other seats, and submits action chips", () => {
+  it("uses a wider grid table layout so richer hands can spread across the stage", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/plugins/doudizhu/doudizhu.css"), "utf-8");
+
+    expect(css).toMatch(
+      /grid-template-areas:\s*"left center right"\s*"bottom bottom bottom"/,
+    );
+    expect(css).toMatch(/\.doudizhu-center\s*\{[^}]*grid-area:\s*center/s);
+    expect(css).toMatch(/\.doudizhu-seat--bottom\s*\{[^}]*grid-area:\s*bottom/s);
+    expect(css).not.toMatch(/\.doudizhu-seat\s*\{[^}]*position:\s*absolute/s);
+  });
+
+  it("renders a plugin-local doudizhu stage, masks other seats, and submits action chips", () => {
     const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -45,12 +59,21 @@ describe("DoudizhuPlugin", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /doudizhu table/i })).toBeInTheDocument();
-    expect(screen.getByTestId("table-center-cards")).toHaveTextContent("3");
-    expect(screen.getByTestId("seat-player_0-hand")).toHaveTextContent("3");
-    expect(screen.getByTestId("seat-player_0-hand")).toHaveTextContent("4");
-    expect(screen.getByTestId("seat-player_1-hand")).toHaveTextContent("Hidden hand");
-    expect(screen.getByText(/observer: player_0/i)).toBeInTheDocument();
+    expect(screen.getByTestId("doudizhu-stage")).toBeInTheDocument();
+    expect(screen.getByTestId("doudizhu-center-cards")).toHaveTextContent("3");
+    expect(screen.getByTestId("doudizhu-seat-bottom")).toHaveTextContent("Player 0");
+    expect(screen.getByTestId("doudizhu-seat-bottom")).toHaveTextContent("landlord");
+    expect(screen.getByTestId("doudizhu-seat-bottom-hand")).toHaveTextContent("3");
+    expect(screen.getByTestId("doudizhu-seat-bottom-hand")).toHaveTextContent("4");
+    expect(screen.getByLabelText("Doudizhu card BlackJoker")).toBeInTheDocument();
+    expect(screen.getByLabelText("Doudizhu card RedJoker")).toBeInTheDocument();
+    expect(screen.getByTestId("doudizhu-seat-left-hand")).toHaveTextContent("Hidden hand");
+    expect(screen.getByTestId("doudizhu-seat-right-hand")).toHaveTextContent("Hidden hand");
+    expect(
+      screen
+        .getByTestId("doudizhu-seat-bottom-hand")
+        .querySelectorAll(".doudizhu-hand__cards > .doudizhu-card"),
+    ).toHaveLength(17);
 
     fireEvent.click(screen.getByRole("button", { name: /play pass/i }));
     expect(submitInput).toHaveBeenCalledWith({
@@ -59,7 +82,7 @@ describe("DoudizhuPlugin", () => {
     });
   });
 
-  it("renders a rich table with anchored seats, card blocks, and history panels", () => {
+  it("keeps host-owned summary and chat panels out of the plugin content block", () => {
     render(
       <DoudizhuPlugin
         session={{
@@ -96,11 +119,13 @@ describe("DoudizhuPlugin", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Table seat bottom")).toBeInTheDocument();
-    expect(screen.getByLabelText("Table seat left")).toBeInTheDocument();
-    expect(screen.getByText("landlord")).toBeInTheDocument();
+    expect(screen.getByLabelText("Doudizhu seat bottom")).toBeInTheDocument();
+    expect(screen.getByLabelText("Doudizhu seat left")).toBeInTheDocument();
+    expect(screen.getByLabelText("Doudizhu seat right")).toBeInTheDocument();
     expect(screen.getAllByLabelText("Doudizhu card 3").length).toBeGreaterThan(0);
-    expect(screen.getByText("player_0: 3")).toBeInTheDocument();
-    expect(screen.getByText(/watch this/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^History$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Table talk$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/observer: player_0/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/watch this/i)).not.toBeInTheDocument();
   });
 });
