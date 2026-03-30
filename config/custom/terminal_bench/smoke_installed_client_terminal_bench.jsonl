@@ -1,0 +1,1 @@
+{"instance_id":"tb2__smoke_1","instruction":"Create a file named hello.txt with content 'world'.","goal":"Create a file named hello.txt with content 'world'.","metadata":{"expected_artifacts":["hello.txt"]}}
