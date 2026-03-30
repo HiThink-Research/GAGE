@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE="${MODE:-showdown}"
+MODE="${MODE:-human-vs-ai}"
 ARGS=()
 
 usage() {
@@ -11,11 +11,9 @@ Usage:
   bash scripts/run/arenas/doudizhu/run.sh --mode <mode> [legacy-script-args...]
 
 Modes:
-  showdown
   human-vs-ai
 
 Examples:
-  bash scripts/run/arenas/doudizhu/run.sh --mode showdown
   bash scripts/run/arenas/doudizhu/run.sh --mode human-vs-ai
 EOF
 }
@@ -42,7 +40,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${MODE}" in
-  showdown) TARGET="${SCRIPT_DIR}/run_showdown_legacy.sh" ;;
   human-vs-ai) TARGET="${SCRIPT_DIR}/run_human_vs_ai_legacy.sh" ;;
   *)
     echo "[doudizhu][error] Unsupported mode: ${MODE}" >&2

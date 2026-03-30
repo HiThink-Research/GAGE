@@ -6,12 +6,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 source "${ROOT}/scripts/run/common/env.sh"
 PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
-REPLAY_PORT="${REPLAY_PORT:-8000}"
+VISUAL_PORT="${VISUAL_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
-FRONTEND_DIR="${ROOT}/frontend/rlcard-showdown"
+SAMPLE_ID="${SAMPLE_ID:-mahjong_real_ai_0001}"
+FRONTEND_DIR="${ROOT}/frontend/arena-visual"
 
-# Ensure output dir exists
 mkdir -p "${OUTPUT_DIR}"
+export GAGE_EVAL_RUN_ID="${RUN_ID}"
+export GAGE_EVAL_SAMPLE_ID="${SAMPLE_ID}"
 
 # Port picking utilities
 is_port_in_use() {
@@ -53,10 +55,9 @@ wait_for_port() {
   return 1
 }
 
-# Selective Port Clean (Best Effort)
 cleanup_old_processes() {
-  echo "[mahjong] cleaning up old processes on ports ${REPLAY_PORT} and ${FRONTEND_PORT}..."
-  for port in "${REPLAY_PORT}" "${FRONTEND_PORT}"; do
+  echo "[mahjong] cleaning up old processes on ports ${VISUAL_PORT} and ${FRONTEND_PORT}..."
+  for port in "${VISUAL_PORT}" "${FRONTEND_PORT}"; do
     if is_port_in_use "${port}"; then
       if command -v lsof >/dev/null 2>&1; then
         lsof -tiTCP:"${port}" -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
@@ -71,12 +72,12 @@ cleanup_old_processes() {
 cleanup_old_processes
 
 # Select Ports
-REPLAY_PORT_SELECTED="$(pick_port "${REPLAY_PORT}" 50)"
-if [ -z "${REPLAY_PORT_SELECTED}" ]; then
-  echo "[mahjong][error] Unable to find a free replay port starting at ${REPLAY_PORT}." >&2
+VISUAL_PORT_SELECTED="$(pick_port "${VISUAL_PORT}" 50)"
+if [ -z "${VISUAL_PORT_SELECTED}" ]; then
+  echo "[mahjong][error] Unable to find a free visual port starting at ${VISUAL_PORT}." >&2
   exit 1
 fi
-REPLAY_PORT="${REPLAY_PORT_SELECTED}"
+VISUAL_PORT="${VISUAL_PORT_SELECTED}"
 
 FRONTEND_PORT_SELECTED="$(pick_port "${FRONTEND_PORT}" 50)"
 if [ -z "${FRONTEND_PORT_SELECTED}" ]; then
@@ -85,18 +86,16 @@ if [ -z "${FRONTEND_PORT_SELECTED}" ]; then
 fi
 FRONTEND_PORT="${FRONTEND_PORT_SELECTED}"
 
-# Start Replay Server
-echo "[mahjong] starting replay server on port ${REPLAY_PORT}..."
-PYTHONPATH="${ROOT}/src" "${PYTHON_BIN}" -m gage_eval.tools.replay_server \
-  --port "${REPLAY_PORT}" \
-  --replay-dir "${OUTPUT_DIR}" &
-REPLAY_PID=$!
+echo "[mahjong] starting visual server on port ${VISUAL_PORT}..."
+PYTHONPATH="${ROOT}/src" "${PYTHON_BIN}" -m gage_eval.tools.arena_visual_server \
+  --port "${VISUAL_PORT}" \
+  --arena-visual-dir "${OUTPUT_DIR}" &
+VISUAL_PID=$!
 
-# Start Frontend
-echo "[mahjong] starting showdown frontend on port ${FRONTEND_PORT}..."
+echo "[mahjong] starting arena visual frontend on port ${FRONTEND_PORT}..."
 (
   cd "${FRONTEND_DIR}"
-  REACT_APP_GAGE_API_URL="http://127.0.0.1:${REPLAY_PORT}" \
+  VITE_ARENA_GATEWAY_BASE_URL="http://127.0.0.1:${VISUAL_PORT}" \
     NODE_OPTIONS="--openssl-legacy-provider" \
     BROWSER=none \
     PORT="${FRONTEND_PORT}" \
@@ -130,7 +129,7 @@ fi
   --output-dir "${OUTPUT_DIR}" &
 GAME_PID=$!
 
-REPLAY_URL="http://localhost:${FRONTEND_PORT}/replay/mahjong?replay_path=mahjong_replay.json&mode=ai"
+REPLAY_URL="http://localhost:${FRONTEND_PORT}/sessions/${SAMPLE_ID}?run_id=${RUN_ID}"
 
 echo "=================================="
 echo "Mahjong Real AI Demo Running at: ${REPLAY_URL}"
@@ -148,7 +147,7 @@ cleanup() {
     echo ""
     echo "[mahjong] shutting down components..."
     # Kill the entire process group if possible or target specifically
-    kill ${REPLAY_PID} ${FRONTEND_PID} ${GAME_PID} 2>/dev/null || true
+    kill ${VISUAL_PID} ${FRONTEND_PID} ${GAME_PID} 2>/dev/null || true
     # Extra insurance for Node/React children
     pkill -P ${FRONTEND_PID} 2>/dev/null || true
     exit 0

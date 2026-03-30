@@ -4,15 +4,21 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
+from gage_eval.game_kits.phase_card_game.doudizhu.environment import GenericCardArena
+from gage_eval.game_kits.phase_card_game.doudizhu.formatters.doudizhu import (
+    DoudizhuFormatter,
+)
+from gage_eval.game_kits.phase_card_game.doudizhu.parsers.doudizhu import (
+    DoudizhuMoveParser,
+)
+from gage_eval.game_kits.phase_card_game.doudizhu.renderers.doudizhu import (
+    DoudizhuRenderer,
+)
 from gage_eval.role.arena.replay_paths import (
     resolve_invocation_run_sample_ids,
     resolve_replay_manifest_path,
 )
-from gage_eval.role.arena.games.doudizhu.env import GenericCardArena
-from gage_eval.role.arena.games.doudizhu.formatters.doudizhu import DoudizhuFormatter
-from gage_eval.role.arena.games.doudizhu.parsers.doudizhu import DoudizhuMoveParser
-from gage_eval.role.arena.games.doudizhu.renderers.doudizhu import DoudizhuRenderer
+from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 _ACTION_ID_TO_TEXT = {

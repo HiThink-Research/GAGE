@@ -2,7 +2,10 @@ from queue import Queue
 
 import pytest
 
-from gage_eval.role.arena.games.doudizhu.env import DoudizhuArenaEnvironment
+from gage_eval.game_kits.phase_card_game.doudizhu.kit import build_doudizhu_game_kit
+from gage_eval.game_kits.phase_card_game.doudizhu.environment import (
+    DoudizhuArenaEnvironment,
+)
 from gage_eval.role.arena.types import ArenaAction
 
 pytest.importorskip("rlcard")
@@ -42,3 +45,18 @@ def test_doudizhu_chat_queue_records_messages():
     assert chat_log[-1]["player_id"] == "player_0"
     assert observation.prompt is not None
     assert observation.prompt.payload.get("game_type") == "doudizhu"
+
+
+def test_doudizhu_gamekit_owns_parser_and_renderer_refs() -> None:
+    game_kit = build_doudizhu_game_kit()
+
+    assert game_kit.parser == "doudizhu_v1"
+    assert game_kit.renderer == "doudizhu_replay_v1"
+    assert [env_spec.parser for env_spec in game_kit.env_catalog] == [
+        "doudizhu_v1",
+        "doudizhu_v1",
+    ]
+    assert [env_spec.renderer for env_spec in game_kit.env_catalog] == [
+        "doudizhu_replay_v1",
+        "doudizhu_replay_v1",
+    ]

@@ -4,18 +4,18 @@
     {
       "kind": "arena_impls",
       "name": "doudizhu_arena_v1",
-      "module": "gage_eval.role.arena.games.doudizhu.env",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/doudizhu/env.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/environment.py",
       "aliases": [],
       "optional": false
     },
     {
       "kind": "arena_impls",
       "name": "doudizhu_rlcard_v1",
-      "module": "gage_eval.role.arena.games.doudizhu.env",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/doudizhu/env.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/environment.py",
       "aliases": [],
       "optional": false
     },
@@ -31,9 +31,9 @@
     {
       "kind": "arena_impls",
       "name": "mahjong_rlcard_v1",
-      "module": "gage_eval.role.arena.games.mahjong.env",
+      "module": "gage_eval.game_kits.phase_card_game.mahjong.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/mahjong/env.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/environment.py",
       "aliases": [],
       "optional": false
     },
@@ -111,19 +111,10 @@
     },
     {
       "kind": "parser_impls",
-      "name": "doudizhu_arena_parser_v1",
-      "module": "gage_eval.role.arena.parsers.doudizhu_parser",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/parsers/doudizhu_parser.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "parser_impls",
       "name": "doudizhu_v1",
-      "module": "gage_eval.role.arena.games.doudizhu.parsers.doudizhu",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.parsers.doudizhu",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/doudizhu/parsers/doudizhu.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/parsers/doudizhu.py",
       "aliases": [],
       "optional": false
     },
@@ -148,9 +139,9 @@
     {
       "kind": "parser_impls",
       "name": "mahjong_v1",
-      "module": "gage_eval.role.arena.games.mahjong.parsers.mahjong",
+      "module": "gage_eval.game_kits.phase_card_game.mahjong.parsers.mahjong",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/mahjong/parsers/mahjong.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/parsers/mahjong.py",
       "aliases": [],
       "optional": false
     },
@@ -184,27 +175,18 @@
     {
       "kind": "renderer_impls",
       "name": "doudizhu_replay_v1",
-      "module": "gage_eval.role.arena.games.doudizhu.renderers.doudizhu",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.renderers.doudizhu",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/doudizhu/renderers/doudizhu.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "renderer_impls",
-      "name": "doudizhu_showdown_v1",
-      "module": "gage_eval.role.arena.games.doudizhu.renderers.showdown_board",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/doudizhu/renderers/showdown_board.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/renderers/doudizhu.py",
       "aliases": [],
       "optional": false
     },
     {
       "kind": "renderer_impls",
       "name": "doudizhu_text_v1",
-      "module": "gage_eval.role.arena.games.doudizhu.renderers.board_renderer",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.renderers.board_renderer",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/doudizhu/renderers/board_renderer.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/renderers/board_renderer.py",
       "aliases": [],
       "optional": false
     },
@@ -220,9 +202,9 @@
     {
       "kind": "renderer_impls",
       "name": "mahjong_replay_v1",
-      "module": "gage_eval.role.arena.games.mahjong.renderers.mahjong",
+      "module": "gage_eval.game_kits.phase_card_game.mahjong.renderers.mahjong",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/mahjong/renderers/mahjong.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/renderers/mahjong.py",
       "aliases": [],
       "optional": false
     },

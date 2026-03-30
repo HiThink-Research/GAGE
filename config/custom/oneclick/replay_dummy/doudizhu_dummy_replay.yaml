@@ -102,7 +102,7 @@ role_adapters:
       type: turn
       max_turns: 100
     parser:
-      impl: doudizhu_arena_parser_v1
+      impl: doudizhu_v1
     players:
     - name: p0
       player_id: player_0

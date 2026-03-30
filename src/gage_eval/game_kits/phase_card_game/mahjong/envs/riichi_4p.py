@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from gage_eval.game_kits.phase_card_game.mahjong.environment import MahjongArena
+from gage_eval.game_kits.phase_card_game.mahjong.formatters.mahjong import (
+    StandardMahjongFormatter,
+)
+from gage_eval.game_kits.phase_card_game.mahjong.parsers.mahjong import (
+    StandardMahjongParser,
+)
+from gage_eval.game_kits.phase_card_game.mahjong.renderers.mahjong import (
+    StandardMahjongRenderer,
+)
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
-from gage_eval.role.arena.games.mahjong.env import MahjongArena
-from gage_eval.role.arena.games.mahjong.formatters.mahjong import StandardMahjongFormatter
-from gage_eval.role.arena.games.mahjong.parsers.mahjong import StandardMahjongParser
-from gage_eval.role.arena.games.mahjong.renderers.mahjong import StandardMahjongRenderer
 
 _ACTION_ID_TO_TEXT = {
     0: "B1",

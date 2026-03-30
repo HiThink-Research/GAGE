@@ -7,9 +7,15 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+ARENA_MANIFEST_PATH = REPO_ROOT / "src/gage_eval/registry/manifests/arena.json"
+
+
 def _load_config(relpath: str) -> dict:
     return yaml.safe_load((REPO_ROOT / relpath).read_text(encoding="utf-8"))
 
+
+def _load_arena_manifest() -> dict:
+    return yaml.safe_load(ARENA_MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
@@ -135,6 +141,38 @@ def test_mahjong_human_visual_config_uses_real_env_and_llm_opponents(relpath: st
         for player in players[1:]
     )
 
+
+def test_phase_card_manifest_entries_point_to_gamekit_modules() -> None:
+    manifest = _load_arena_manifest()
+    entry_map = {entry["name"]: entry for entry in manifest["entries"]}
+
+    assert "doudizhu_arena_parser_v1" not in entry_map
+    assert "doudizhu_showdown_v1" not in entry_map
+    assert entry_map["doudizhu_v1"]["module"] == (
+        "gage_eval.game_kits.phase_card_game.doudizhu.parsers.doudizhu"
+    )
+    assert entry_map["doudizhu_replay_v1"]["module"] == (
+        "gage_eval.game_kits.phase_card_game.doudizhu.renderers.doudizhu"
+    )
+    assert entry_map["mahjong_rlcard_v1"]["module"] == (
+        "gage_eval.game_kits.phase_card_game.mahjong.environment"
+    )
+    assert entry_map["mahjong_v1"]["module"] == (
+        "gage_eval.game_kits.phase_card_game.mahjong.parsers.mahjong"
+    )
+    assert entry_map["mahjong_replay_v1"]["module"] == (
+        "gage_eval.game_kits.phase_card_game.mahjong.renderers.mahjong"
+    )
+
+
+def test_doudizhu_dummy_replay_config_uses_gamekit_parser() -> None:
+    payload = _load_config("config/custom/oneclick/replay_dummy/doudizhu_dummy_replay.yaml")
+    arena_adapter = next(
+        adapter for adapter in payload["role_adapters"] if adapter["adapter_id"] == "doudizhu_arena"
+    )
+    parser = arena_adapter["params"]["parser"]
+
+    assert parser["impl"] == "doudizhu_v1"
 
 
 @pytest.mark.parametrize(

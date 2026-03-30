@@ -7,12 +7,12 @@ source "${ROOT}/scripts/run/common/env.sh"
 PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
 CFG="${CFG:-${ROOT}/config/custom/doudizhu/doudizhu_human_vs_llm.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
-RUN_ID="${RUN_ID:-doudizhu_showdown_human_$(date +%Y%m%d_%H%M%S)}"
+RUN_ID="${RUN_ID:-doudizhu_human_$(date +%Y%m%d_%H%M%S)}"
 SAMPLE_ID="${SAMPLE_ID:-doudizhu_litellm_0001}"
-REPLAY_PORT="${REPLAY_PORT:-8000}"
+VISUAL_PORT="${VISUAL_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 ACTION_PORT="${ACTION_PORT:-8001}"
-FRONTEND_DIR="${FRONTEND_DIR:-${ROOT}/frontend/rlcard-showdown}"
+FRONTEND_DIR="${FRONTEND_DIR:-${ROOT}/frontend/arena-visual}"
 AUTO_OPEN="${AUTO_OPEN:-1}"
 FAST_FINISH="${FAST_FINISH:-0}"
 
@@ -34,11 +34,11 @@ if [ ! -x "${PYTHON_BIN}" ]; then
 fi
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "[oneclick][error] node is required for the Showdown frontend." >&2
+  echo "[oneclick][error] node is required for the arena visual frontend." >&2
   exit 1
 fi
 if ! command -v npm >/dev/null 2>&1; then
-  echo "[oneclick][error] npm is required for the Showdown frontend." >&2
+  echo "[oneclick][error] npm is required for the arena visual frontend." >&2
   exit 1
 fi
 if [ ! -d "${FRONTEND_DIR}/node_modules" ]; then
@@ -116,15 +116,15 @@ pick_port() {
   return 1
 }
 
-REPLAY_PORT_SELECTED="$(pick_port "${REPLAY_PORT}" 50)"
-if [ -z "${REPLAY_PORT_SELECTED}" ]; then
-  echo "[oneclick][error] Unable to find a free replay port starting at ${REPLAY_PORT}." >&2
+VISUAL_PORT_SELECTED="$(pick_port "${VISUAL_PORT}" 50)"
+if [ -z "${VISUAL_PORT_SELECTED}" ]; then
+  echo "[oneclick][error] Unable to find a free visual port starting at ${VISUAL_PORT}." >&2
   exit 1
 fi
-if [ "${REPLAY_PORT_SELECTED}" != "${REPLAY_PORT}" ]; then
-  echo "[oneclick][warn] Replay port ${REPLAY_PORT} in use. Using ${REPLAY_PORT_SELECTED}." >&2
+if [ "${VISUAL_PORT_SELECTED}" != "${VISUAL_PORT}" ]; then
+  echo "[oneclick][warn] Visual port ${VISUAL_PORT} in use. Using ${VISUAL_PORT_SELECTED}." >&2
 fi
-REPLAY_PORT="${REPLAY_PORT_SELECTED}"
+VISUAL_PORT="${VISUAL_PORT_SELECTED}"
 
 FRONTEND_PORT_SELECTED="$(pick_port "${FRONTEND_PORT}" 50)"
 if [ -z "${FRONTEND_PORT_SELECTED}" ]; then
@@ -136,7 +136,7 @@ if [ "${FRONTEND_PORT_SELECTED}" != "${FRONTEND_PORT}" ]; then
 fi
 FRONTEND_PORT="${FRONTEND_PORT_SELECTED}"
 
-ACTION_PORT_SELECTED="$(pick_port "${ACTION_PORT}" 50 "${REPLAY_PORT}")"
+ACTION_PORT_SELECTED="$(pick_port "${ACTION_PORT}" 50 "${VISUAL_PORT}")"
 if [ -z "${ACTION_PORT_SELECTED}" ]; then
   echo "[oneclick][error] Unable to find a free action port starting at ${ACTION_PORT}." >&2
   exit 1
@@ -157,23 +157,20 @@ print(quote(os.environ["ACTION_URL"], safe=""))
 PY
 )"
 
-REPLAY_URL="http://127.0.0.1:${FRONTEND_PORT}/replay/doudizhu?run_id=${RUN_ID}&sample_id=${SAMPLE_ID}&live=1&autoplay=1&play=1&action_url=${ACTION_URL_ENC}"
-if [ "${FAST_FINISH}" = "1" ]; then
-  REPLAY_URL="${REPLAY_URL}&fast_finish=1"
-fi
-echo "[oneclick] replay url: ${REPLAY_URL}"
+VIEWER_URL="http://127.0.0.1:${FRONTEND_PORT}/sessions/${SAMPLE_ID}?run_id=${RUN_ID}"
+echo "[oneclick] viewer url: ${VIEWER_URL}"
 echo "[oneclick] action url: ${ACTION_URL}"
 
-echo "[oneclick] starting replay server..."
-PYTHONPATH="${ROOT}/src" "${PYTHON_BIN}" -m gage_eval.tools.replay_server \
-  --port "${REPLAY_PORT}" \
-  --replay-dir "${OUTPUT_DIR}" &
-REPLAY_PID=$!
+echo "[oneclick] starting visual server..."
+PYTHONPATH="${ROOT}/src" "${PYTHON_BIN}" -m gage_eval.tools.arena_visual_server \
+  --port "${VISUAL_PORT}" \
+  --arena-visual-dir "${OUTPUT_DIR}" &
+VISUAL_PID=$!
 
-echo "[oneclick] starting showdown frontend..."
+echo "[oneclick] starting arena visual frontend..."
 (
   cd "${FRONTEND_DIR}"
-  REACT_APP_GAGE_API_URL="http://127.0.0.1:${REPLAY_PORT}" \
+  VITE_ARENA_GATEWAY_BASE_URL="http://127.0.0.1:${VISUAL_PORT}" \
     REACT_APP_GAGE_ACTION_URL="http://127.0.0.1:${ACTION_PORT}" \
     NODE_OPTIONS="${FRONTEND_NODE_OPTIONS}" \
     BROWSER=none \
@@ -183,9 +180,9 @@ echo "[oneclick] starting showdown frontend..."
 FRONTEND_PID=$!
 
 if wait_for_port "${FRONTEND_PORT}" 60; then
-  open_url "${REPLAY_URL}"
+  open_url "${VIEWER_URL}"
 else
-  echo "[oneclick][warn] Frontend did not start within 60s. Open manually: ${REPLAY_URL}" >&2
+  echo "[oneclick][warn] Frontend did not start within 60s. Open manually: ${VIEWER_URL}" >&2
 fi
 
 echo "[oneclick] running doudizhu pipeline..."
@@ -197,6 +194,6 @@ export DOUDIZHU_ACTION_PORT="${ACTION_PORT}"
   --run-id "${RUN_ID}"
 
 echo "[oneclick] replay ready:"
-echo "${REPLAY_URL}"
+echo "${VIEWER_URL}"
 
 wait "${FRONTEND_PID}"

@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Sequence
 
-from gage_eval.role.arena.games.doudizhu import env as doudizhu_env_module
-from gage_eval.role.arena.games.doudizhu.env import DoudizhuArenaEnvironment
+import pytest
+
+from gage_eval.game_kits.phase_card_game.doudizhu import (
+    environment as doudizhu_env_module,
+    renderers as doudizhu_renderers,
+)
+from gage_eval.game_kits.phase_card_game.doudizhu.environment import (
+    DoudizhuArenaEnvironment,
+)
+from gage_eval.registry import registry
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _read_text(relpath: str) -> str:
+    return (REPO_ROOT / relpath).read_text(encoding="utf-8")
 
 
 class _StubCore:
@@ -87,3 +103,24 @@ def test_doudizhu_arena_exposes_get_last_frame(monkeypatch) -> None:
     latest_frame = env.get_last_frame()
     assert latest_frame["observer_player_id"] == "player_0"
     assert "board_text" in latest_frame
+
+
+def test_doudizhu_renderers_package_does_not_expose_showdown_renderer() -> None:
+    assert "DoudizhuShowdownRenderer" not in doudizhu_renderers.__all__
+    assert not hasattr(doudizhu_renderers, "DoudizhuShowdownRenderer")
+    with pytest.raises(KeyError):
+        registry.get("renderer_impls", "doudizhu_showdown_v1")
+    with pytest.raises(KeyError):
+        registry.get("parser_impls", "doudizhu_arena_parser_v1")
+
+
+def test_doudizhu_run_scripts_do_not_default_to_showdown() -> None:
+    run_sh = _read_text("scripts/run/arenas/doudizhu/run.sh")
+    human_vs_ai = _read_text("scripts/run/arenas/doudizhu/run_human_vs_ai_legacy.sh")
+
+    assert 'MODE="${MODE:-human-vs-ai}"' in run_sh
+    assert "showdown" not in run_sh
+    assert "rlcard-showdown" not in human_vs_ai
+    assert "frontend/arena-visual" in human_vs_ai
+    assert "VITE_ARENA_GATEWAY_BASE_URL" in human_vs_ai
+    assert "/sessions/${SAMPLE_ID}" in human_vs_ai

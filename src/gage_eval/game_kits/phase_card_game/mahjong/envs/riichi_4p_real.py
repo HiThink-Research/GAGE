@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from gage_eval.game_kits.phase_card_game.mahjong.environment import MahjongArena
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
-from gage_eval.role.arena.games.mahjong.env import MahjongArena
 
 
 class Riichi4pRealEnvironment:

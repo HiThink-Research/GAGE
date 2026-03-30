@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from gage_eval.role.arena.games.mahjong import env as mahjong_env_module
-from gage_eval.role.arena.games.mahjong.env import MahjongArena
+from gage_eval.game_kits.phase_card_game.mahjong import (
+    environment as mahjong_env_module,
+)
+from gage_eval.game_kits.phase_card_game.mahjong.environment import MahjongArena
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _read_text(relpath: str) -> str:
+    return (REPO_ROOT / relpath).read_text(encoding="utf-8")
 
 
 class _StubCore:
@@ -99,3 +109,18 @@ def test_mahjong_arena_exposes_get_last_frame(monkeypatch) -> None:
     latest_frame = arena.get_last_frame()
     assert latest_frame["observer_player_id"] == "player_0"
     assert latest_frame["public_state"]["round"] == 1
+
+
+def test_mahjong_run_scripts_do_not_default_to_showdown() -> None:
+    run_sh = _read_text("scripts/run/arenas/mahjong/run.sh")
+    human_vs_ai = _read_text("scripts/run/arenas/mahjong/run_human_vs_ai_legacy.sh")
+    human_vs_dummy = _read_text("scripts/run/arenas/mahjong/run_human_vs_dummy_legacy.sh")
+    real_ai = _read_text("scripts/run/arenas/mahjong/run_real_ai_legacy.sh")
+
+    assert 'MODE="${MODE:-human-vs-ai}"' in run_sh
+    assert "showdown" not in run_sh
+    for script in (human_vs_ai, human_vs_dummy, real_ai):
+        assert "rlcard-showdown" not in script
+        assert "frontend/arena-visual" in script
+        assert "VITE_ARENA_GATEWAY_BASE_URL" in script
+        assert "/sessions/" in script
