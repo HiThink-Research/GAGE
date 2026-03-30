@@ -50,10 +50,48 @@ class RuntimeBindingResolver:
     def resolve(self, sample: ArenaSample) -> ResolvedRuntimeBinding:
         game_kit = self.game_kits.build(sample.game_kit)
         env_spec = self._resolve_env_spec(game_kit, sample)
+        runtime_binding_policy = self._resolve_optional_runtime_ref(
+            sample=sample,
+            keys=("runtime_binding_policy",),
+            env_value=env_spec.runtime_binding_policy,
+            kit_value=game_kit.runtime_binding_policy,
+        )
         scheduler_binding = self._resolve_scheduler_binding(sample, game_kit, env_spec)
-        observation_workflow_id = self._resolve_observation_workflow_id(game_kit, env_spec)
-        visualization_spec_id = self._resolve_visualization_spec_id(game_kit)
-        support_workflow_id = self._resolve_support_workflow_id(game_kit)
+        observation_workflow_id = self._resolve_observation_workflow_id(sample, game_kit, env_spec)
+        game_display = self._resolve_game_display_ref(sample, game_kit, env_spec)
+        replay_viewer = self._resolve_replay_viewer_ref(
+            sample,
+            game_kit,
+            env_spec,
+            game_display=game_display,
+        )
+        parser = self._resolve_optional_runtime_ref(
+            sample=sample,
+            keys=("parser",),
+            env_value=env_spec.parser,
+            kit_value=game_kit.parser,
+        )
+        renderer = self._resolve_optional_runtime_ref(
+            sample=sample,
+            keys=("renderer",),
+            env_value=env_spec.renderer,
+            kit_value=game_kit.renderer,
+            system_default=self._resolve_renderer_ref(game_display),
+        )
+        replay_policy = self._resolve_optional_runtime_ref(
+            sample=sample,
+            keys=("replay_policy", "replay_adapter"),
+            env_value=env_spec.replay_policy,
+            kit_value=game_kit.replay_policy,
+        )
+        input_mapper = self._resolve_optional_runtime_ref(
+            sample=sample,
+            keys=("input_mapper",),
+            env_value=env_spec.input_mapper,
+            kit_value=game_kit.input_mapper,
+        )
+        game_content_refs = self._resolve_game_content_refs(sample, game_kit, env_spec)
+        support_workflow_id = self._resolve_support_workflow_id(sample, game_kit, env_spec)
         player_bindings = self._resolve_player_bindings(sample=sample, game_kit=game_kit)
 
         return ResolvedRuntimeBinding(
@@ -61,7 +99,15 @@ class RuntimeBindingResolver:
             env_spec=env_spec,
             scheduler=self.schedulers.build(scheduler_binding),
             resource_spec=env_spec.resource_spec,
-            visualization_spec=self.visualization_specs.build(visualization_spec_id),
+            runtime_binding_policy=runtime_binding_policy,
+            game_display=game_display,
+            replay_viewer=replay_viewer,
+            parser=parser,
+            renderer=renderer,
+            replay_policy=replay_policy,
+            input_mapper=input_mapper,
+            game_content_refs=game_content_refs,
+            visualization_spec=self.visualization_specs.build(game_display),
             players=tuple(sample.players),
             player_bindings=player_bindings,
             player_driver_registry=self.player_drivers,
@@ -175,16 +221,128 @@ class RuntimeBindingResolver:
         return None
 
     @staticmethod
-    def _resolve_observation_workflow_id(game_kit: GameKit, env_spec: EnvSpec) -> str:
-        return str(env_spec.observation_workflow or game_kit.observation_workflow)
+    def _resolve_observation_workflow_id(
+        sample: ArenaSample,
+        game_kit: GameKit,
+        env_spec: EnvSpec,
+    ) -> str:
+        return str(
+            RuntimeBindingResolver._resolve_optional_runtime_ref(
+                sample=sample,
+                keys=("observation_workflow",),
+                env_value=env_spec.observation_workflow,
+                kit_value=game_kit.observation_workflow,
+                system_default="arena/default",
+            )
+        )
 
     @staticmethod
-    def _resolve_visualization_spec_id(game_kit: GameKit) -> str:
-        return str(game_kit.visualization_spec or "arena/default")
+    def _resolve_game_display_ref(
+        sample: ArenaSample,
+        game_kit: GameKit,
+        env_spec: EnvSpec,
+    ) -> str:
+        return str(
+            RuntimeBindingResolver._resolve_optional_runtime_ref(
+                sample=sample,
+                keys=("game_display", "game_display_descriptor", "visualization_spec"),
+                env_value=env_spec.game_display,
+                kit_value=game_kit.game_display or game_kit.visualization_spec,
+                system_default="arena/default",
+            )
+        )
 
     @staticmethod
-    def _resolve_support_workflow_id(game_kit: GameKit) -> str:
-        return str(game_kit.support_workflow or "arena/default")
+    def _resolve_replay_viewer_ref(
+        sample: ArenaSample,
+        game_kit: GameKit,
+        env_spec: EnvSpec,
+        *,
+        game_display: str,
+    ) -> str:
+        return str(
+            RuntimeBindingResolver._resolve_optional_runtime_ref(
+                sample=sample,
+                keys=("replay_viewer", "replay_viewer_descriptor"),
+                env_value=env_spec.replay_viewer,
+                kit_value=game_kit.replay_viewer,
+                system_default=game_display,
+            )
+        )
+
+    @staticmethod
+    def _resolve_support_workflow_id(
+        sample: ArenaSample,
+        game_kit: GameKit,
+        env_spec: EnvSpec,
+    ) -> str:
+        return str(
+            RuntimeBindingResolver._resolve_optional_runtime_ref(
+                sample=sample,
+                keys=("support_workflow",),
+                env_value=env_spec.defaults.get("support_workflow"),
+                kit_value=game_kit.support_workflow,
+                system_default="arena/default",
+            )
+        )
+
+    def _resolve_renderer_ref(self, game_display: str | None) -> str | None:
+        if game_display is None:
+            return None
+        try:
+            spec = self.visualization_specs.build(game_display)
+        except (KeyError, TypeError):
+            return None
+        return self._coerce_optional_text(spec.renderer_impl)
+
+    @classmethod
+    def _resolve_optional_runtime_ref(
+        cls,
+        *,
+        sample: ArenaSample,
+        keys: tuple[str, ...],
+        env_value: object,
+        kit_value: object,
+        system_default: object = None,
+    ) -> str | None:
+        sample_value = cls._sample_runtime_override(sample, *keys)
+        for candidate in (sample_value, env_value, kit_value, system_default):
+            text = cls._coerce_optional_text(candidate)
+            if text is not None:
+                return text
+        return None
+
+    @staticmethod
+    def _sample_runtime_override(sample: ArenaSample, *keys: str) -> object:
+        overrides = sample.runtime_overrides or {}
+        for key in keys:
+            value = overrides.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    @classmethod
+    def _resolve_game_content_refs(
+        cls,
+        sample: ArenaSample,
+        game_kit: GameKit,
+        env_spec: EnvSpec,
+    ) -> dict[str, str]:
+        merged: dict[str, str] = {}
+        for source in (game_kit.game_content_refs, env_spec.game_content_refs):
+            if not isinstance(source, Mapping):
+                continue
+            for key, value in source.items():
+                text = cls._coerce_optional_text(value)
+                if text is not None:
+                    merged[str(key)] = text
+        override_refs = cls._sample_runtime_override(sample, "game_content_refs", "content_refs")
+        if isinstance(override_refs, Mapping):
+            for key, value in override_refs.items():
+                text = cls._coerce_optional_text(value)
+                if text is not None:
+                    merged[str(key)] = text
+        return merged
 
     def _resolve_player_seat(
         self,

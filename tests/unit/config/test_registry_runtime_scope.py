@@ -10,9 +10,12 @@ import pytest
 from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.config.registry import ConfigRegistry, _collect_runtime_registry_packages
 from gage_eval.evaluation.runtime_builder import build_runtime
+from gage_eval.game_kits.registry import GameKitRegistry
+from gage_eval.game_kits.runtime_binding import RuntimeBindingResolver
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import RegistryBootstrapCoordinator, RegistryManager, RegistryRuntimeMutationError, registry
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
+from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.model.backends.builder import build_backend
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
@@ -310,6 +313,66 @@ def test_prepare_runtime_registry_context_preloads_gamearena_runtime_packages_ac
         assert second_context.view.entry("support_workflows", "arena/default").name == "arena/default"
     finally:
         second_context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_resolves_gamekit_visualization_specs_from_isolated_clone() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        sample = ArenaSample(game_kit="gomoku", env="gomoku_standard")
+        resolver = RuntimeBindingResolver(game_kits=GameKitRegistry(registry_view=context.view))
+        resolved = resolver.resolve(sample)
+
+        assert (
+            context.view.entry("visualization_specs", "arena/visualization/gomoku_board_v1").name
+            == "arena/visualization/gomoku_board_v1"
+        )
+        assert resolved.visualization_spec.spec_id == "arena/visualization/gomoku_board_v1"
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_surfaces_explicit_runtime_refs_from_isolated_clone() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        sample = ArenaSample(game_kit="gomoku", env="gomoku_standard")
+        resolver = RuntimeBindingResolver(game_kits=GameKitRegistry(registry_view=context.view))
+        resolved = resolver.resolve(sample)
+
+        assert resolved.game_kit.game_display == "arena/visualization/gomoku_board_v1"
+        assert resolved.game_display == "arena/visualization/gomoku_board_v1"
+        assert resolved.replay_viewer == "arena/visualization/gomoku_board_v1"
+        assert resolved.renderer == "placeholder://arena/visualization/gomoku/renderer"
+        assert resolved.visualization_spec.spec_id == resolved.game_display
+    finally:
+        context.close()
 
 
 @pytest.mark.fast

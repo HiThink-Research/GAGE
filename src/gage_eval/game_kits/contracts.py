@@ -16,6 +16,13 @@ class EnvSpec:
     scheduler_binding: str | None = None
     observation_workflow: str | None = None
     game_content_refs: dict[str, str] = field(default_factory=dict)
+    runtime_binding_policy: str | None = None
+    game_display: str | None = None
+    replay_viewer: str | None = None
+    parser: str | None = None
+    renderer: str | None = None
+    replay_policy: str | None = None
+    input_mapper: str | None = None
     defaults: dict[str, object] = field(default_factory=dict)
 
 
@@ -35,6 +42,14 @@ class GameKit:
     visualization_spec: str | None = None
     player_driver: str | None = None
     content_asset: str | None = None
+    game_content_refs: dict[str, str] = field(default_factory=dict)
+    runtime_binding_policy: str | None = None
+    game_display: str | None = None
+    replay_viewer: str | None = None
+    parser: str | None = None
+    renderer: str | None = None
+    replay_policy: str | None = None
+    input_mapper: str | None = None
     defaults: dict[str, object] = field(default_factory=dict)
 
 
@@ -60,6 +75,14 @@ class ResolvedRuntimeBinding:
     env_spec: EnvSpec
     scheduler: object
     resource_spec: object
+    runtime_binding_policy: str | None = None
+    game_display: str | None = None
+    replay_viewer: str | None = None
+    parser: str | None = None
+    renderer: str | None = None
+    replay_policy: str | None = None
+    input_mapper: str | None = None
+    game_content_refs: dict[str, str] = field(default_factory=dict)
     visualization_spec: GameVisualizationSpec | None = None
     players: tuple[dict[str, object], ...] = ()
     player_bindings: tuple[object, ...] = ()

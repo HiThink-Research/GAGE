@@ -213,3 +213,100 @@ def test_runtime_binding_resolver_resolves_support_workflow(fake_game_kit_regist
     assert resolved.support_workflow.workflow_id == "arena/default"
     assert resolved.support_workflow.units_by_hook
     assert resolved.support_workflow.units_by_hook
+
+
+def test_runtime_binding_resolver_surfaces_extension_refs_with_explicit_precedence() -> None:
+    contracts = importlib.import_module("gage_eval.game_kits.contracts")
+    registry_module = importlib.import_module("gage_eval.game_kits.registry")
+    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
+    registry_core = importlib.import_module("gage_eval.registry")
+
+    clone = registry_core.registry.clone()
+    clone.register(
+        "visualization_specs",
+        "display/sample",
+        contracts.GameVisualizationSpec(
+            spec_id="display/sample",
+            plugin_id="arena.visualization.tests.sample",
+            visual_kind="board",
+        ),
+        desc="Sample-level game display for resolver precedence tests",
+    )
+    clone.register(
+        "game_kits",
+        "binding_surface_v1",
+        contracts.GameKit(
+            kit_id="binding_surface_v1",
+            family="suite",
+            scheduler_binding="turn/default",
+            support_workflow="arena/default",
+            observation_workflow="noop_observation_v1",
+            env_catalog=(
+                contracts.EnvSpec(
+                    env_id="env_v1",
+                    kit_id="binding_surface_v1",
+                    resource_spec={"env_id": "env_v1"},
+                    game_content_refs={
+                        "kit_only": "content/kit",
+                        "env_only": "content/env",
+                        "shared": "env",
+                    },
+                    runtime_binding_policy="policy/env",
+                    game_display="display/env",
+                    replay_viewer="viewer/env",
+                    parser="parser/env",
+                    renderer="renderer/env",
+                    replay_policy="replay/env",
+                    input_mapper="input/env",
+                ),
+            ),
+            default_env="env_v1",
+            seat_spec={"seats": ("alpha", "beta")},
+            game_content_refs={
+                "kit_only": "content/kit",
+                "shared": "kit",
+            },
+            runtime_binding_policy="policy/kit",
+            game_display="display/kit",
+            replay_viewer="viewer/kit",
+            parser="parser/kit",
+            renderer="renderer/kit",
+            replay_policy="replay/kit",
+            input_mapper="input/kit",
+        ),
+        desc="Game kit with explicit extension refs for precedence tests",
+    )
+
+    resolver = runtime_binding.RuntimeBindingResolver(
+        game_kits=registry_module.GameKitRegistry(registry_view=clone)
+    )
+    sample = ArenaSample(
+        game_kit="binding_surface_v1",
+        env="env_v1",
+        runtime_overrides={
+            "game_display": "display/sample",
+            "replay_viewer": "viewer/sample",
+            "parser": "parser/sample",
+            "game_content_refs": {
+                "sample_only": "content/sample",
+                "shared": "sample",
+            },
+        },
+    )
+
+    resolved = resolver.resolve(sample)
+
+    assert resolved.runtime_binding_policy == "policy/env"
+    assert resolved.game_display == "display/sample"
+    assert resolved.replay_viewer == "viewer/sample"
+    assert resolved.parser == "parser/sample"
+    assert resolved.renderer == "renderer/env"
+    assert resolved.replay_policy == "replay/env"
+    assert resolved.input_mapper == "input/env"
+    assert resolved.game_content_refs == {
+        "kit_only": "content/kit",
+        "env_only": "content/env",
+        "sample_only": "content/sample",
+        "shared": "sample",
+    }
+    assert resolved.visualization_spec.spec_id == "display/sample"
