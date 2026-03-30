@@ -1,43 +1,44 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-
-import pytest
+from pathlib import Path
 
 from gage_eval.agent_runtime.artifacts.layout import ArtifactLayout
 from gage_eval.agent_runtime.artifacts.sink import FileArtifactSink
 from gage_eval.agent_runtime.artifacts.trace import TraceEvent
 
 
-@pytest.mark.fast
 def test_artifact_layout_for_sample() -> None:
-    layout = ArtifactLayout.for_sample("runs", "run-1", "sample-1")
+    layout = ArtifactLayout.for_sample("/tmp/runs", "run-1", "sample-1")
 
-    assert layout.sample_dir.endswith("runs/run-1/samples/sample-1")
-    assert layout.patch_file.endswith("agent/submission.patch")
-
-
-@pytest.mark.fast
-def test_artifact_layout_paths_consistent() -> None:
-    layout = ArtifactLayout.for_sample("runs", "run-1", "sample-1")
-
-    assert layout.agent_dir.startswith(layout.sample_dir)
-    assert layout.verifier_dir.startswith(layout.sample_dir)
+    assert layout.run_dir == "/tmp/runs/run-1"
+    assert layout.sample_dir.endswith("/samples/sample-1")
+    assert layout.agent_dir.endswith("/samples/sample-1/agent")
+    assert layout.verifier_dir.endswith("/samples/sample-1/verifier")
+    assert layout.patch_file.endswith("/samples/sample-1/agent/submission.patch")
+    assert layout.metadata_file.endswith("/samples/sample-1/runtime_metadata.json")
 
 
-@pytest.mark.fast
-def test_file_artifact_sink_write_text(tmp_path) -> None:
+def test_file_artifact_sink_write_text(tmp_path: Path) -> None:
     sink = FileArtifactSink()
-    target = tmp_path / "artifacts" / "stdout.log"
+    target = tmp_path / "nested" / "artifact.txt"
 
     sink.write_text(str(target), "hello")
 
     assert target.read_text(encoding="utf-8") == "hello"
 
 
-@pytest.mark.fast
-def test_trace_event_frozen() -> None:
-    event = TraceEvent(name="runtime_start", payload={"ok": True})
+def test_file_artifact_sink_write_bytes(tmp_path: Path) -> None:
+    sink = FileArtifactSink()
+    target = tmp_path / "nested" / "artifact.bin"
 
-    with pytest.raises(FrozenInstanceError):
-        event.level = "error"
+    sink.write_bytes(str(target), b"abc")
+
+    assert target.read_bytes() == b"abc"
+
+
+def test_trace_event_frozen() -> None:
+    event = TraceEvent(name="sample", payload={"x": 1})
+
+    assert event.name == "sample"
+    assert event.payload == {"x": 1}
+

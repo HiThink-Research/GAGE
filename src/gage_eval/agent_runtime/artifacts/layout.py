@@ -1,4 +1,4 @@
-"""ArtifactLayout — frozen directory structure for trial artifacts."""
+"""Frozen directory structure for trial artifacts."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ArtifactLayout:
-    """Resolved output paths for a single runtime sample."""
+    """Filesystem layout for a single sample run."""
 
     run_dir: str
     sample_dir: str
@@ -21,6 +21,7 @@ class ArtifactLayout:
 
     @classmethod
     def for_sample(cls, base_dir: str, run_id: str, sample_id: str) -> "ArtifactLayout":
+        """Build the default layout for a sample."""
         run_dir = os.path.join(base_dir, run_id)
         sample_dir = os.path.join(run_dir, "samples", sample_id)
         agent_dir = os.path.join(sample_dir, "agent")
@@ -35,3 +36,4 @@ class ArtifactLayout:
             stdout_file=os.path.join(agent_dir, "stdout.log"),
             metadata_file=os.path.join(sample_dir, "runtime_metadata.json"),
         )
+

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional, Protocol
 
 @dataclass(frozen=True)
 class VerifierInput:
-    """Normalized input payload for verification."""
+    """Input payload for a benchmark verifier."""
 
     benchmark_kit_id: str
     sample_id: str
@@ -19,7 +19,7 @@ class VerifierInput:
 
 @dataclass(frozen=True)
 class VerifierResult:
-    """Normalized verifier output."""
+    """Structured result returned by a verifier."""
 
     status: str
     score: Optional[float] = None
@@ -28,7 +28,7 @@ class VerifierResult:
 
 
 class Verifier(Protocol):
-    """Sync verification protocol."""
+    """Verifier protocol."""
 
-    def verify(self, verifier_input: VerifierInput) -> VerifierResult:
-        """Verify a scheduler result."""
+    def verify(self, verifier_input: VerifierInput) -> VerifierResult: ...
+

@@ -1,14 +1,16 @@
-"""TraceEvent — append-only event record."""
+"""Append-only trace events for agent runtime runs."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Dict
 
 
 @dataclass(frozen=True)
 class TraceEvent:
-    """Minimal runtime trace event."""
+    """A single trace event emitted by a runtime component."""
 
     name: str
-    payload: dict
+    payload: Dict[str, Any]
     level: str = "info"
+

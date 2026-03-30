@@ -1,36 +1,35 @@
-"""ArtifactSink — write artifacts to disk."""
+"""Artifact sink for local filesystem writes."""
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import Protocol
 
 
 class ArtifactSink(Protocol):
-    """Protocol for artifact writers."""
+    """Write interface for runtime artifacts."""
 
-    def write_text(self, path: str, content: str) -> None:
-        """Write text content to an artifact path."""
+    def write_text(self, path: str, content: str) -> None: ...
 
-    def write_bytes(self, path: str, content: bytes) -> None:
-        """Write binary content to an artifact path."""
+    def write_bytes(self, path: str, content: bytes) -> None: ...
 
-    def record_event(self, name: str, payload: dict) -> None:
-        """Record an event alongside artifact outputs."""
+    def record_event(self, name: str, payload: dict) -> None: ...
 
 
 class FileArtifactSink:
-    """Writes artifacts to the local filesystem."""
+    """Write runtime artifacts to the local filesystem."""
 
     def write_text(self, path: str, content: str) -> None:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
 
     def write_bytes(self, path: str, content: bytes) -> None:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as handle:
-            handle.write(content)
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
 
     def record_event(self, name: str, payload: dict) -> None:
+        """Record an event. The default implementation is a no-op."""
         return None
+
