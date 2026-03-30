@@ -1,8 +1,10 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import type { VisualScene, VisualSession } from "../../gateway/types";
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
 import type { ActionIntent } from "../sdk/input";
+import type { FrameActionDescriptor, FrameKeyboardControls } from "./contracts";
+import { normalizeKeyboardKey } from "./keyboardControls";
 
 interface FrameViewport {
   width: number;
@@ -37,12 +39,6 @@ interface FrameSceneData {
   overlays: FrameBadge[];
 }
 
-interface FrameActionDescriptor {
-  id: string;
-  label: string;
-  payload: Record<string, unknown>;
-}
-
 interface FrameSurfaceProps {
   gameLabel: string;
   session: VisualSession;
@@ -52,6 +48,7 @@ interface FrameSurfaceProps {
     actionPayload: ActionIntent["action"];
   }) => Promise<void>;
   mediaSubscribe: ArenaMediaSubscriber;
+  keyboardControls?: FrameKeyboardControls;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -235,8 +232,11 @@ export function FrameSurface({
   scene,
   submitInput,
   mediaSubscribe,
+  keyboardControls,
 }: FrameSurfaceProps) {
   const frameScene = readFrameScene(scene);
+  const pressedKeysRef = useRef<Set<string>>(new Set());
+  const lastKeyboardDispatchRef = useRef<string | null>(null);
 
   if (!frameScene) {
     return (
@@ -258,9 +258,89 @@ export function FrameSurface({
     mediaId: primaryMediaId ?? "",
     subscribe: mediaSubscribe,
   });
+  const keyboardSceneToken =
+    scene?.sceneId ??
+    `${session.sessionId}:${frameScene.status.tick}:${frameScene.status.moveCount}:${frameScene.status.lastMove ?? ""}`;
   const imageClassName = resolveImageClassName(frameScene.frame.fit);
   const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
   const viewportStyle = resolveViewportStyle(frameScene.frame.viewport);
+
+  function submitKeyboardAction(pressedKeys: ReadonlySet<string>) {
+    if (!keyboardControls || !canSubmitActions || !resolvedActorId) {
+      return;
+    }
+    const actionDescriptor = keyboardControls.resolveAction(actionDescriptors, pressedKeys);
+    if (!actionDescriptor) {
+      if (pressedKeys.size === 0) {
+        lastKeyboardDispatchRef.current = null;
+      }
+      return;
+    }
+    const pressedKeysToken = [...pressedKeys].sort().join(",");
+    const dispatchToken = `${keyboardSceneToken}:${resolvedActorId}:${actionDescriptor.id}:${pressedKeysToken}`;
+    if (lastKeyboardDispatchRef.current === dispatchToken) {
+      return;
+    }
+    lastKeyboardDispatchRef.current = dispatchToken;
+    void submitInput({
+      playerId: resolvedActorId,
+      actionPayload: actionDescriptor.payload,
+    });
+  }
+
+  useEffect(() => {
+    if (!keyboardControls) {
+      pressedKeysRef.current = new Set();
+      lastKeyboardDispatchRef.current = null;
+      return;
+    }
+    const watchedKeys = new Set(
+      keyboardControls.watchedKeys.map((key) => normalizeKeyboardKey(key)),
+    );
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const normalizedKey = normalizeKeyboardKey(event.key);
+      if (!watchedKeys.has(normalizedKey) || isEditingTarget(event.target)) {
+        return;
+      }
+      const nextPressedKeys = new Set(pressedKeysRef.current);
+      const sizeBefore = nextPressedKeys.size;
+      nextPressedKeys.add(normalizedKey);
+      pressedKeysRef.current = nextPressedKeys;
+      event.preventDefault();
+      if (nextPressedKeys.size !== sizeBefore) {
+        submitKeyboardAction(nextPressedKeys);
+      }
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      const normalizedKey = normalizeKeyboardKey(event.key);
+      if (!watchedKeys.has(normalizedKey) || isEditingTarget(event.target)) {
+        return;
+      }
+      const nextPressedKeys = new Set(pressedKeysRef.current);
+      const hadKey = nextPressedKeys.delete(normalizedKey);
+      pressedKeysRef.current = nextPressedKeys;
+      event.preventDefault();
+      if (hadKey) {
+        submitKeyboardAction(nextPressedKeys);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput, actionDescriptors]);
+
+  useEffect(() => {
+    if (!keyboardControls || pressedKeysRef.current.size === 0) {
+      return;
+    }
+    submitKeyboardAction(new Set(pressedKeysRef.current));
+  }, [actionDescriptors, canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput]);
 
   return (
     <section className="frame-surface">
@@ -308,6 +388,11 @@ export function FrameSurface({
         {formatStatusLine(frameScene)}
       </p>
       {frameScene.viewText ? <p className="frame-surface__view-text">{frameScene.viewText}</p> : null}
+      {keyboardControls ? (
+        <p className="frame-surface__keyboard-hint" data-testid="frame-keyboard-hint">
+          {keyboardControls.hint}
+        </p>
+      ) : null}
 
       {actionDescriptors.length > 0 ? (
         <div className="frame-surface__actions">
@@ -333,5 +418,23 @@ export function FrameSurface({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function isEditingTarget(target: EventTarget | null): boolean {
+  if (!target || typeof target !== "object") {
+    return false;
+  }
+  const candidate = target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+  };
+  const tagName = typeof candidate.tagName === "string" ? candidate.tagName.toUpperCase() : "";
+  return (
+    candidate.isContentEditable === true ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT" ||
+    tagName === "BUTTON"
   );
 }

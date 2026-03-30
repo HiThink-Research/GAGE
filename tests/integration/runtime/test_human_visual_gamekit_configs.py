@@ -26,6 +26,8 @@ def test_doudizhu_human_visual_config_uses_real_env_and_llm_opponents(relpath: s
     players = params["players"]
 
     assert params["env"] == "classic_3p_real"
+    assert params["runtime_overrides"]["chat_mode"] == "all"
+    assert params["runtime_overrides"]["chat_every_n"] == 1
     assert payload["backends"][0]["backend_id"] == "local_qwen35_litellm_backend"
     assert players[0]["player_kind"] == "human"
     assert players[1]["player_kind"] == "llm"
@@ -47,6 +49,8 @@ def test_mahjong_human_visual_config_uses_real_env_and_llm_opponents(relpath: st
     players = params["players"]
 
     assert params["env"] == "riichi_4p_real"
+    assert params["runtime_overrides"]["chat_mode"] == "all"
+    assert params["runtime_overrides"]["chat_every_n"] == 1
     assert payload["backends"][0]["backend_id"] == "local_qwen35_litellm_backend"
     assert players[0]["player_kind"] == "human"
     assert [player["player_kind"] for player in players[1:]] == ["llm", "llm", "llm"]
@@ -83,7 +87,6 @@ def test_pettingzoo_dummy_visual_configs_cover_visual_schemes(relpath: str, expe
     assert params["env"] == "space_invaders"
     assert params["runtime_overrides"] == {
         "backend_mode": "real",
-        "max_cycles": 32,
         "include_raw_obs": True,
         "use_action_meanings": True,
     }
@@ -116,7 +119,6 @@ def test_pettingzoo_human_visual_config_routes_human_input_to_pilot_0() -> None:
     }
     assert params["runtime_overrides"] == {
         "backend_mode": "real",
-        "max_cycles": 8,
         "include_raw_obs": True,
         "use_action_meanings": True,
     }
@@ -129,6 +131,88 @@ def test_pettingzoo_human_visual_config_routes_human_input_to_pilot_0() -> None:
     assert [player["player_id"] for player in players] == ["pilot_0", "pilot_1"]
     assert [player["player_kind"] for player in players] == ["human", "dummy"]
     assert players[1]["actions"] == ["LEFT", "NOOP"]
+
+
+def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> None:
+    payload = _load_config("config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "retro_platformer"
+    assert params["env"] == "retro_mario"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == {
+        "backend_mode": "real",
+        "default_state": "Start",
+        "display_mode": "headless",
+        "obs_image": True,
+        "frame_stride": 1,
+        "max_turns": 256,
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["live_scene_scheme"] == "http_pull"
+    assert visualizer["linger_after_finish_s"] == 15.0
+    assert players == [
+        {
+            "seat": "player_0",
+            "player_id": "player_0",
+            "player_kind": "human",
+        }
+    ]
+
+
+def test_vizdoom_human_visual_config_routes_human_input_to_p0() -> None:
+    payload = _load_config("config/custom/vizdoom/vizdoom_human_visual_gamekit.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "vizdoom"
+    assert params["env"] == "duel_map01"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == {
+        "backend_mode": "real",
+        "show_pov": False,
+        "capture_pov": True,
+        "obs_image": True,
+        "frame_stride": 1,
+        "max_steps": 600,
+        "action_repeat": 1,
+        "sleep_s": 0.0,
+        "allow_respawn": True,
+        "respawn_grace_steps": 600,
+        "reset_retry_count": 3,
+        "death_check_warmup_steps": 8,
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["live_scene_scheme"] == "http_pull"
+    assert visualizer["linger_after_finish_s"] == 15.0
+    assert players == [
+        {
+            "seat": "p0",
+            "player_id": "p0",
+            "player_kind": "human",
+        },
+        {
+            "seat": "p1",
+            "player_id": "p1",
+            "player_kind": "dummy",
+            "actions": ["3", "2", "3"],
+        },
+    ]
 
 
 def test_pettingzoo_double_llm_visual_config_routes_both_seats_to_same_backend() -> None:

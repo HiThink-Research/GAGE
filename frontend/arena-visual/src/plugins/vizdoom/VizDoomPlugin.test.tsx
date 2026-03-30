@@ -69,4 +69,94 @@ describe("VizDoomPlugin", () => {
     fireEvent.click(fireButton);
     expect(submitInput).not.toHaveBeenCalled();
   });
+
+  it("maps keyboard shortcuts onto the visible vizdoom legal actions", async () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <VizDoomPlugin
+        session={{
+          sessionId: "vizdoom-sample",
+          gameId: "vizdoom",
+          pluginId: "arena.visualization.vizdoom.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 3017,
+            cursorEventSeq: 17,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "p0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "p0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={vizdoomScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
+    );
+
+    fireEvent.keyDown(window, { key: "w" });
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "p0",
+      actionPayload: {
+        id: "1",
+        move: "1"
+      }
+    });
+
+    fireEvent.keyDown(window, { key: " " });
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "p0",
+      actionPayload: {
+        id: "2",
+        move: "2"
+      }
+    });
+
+    fireEvent.keyUp(window, { key: " " });
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "p0",
+      actionPayload: {
+        id: "1",
+        move: "1"
+      }
+    });
+
+    fireEvent.keyUp(window, { key: "w" });
+    expect(submitInput).toHaveBeenCalledTimes(3);
+
+    fireEvent.keyDown(window, { key: "a" });
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "p0",
+      actionPayload: {
+        id: "0",
+        move: "0"
+      }
+    });
+  });
 });

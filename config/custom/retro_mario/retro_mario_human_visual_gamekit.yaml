@@ -1,0 +1,52 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: retro_mario_human_visual_gamekit
+  description: >
+    GameArena Retro Mario human-play config for the arena_visual web app. The
+    runtime uses the real stable-retro backend and exposes the live frame scene
+    so the browser can drive Mario through human input events instead of a stub
+    player or LLM backend.
+
+datasets:
+  - dataset_id: retro_mario_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Retro_Mario.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: retro_mario_human_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: retro_mario_human_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: retro_platformer
+      env: retro_mario
+      runtime_overrides:
+        backend_mode: real
+        default_state: Start
+        display_mode: headless
+        obs_image: true
+        frame_stride: 1
+        max_turns: 256
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE Retro Mario Arena Visual
+        launch_browser: true
+        mode: arena_visual
+        port: 5808
+        live_scene_scheme: http_pull
+        linger_after_finish_s: 15.0
+      players:
+        - seat: player_0
+          player_id: player_0
+          player_kind: human

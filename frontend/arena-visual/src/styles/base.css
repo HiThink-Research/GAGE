@@ -1317,8 +1317,18 @@ select {
 .frame-surface__actor-label,
 .frame-surface__subtitle,
 .frame-surface__status-line,
-.frame-surface__view-text {
+.frame-surface__view-text,
+.frame-surface__keyboard-hint {
   color: var(--color-text-muted);
+}
+
+.frame-surface__keyboard-hint {
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--radius-sm);
+  background: rgba(232, 239, 232, 0.8);
+  border: 1px solid rgba(46, 90, 69, 0.12);
+  font-size: 0.92rem;
 }
 
 .frame-surface__viewport {

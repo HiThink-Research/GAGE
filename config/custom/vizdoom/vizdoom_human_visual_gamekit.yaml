@@ -1,0 +1,61 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: vizdoom_human_visual_gamekit
+  description: >
+    GameArena ViZDoom human-vs-dummy config for the arena_visual web app. The
+    runtime uses the real ViZDoom backend in single-process mode so the browser
+    can drive player p0 through live action intents while p1 stays deterministic.
+
+datasets:
+  - dataset_id: vizdoom_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_ViZDoom_Demo.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: vizdoom_human_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: vizdoom_human_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: vizdoom
+      env: duel_map01
+      runtime_overrides:
+        backend_mode: real
+        show_pov: false
+        capture_pov: true
+        obs_image: true
+        frame_stride: 1
+        max_steps: 600
+        action_repeat: 1
+        sleep_s: 0.0
+        allow_respawn: true
+        respawn_grace_steps: 600
+        reset_retry_count: 3
+        death_check_warmup_steps: 8
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE ViZDoom Arena Visual
+        launch_browser: true
+        mode: arena_visual
+        port: 5809
+        live_scene_scheme: http_pull
+        linger_after_finish_s: 15.0
+      players:
+        - seat: p0
+          player_id: p0
+          player_kind: human
+        - seat: p1
+          player_id: p1
+          player_kind: dummy
+          actions: ["3", "2", "3"]
