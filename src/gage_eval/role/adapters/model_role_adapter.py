@@ -33,6 +33,7 @@ class ModelRoleAdapter(RoleAdapter):
         self.backend = self._resolve_backend(backend)
         self.prompt_renderer = prompt_renderer
         self.params = params
+        self._shutdown_completed = False
 
     def _resolve_backend(self, backend: Any):
         if backend is None:
@@ -180,3 +181,26 @@ class ModelRoleAdapter(RoleAdapter):
         else:
             response = await ensure_async(self.backend)(request)
         return self.handle_backend_response(payload, response)
+
+    def shutdown(self) -> None:
+        """Release backend resources and break heavy references after shutdown."""
+
+        if self._shutdown_completed:
+            return
+
+        backend = getattr(self, "backend", None)
+        cleanup_fn = None
+        if backend is not None:
+            shutdown_fn = getattr(backend, "shutdown", None)
+            close_fn = getattr(backend, "close", None)
+            if callable(shutdown_fn):
+                cleanup_fn = shutdown_fn
+            elif callable(close_fn):
+                cleanup_fn = close_fn
+
+        try:
+            if cleanup_fn is not None:
+                cleanup_fn()
+        finally:
+            self.backend = None
+            self._shutdown_completed = True

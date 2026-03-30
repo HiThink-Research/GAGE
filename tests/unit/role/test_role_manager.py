@@ -9,6 +9,8 @@ import pytest
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
+from gage_eval.role.adapters.dut_model import DUTModelAdapter
+from gage_eval.role.model.backends.base_backend import Backend
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_instance import Role
 from gage_eval.role.runtime.invocation import RoleSessionStore, SampleExecutionContext
@@ -81,6 +83,19 @@ class _StubPool:
             "shard_count": 0,
             "shards": [],
         }
+
+
+class _ShutdownTrackingBackend(Backend):
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+        super().__init__({})
+
+    async def ainvoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
+        return {"answer": "ok"}
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
 
 
 @pytest.mark.fast
@@ -231,3 +246,21 @@ def test_role_manager_shutdown_aggregates_adapter_and_pool_failures() -> None:
         "bad_adapter",
         "bad_pool",
     }
+
+
+@pytest.mark.fast
+def test_role_manager_shutdown_propagates_to_model_backend_once() -> None:
+    manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)]))
+    backend = _ShutdownTrackingBackend()
+    adapter = DUTModelAdapter(
+        adapter_id="dut",
+        role_type="dut_model",
+        backend=backend,
+        capabilities=(),
+    )
+
+    manager.register_role_adapter("dut", adapter)
+    manager.shutdown()
+
+    assert backend.shutdown_calls == 1
+    assert adapter.backend is None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import unittest
 from pathlib import Path
@@ -64,6 +65,15 @@ class _FakeModel:
         self._calls.append("model.shutdown")
 
 
+class _FakeAsyncLLMModel:
+    def __init__(self, output_handler: asyncio.Task[None]) -> None:
+        self.output_handler = output_handler
+        self.output_handler_seen_at_shutdown = object()
+
+    def shutdown(self) -> None:
+        self.output_handler_seen_at_shutdown = self.output_handler
+
+
 class VLLMShutdownTests(unittest.TestCase):
     def test_graceful_loop_shutdown_stops_model_before_loop(self) -> None:
         calls: list[str] = []
@@ -81,14 +91,24 @@ class VLLMShutdownTests(unittest.TestCase):
 
     def test_vllm_backend_shutdown_is_idempotent(self) -> None:
         backend = make_backend()
+        original_loop = backend._loop
+        original_loop_thread = backend._loop_thread
+        original_model = backend.model
 
         with patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown") as shutdown_mock:
             backend.shutdown()
             backend.shutdown()
 
-        shutdown_mock.assert_called_once_with(backend._loop, backend._loop_thread, backend.model)
+        shutdown_mock.assert_called_once_with(original_loop, original_loop_thread, original_model)
         self.assertTrue(backend._shutdown_started)
         self.assertTrue(backend._shutdown_completed)
+        self.assertIsNone(backend.model)
+        self.assertIsNone(backend._loop)
+        self.assertIsNone(backend._loop_thread)
+        self.assertIsNone(backend._processor)
+        self.assertIsNone(backend._tokenizer)
+        self.assertIsNone(backend._engine_runtime)
+        self.assertIsNone(backend._engine_mm_support)
 
     def test_vllm_backend_shutdown_unregisters_cleanup_callback(self) -> None:
         backend = make_backend()
@@ -100,6 +120,35 @@ class VLLMShutdownTests(unittest.TestCase):
             backend.shutdown()
 
         unregister.assert_called_once_with()
+
+    def test_vllm_backend_shutdown_quiesces_output_handler_before_engine_shutdown(self) -> None:
+        backend = make_backend()
+        loop = asyncio.new_event_loop()
+
+        async def _wait_forever() -> None:
+            await asyncio.sleep(10)
+
+        handler = loop.create_task(_wait_forever())
+        model = _FakeAsyncLLMModel(handler)
+        backend.model = model
+        backend._loop = loop
+        backend._loop_thread = None
+
+        with (
+            patch(
+                "gage_eval.role.model.backends.vllm_backend.run_coroutine_threadsafe_with_timeout",
+                side_effect=lambda target_loop, coro, **kwargs: target_loop.run_until_complete(coro),
+            ),
+            patch(
+                "gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown",
+                side_effect=lambda loop_arg, loop_thread_arg, model_arg: model_arg.shutdown(),
+            ),
+        ):
+            backend.shutdown()
+
+        self.assertTrue(handler.cancelled())
+        self.assertIsNone(model.output_handler_seen_at_shutdown)
+        loop.close()
 
     def test_vllm_backend_starts_background_loop_lazily_once(self) -> None:
         backend = make_backend()

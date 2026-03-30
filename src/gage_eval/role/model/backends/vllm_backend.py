@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import os
 import re
@@ -158,12 +159,54 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             self._shutdown_started = True
             cleanup_unregister = self._cleanup_unregister
             self._cleanup_unregister = lambda: None
+            loop = self._loop
+            loop_thread = self._loop_thread
+            model = getattr(self, "model", None)
         try:
-            graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
+            self._quiesce_output_handler(model)
+            graceful_loop_shutdown(loop, loop_thread, model)
         finally:
             cleanup_unregister()
+            self.model = None
+            self._loop = None
+            self._loop_thread = None
+            self._processor = None
+            self._tokenizer = None
+            self._engine_runtime = None
+            self._engine_mm_support = None
             with self._shutdown_lock:
                 self._shutdown_completed = True
+
+    def _quiesce_output_handler(self, model: Any) -> None:
+        """Cancel the vLLM output handler before engine shutdown tears down EngineCore."""
+
+        handler = getattr(model, "output_handler", None)
+        if handler is None:
+            return
+        handler_loop = getattr(handler, "get_loop", lambda: None)()
+        if handler_loop is None:
+            model.output_handler = None
+            return
+
+        async def _cancel_output_handler() -> None:
+            if handler.done():
+                return
+            handler.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await handler
+
+        try:
+            run_coroutine_threadsafe_with_timeout(
+                handler_loop,
+                _cancel_output_handler(),
+                timeout=1.0,
+                logger_prefix="vllm_backend_shutdown",
+            )
+        except Exception:
+            logger.debug("vllm_backend output handler cleanup fell back to best-effort", exc_info=True)
+        finally:
+            if getattr(model, "output_handler", None) is handler:
+                model.output_handler = None
 
     def load_model(self, config: Dict[str, Any]):
         """Load the model/processor and apply compatibility patches (reward/MoE/rope scaling/low-memory)."""
