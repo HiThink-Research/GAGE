@@ -4,9 +4,11 @@ from typing import Any, Sequence
 
 from loguru import logger
 
+from gage_eval.game_kits.aec_env_game.pettingzoo.environment import (
+    PettingZooAecArenaEnvironment,
+)
 from gage_eval.game_kits.real_time_game.backend_mode import normalize_backend_mode
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
-from gage_eval.role.arena.games.pettingzoo.env import PettingZooAecArenaEnvironment
 
 try:
     import numpy as np

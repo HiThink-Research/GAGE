@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from gage_eval.game_kits.real_time_game.backend_mode import normalize_backend_mode
+from gage_eval.game_kits.real_time_game.retro_platformer.environment import (
+    StableRetroArenaEnvironment,
+)
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
-from gage_eval.role.arena.games.retro.retro_env import StableRetroArenaEnvironment
 
 try:
     import numpy as np
@@ -181,3 +183,6 @@ def build_retro_mario_environment(*, sample, resolved, resources, player_specs, 
         player_specs=player_specs,
         invocation_context=invocation_context,
     )
+
+
+__all__ = ["RetroMarioEnvironment", "build_retro_mario_environment"]

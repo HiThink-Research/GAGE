@@ -1,276 +1,90 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import importlib
 
 import pytest
 
-from gage_eval.tools import ws_rgb_replay
+from gage_eval.game_kits.aec_env_game.pettingzoo import replay as pettingzoo_replay
 
 
-def _write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+class _StubPettingZooReplayEnvironment:
+    def __init__(self, **_: object) -> None:
+        self._frames = [
+            {"board_text": "initial", "metadata": {"step": 0}},
+            {"board_text": "observed-1", "metadata": {"step": 1}},
+            {"board_text": "applied-1", "metadata": {"step": 2}},
+        ]
+        self._index = 0
+
+    def get_last_frame(self) -> dict[str, object]:
+        return dict(self._frames[self._index])
+
+    def get_active_player(self) -> str:
+        return "player_0"
+
+    def observe(self, player: str) -> None:
+        _ = player
+        self._index = min(1, len(self._frames) - 1)
+
+    def apply(self, action) -> None:
+        _ = action
+        self._index = min(2, len(self._frames) - 1)
+        return None
 
 
-def test_build_replay_v1_display_prefers_frame_events(tmp_path: Path) -> None:
-    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_1"
-    frame_path = replay_dir / "frames" / "frame_000000.jpg"
-    frame_path.parent.mkdir(parents=True, exist_ok=True)
-    frame_path.write_bytes(b"\xff\xd8\xff\xd9")
+def test_ws_rgb_replay_tool_public_path_is_removed() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("gage_eval.tools.ws_rgb_replay")
 
-    events_path = replay_dir / "events.jsonl"
-    events_path.write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "action", "seq": 1, "step": 1, "actor": "player_0", "move": "A1"}),
-                json.dumps(
+
+def test_pettingzoo_replay_builds_visualization_artifact_without_ws_rgb_public_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        pettingzoo_replay,
+        "PettingZooAecArenaEnvironment",
+        _StubPettingZooReplayEnvironment,
+    )
+    monkeypatch.setattr(
+        pettingzoo_replay,
+        "_can_import_env",
+        lambda env_id: env_id == "pettingzoo.atari.space_invaders_v2",
+    )
+
+    artifact = pettingzoo_replay.build_replay_artifact(
+        {
+            "sample": {
+                "id": "sample_1",
+                "metadata": {"player_ids": ["player_0"]},
+                "predict_result": [
                     {
-                        "type": "frame",
-                        "seq": 2,
-                        "step": 1,
-                        "actor": "player_0",
-                        "frame": {"board_text": "frame-1"},
-                        "image": {"path": "frames/frame_000000.jpg", "format": "jpeg", "width": 4, "height": 4},
+                        "result": {
+                            "move_log": [
+                                {"index": 1, "player": "player_0", "move": "RIGHT"},
+                            ]
+                        }
                     }
-                ),
-                json.dumps({"type": "result", "seq": 3, "result": "draw"}),
-            ]
-        ),
-        encoding="utf-8",
-    )
-    replay_manifest = replay_dir / "replay.json"
-    _write_json(
-        replay_manifest,
-        {
-            "schema": "gage_replay/v1",
-            "recording": {"events_path": "events.jsonl"},
-            "meta": {"scheduler_type": "turn"},
+                ],
+            }
         },
-    )
-
-    sample_record = {
-        "task_id": "pettingzoo_pong_dummy_ws_rgb",
-        "sample": {
-            "id": "sample_1",
-            "metadata": {"player_ids": ["player_0"]},
-            "predict_result": [{"replay_path": str(replay_manifest)}],
-        },
-    }
-    display = ws_rgb_replay._build_replay_v1_display(
-        sample_record,
-        task_id="pettingzoo_pong_dummy_ws_rgb",
+        task_id="pettingzoo_space_invaders_dummy",
         fps=10.0,
         max_frames=0,
     )
 
-    assert display is not None
-    frame_source = display["frame_source"]
-    frame = frame_source()
-    assert frame["board_text"] == "frame-1"
-    assert frame["_image_path_abs"] == str(frame_path.resolve())
-    frame_count = display["frame_count"]
-    frame_at = display["frame_at"]
-    assert callable(frame_count)
-    assert callable(frame_at)
-    assert frame_count() == 1
-    assert frame_at(0)["board_text"] == "frame-1"
-
-
-def test_build_replay_v1_display_returns_none_without_frame_events(tmp_path: Path) -> None:
-    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_2"
-    replay_dir.mkdir(parents=True, exist_ok=True)
-    events_path = replay_dir / "events.jsonl"
-    events_path.write_text(json.dumps({"type": "action", "seq": 1}), encoding="utf-8")
-
-    replay_manifest = replay_dir / "replay.json"
-    _write_json(
-        replay_manifest,
-        {
-            "schema": "gage_replay/v1",
-            "recording": {"events_path": "events.jsonl"},
-            "meta": {"scheduler_type": "turn"},
-        },
-    )
-    sample_record = {
-        "sample": {
-            "id": "sample_2",
-            "predict_result": [{"replay_path": str(replay_manifest)}],
-        }
-    }
-
-    display = ws_rgb_replay._build_replay_v1_display(
-        sample_record,
-        task_id="task_no_frame",
-        fps=10.0,
-        max_frames=0,
-    )
-
-    assert display is None
-
-
-def test_build_replay_v1_display_trims_leading_empty_frame(tmp_path: Path) -> None:
-    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_trim"
-    replay_dir.mkdir(parents=True, exist_ok=True)
-    events_path = replay_dir / "events.jsonl"
-    events_path.write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "frame", "seq": 1, "step": 0, "actor": "player_0", "frame": {}}),
-                json.dumps(
-                    {
-                        "type": "frame",
-                        "seq": 2,
-                        "step": 1,
-                        "actor": "player_0",
-                        "frame": {"board_text": "frame-2"},
-                    }
-                ),
-                json.dumps({"type": "result", "seq": 3, "result": "draw"}),
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    replay_manifest = replay_dir / "replay.json"
-    _write_json(
-        replay_manifest,
-        {
-            "schema": "gage_replay/v1",
-            "recording": {"events_path": "events.jsonl"},
-            "meta": {"scheduler_type": "turn"},
-        },
-    )
-    sample_record = {
-        "sample": {
-            "id": "sample_trim",
-            "predict_result": [{"replay_path": str(replay_manifest)}],
-        }
-    }
-
-    display = ws_rgb_replay._build_replay_v1_display(
-        sample_record,
-        task_id="task_trim",
-        fps=10.0,
-        max_frames=0,
-    )
-
-    assert display is not None
-    assert display["frame_count"]() == 1
-    assert display["frame_at"](0)["board_text"] == "frame-2"
-
-
-def test_build_replay_v1_display_accepts_result_replay_path_in_sample_envelope(tmp_path: Path) -> None:
-    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_result"
-    replay_dir.mkdir(parents=True, exist_ok=True)
-    (replay_dir / "events.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "frame",
-                        "seq": 1,
-                        "step": 1,
-                        "actor": "player_0",
-                        "frame": {"board_text": "frame-from-result"},
-                    }
-                ),
-                json.dumps({"type": "result", "seq": 2, "result": "draw"}),
-            ]
-        ),
-        encoding="utf-8",
-    )
-    replay_manifest = replay_dir / "replay.json"
-    _write_json(
-        replay_manifest,
-        {
-            "schema": "gage_replay/v1",
-            "recording": {"events_path": "events.jsonl"},
-            "meta": {"scheduler_type": "turn"},
-        },
-    )
-
-    sample_record = {
-        "sample": {
-            "id": "sample_result",
-            "predict_result": [
-                {
-                    "result": {"replay_path": str(replay_manifest)},
-                }
-            ],
-        }
-    }
-
-    display = ws_rgb_replay._build_replay_v1_display(
-        sample_record,
-        task_id="task_result_path",
-        fps=10.0,
-        max_frames=0,
-    )
-
-    assert display is not None
-    assert display["frame_count"]() == 1
-    assert display["frame_at"](0)["board_text"] == "frame-from-result"
-
-
-def test_build_replay_v1_display_accepts_artifacts_replay_ref_in_sample_envelope(tmp_path: Path) -> None:
-    replay_dir = tmp_path / "runs" / "run_demo" / "replays" / "sample_artifacts"
-    replay_dir.mkdir(parents=True, exist_ok=True)
-    (replay_dir / "events.jsonl").write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "type": "frame",
-                        "seq": 1,
-                        "step": 1,
-                        "actor": "player_0",
-                        "frame": {"board_text": "frame-from-artifacts"},
-                    }
-                ),
-                json.dumps({"type": "result", "seq": 2, "result": "draw"}),
-            ]
-        ),
-        encoding="utf-8",
-    )
-    replay_manifest = replay_dir / "replay.json"
-    _write_json(
-        replay_manifest,
-        {
-            "schema": "gage_replay/v1",
-            "recording": {"events_path": "events.jsonl"},
-            "meta": {"scheduler_type": "turn"},
-        },
-    )
-
-    sample_record = {
-        "sample": {
-            "id": "sample_artifacts",
-            "predict_result": [
-                {
-                    "artifacts": {"replay_ref": str(replay_manifest)},
-                }
-            ],
-        }
-    }
-
-    display = ws_rgb_replay._build_replay_v1_display(
-        sample_record,
-        task_id="task_artifacts_ref",
-        fps=10.0,
-        max_frames=0,
-    )
-
-    assert display is not None
-    assert display["frame_count"]() == 1
-    assert display["frame_at"](0)["board_text"] == "frame-from-artifacts"
+    assert not hasattr(pettingzoo_replay, "build_ws_rgb_replay_display")
+    assert not hasattr(pettingzoo_replay, "ReplayFrameCursor")
+    assert artifact["artifact_type"] == "pettingzoo_replay_frames"
+    assert artifact["artifact_id"] == "replay:sample_1:pettingzoo"
+    assert artifact["label"] == "pettingzoo_replay:pettingzoo.atari.space_invaders_v2"
+    assert artifact["human_player_id"] == "player_0"
+    assert artifact["frame_count"]() == 3
+    assert artifact["frame_at"](2)["board_text"] == "applied-1"
 
 
 def test_pettingzoo_replay_infers_env_id_from_current_game_arena_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gage_eval.role.arena.games.pettingzoo import ws_rgb_replay as pettingzoo_replay
-
     monkeypatch.setattr(
         pettingzoo_replay,
         "_can_import_env",
@@ -291,8 +105,6 @@ def test_pettingzoo_replay_infers_env_id_from_current_game_arena_metadata(
 
 
 def test_pettingzoo_replay_accepts_result_move_log_from_current_sample_envelope() -> None:
-    from gage_eval.role.arena.games.pettingzoo import ws_rgb_replay as pettingzoo_replay
-
     resolved = pettingzoo_replay._resolve_game_log(
         {
             "predict_result": [
@@ -312,31 +124,3 @@ def test_pettingzoo_replay_accepts_result_move_log_from_current_sample_envelope(
         {"index": 1, "player": "pilot_alpha", "move": "RIGHTFIRE"},
         {"index": 2, "player": "pilot_beta", "move": "LEFT"},
     ]
-
-
-def test_maybe_open_browser_uses_webbrowser_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-
-    def _fake_open(url: str) -> bool:
-        calls.append(url)
-        return True
-
-    monkeypatch.setattr(ws_rgb_replay.webbrowser, "open", _fake_open)
-
-    ws_rgb_replay._maybe_open_browser("http://127.0.0.1:5800/ws_rgb/viewer", enabled=True)
-
-    assert calls == ["http://127.0.0.1:5800/ws_rgb/viewer"]
-
-
-def test_maybe_open_browser_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
-
-    def _fake_open(url: str) -> bool:
-        calls.append(url)
-        return True
-
-    monkeypatch.setattr(ws_rgb_replay.webbrowser, "open", _fake_open)
-
-    ws_rgb_replay._maybe_open_browser("http://127.0.0.1:5800/ws_rgb/viewer", enabled=False)
-
-    assert calls == []

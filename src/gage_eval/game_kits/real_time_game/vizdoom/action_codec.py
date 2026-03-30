@@ -1,4 +1,4 @@
-"""Action encoding utilities for ViZDoom-style discrete actions."""
+"""GameKit-owned action encoding utilities for ViZDoom discrete actions."""
 
 from __future__ import annotations
 
@@ -8,13 +8,7 @@ from typing import Any, Dict, Iterable, Optional
 
 @dataclass(frozen=True)
 class VizDoomActionCodec:
-    """Encode human/LLM moves into discrete action IDs.
-
-    Args:
-        action_labels: Optional ordered labels for each action id.
-        action_mapping: Optional explicit label-to-id mapping.
-        default_action: Fallback action id when encoding fails.
-    """
+    """Encode human/LLM moves into discrete action IDs."""
 
     action_labels: Optional[Iterable[str]] = None
     action_mapping: Optional[Dict[str, int]] = None
@@ -25,15 +19,6 @@ class VizDoomActionCodec:
             object.__setattr__(self, "action_labels", tuple(str(label) for label in self.action_labels))
 
     def encode(self, move: Any) -> int:
-        """Encode a move into a discrete action id.
-
-        Args:
-            move: Raw move value (string/int/label).
-
-        Returns:
-            Discrete action id.
-        """
-
         if move is None:
             return self.default_action
         if isinstance(move, int):
@@ -54,8 +39,6 @@ class VizDoomActionCodec:
             return self.default_action
 
     def legal_moves(self) -> list[int]:
-        """Return the legal action ids."""
-
         if self.action_mapping:
             return sorted(set(self.action_mapping.values()))
         if self.action_labels:

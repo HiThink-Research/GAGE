@@ -1,6 +1,11 @@
 from typing import Any, Dict, List
 
-from gage_eval.role.arena.games.pettingzoo.env import PettingZooAecArenaEnvironment
+from gage_eval.game_kits.aec_env_game.pettingzoo.action_codec import (
+    DiscreteActionCodec,
+)
+from gage_eval.game_kits.aec_env_game.pettingzoo.environment import (
+    PettingZooAecArenaEnvironment,
+)
 from gage_eval.role.arena.types import ArenaAction
 
 
@@ -131,6 +136,22 @@ def test_pettingzoo_env_disable_action_meanings_uses_numeric_moves():
     assert observation.legal_moves[:3] == ["0", "1", "2"]
     assert "NOOP" not in observation.legal_moves
     assert observation.prompt is not None
+
+
+def test_pettingzoo_env_uses_gamekit_owned_discrete_action_codec():
+    env = FakeAecEnv(max_steps=2, action_n=4)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        env_id="pettingzoo.atari.space_invaders_v2",
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+        use_action_meanings=False,
+    )
+
+    assert isinstance(adapter._codec, DiscreteActionCodec)
+    assert adapter._codec.__class__.__module__ == (
+        "gage_eval.game_kits.aec_env_game.pettingzoo.action_codec"
+    )
 
 
 def test_pettingzoo_env_observation_includes_inline_image_when_rgb_obs_available(monkeypatch):

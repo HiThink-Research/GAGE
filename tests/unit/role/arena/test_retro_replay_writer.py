@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gage_eval.role.arena.games.retro.replay import ReplaySchemaWriter
+from gage_eval.game_kits.real_time_game.retro_platformer.replay import ReplaySchemaWriter
 from gage_eval.role.arena.types import ArenaAction, GameResult
 
 

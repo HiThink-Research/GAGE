@@ -1,3 +1,5 @@
+"""PettingZoo GameKit registry entry."""
+
 from __future__ import annotations
 
 from gage_eval.game_kits.aec_env_game.pettingzoo.envs.space_invaders import (
@@ -23,6 +25,12 @@ def build_pettingzoo_game_kit() -> GameKit:
         scheduler_binding="agent_cycle/default",
         observation_workflow="noop_observation_v1",
         visualization_spec=VISUALIZATION_SPEC_ID,
+        parser=(
+            "gage_eval.game_kits.aec_env_game.pettingzoo.action_codec.DiscreteActionParser"
+        ),
+        input_mapper=(
+            "gage_eval.game_kits.aec_env_game.pettingzoo.input_mapper.PettingZooDiscreteInputMapper"
+        ),
         env_catalog=(
             EnvSpec(
                 env_id="space_invaders",
@@ -31,6 +39,12 @@ def build_pettingzoo_game_kit() -> GameKit:
                     "env_id": "space_invaders",
                     "family": "pettingzoo",
                 },
+                parser=(
+                    "gage_eval.game_kits.aec_env_game.pettingzoo.action_codec.DiscreteActionParser"
+                ),
+                input_mapper=(
+                    "gage_eval.game_kits.aec_env_game.pettingzoo.input_mapper.PettingZooDiscreteInputMapper"
+                ),
                 defaults={
                     "env_factory": build_space_invaders_environment,
                     "env_id": "pettingzoo.atari.space_invaders_v2",
@@ -51,5 +65,14 @@ def build_pettingzoo_game_kit() -> GameKit:
             "use_action_meanings": True,
             "include_raw_obs": False,
             "illegal_policy": {"retry": 0, "on_fail": "loss"},
+            "parser": (
+                "gage_eval.game_kits.aec_env_game.pettingzoo.action_codec.DiscreteActionParser"
+            ),
+            "input_mapper": (
+                "gage_eval.game_kits.aec_env_game.pettingzoo.input_mapper.PettingZooDiscreteInputMapper"
+            ),
         },
     )
+
+
+__all__ = ["build_pettingzoo_game_kit"]

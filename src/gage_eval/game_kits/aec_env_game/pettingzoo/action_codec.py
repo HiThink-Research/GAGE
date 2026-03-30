@@ -1,4 +1,4 @@
-"""Discrete action codec and parser for PettingZoo/Gymnasium-style environments."""
+"""GameKit-owned discrete action codec and parser for PettingZoo environments."""
 
 from __future__ import annotations
 
@@ -33,28 +33,12 @@ class DiscreteActionCodec:
     """Encode/decode discrete actions with optional labels."""
 
     def __init__(self, action_labels: Optional[Sequence[str]] = None) -> None:
-        """Initialize the codec.
-
-        Args:
-            action_labels: Optional ordered list of action labels.
-        """
-
         self._action_labels = [str(label) for label in action_labels or []]
         self._label_lookup = {
             self._normalize_token(label): idx for idx, label in enumerate(self._action_labels)
         }
 
     def legal_moves(self, action_space: Any, *, action_mask: Optional[Sequence[int]] = None) -> list[str]:
-        """Return legal move strings for the provided action space.
-
-        Args:
-            action_space: Discrete action space with `n` or `__len__`.
-            action_mask: Optional mask of legal actions (1 = legal).
-
-        Returns:
-            List of legal move strings.
-        """
-
         count = self._resolve_action_count(action_space)
         labels = self._resolve_labels(count)
         if action_mask is None:
@@ -71,20 +55,6 @@ class DiscreteActionCodec:
         action_space: Any,
         action_mask: Optional[Sequence[int]] = None,
     ) -> int:
-        """Encode a move into an action id.
-
-        Args:
-            move: Action label or id string.
-            action_space: Discrete action space with `n` or `contains`.
-            action_mask: Optional mask of legal actions.
-
-        Returns:
-            Encoded action id.
-
-        Raises:
-            ValueError: If the action is invalid.
-        """
-
         action_id = self._resolve_action_id(move)
         if action_id is None:
             raise ValueError("invalid_action")
@@ -97,15 +67,6 @@ class DiscreteActionCodec:
         return action_id
 
     def decode(self, action_id: int) -> str:
-        """Decode an action id into a display label.
-
-        Args:
-            action_id: Encoded action identifier.
-
-        Returns:
-            Human-readable action label or numeric string.
-        """
-
         if 0 <= action_id < len(self._action_labels):
             return self._action_labels[action_id]
         return str(action_id)
@@ -160,7 +121,7 @@ class DiscreteActionCodec:
     "parser_impls",
     "discrete_action_parser_v1",
     desc="Discrete action parser (numeric or labeled actions)",
-    tags=("parser", "action"),
+    tags=("parser", "action", "pettingzoo", "gamekit"),
 )
 class DiscreteActionParser:
     """Parse discrete action selections from model output."""
@@ -172,14 +133,7 @@ class DiscreteActionParser:
         coord_scheme: Optional[str] = None,
         **_: object,
     ) -> None:
-        """Initialize the parser.
-
-        Args:
-            action_labels: Optional ordered action labels.
-            board_size: Unused board size (accepted for arena parser compatibility).
-            coord_scheme: Unused coordinate scheme (accepted for arena parser compatibility).
-        """
-
+        _ = (board_size, coord_scheme)
         self._action_labels = [str(label) for label in action_labels or []]
         self._normalized_labels = [self._normalize_token(label) for label in self._action_labels]
         self._int_pattern = re.compile(r"-?\d+")
@@ -190,16 +144,6 @@ class DiscreteActionParser:
         *,
         legal_moves: Optional[Iterable[str]] = None,
     ) -> DiscreteActionParseResult:
-        """Parse an action from raw text and validate against legal moves.
-
-        Args:
-            text: Raw model output.
-            legal_moves: Optional list of legal move labels.
-
-        Returns:
-            Parsed action result.
-        """
-
         raw = text or ""
         stripped = raw.strip()
         if not stripped:
@@ -208,7 +152,6 @@ class DiscreteActionParser:
         legal_list = [str(move) for move in legal_moves or []]
         legal_lookup = {self._normalize_token(move): move for move in legal_list}
 
-        # STEP 1: Prefer direct/legal matches when provided.
         candidate = self._select_from_legal(stripped, legal_list, legal_lookup)
         if candidate is None:
             candidate = self._select_numeric(stripped)
@@ -232,17 +175,6 @@ class DiscreteActionParser:
         reason: str,
         legal_moves: Sequence[str],
     ) -> str:
-        """Build a retry prompt when an illegal move is detected.
-
-        Args:
-            last_output: The previous model output.
-            reason: Explanation for why the move is invalid.
-            legal_moves: List of legal move labels.
-
-        Returns:
-            A formatted prompt for rethinking.
-        """
-
         legal_block = ", ".join(legal_moves)
         return DEFAULT_RETHINK_TEMPLATE.format(
             reason=reason,

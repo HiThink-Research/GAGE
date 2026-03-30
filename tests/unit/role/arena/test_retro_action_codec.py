@@ -1,6 +1,11 @@
 import pytest
 
-from gage_eval.role.arena.games.retro.action_codec import RetroActionCodec
+from gage_eval.game_kits.real_time_game.retro_platformer.action_codec import (
+    RetroActionCodec,
+)
+from gage_eval.game_kits.real_time_game.retro_platformer.parser import (
+    RetroActionParser,
+)
 
 
 def test_retro_action_codec_exposes_buttons_and_encodes_macro_moves():
@@ -45,3 +50,13 @@ def test_retro_action_codec_reinserts_noop_when_overridden_with_invalid_combo():
 
     assert codec.legal_moves()[:2] == ["noop", "left"]
     assert codec.encode("noop").buttons == [0]
+
+
+def test_retro_action_parser_is_gamekit_owned_and_accepts_key_combo_aliases():
+    parser = RetroActionParser(hold_ticks_min=1, hold_ticks_max=12, default_hold_ticks=6)
+
+    result = parser.parse('{"move":"d+j+k","hold_ticks":5}', legal_moves=["noop", "right_run_jump"])
+
+    assert result.error is None
+    assert result.move == "right_run_jump"
+    assert result.hold_ticks == 5

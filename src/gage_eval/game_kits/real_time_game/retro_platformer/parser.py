@@ -1,4 +1,4 @@
-"""Parsing utilities for stable-retro action JSON."""
+"""GameKit-owned parser for stable-retro macro actions."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Sequence
 
+from gage_eval.game_kits.real_time_game.retro_platformer.keyboard_input import (
+    resolve_macro_move_from_action_state,
+)
 from gage_eval.registry import registry
-from gage_eval.role.arena.games.retro.keyboard_input import resolve_macro_move_from_action_state
 
 DEFAULT_RETHINK_TEMPLATE = (
     "Your previous action could not be processed.\n"
@@ -37,7 +39,7 @@ class RetroParseResult:
     "parser_impls",
     "retro_action_v1",
     desc="Stable-retro macro action parser (JSON + hold_ticks)",
-    tags=("retro", "parser", "arena"),
+    tags=("retro", "parser", "arena", "gamekit"),
 )
 class RetroActionParser:
     """Parse macro actions for stable-retro environments."""
@@ -50,14 +52,6 @@ class RetroActionParser:
         default_hold_ticks: int = 6,
         **_: Any,
     ) -> None:
-        """Initialize the parser.
-
-        Args:
-            hold_ticks_min: Minimum allowed hold_ticks value.
-            hold_ticks_max: Maximum allowed hold_ticks value.
-            default_hold_ticks: Default hold_ticks when omitted.
-        """
-
         self._hold_ticks_min = int(hold_ticks_min)
         self._hold_ticks_max = int(hold_ticks_max)
         self._default_hold_ticks = int(default_hold_ticks)
@@ -70,16 +64,6 @@ class RetroActionParser:
         *,
         legal_moves: Optional[Iterable[str]] = None,
     ) -> RetroParseResult:
-        """Parse a macro action from text and optionally validate legality.
-
-        Args:
-            text: Raw model output or user input.
-            legal_moves: Optional list of legal macro actions.
-
-        Returns:
-            The parsed move result.
-        """
-
         raw = text or ""
         stripped = raw.strip()
         if not stripped:
@@ -107,17 +91,6 @@ class RetroActionParser:
         reason: str,
         legal_moves: Sequence[str],
     ) -> str:
-        """Build a retry prompt when an illegal action is detected.
-
-        Args:
-            last_output: The previous model output.
-            reason: Explanation for why the action is invalid.
-            legal_moves: List of legal macro actions.
-
-        Returns:
-            A formatted prompt for rethinking.
-        """
-
         legal_block = ", ".join(legal_moves)
         return DEFAULT_RETHINK_TEMPLATE.format(
             reason=reason,
@@ -126,16 +99,6 @@ class RetroActionParser:
         )
 
     def build_action_dict(self, *, player: str, parse_result: RetroParseResult) -> dict[str, Any]:
-        """Build a section-15 action dict from a parse result.
-
-        Args:
-            player: Player id issuing the action.
-            parse_result: Parsed action payload.
-
-        Returns:
-            Action dict aligned with section 15.2.
-        """
-
         move = parse_result.move or parse_result.coord or ""
         payload: dict[str, Any] = {"player": str(player), "move": str(move), "raw": str(parse_result.raw)}
         if parse_result.hold_ticks is not None:
@@ -177,21 +140,6 @@ class RetroActionParser:
         return None
 
     def _resolve_key_alias_move(self, move: str) -> Optional[str]:
-        """Resolve key-alias strings into canonical macro moves.
-
-        This supports a compact "keyboard" interface for models such as:
-        - `d` -> right
-        - `dk` / `d+k` -> right_run
-        - `djk` / `d+j+k` -> right_run_jump
-
-        Args:
-            move: Move string extracted from model output.
-
-        Returns:
-            Canonical macro move string when the input looks like a key combo,
-            otherwise None.
-        """
-
         normalized = str(move or "").strip().lower()
         if not normalized:
             return None

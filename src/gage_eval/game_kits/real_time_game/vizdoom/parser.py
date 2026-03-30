@@ -1,4 +1,4 @@
-"""Parser for ViZDoom-style discrete action outputs."""
+"""GameKit-owned parser for ViZDoom discrete action outputs."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 import re
 from typing import Any, Iterable, Optional, Sequence
 
+from gage_eval.game_kits.real_time_game.vizdoom.action_codec import VizDoomActionCodec
 from gage_eval.registry import registry
-from gage_eval.role.arena.parsers.vizdoom_action_codec import VizDoomActionCodec
 
 DEFAULT_RETHINK_TEMPLATE = (
     "Your previous action could not be parsed.\n"
@@ -38,7 +38,7 @@ class VizDoomParseResult:
     "parser_impls",
     "vizdoom_parser_v1",
     desc="ViZDoom parser for discrete action ids",
-    tags=("vizdoom", "parser"),
+    tags=("vizdoom", "parser", "gamekit"),
 )
 class VizDoomParser:
     """Parse discrete action ids from raw model output."""
@@ -51,14 +51,6 @@ class VizDoomParser:
         default_action: int = 0,
         **_: object,
     ) -> None:
-        """Initialize the parser.
-
-        Args:
-            action_labels: Optional ordered labels for action ids.
-            action_mapping: Optional explicit label-to-id mapping.
-            default_action: Fallback action id when parsing fails.
-        """
-
         self._codec = VizDoomActionCodec(
             action_labels=action_labels,
             action_mapping=action_mapping,
@@ -71,27 +63,15 @@ class VizDoomParser:
         *,
         legal_moves: Optional[Iterable[int] | Iterable[str]] = None,
     ) -> VizDoomParseResult:
-        """Parse a move from text and optionally validate against legal moves.
-
-        Args:
-            text: Raw model output or user input.
-            legal_moves: Optional list of legal moves.
-
-        Returns:
-            Parsed action result.
-        """
-
         raw = text or ""
         stripped = raw.strip()
         if not stripped:
             return VizDoomParseResult(None, None, raw, "empty_text")
 
-        # STEP 1: Extract action candidate and optional reason text.
         parsed, parsed_reason = self._extract_action_and_reason(stripped)
         if parsed is None:
             return VizDoomParseResult(None, None, raw, "invalid_format", parsed_reason)
 
-        # STEP 2: Validate parsed action with legal moves and recover from noisy reasons.
         move = self._codec.encode(parsed)
         if legal_moves is not None:
             legal_list = [str(item) for item in legal_moves]
@@ -113,17 +93,6 @@ class VizDoomParser:
         reason: str,
         legal_moves: Sequence[str],
     ) -> str:
-        """Build a retry prompt for invalid actions.
-
-        Args:
-            last_output: The previous model output.
-            reason: Explanation for why the action is invalid.
-            legal_moves: List of legal action ids.
-
-        Returns:
-            A formatted prompt for rethinking.
-        """
-
         legal_block = ", ".join(legal_moves)
         return DEFAULT_RETHINK_TEMPLATE.format(
             reason=reason,
@@ -132,8 +101,6 @@ class VizDoomParser:
         )
 
     def _extract_action_and_reason(self, text: str) -> tuple[Optional[object], Optional[str]]:
-        """Extract action payload and optional reason string from model output."""
-
         if text.startswith("{") and text.endswith("}"):
             try:
                 payload = json.loads(text)
@@ -158,8 +125,6 @@ class VizDoomParser:
 
     @staticmethod
     def _extract_action_from_payload(payload: dict[str, Any]) -> Optional[object]:
-        """Extract action value from JSON payload keys."""
-
         for key in ("action", "move", "id"):
             if key in payload:
                 return payload[key]
@@ -167,8 +132,6 @@ class VizDoomParser:
 
     @staticmethod
     def _extract_reason_from_payload(payload: dict[str, Any]) -> Optional[str]:
-        """Extract short reason text from JSON payload keys."""
-
         for key in ("reason", "rationale", "analysis", "explanation", "why"):
             value = payload.get(key)
             if value is None:
@@ -179,8 +142,6 @@ class VizDoomParser:
         return None
 
     def _extract_action_from_labeled_line(self, text: str) -> Optional[object]:
-        """Extract action value from lines like `Action: 2`."""
-
         for line in text.splitlines():
             stripped = line.strip()
             if not stripped:
@@ -197,8 +158,6 @@ class VizDoomParser:
         return None
 
     def _extract_action_from_first_line(self, text: str) -> Optional[object]:
-        """Extract action value when the first line is a compact action token."""
-
         for line in text.splitlines():
             stripped = line.strip()
             if not stripped:
@@ -214,8 +173,6 @@ class VizDoomParser:
         text: str,
         legal_moves: Sequence[str],
     ) -> Optional[object]:
-        """Recover a legal action candidate when free-form reason text is noisy."""
-
         if not legal_moves:
             return None
         legal_lookup = {str(item).strip().lower(): str(item) for item in legal_moves}
@@ -239,15 +196,13 @@ class VizDoomParser:
         return None
 
     def _extract_reason_text(self, text: str) -> Optional[str]:
-        """Extract reason text from common free-form response patterns."""
-
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
             return None
 
         for line in lines:
             match = re.match(
-                r"^(?:reason|rationale|analysis|explanation|why)\s*[:=\-]\s*(.+)$",
+                r"^(?:reason|rationale|analysis|explanation|why)\s*[:=\\-]\s*(.+)$",
                 line,
                 flags=re.IGNORECASE,
             )
@@ -274,3 +229,6 @@ class VizDoomParser:
         if match:
             return match[-1]
         return text
+
+
+__all__ = ["VizDoomActionCodec", "VizDoomParseResult", "VizDoomParser"]
