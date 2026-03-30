@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from gage_eval.agent_runtime.spec import AgentRuntimeSpec
 from gage_eval.observability.logger import ObservableLogger
 
 _logger = ObservableLogger()
@@ -101,6 +102,7 @@ class RoleAdapterSpec:
     backend_id: Optional[str] = None
     backend: Optional[Dict[str, Any]] = None
     agent_backend_id: Optional[str] = None
+    agent_runtime_id: Optional[str] = None
     agent_backend: Optional[Dict[str, Any]] = None
     mcp_client_id: Optional[str] = None
     prompt_id: Optional[str] = None
@@ -230,6 +232,7 @@ class PipelineConfig:
     models: Sequence[ModelSpec] = field(default_factory=tuple)
     backends: Sequence[BackendSpec] = field(default_factory=tuple)
     agent_backends: Sequence[AgentBackendSpec] = field(default_factory=tuple)
+    agent_runtimes: Sequence[AgentRuntimeSpec] = field(default_factory=tuple)
     sandbox_profiles: Sequence[SandboxProfileSpec] = field(default_factory=tuple)
     mcp_clients: Sequence[McpClientSpec] = field(default_factory=tuple)
     prompts: Sequence[PromptTemplateSpec] = field(default_factory=tuple)

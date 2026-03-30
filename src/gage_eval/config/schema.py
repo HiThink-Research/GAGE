@@ -30,6 +30,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     models = _ensure_list(data.get("models"), "models", errors)
     backends = _ensure_list(data.get("backends"), "backends", errors)
     agent_backends = _ensure_list(data.get("agent_backends"), "agent_backends", errors)
+    agent_runtimes = _ensure_list(data.get("agent_runtimes"), "agent_runtimes", errors)
     sandbox_profiles = _ensure_list(data.get("sandbox_profiles"), "sandbox_profiles", errors)
     mcp_clients = _ensure_list(data.get("mcp_clients"), "mcp_clients", errors)
     prompts = _ensure_list(data.get("prompts"), "prompts", errors)
@@ -55,6 +56,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     model_ids = _ensure_unique(models, "model_id", "model", errors)
     backend_ids = _ensure_unique(backends, "backend_id", "backend", errors)
     agent_backend_ids = _ensure_unique(agent_backends, "agent_backend_id", "agent backend", errors)
+    agent_runtime_ids = _ensure_unique(agent_runtimes, "agent_runtime_id", "agent runtime", errors)
     _normalize_sandbox_profile_ids(sandbox_profiles, errors)
     _ensure_unique(sandbox_profiles, "sandbox_id", "sandbox profile", errors)
     mcp_client_ids = _ensure_unique(mcp_clients, "mcp_client_id", "mcp client", errors)
@@ -62,7 +64,15 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     adapter_ids = _ensure_unique(role_adapters, "adapter_id", "role adapter", errors)
     metric_ids = _ensure_unique(metrics, "metric_id", "metric", errors, allow_str=True)
 
-    _validate_role_bindings(role_adapters, backend_ids, agent_backend_ids, prompt_ids, mcp_client_ids, errors)
+    _validate_role_bindings(
+        role_adapters,
+        backend_ids,
+        agent_backend_ids,
+        agent_runtime_ids,
+        prompt_ids,
+        mcp_client_ids,
+        errors,
+    )
     _validate_steps(custom, adapter_ids=adapter_ids, errors=errors)
     _validate_tasks(
         tasks=tasks,
@@ -81,6 +91,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["models"] = models
     data["backends"] = backends
     data["agent_backends"] = agent_backends
+    data["agent_runtimes"] = agent_runtimes
     data["sandbox_profiles"] = sandbox_profiles
     data["mcp_clients"] = mcp_clients
     data["prompts"] = prompts
@@ -143,18 +154,21 @@ def _validate_role_bindings(
     role_adapters: List[dict],
     backend_ids: List[str],
     agent_backend_ids: List[str],
+    agent_runtime_ids: List[str],
     prompt_ids: List[str],
     mcp_client_ids: List[str],
     errors: List[str],
 ) -> None:
     backend_set = set(backend_ids)
     agent_backend_set = set(agent_backend_ids)
+    agent_runtime_set = set(agent_runtime_ids)
     prompt_set = set(prompt_ids)
     mcp_client_set = set(mcp_client_ids)
     for adapter in role_adapters:
         backend_id = adapter.get("backend_id")
         inline_backend = adapter.get("backend")
         agent_backend_id = adapter.get("agent_backend_id")
+        agent_runtime_id = adapter.get("agent_runtime_id")
         inline_agent_backend = adapter.get("agent_backend")
         prompt_id = adapter.get("prompt_id")
         mcp_client_id = adapter.get("mcp_client_id")
@@ -175,6 +189,10 @@ def _validate_role_bindings(
         if agent_backend_id and agent_backend_id not in agent_backend_set:
             errors.append(
                 f"role adapter '{adapter_id}' references unknown agent backend '{agent_backend_id}'"
+            )
+        if agent_runtime_id and agent_runtime_id not in agent_runtime_set:
+            errors.append(
+                f"role adapter '{adapter_id}' references unknown agent runtime '{agent_runtime_id}'"
             )
         if inline_agent_backend is not None:
             if not isinstance(inline_agent_backend, dict):

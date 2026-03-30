@@ -90,6 +90,7 @@ class PipelineConfigBuilder:
         normalized = self._require_normalized()
 
         from gage_eval.config.pipeline_config import (
+            AgentRuntimeSpec,
             AgentBackendSpec,
             BackendSpec,
             DatasetSpec,
@@ -99,6 +100,7 @@ class PipelineConfigBuilder:
             SandboxProfileSpec,
             _strip_known_keys,
         )
+        from gage_eval.agent_runtime.spec import ClientSurfacePolicy, ResourcePolicy, SandboxPolicy
 
         self._state["models"] = tuple(
             ModelSpec(
@@ -141,6 +143,23 @@ class PipelineConfigBuilder:
                 backend_id=item.get("backend_id"),
             )
             for item in normalized.get("agent_backends", [])
+        )
+
+        self._state["agent_runtimes"] = tuple(
+            AgentRuntimeSpec(
+                agent_runtime_id=item.get("agent_runtime_id"),
+                scheduler=item.get("scheduler"),
+                benchmark_kit_id=item.get("benchmark_kit_id"),
+                client_id=item.get("client_id"),
+                role_adapter_id=item.get("role_adapter_id"),
+                resource_policy=ResourcePolicy(**(item.get("resource_policy") or {})),
+                client_surface_policy=ClientSurfacePolicy(
+                    **(item.get("client_surface_policy") or {})
+                ),
+                sandbox_policy=SandboxPolicy(**(item.get("sandbox_policy") or {})),
+                params=item.get("params") or {},
+            )
+            for item in normalized.get("agent_runtimes", [])
         )
 
         self._state["sandbox_profiles"] = tuple(
@@ -208,6 +227,7 @@ class PipelineConfigBuilder:
                 backend_id=item.get("backend_id"),
                 backend=dict(item.get("backend", {})) if item.get("backend") else None,
                 agent_backend_id=item.get("agent_backend_id"),
+                agent_runtime_id=item.get("agent_runtime_id"),
                 agent_backend=dict(item.get("agent_backend", {})) if item.get("agent_backend") else None,
                 mcp_client_id=item.get("mcp_client_id"),
                 prompt_id=item.get("prompt_id"),
@@ -317,6 +337,7 @@ class PipelineConfigBuilder:
             models=self._state.get("models", ()),
             backends=self._state.get("backends", ()),
             agent_backends=self._state.get("agent_backends", ()),
+            agent_runtimes=self._state.get("agent_runtimes", ()),
             sandbox_profiles=self._state.get("sandbox_profiles", ()),
             mcp_clients=self._state.get("mcp_clients", ()),
             prompts=self._state.get("prompts", ()),
