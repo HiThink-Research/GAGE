@@ -1,27 +1,20 @@
-"""Claude CLI client driver — shell only, not yet implemented."""
+"""Claude client driver shell."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from gage_eval.agent_runtime.clients import ClientRunRequest, ClientRunResult
-
-if TYPE_CHECKING:
-    from gage_eval.agent_runtime.environment.base import AgentEnvironment
-    from gage_eval.agent_runtime.session import AgentRuntimeSession
-
 
 class ClaudeClient:
-    """Placeholder for a Claude Code driver."""
+    """Claude client shell. Not yet implemented."""
 
-    def setup(self, environment: "AgentEnvironment", session: "AgentRuntimeSession") -> None:
-        raise NotImplementedError("ClaudeClient.setup is not implemented yet")
+    def setup(self, environment, session) -> None:  # pragma: no cover - shell
+        """Prepare the environment."""
+        raise NotImplementedError("ClaudeClient.setup not yet implemented")
 
-    def run(self, request: ClientRunRequest, environment: "AgentEnvironment") -> ClientRunResult:
-        raise NotImplementedError("ClaudeClient.run is not implemented yet")
+    def run(self, request, environment):  # pragma: no cover - shell
+        """Run the client."""
+        raise NotImplementedError("ClaudeClient.run not yet implemented")
 
-    def cleanup(self, environment: "AgentEnvironment", session: "AgentRuntimeSession") -> None:
-        try:
-            raise NotImplementedError("ClaudeClient.cleanup is not implemented yet")
-        except Exception:
-            return None
+    def cleanup(self, environment, session) -> None:  # pragma: no cover - shell
+        """Release environment resources."""
+        raise NotImplementedError("ClaudeClient.cleanup not yet implemented")
+

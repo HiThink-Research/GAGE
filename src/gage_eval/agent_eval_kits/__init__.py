@@ -1,3 +1,4 @@
-"""Benchmark kit package root."""
+"""Benchmark-specific runtime kits."""
 
 from __future__ import annotations
+

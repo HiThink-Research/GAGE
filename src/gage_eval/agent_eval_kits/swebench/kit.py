@@ -1,4 +1,4 @@
-"""SWE-bench benchmark kit definition — shell only, not yet implemented."""
+"""SWE-bench benchmark kit definition."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class BenchmarkKitDefinition:
-    """Static metadata for a benchmark kit."""
+    """Static benchmark kit metadata."""
 
     kit_id: str
     verifier_kind: Literal["judge_adapter", "native"]
@@ -17,4 +17,10 @@ class BenchmarkKitDefinition:
 
 
 def build_kit() -> BenchmarkKitDefinition:
-    raise NotImplementedError("swebench.build_kit is not implemented yet")
+    """Build the SWE-bench kit definition."""
+    return BenchmarkKitDefinition(
+        kit_id="swebench",
+        verifier_kind="judge_adapter",
+        required_surfaces=("terminal", "fs"),
+        optional_surfaces=(),
+    )

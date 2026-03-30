@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 @dataclass(frozen=True)
 class ClientRunRequest:
-    """Execution payload passed to an installed client driver."""
+    """Request object for running an installed client."""
 
     instruction: str
     cwd: str
@@ -18,7 +18,7 @@ class ClientRunRequest:
 
 @dataclass(frozen=True)
 class ClientRunResult:
-    """Normalized client execution result."""
+    """Result object returned by an installed client driver."""
 
     exit_code: int
     stdout: str
@@ -27,5 +27,3 @@ class ClientRunResult:
     trajectory_path: Optional[str] = None
     artifacts: Dict[str, str] = field(default_factory=dict)
 
-
-__all__ = ["ClientRunRequest", "ClientRunResult"]
