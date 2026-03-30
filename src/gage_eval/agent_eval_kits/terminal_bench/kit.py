@@ -1,20 +1,19 @@
-"""Terminal benchmark kit definition — shell only, not yet implemented."""
+"""Terminal benchmark kit definition."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
-
-
-@dataclass(frozen=True)
-class BenchmarkKitDefinition:
-    """Static metadata for a terminal benchmark kit."""
-
-    kit_id: str
-    verifier_kind: Literal["judge_adapter", "native"]
-    required_surfaces: tuple[str, ...] = ()
-    optional_surfaces: tuple[str, ...] = ()
+from gage_eval.agent_eval_kits.terminal_bench.contracts import (
+    BenchmarkKitDefinition,
+    TERMINAL_BENCH_KIT_ID,
+    TERMINAL_BENCH_REQUIRED_SURFACES,
+)
 
 
 def build_kit() -> BenchmarkKitDefinition:
-    raise NotImplementedError("terminal_bench.build_kit is not implemented yet")
+    """Return the terminal benchmark kit definition."""
+
+    return BenchmarkKitDefinition(
+        kit_id=TERMINAL_BENCH_KIT_ID,
+        verifier_kind="native",
+        required_surfaces=TERMINAL_BENCH_REQUIRED_SURFACES,
+    )
