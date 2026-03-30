@@ -19,6 +19,19 @@ export interface TableHand {
   isVisible: boolean;
   cards: string[];
   maskedCount: number;
+  drawTile?: string | null;
+}
+
+export interface TableMeldGroup {
+  type: string | null;
+  label: string;
+  tiles: string[];
+}
+
+export interface TableDiscardLane {
+  seatId: string;
+  playerId: string;
+  cards: string[];
 }
 
 export interface TableSeat {
@@ -30,6 +43,8 @@ export interface TableSeat {
   isObserver: boolean;
   playedCards: string[];
   publicNotes: string[];
+  meldGroups: TableMeldGroup[];
+  drawTile: string | null;
   hand: TableHand;
 }
 
@@ -46,6 +61,7 @@ export interface TableSceneData {
       label: string;
       cards: string[];
       history: string[];
+      discardLanes: TableDiscardLane[];
     };
   };
   status: {
@@ -53,6 +69,11 @@ export interface TableSceneData {
     observerPlayerId: string | null;
     moveCount: number;
     lastMove: string | null;
+    lastDiscard: {
+      playerId: string | null;
+      tile: string | null;
+      isTsumogiri: boolean;
+    } | null;
     landlordId: string | null;
   };
   panels: {
@@ -103,12 +124,52 @@ function readHand(value: unknown): TableHand {
       isVisible: false,
       cards: [],
       maskedCount: 0,
+      drawTile: null,
     };
   }
   return {
     isVisible: readBoolean(value.isVisible),
     cards: readStringArray(value.cards),
     maskedCount: Math.max(0, Math.floor(readNumber(value.maskedCount))),
+    drawTile: readString(value.drawTile),
+  };
+}
+
+function readMeldGroups(value: unknown): TableMeldGroup[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(isRecord)
+    .map((group) => ({
+      type: readString(group.type),
+      label: readString(group.label) ?? "",
+      tiles: readStringArray(group.tiles),
+    }))
+    .filter((group) => group.label !== "" || group.tiles.length > 0);
+}
+
+function readDiscardLanes(value: unknown): TableDiscardLane[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(isRecord)
+    .map((lane, index) => ({
+      seatId: readString(lane.seatId) ?? `seat-${index + 1}`,
+      playerId: readString(lane.playerId) ?? `player-${index + 1}`,
+      cards: readStringArray(lane.cards),
+    }));
+}
+
+function readLastDiscard(value: unknown): TableSceneData["status"]["lastDiscard"] {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return {
+    playerId: readString(value.playerId),
+    tile: readString(value.tile),
+    isTsumogiri: readBoolean(value.isTsumogiri),
   };
 }
 
@@ -147,6 +208,8 @@ export function readTableScene(scene?: VisualScene): TableSceneData | null {
       isObserver: readBoolean(seat.isObserver),
       playedCards: readStringArray(seat.playedCards),
       publicNotes: readStringArray(seat.publicNotes),
+      meldGroups: readMeldGroups(seat.meldGroups),
+      drawTile: readString(seat.drawTile),
       hand: readHand(seat.hand),
     }));
 
@@ -162,6 +225,7 @@ export function readTableScene(scene?: VisualScene): TableSceneData | null {
         label: readString(center.label) ?? "Center",
         cards: readStringArray(center.cards),
         history: readStringArray(center.history),
+        discardLanes: readDiscardLanes(center.discardLanes),
       },
     },
     status: {
@@ -169,6 +233,7 @@ export function readTableScene(scene?: VisualScene): TableSceneData | null {
       observerPlayerId: readString(status.observerPlayerId),
       moveCount: readNumber(status.moveCount),
       lastMove: readString(status.lastMove),
+      lastDiscard: readLastDiscard(status.lastDiscard),
       landlordId: readString(status.landlordId),
     },
     panels: {

@@ -1,4 +1,15 @@
-import type { TableSceneData, TableSeat } from "../table/TableLayout";
+import { useEffect, useState } from "react";
+
+import type { TableDiscardLane, TableMeldGroup, TableSceneData, TableSeat } from "../table/TableLayout";
+import { MahjongActionTray } from "./MahjongActionTray";
+import {
+  isMahjongTileCode,
+  normalizeTileCode,
+  resolveMahjongDiscardLanes,
+  resolveMahjongMeldGroups,
+  splitMahjongSeatHand,
+  uniqueMahjongActionTexts,
+} from "./mahjongScene";
 
 import "./mahjong.css";
 
@@ -26,85 +37,19 @@ interface MahjongTableProps {
   onSubmitAction: (actionText: string) => void;
 }
 
-interface ParsedMeld {
-  label: string;
-  tiles: string[];
-}
-
 interface MahjongTileProps {
   tile: string;
   compact?: boolean;
   hidden?: boolean;
   emphasized?: boolean;
+  selected?: boolean;
   disabled?: boolean;
   ariaLabel?: string;
   onClick?: () => void;
+  onDoubleClick?: () => void;
 }
 
-interface SeatRenderState {
-  mainTiles: string[];
-  drawTile: string | null;
-}
-
-function isMahjongTileCode(value: string): boolean {
-  const normalized = value.trim();
-  return /^[BCD][1-9]$/i.test(normalized) || /^(East|South|West|North|Green|Red|White)$/i.test(normalized);
-}
-
-function normalizeTileCode(value: string): string {
-  const trimmed = value.trim();
-  if (/^[BCD][1-9]$/i.test(trimmed)) {
-    return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-  }
-  if (/^(East|South|West|North|Green|Red|White)$/i.test(trimmed)) {
-    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
-  }
-  return trimmed;
-}
-
-function parseMeldNote(note: string): ParsedMeld {
-  const tiles = Array.from(
-    note.matchAll(/\b([BCD][1-9]|East|South|West|North|Green|Red|White)\b/gi),
-    (match) => normalizeTileCode(match[1] ?? match[0]),
-  );
-  const prefix = note.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-
-  if (tiles.length === 1 && (prefix === "pong" || prefix === "peng")) {
-    return {
-      label: note,
-      tiles: [tiles[0], tiles[0], tiles[0]],
-    };
-  }
-  if (tiles.length === 1 && (prefix === "kong" || prefix === "gang")) {
-    return {
-      label: note,
-      tiles: [tiles[0], tiles[0], tiles[0], tiles[0]],
-    };
-  }
-  if (tiles.length >= 3 && (prefix === "chow" || prefix === "chi")) {
-    return {
-      label: note,
-      tiles: tiles.slice(0, 3),
-    };
-  }
-  return {
-    label: note,
-    tiles,
-  };
-}
-
-function splitSeatHand(cards: string[]): SeatRenderState {
-  if (cards.length > 1 && cards.length % 3 === 2) {
-    return {
-      mainTiles: cards.slice(0, -1),
-      drawTile: cards.at(-1) ?? null,
-    };
-  }
-  return {
-    mainTiles: cards,
-    drawTile: null,
-  };
-}
+const MAHJONG_CALL_ACTIONS = new Set(["pong", "chow", "kong", "gong", "hu"]);
 
 function rotateSeatIds(seatIds: string[], bottomSeatId: string): string[] {
   const anchorIndex = seatIds.indexOf(bottomSeatId);
@@ -144,12 +89,7 @@ function renderMaskedHand(maskedCount: number, compact: boolean) {
     <div className="mahjong-hand mahjong-hand--masked">
       <div className="mahjong-hand__rack">
         {Array.from({ length: previewCount }, (_, index) => (
-          <MahjongTile
-            key={`masked-${index}`}
-            tile="Back"
-            compact={compact}
-            hidden={true}
-          />
+          <MahjongTile key={`masked-${index}`} tile="Back" compact={compact} hidden={true} />
         ))}
       </div>
       <p className="mahjong-hand__caption">
@@ -164,9 +104,11 @@ function MahjongTile({
   compact = false,
   hidden = false,
   emphasized = false,
+  selected = false,
   disabled = false,
   ariaLabel,
   onClick,
+  onDoubleClick,
 }: MahjongTileProps) {
   const resolvedTile = hidden ? "Back" : normalizeTileCode(tile);
   const src = mahjongTileAssets[resolvedTile] ?? null;
@@ -175,6 +117,7 @@ function MahjongTile({
     compact ? "is-compact" : "",
     hidden ? "is-hidden" : "",
     emphasized ? "is-emphasized" : "",
+    selected ? "is-selected" : "",
     onClick ? "is-interactive" : "",
   ]
     .filter((value) => value !== "")
@@ -186,9 +129,11 @@ function MahjongTile({
       <button
         type="button"
         className={className}
-        aria-label={ariaLabel ?? `Play ${resolvedTile}`}
+        aria-label={ariaLabel ?? `Select ${resolvedTile}`}
+        aria-pressed={selected}
         disabled={disabled}
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
       >
         {content}
       </button>
@@ -203,64 +148,82 @@ function MahjongTile({
   );
 }
 
-function renderMelds(notes: string[], compact: boolean) {
-  if (notes.length === 0) {
+function renderMelds(groups: TableMeldGroup[], compact: boolean) {
+  if (groups.length === 0) {
     return null;
   }
   return (
     <div className={`mahjong-melds ${compact ? "is-compact" : ""}`}>
-      {notes.map((note) => {
-        const meld = parseMeldNote(note);
-        return (
-          <div key={note} className="mahjong-meld">
-            <div className="mahjong-meld__tiles">
-              {meld.tiles.length > 0 ? (
-                meld.tiles.map((tileCode, index) => (
-                  <MahjongTile
-                    key={`${note}-${tileCode}-${index}`}
-                    tile={tileCode}
-                    compact={compact}
-                  />
-                ))
-              ) : (
-                <span className="mahjong-meld__label">{note}</span>
-              )}
-            </div>
-            <p className="mahjong-meld__caption">{meld.label}</p>
+      {groups.map((group, groupIndex) => (
+        <div key={`${group.label}-${groupIndex}`} className="mahjong-meld">
+          <div className="mahjong-meld__tiles">
+            {group.tiles.length > 0 ? (
+              group.tiles.map((tileCode, tileIndex) => (
+                <MahjongTile
+                  key={`${group.label}-${tileCode}-${tileIndex}`}
+                  tile={tileCode}
+                  compact={compact}
+                />
+              ))
+            ) : (
+              <span className="mahjong-meld__label">{group.label}</span>
+            )}
           </div>
-        );
-      })}
+          <p className="mahjong-meld__caption">{group.label}</p>
+        </div>
+      ))}
     </div>
   );
 }
 
-function renderVisibleHand(
-  seat: TableSeat,
-  compact: boolean,
-  canSubmitActions: boolean,
-  tileActionSet: Set<string>,
-  onSubmitAction: (actionText: string) => void,
-) {
-  const handState = splitSeatHand(seat.hand.cards.map(normalizeTileCode));
+function renderSeatHand({
+  seat,
+  compact,
+  canSubmitActions,
+  tileActionSet,
+  selectedTile,
+  onSelectTile,
+  onConfirmTile,
+}: {
+  seat: TableSeat;
+  compact: boolean;
+  canSubmitActions: boolean;
+  tileActionSet: Set<string>;
+  selectedTile: string | null;
+  onSelectTile: (tile: string) => void;
+  onConfirmTile: (tile: string) => void;
+}) {
+  if (!seat.hand.isVisible) {
+    return renderMaskedHand(seat.hand.maskedCount, compact);
+  }
+
+  const handState = splitMahjongSeatHand(seat);
   const interactive = canSubmitActions && !compact;
 
   return (
     <div className="mahjong-hand mahjong-hand--visible">
       <div className="mahjong-hand__rack">
         {handState.mainTiles.map((tileCode, index) => {
-          const normalizedTile = normalizeTileCode(tileCode);
-          const isLegal = interactive && tileActionSet.has(normalizedTile);
+          const isLegal = interactive && tileActionSet.has(tileCode);
           return (
             <MahjongTile
-              key={`${seat.playerId}-${normalizedTile}-${index}`}
-              tile={normalizedTile}
+              key={`${seat.playerId}-${tileCode}-${index}`}
+              tile={tileCode}
               compact={compact}
+              selected={selectedTile === tileCode}
               disabled={!isLegal}
-              ariaLabel={`Play ${normalizedTile}`}
+              ariaLabel={`Select ${tileCode}`}
               onClick={
                 isLegal
                   ? () => {
-                      onSubmitAction(normalizedTile);
+                      onSelectTile(tileCode);
+                    }
+                  : undefined
+              }
+              onDoubleClick={
+                isLegal
+                  ? () => {
+                      onConfirmTile(tileCode);
                     }
                   : undefined
               }
@@ -272,13 +235,21 @@ function renderVisibleHand(
             <MahjongTile
               tile={handState.drawTile}
               compact={compact}
-              emphasized={interactive && tileActionSet.has(normalizeTileCode(handState.drawTile))}
-              disabled={!interactive || !tileActionSet.has(normalizeTileCode(handState.drawTile))}
-              ariaLabel={`Play ${normalizeTileCode(handState.drawTile)}`}
+              emphasized={tileActionSet.has(handState.drawTile)}
+              selected={selectedTile === handState.drawTile}
+              disabled={!interactive || !tileActionSet.has(handState.drawTile)}
+              ariaLabel={`Select ${handState.drawTile}`}
               onClick={
-                interactive && tileActionSet.has(normalizeTileCode(handState.drawTile))
+                interactive && tileActionSet.has(handState.drawTile)
                   ? () => {
-                      onSubmitAction(normalizeTileCode(handState.drawTile ?? ""));
+                      onSelectTile(handState.drawTile ?? "");
+                    }
+                  : undefined
+              }
+              onDoubleClick={
+                interactive && tileActionSet.has(handState.drawTile)
+                  ? () => {
+                      onConfirmTile(handState.drawTile ?? "");
                     }
                   : undefined
               }
@@ -290,31 +261,22 @@ function renderVisibleHand(
   );
 }
 
-function renderSeatHand(
-  seat: TableSeat,
-  compact: boolean,
-  canSubmitActions: boolean,
-  tileActionSet: Set<string>,
-  onSubmitAction: (actionText: string) => void,
-) {
-  if (!seat.hand.isVisible) {
-    return renderMaskedHand(seat.hand.maskedCount, compact);
-  }
-  return renderVisibleHand(seat, compact, canSubmitActions, tileActionSet, onSubmitAction);
-}
-
 function MahjongSeat({
   seat,
   anchor,
   canSubmitActions,
   tileActionSet,
-  onSubmitAction,
+  selectedTile,
+  onSelectTile,
+  onConfirmTile,
 }: {
   seat: TableSeat;
   anchor: SeatAnchor;
   canSubmitActions: boolean;
   tileActionSet: Set<string>;
-  onSubmitAction: (actionText: string) => void;
+  selectedTile: string | null;
+  onSelectTile: (tile: string) => void;
+  onConfirmTile: (tile: string) => void;
 }) {
   const compact = anchor !== "bottom";
   const className = [
@@ -325,6 +287,7 @@ function MahjongSeat({
   ]
     .filter((value) => value !== "")
     .join(" ");
+  const meldGroups = resolveMahjongMeldGroups(seat);
 
   return (
     <article
@@ -343,34 +306,129 @@ function MahjongSeat({
         </div>
       </header>
 
-      {renderMelds(seat.publicNotes, compact)}
+      {renderMelds(meldGroups, compact)}
 
-      <div
-        className="mahjong-seat__hand"
-        data-testid={`mahjong-seat-${anchor}-hand`}
-      >
-        {renderSeatHand(
+      <div className="mahjong-seat__hand" data-testid={`mahjong-seat-${anchor}-hand`}>
+        {renderSeatHand({
           seat,
           compact,
-          canSubmitActions && anchor === "bottom",
+          canSubmitActions: canSubmitActions && anchor === "bottom",
           tileActionSet,
-          onSubmitAction,
-        )}
+          selectedTile: anchor === "bottom" ? selectedTile : null,
+          onSelectTile,
+          onConfirmTile,
+        })}
       </div>
     </article>
   );
 }
 
-function uniqueActionTexts(actionTexts: string[]): string[] {
-  const seen = new Set<string>();
-  return actionTexts.filter((actionText) => {
-    const normalized = normalizeTileCode(actionText);
-    if (seen.has(normalized)) {
-      return false;
-    }
-    seen.add(normalized);
-    return true;
-  });
+function resolveLastDiscardIndex(
+  lane: TableDiscardLane,
+  lastDiscard: TableSceneData["status"]["lastDiscard"],
+): number {
+  if (!lastDiscard?.tile || lastDiscard.playerId !== lane.playerId) {
+    return -1;
+  }
+  const normalizedTile = normalizeTileCode(lastDiscard.tile);
+  return lane.cards.reduce((resolvedIndex, tileCode, index) => {
+    return normalizeTileCode(tileCode) === normalizedTile ? index : resolvedIndex;
+  }, -1);
+}
+
+function MahjongDiscardLane({
+  lane,
+  lastDiscard,
+}: {
+  lane: TableDiscardLane;
+  lastDiscard: TableSceneData["status"]["lastDiscard"];
+}) {
+  const emphasizedIndex = resolveLastDiscardIndex(lane, lastDiscard);
+
+  return (
+    <div
+      className="mahjong-discard-lane"
+      data-testid={`mahjong-discard-lane-${lane.playerId}`}
+    >
+      <p className="mahjong-discard-lane__label">{lane.seatId}</p>
+      <div className="mahjong-discard-lane__tiles">
+        {lane.cards.length > 0 ? (
+          lane.cards.map((tileCode, index) => {
+            const isLastDiscard = index === emphasizedIndex;
+            const discardStyle =
+              isLastDiscard && lastDiscard
+                ? lastDiscard.isTsumogiri
+                  ? "is-tsumogiri"
+                  : "is-tedashi"
+                : "";
+
+            return (
+              <div
+                key={`${lane.playerId}-${tileCode}-${index}`}
+                className={["mahjong-discard-lane__entry", discardStyle].filter(Boolean).join(" ")}
+              >
+                <MahjongTile
+                  tile={tileCode}
+                  compact={true}
+                  emphasized={isLastDiscard}
+                />
+                {isLastDiscard && lastDiscard ? (
+                  <span
+                    className="mahjong-discard-lane__marker"
+                    aria-label={lastDiscard.isTsumogiri ? "Tsumogiri discard" : "Tedashi discard"}
+                  >
+                    {lastDiscard.isTsumogiri ? "Tsumo" : "Tedashi"}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })
+        ) : (
+          <span className="mahjong-discards__placeholder">No discards</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function isMahjongCallAction(actionText: string): boolean {
+  return MAHJONG_CALL_ACTIONS.has(actionText.trim().toLowerCase());
+}
+
+function MahjongCallPanel({
+  callActions,
+  canSubmitActions,
+  onSubmitAction,
+}: {
+  callActions: string[];
+  canSubmitActions: boolean;
+  onSubmitAction: (actionText: string) => void;
+}) {
+  if (callActions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mahjong-call-panel" data-testid="mahjong-call-panel">
+      <p className="mahjong-call-panel__eyebrow">Call options</p>
+      <div className="mahjong-call-panel__actions">
+        {callActions.map((actionText) => (
+          <button
+            key={actionText}
+            type="button"
+            className="mahjong-action mahjong-action--call"
+            aria-label={`Play ${actionText}`}
+            disabled={!canSubmitActions}
+            onClick={() => {
+              onSubmitAction(actionText);
+            }}
+          >
+            <span className="mahjong-action__label">{actionText}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function MahjongTable({
@@ -379,20 +437,36 @@ export function MahjongTable({
   canSubmitActions,
   onSubmitAction,
 }: MahjongTableProps) {
+  const [selectedTile, setSelectedTile] = useState<string | null>(null);
   const anchoredSeats = resolveAnchoredSeats(tableScene);
-  const bottomSeat = anchoredSeats.find((entry) => entry.anchor === "bottom")?.seat ?? null;
-  const tileActionSet = new Set(
-    actionTexts.filter(isMahjongTileCode).map(normalizeTileCode),
+  const tileActionSet = new Set(actionTexts.filter(isMahjongTileCode).map(normalizeTileCode));
+  const uniqueActions = uniqueMahjongActionTexts(actionTexts);
+  const callActions = uniqueActions.filter(isMahjongCallAction);
+  const trayActions = uniqueActions.filter(
+    (actionText) => !isMahjongTileCode(actionText) && !isMahjongCallAction(actionText),
   );
-  const bottomVisibleTiles = new Set(
-    bottomSeat?.hand.isVisible ? bottomSeat.hand.cards.map(normalizeTileCode) : [],
-  );
-  const trayActions = uniqueActionTexts(actionTexts).filter((actionText) => {
-    const normalized = normalizeTileCode(actionText);
-    return !isMahjongTileCode(normalized) || !bottomVisibleTiles.has(normalized);
-  });
-  const lastDiscardIndex =
-    tableScene.table.center.cards.length > 0 ? tableScene.table.center.cards.length - 1 : -1;
+  const lastDiscard = tableScene.status.lastDiscard;
+  const discardLanes = resolveMahjongDiscardLanes(tableScene);
+
+  useEffect(() => {
+    if (!selectedTile) {
+      return;
+    }
+    if (!canSubmitActions || !tileActionSet.has(selectedTile)) {
+      setSelectedTile(null);
+    }
+  }, [canSubmitActions, selectedTile, tileActionSet]);
+
+  const handleSelectTile = (tile: string) => {
+    const normalized = normalizeTileCode(tile);
+    setSelectedTile((current) => (current === normalized ? null : normalized));
+  };
+
+  const handleConfirmTile = (tile: string) => {
+    const normalized = normalizeTileCode(tile);
+    onSubmitAction(normalized);
+    setSelectedTile(null);
+  };
 
   return (
     <section className="mahjong-stage" data-testid="mahjong-stage">
@@ -404,7 +478,9 @@ export function MahjongTable({
             anchor={anchor}
             canSubmitActions={canSubmitActions}
             tileActionSet={tileActionSet}
-            onSubmitAction={onSubmitAction}
+            selectedTile={selectedTile}
+            onSelectTile={handleSelectTile}
+            onConfirmTile={handleConfirmTile}
           />
         ))}
 
@@ -417,38 +493,42 @@ export function MahjongTable({
                   key={`discard-${tileCode}-${index}`}
                   tile={tileCode}
                   compact={true}
-                  emphasized={index === lastDiscardIndex}
+                  emphasized={index === tableScene.table.center.cards.length - 1}
                 />
               ))
             ) : (
               <p className="mahjong-discards__placeholder">No discards yet</p>
             )}
           </div>
+          {discardLanes.length > 0 ? (
+            <div className="mahjong-discard-lanes">
+              {discardLanes.map((lane) => (
+                <MahjongDiscardLane
+                  key={`${lane.playerId}-${lane.seatId}`}
+                  lane={lane}
+                  lastDiscard={lastDiscard}
+                />
+              ))}
+            </div>
+          ) : null}
+          <MahjongCallPanel
+            callActions={callActions}
+            canSubmitActions={canSubmitActions}
+            onSubmitAction={onSubmitAction}
+          />
         </section>
       </div>
 
-      {trayActions.length > 0 ? (
-        <div className="mahjong-actions">
-          {trayActions.map((actionText) => (
-            <button
-              key={actionText}
-              type="button"
-              className="mahjong-action"
-              aria-label={`Play ${actionText}`}
-              disabled={!canSubmitActions}
-              onClick={() => {
-                onSubmitAction(normalizeTileCode(actionText));
-              }}
-            >
-              {isMahjongTileCode(actionText) ? (
-                <MahjongTile tile={actionText} compact={true} />
-              ) : (
-                <span className="mahjong-action__label">{actionText}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <MahjongActionTray
+        selectedTile={selectedTile}
+        trayActions={trayActions}
+        canSubmitActions={canSubmitActions}
+        onClearSelection={() => {
+          setSelectedTile(null);
+        }}
+        onConfirmTile={handleConfirmTile}
+        onSubmitAction={onSubmitAction}
+      />
     </section>
   );
 }

@@ -96,6 +96,20 @@ def test_visualization_spec_plugin_ids_are_unique_across_current_games() -> None
     assert len(plugin_ids) == len(EXPECTED_VISUALIZATION_SPECS)
 
 
+def test_mahjong_visualization_spec_declares_structured_table_scene_extensions() -> None:
+    resolved = _resolve_visualization_spec("mahjong")
+    rules = resolved.visualization_spec.scene_projection_rules
+
+    assert rules["default_layout"] == "four-seat"
+    assert rules["scene_contract"] == {
+        "table": {
+            "seat_extensions": ["meldGroups", "drawTile", "hand.drawTile"],
+            "center_extensions": ["discardLanes"],
+            "status_extensions": ["lastDiscard"],
+        }
+    }
+
+
 def test_visualization_spec_kinds_cover_expected_stage_set() -> None:
     kinds = {
         _resolve_visualization_spec(kit_id).visualization_spec.visual_kind

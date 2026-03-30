@@ -873,6 +873,10 @@ def _project_table_scene(
             "chatLog": chat_log,
         },
     }
+    if table_game == "mahjong":
+        last_discard = _normalize_mahjong_last_discard(public_state.get("last_discard"))
+        if last_discard is not None:
+            body["status"]["lastDiscard"] = last_discard
     return body, legal_actions, active_player_id
 
 
@@ -1209,6 +1213,11 @@ def _project_doudizhu_table(
         for player_id, count in _mapping_or_empty(public_state.get("num_cards_left")).items()
     }
     played_cards = _normalize_played_cards(public_state.get("played_cards"))
+    suitful_hands = _normalize_doudizhu_hands(ui_state.get("hands"), player_ids=player_ids)
+    latest_actions = _normalize_doudizhu_latest_actions(
+        ui_state.get("latest_actions"),
+        player_ids=player_ids,
+    )
     private_self_id = _string_or_none(private_state.get("self_id"))
     private_hand = _normalize_string_list(private_state.get("current_hand"))
     seats: list[dict[str, Any]] = []
@@ -1218,11 +1227,13 @@ def _project_doudizhu_table(
             observer_player_id=observer_player_id,
             player_id=player_id,
         )
+        visible_hand = suitful_hands.get(player_id, [])
         if player_id == private_self_id and private_hand:
-            cards = private_hand if is_visible else []
-            masked_count = 0 if is_visible else len(private_hand)
+            resolved_hand = visible_hand or private_hand
+            cards = resolved_hand if is_visible else []
+            masked_count = 0 if is_visible else len(resolved_hand)
         else:
-            cards = []
+            cards = visible_hand if is_visible else []
             masked_count = 0 if is_visible else card_counts.get(player_id, 0)
         seats.append(
             {
@@ -1232,7 +1243,7 @@ def _project_doudizhu_table(
                 "role": _string_or_none(roles.get(player_id)),
                 "isActive": bool(active_player_id and player_id == active_player_id),
                 "isObserver": bool(observer_player_id and player_id == observer_player_id),
-                "playedCards": played_cards.get(player_id, []),
+                "playedCards": latest_actions.get(player_id, played_cards.get(player_id, [])),
                 "publicNotes": [],
                 "hand": {
                     "isVisible": is_visible,
@@ -1272,11 +1283,14 @@ def _project_mahjong_table(
     visualization_spec: GameVisualizationSpec | None,
 ) -> dict[str, Any]:
     private_hand = _normalize_string_list(private_state.get("hand"))
+    private_draw_tile = _string_or_none(private_state.get("draw_tile"))
     card_counts = {
         str(player_id): _coerce_int(count, default=0)
         for player_id, count in _mapping_or_empty(public_state.get("num_cards_left")).items()
     }
     melds = _mapping_or_empty(public_state.get("melds"))
+    meld_groups = _normalize_mahjong_meld_groups(public_state.get("meld_groups"))
+    discard_lanes = _normalize_mahjong_discard_lanes(public_state.get("discard_lanes"), player_ids=player_ids)
     seats: list[dict[str, Any]] = []
     for player_id in player_ids:
         is_visible = _table_hand_visible(
@@ -1300,23 +1314,95 @@ def _project_mahjong_table(
                 "isObserver": bool(observer_player_id and player_id == observer_player_id),
                 "playedCards": [],
                 "publicNotes": public_notes,
+                "meldGroups": meld_groups.get(player_id, []),
+                "drawTile": private_draw_tile if is_visible else None,
                 "hand": {
                     "isVisible": is_visible,
                     "cards": private_hand if is_visible else [],
                     "maskedCount": 0 if is_visible else masked_count,
+                    "drawTile": private_draw_tile if is_visible else None,
                 },
             }
         )
 
     layout = _string_or_none(_scene_projection_rule_value(visualization_spec, "default_layout")) or "four-seat"
+    center_payload: dict[str, Any] = {
+        "label": "Discards",
+        "cards": _normalize_string_list(public_state.get("discards")),
+        "history": [],
+    }
+    if discard_lanes:
+        center_payload["discardLanes"] = discard_lanes
+
     return {
         "layout": layout,
         "seats": seats,
-        "center": {
-            "label": "Discards",
-            "cards": _normalize_string_list(public_state.get("discards")),
-            "history": [],
-        },
+        "center": center_payload,
+    }
+
+
+def _normalize_mahjong_meld_groups(value: Any) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(value, Mapping):
+        return {}
+
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for raw_player_id, raw_groups in value.items():
+        player_id = str(raw_player_id)
+        groups: list[dict[str, Any]] = []
+        if isinstance(raw_groups, Sequence) and not isinstance(raw_groups, (str, bytes)):
+            for raw_group in raw_groups:
+                if not isinstance(raw_group, Mapping):
+                    continue
+                tiles = _normalize_string_list(raw_group.get("tiles"))
+                label = _string_or_none(raw_group.get("label")) or ("-".join(tiles) if tiles else "")
+                if not label and not tiles:
+                    continue
+                groups.append(
+                    {
+                        "type": _string_or_none(raw_group.get("type")),
+                        "label": label,
+                        "tiles": tiles,
+                    }
+                )
+        if groups:
+            normalized[player_id] = groups
+    return normalized
+
+
+def _normalize_mahjong_discard_lanes(
+    value: Any,
+    *,
+    player_ids: Sequence[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return []
+
+    lanes: list[dict[str, Any]] = []
+    for player_id in player_ids:
+        cards = _normalize_string_list(value.get(player_id))
+        lanes.append(
+            {
+                "seatId": player_id,
+                "playerId": player_id,
+                "cards": cards,
+            }
+        )
+    return lanes
+
+
+def _normalize_mahjong_last_discard(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    tile = _string_or_none(value.get("tile"))
+    player_id = _string_or_none(value.get("player_id")) or _string_or_none(value.get("playerId"))
+    if tile is None and player_id is None:
+        return None
+
+    return {
+        "playerId": player_id,
+        "tile": tile,
+        "isTsumogiri": bool(value.get("is_tsumogiri") or value.get("isTsumogiri")),
     }
 
 
@@ -1655,6 +1741,63 @@ def _normalize_played_cards(value: Any) -> dict[str, list[str]]:
             continue
         played_cards[player_id] = _normalize_string_list(item.get("cards"))
     return played_cards
+
+
+def _normalize_doudizhu_hands(
+    value: Any,
+    *,
+    player_ids: Sequence[str],
+) -> dict[str, list[str]]:
+    return _normalize_doudizhu_player_card_map(value, player_ids=player_ids)
+
+
+def _normalize_doudizhu_latest_actions(
+    value: Any,
+    *,
+    player_ids: Sequence[str],
+) -> dict[str, list[str]]:
+    return _normalize_doudizhu_player_card_map(value, player_ids=player_ids)
+
+
+def _normalize_doudizhu_player_card_map(
+    value: Any,
+    *,
+    player_ids: Sequence[str],
+) -> dict[str, list[str]]:
+    normalized: dict[str, list[str]] = {}
+    if isinstance(value, Mapping):
+        for raw_player_id, raw_cards in value.items():
+            player_id = _string_or_none(raw_player_id)
+            if player_id is None:
+                continue
+            normalized[player_id] = _normalize_doudizhu_card_collection(raw_cards)
+        return normalized
+
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return normalized
+
+    for index, raw_cards in enumerate(value):
+        if index >= len(player_ids):
+            break
+        normalized[player_ids[index]] = _normalize_doudizhu_card_collection(raw_cards)
+    return normalized
+
+
+def _normalize_doudizhu_card_collection(value: Any) -> list[str]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        cards: list[str] = []
+        for item in value:
+            card = _string_or_none(item)
+            if card is not None and card.lower() != "pass":
+                cards.append(card)
+        return cards
+
+    text = _string_or_none(value)
+    if text is None or text.lower() == "pass":
+        return []
+    if " " in text or "," in text:
+        return [item for item in text.replace(",", " ").split() if item and item.lower() != "pass"]
+    return [text]
 
 
 def _invert_seat_order(

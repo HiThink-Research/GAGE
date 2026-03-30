@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { VisualScene } from "../../gateway/types";
@@ -67,9 +67,8 @@ describe("MahjongPlugin", () => {
     expect(screen.getByText("Pong C3")).toBeInTheDocument();
     expect(screen.getByLabelText("Mahjong seat east")).toBeInTheDocument();
 
-    const playButton = screen.getByRole("button", { name: /play b1/i });
-    expect(playButton).toBeDisabled();
-    fireEvent.click(playButton);
+    expect(screen.queryByRole("button", { name: /select b1/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /confirm b1/i })).toBeNull();
     expect(submitInput).not.toHaveBeenCalled();
   });
 
@@ -117,13 +116,16 @@ describe("MahjongPlugin", () => {
       "mahjong-seat-bottom",
     );
     expect(
-      screen.getByTestId("mahjong-seat-bottom-hand").querySelector('[aria-label="Play B1"]'),
+      screen.getByTestId("mahjong-seat-bottom-hand").querySelector('[aria-label="Select B1"]'),
     ).not.toBeNull();
     expect(
-      screen.getByTestId("mahjong-draw-slot").querySelector('[aria-label="Play Red"]'),
+      screen.getByTestId("mahjong-draw-slot").querySelector('[aria-label="Select Red"]'),
     ).not.toBeNull();
     expect(screen.getByText("Chow B2-B3-B4")).toBeInTheDocument();
     expect(screen.getByText("Kong D5")).toBeInTheDocument();
+    expect(screen.getByTestId("mahjong-call-panel")).toBeInTheDocument();
+    expect(within(screen.getByTestId("mahjong-call-panel")).getByRole("button", { name: /play pong/i })).toBeInTheDocument();
+    expect(within(screen.getByTestId("mahjong-call-panel")).getByRole("button", { name: /play hu/i })).toBeInTheDocument();
     expect(
       screen
         .getByTestId("mahjong-seat-bottom-hand")
@@ -132,7 +134,7 @@ describe("MahjongPlugin", () => {
     expect(screen.getByTestId("mahjong-seat-bottom-hand")).toHaveTextContent("B9");
     expect(screen.getByTestId("mahjong-seat-bottom-hand")).toHaveTextContent("Green");
 
-    fireEvent.click(screen.getByRole("button", { name: /play b1/i }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: /select b1/i }));
     expect(submitInput).toHaveBeenCalledWith({
       playerId: "east",
       actionText: "B1",
@@ -142,6 +144,61 @@ describe("MahjongPlugin", () => {
     expect(submitInput).toHaveBeenCalledWith({
       playerId: "east",
       actionText: "Pong",
+    });
+  });
+
+  it("renders structured discard lanes and requires confirming a selected tile before submit", () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <MahjongPlugin
+        session={{
+          sessionId: "mahjong-sample",
+          gameId: "mahjong",
+          pluginId: "arena.visualization.mahjong.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 2021,
+            cursorEventSeq: 21,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "east",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "east",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={mahjongRichScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByTestId("mahjong-discard-lane-east")).toHaveTextContent("B1");
+    expect(screen.getByTestId("mahjong-discard-lane-north")).toHaveTextContent("White");
+    expect(screen.getByTestId("mahjong-discard-lane-north")).toHaveTextContent("Tedashi");
+    expect(screen.getByLabelText(/tedashi discard/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /select b1/i }));
+    expect(submitInput).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /confirm b1/i })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /confirm b1/i }));
+    expect(submitInput).toHaveBeenCalledWith({
+      playerId: "east",
+      actionText: "B1",
     });
   });
 });

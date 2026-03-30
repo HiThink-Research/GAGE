@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from queue import Empty
 from typing import Any
 
@@ -25,21 +26,25 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         self._timeout_fallback_move = timeout_fallback_move
 
     def next_action(self, observation: ArenaObservation) -> ArenaAction:
-        raw_text = self._read_raw_action(observation)
-        move = str(raw_text or "").strip()
+        payload = self._read_action_payload(observation)
+        move = self._resolve_move(payload)
         if not move:
             fallback = self._resolve_timeout_fallback_move(observation)
             move = str(fallback or "").strip()
         if not move:
             raise ValueError(f"Human player '{self.player_id}' did not provide an action")
+        metadata = {"driver_id": self.metadata.get("driver_id"), "player_type": "human"}
+        payload_metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
+        if isinstance(payload_metadata, Mapping):
+            metadata.update(dict(payload_metadata))
         return ArenaAction(
             player=self.player_id,
             move=move,
-            raw=move,
-            metadata={"driver_id": self.metadata.get("driver_id"), "player_type": "human"},
+            raw=self._resolve_raw(payload, move),
+            metadata=metadata,
         )
 
-    def _read_raw_action(self, observation: ArenaObservation) -> str | None:
+    def _read_action_payload(self, observation: ArenaObservation) -> dict[str, Any]:
         queue = self._action_queue
         if queue is not None:
             timeout_s = None
@@ -50,10 +55,24 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
                 try:
                     queued = get(timeout=timeout_s) if timeout_s is not None else get()
                 except Empty:
-                    return None
-                payload = parse_action_payload(queued)
-                return extract_action_text(payload)
-        return input(self._format_prompt(observation))
+                    return {}
+                return parse_action_payload(queued)
+        return parse_action_payload(input(self._format_prompt(observation)))
+
+    def _resolve_move(self, payload: Mapping[str, Any] | None) -> str:
+        if not isinstance(payload, Mapping):
+            return ""
+        move = payload.get("action", payload.get("move"))
+        if move is None:
+            move = extract_action_text(payload)
+        return str(move or "").strip()
+
+    def _resolve_raw(self, payload: Mapping[str, Any] | None, move: str) -> str:
+        if isinstance(payload, Mapping):
+            raw = str(payload.get("raw") or "").strip()
+            if raw:
+                return raw
+        return str(move or "").strip()
 
     def _resolve_timeout_fallback_move(self, observation: ArenaObservation) -> str | None:
         if self._timeout_fallback_move:

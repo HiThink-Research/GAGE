@@ -33,6 +33,14 @@ const richScene: VisualScene = {
           isObserver: true,
           playedCards: [],
           publicNotes: ["Chow B2-B3-B4"],
+          meldGroups: [
+            {
+              type: "chow",
+              label: "Chow B2-B3-B4",
+              tiles: ["B2", "B3", "B4"],
+            },
+          ],
+          drawTile: "Red",
           hand: {
             isVisible: true,
             cards: [
@@ -63,6 +71,13 @@ const richScene: VisualScene = {
           isObserver: false,
           playedCards: [],
           publicNotes: ["Pong C3"],
+          meldGroups: [
+            {
+              type: "pong",
+              label: "Pong C3",
+              tiles: ["C3", "C3", "C3"],
+            },
+          ],
           hand: { isVisible: false, cards: [], maskedCount: 13 },
         },
         {
@@ -85,6 +100,13 @@ const richScene: VisualScene = {
           isObserver: false,
           playedCards: [],
           publicNotes: ["Kong D5"],
+          meldGroups: [
+            {
+              type: "kong",
+              label: "Kong D5",
+              tiles: ["D5", "D5", "D5", "D5"],
+            },
+          ],
           hand: { isVisible: false, cards: [], maskedCount: 13 },
         },
       ],
@@ -92,6 +114,12 @@ const richScene: VisualScene = {
         label: "Discards",
         cards: ["B1", "C1", "D1", "East", "B9", "C9", "D9", "White"],
         history: [],
+        discardLanes: [
+          { seatId: "east", playerId: "east", cards: ["B1", "B9"] },
+          { seatId: "south", playerId: "south", cards: ["C1", "C9"] },
+          { seatId: "west", playerId: "west", cards: ["D1", "D9"] },
+          { seatId: "north", playerId: "north", cards: ["East", "White"] },
+        ],
       },
     },
     status: {
@@ -99,6 +127,11 @@ const richScene: VisualScene = {
       observerPlayerId: "east",
       moveCount: 11,
       lastMove: "East",
+      lastDiscard: {
+        playerId: "north",
+        tile: "East",
+        isTsumogiri: false,
+      },
       landlordId: null,
     },
     panels: {

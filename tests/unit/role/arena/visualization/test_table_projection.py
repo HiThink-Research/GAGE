@@ -60,7 +60,8 @@ def test_doudizhu_table_projection_masks_non_observer_private_hands() -> None:
                     "left": "player_1",
                     "right": "player_2",
                 },
-                "latest_actions": [["3"], [], []],
+                "hands": [["H3", "D4"], ["S5", "C6"], ["H7", "D8"]],
+                "latest_actions": [["S3"], [], []],
                 "move_history": [{"player_idx": 0, "move": "3"}],
             },
             "legal_moves": ["pass", "4"],
@@ -82,7 +83,7 @@ def test_doudizhu_table_projection_masks_non_observer_private_hands() -> None:
     assert seats["player_0"]["role"] == "landlord"
     assert seats["player_0"]["hand"] == {
         "isVisible": True,
-        "cards": ["3", "4"],
+        "cards": ["H3", "D4"],
         "maskedCount": 0,
     }
     assert seats["player_1"]["hand"] == {
@@ -90,6 +91,7 @@ def test_doudizhu_table_projection_masks_non_observer_private_hands() -> None:
         "cards": [],
         "maskedCount": 2,
     }
+    assert seats["player_0"]["playedCards"] == ["S3"]
     assert seats["player_2"]["playedCards"] == []
     assert table["center"] == {
         "label": "Seen cards",
@@ -209,14 +211,28 @@ def test_doudizhu_table_projection_prefers_current_event_observation_over_stale_
                                 {"player": 2, "action": "pass"},
                             ],
                         },
-                        "private_state": {
-                            "self_id": "landlord",
-                            "current_hand": ["4"],
-                            "current_hand_text": "4",
+                    "private_state": {
+                        "self_id": "landlord",
+                        "current_hand": ["4"],
+                        "current_hand_text": "4",
+                    },
+                    "ui_state": {
+                        "roles": {
+                            "landlord": "landlord",
+                            "farmer_left": "peasant",
+                            "farmer_right": "peasant",
                         },
-                        "player_id": "landlord",
-                        "active_player_id": "landlord",
-                        "observer_player_id": "landlord",
+                        "seat_order": {
+                            "bottom": "landlord",
+                            "left": "farmer_left",
+                            "right": "farmer_right",
+                        },
+                        "hands": [["H4"], ["S8", "C9"], ["DQ", "HK"]],
+                        "latest_actions": [["C3"], [], []],
+                    },
+                    "player_id": "landlord",
+                    "active_player_id": "landlord",
+                    "observer_player_id": "landlord",
                     },
                     "legal_actions": {"items": ["4"]},
                     "context": {"mode": "turn"},
@@ -275,7 +291,7 @@ def test_doudizhu_table_projection_prefers_current_event_observation_over_stale_
     seats = {seat["playerId"]: seat for seat in scene.body["table"]["seats"]}
     assert seats["landlord"]["hand"] == {
         "isVisible": True,
-        "cards": ["4"],
+        "cards": ["H4"],
         "maskedCount": 0,
     }
 
@@ -331,6 +347,7 @@ def test_mahjong_table_projection_masks_private_hand_for_spectator() -> None:
         "isVisible": False,
         "cards": [],
         "maskedCount": 2,
+        "drawTile": None,
     }
     assert seats["south"]["publicNotes"] == ["Pong C3"]
     assert table["center"] == {
@@ -394,6 +411,7 @@ def test_mahjong_table_projection_keeps_private_hand_for_player_observer() -> No
         "isVisible": True,
         "cards": ["B1", "Red"],
         "maskedCount": 0,
+        "drawTile": None,
     }
     assert scene.body["status"]["privateViewPlayerId"] == "east"
 
@@ -451,24 +469,120 @@ def test_mahjong_table_projection_inferrs_private_view_from_observation_player()
         "isVisible": True,
         "cards": ["B1", "Red"],
         "maskedCount": 0,
+        "drawTile": None,
     }
     assert seats["south"]["hand"] == {
         "isVisible": False,
         "cards": [],
         "maskedCount": 13,
+        "drawTile": None,
     }
     assert seats["west"]["hand"] == {
         "isVisible": False,
         "cards": [],
         "maskedCount": 13,
+        "drawTile": None,
     }
     assert seats["north"]["hand"] == {
         "isVisible": False,
         "cards": [],
         "maskedCount": 13,
+        "drawTile": None,
     }
     assert scene.body["status"]["observerPlayerId"] == "east"
     assert scene.body["status"]["privateViewPlayerId"] == "east"
+
+
+def test_mahjong_table_projection_exposes_structured_draw_meld_and_discard_lane_fields() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="mahjong-structured",
+            game_id="mahjong",
+            plugin_id=MAHJONG_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="east", observer_kind="player"),
+        ),
+        event=TimelineEvent(
+            seq=15,
+            ts_ms=1015,
+            type="decision_window_open",
+            label="decision_window_open",
+        ),
+        snapshot_body={
+            "active_player_id": "east",
+            "observer_player_id": "east",
+            "player_ids": ["east", "south", "west", "north"],
+            "player_names": {
+                "east": "East",
+                "south": "South",
+                "west": "West",
+                "north": "North",
+            },
+            "public_state": {
+                "discards": ["B1", "C1", "D1", "East"],
+                "discard_lanes": {
+                    "east": ["B1"],
+                    "south": ["C1"],
+                    "west": ["D1"],
+                    "north": ["East"],
+                },
+                "melds": {"south": ["Pong C3"]},
+                "meld_groups": {
+                    "south": [
+                        {
+                            "type": "pong",
+                            "label": "Pong C3",
+                            "tiles": ["C3", "C3", "C3"],
+                        }
+                    ]
+                },
+                "last_discard": {
+                    "player_id": "north",
+                    "tile": "East",
+                    "is_tsumogiri": False,
+                },
+            },
+            "private_state": {
+                "hand": [
+                    "B1",
+                    "B2",
+                    "B3",
+                    "B4",
+                    "B5",
+                    "B9",
+                    "C3",
+                    "C4",
+                    "C5",
+                    "D2",
+                    "D3",
+                    "D4",
+                    "Green",
+                    "Red",
+                ],
+                "draw_tile": "Red",
+            },
+            "legal_moves": ["B1", "Red", "Pong"],
+            "move_count": 11,
+            "last_move": "East",
+        },
+        visualization_spec=MAHJONG_VISUALIZATION_SPEC,
+    )
+
+    seats = {seat["playerId"]: seat for seat in scene.body["table"]["seats"]}
+    assert seats["east"]["drawTile"] == "Red"
+    assert seats["south"]["meldGroups"] == [
+        {"type": "pong", "label": "Pong C3", "tiles": ["C3", "C3", "C3"]}
+    ]
+    assert scene.body["table"]["center"]["discardLanes"] == [
+        {"seatId": "east", "playerId": "east", "cards": ["B1"]},
+        {"seatId": "south", "playerId": "south", "cards": ["C1"]},
+        {"seatId": "west", "playerId": "west", "cards": ["D1"]},
+        {"seatId": "north", "playerId": "north", "cards": ["East"]},
+    ]
+    assert scene.body["status"]["lastDiscard"] == {
+        "playerId": "north",
+        "tile": "East",
+        "isTsumogiri": False,
+    }
 
 
 def test_mahjong_table_projection_uses_result_final_board_for_terminal_scene() -> None:
@@ -537,6 +651,7 @@ def test_mahjong_table_projection_uses_result_final_board_for_terminal_scene() -
         "isVisible": True,
         "cards": [],
         "maskedCount": 0,
+        "drawTile": None,
     }
     assert scene.body["table"]["center"]["cards"] == ["B1", "C1", "D1", "East", "Red"]
     assert scene.body["status"]["moveCount"] == 5

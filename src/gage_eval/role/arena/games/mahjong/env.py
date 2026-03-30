@@ -101,7 +101,7 @@ class MahjongArena:
         self._player_models = self._normalize_player_models(self._player_ids, player_models)
         self._player_id_map = {idx: player_id for idx, player_id in enumerate(self._player_ids)}
         self._player_index_map = {player_id: idx for idx, player_id in self._player_id_map.items()}
-        self._formatter = formatter or StandardMahjongFormatter()
+        self._formatter = formatter or StandardMahjongFormatter(player_id_map=self._player_id_map)
         self._parser = parser or StandardMahjongParser()
         self._renderer = renderer or StandardMahjongRenderer()
         self._chat_mode = str(chat_mode or "off")
@@ -223,12 +223,10 @@ class MahjongArena:
             raw_obs,
             legal_action_ids,
         )
-        hand_counts = self._build_public_hand_counts()
-        if hand_counts:
-            public_state = {
-                **public_state,
-                "num_cards_left": hand_counts,
-            }
+        public_state, private_state = self._augment_table_state(
+            public_state=public_state,
+            private_state=private_state,
+        )
         chat_log = [] if self._chat_mode == "off" else list(self._chat_log)
         board_text = self._format_board_text(
             public_state,
@@ -367,6 +365,10 @@ class MahjongArena:
         action_text = self._formatter.format_action(action_id)
         action_raw = self._action_id_to_raw.get(action_id, "")
         action_card = action_text if is_tile_action(action_raw) else None
+        player_index = self._resolve_player_index(player_id)
+        pre_step_observation = self._core.get_observation(player_index)
+        draw_tile = self._extract_draw_tile(pre_step_observation)
+        is_tsumogiri = bool(action_card and draw_tile and action_card == draw_tile)
         chat_text = self._resolve_chat_text(action, parsed)
         player_type = self._resolve_player_type(action)
 
@@ -378,6 +380,8 @@ class MahjongArena:
                 "action_id": action_id,
                 "action_text": action_text,
                 "action_card": action_card,
+                "draw_tile": draw_tile,
+                "is_tsumogiri": is_tsumogiri,
                 "chat": chat_text,
                 "timestamp_ms": int(time.time() * 1000),
             }
@@ -765,6 +769,10 @@ class MahjongArena:
                 raw_obs,
                 legal_action_ids,
             )
+            public_state, private_state = self._augment_table_state(
+                public_state=public_state,
+                private_state=private_state,
+            )
 
         # STEP 3: Return one renderer-ready frame envelope.
         return {
@@ -801,6 +809,72 @@ class MahjongArena:
             return active_player_id, player_index, legal_moves
         except Exception:
             return None, None, []
+
+    def _augment_table_state(
+        self,
+        *,
+        public_state: dict[str, Any],
+        private_state: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        resolved_public_state = dict(public_state)
+        resolved_private_state = dict(private_state)
+
+        hand_counts = self._build_public_hand_counts()
+        if hand_counts:
+            resolved_public_state["num_cards_left"] = hand_counts
+
+        discard_lanes = self._build_discard_lanes()
+        if discard_lanes:
+            resolved_public_state["discard_lanes"] = discard_lanes
+
+        last_discard = self._resolve_last_discard()
+        if last_discard is not None:
+            resolved_public_state["last_discard"] = last_discard
+
+        if not resolved_private_state.get("draw_tile"):
+          resolved_private_state["draw_tile"] = self._extract_draw_tile_from_hand(
+              resolved_private_state.get("hand")
+          )
+
+        return resolved_public_state, resolved_private_state
+
+    def _build_discard_lanes(self) -> dict[str, list[str]]:
+        lanes: dict[str, list[str]] = {player_id: [] for player_id in self._player_ids}
+        for move in self._move_log:
+            player_id = str(move.get("player_id", ""))
+            action_card = move.get("action_card")
+            if player_id in lanes and isinstance(action_card, str) and action_card:
+                lanes[player_id].append(action_card)
+        return lanes
+
+    def _resolve_last_discard(self) -> dict[str, Any] | None:
+        for move in reversed(self._move_log):
+            action_card = move.get("action_card")
+            if not isinstance(action_card, str) or not action_card:
+                continue
+            return {
+                "player_id": str(move.get("player_id", "")),
+                "tile": action_card,
+                "is_tsumogiri": bool(move.get("is_tsumogiri")),
+            }
+        return None
+
+    def _extract_draw_tile(self, raw_observation: Mapping[str, Any]) -> str | None:
+        current_hand = raw_observation.get("current_hand")
+        if not isinstance(current_hand, Sequence) or isinstance(current_hand, (str, bytes)):
+            return None
+        if len(current_hand) % 3 != 2 or len(current_hand) == 0:
+            return None
+        return self._formatter._format_card(current_hand[-1])  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _extract_draw_tile_from_hand(value: Any) -> str | None:
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+            return None
+        cards = [str(item) for item in value]
+        if len(cards) % 3 == 2 and cards:
+            return cards[-1]
+        return None
 
     @staticmethod
     def _format_board_text(

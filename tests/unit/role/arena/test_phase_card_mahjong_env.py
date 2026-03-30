@@ -72,6 +72,7 @@ def test_riichi_4p_environment_exposes_standardish_opening_hands_and_turn_draws(
 
     assert east_observation.metadata["private_state"]["hand"][0] == "B1"
     assert len(east_observation.metadata["private_state"]["hand"]) == 14
+    assert east_observation.metadata["private_state"]["draw_tile"] == "Green"
     assert len(south_observation.metadata["private_state"]["hand"]) == 13
     assert len(west_observation.metadata["private_state"]["hand"]) == 13
     assert len(north_observation.metadata["private_state"]["hand"]) == 13
@@ -86,12 +87,24 @@ def test_riichi_4p_environment_exposes_standardish_opening_hands_and_turn_draws(
     south_turn = environment.observe("south")
     assert south_turn.metadata["active_player_id"] == "south"
     assert south_turn.metadata["private_state"]["hand"][-1] == "C1"
+    assert south_turn.metadata["private_state"]["draw_tile"] == "C1"
     assert len(south_turn.metadata["private_state"]["hand"]) == 14
     assert south_turn.metadata["public_state"]["num_cards_left"] == {
         "east": 13,
         "south": 14,
         "west": 13,
         "north": 13,
+    }
+    assert south_turn.metadata["public_state"]["discard_lanes"] == {
+        "east": ["B1"],
+        "south": [],
+        "west": [],
+        "north": [],
+    }
+    assert south_turn.metadata["public_state"]["last_discard"] == {
+        "player_id": "east",
+        "tile": "B1",
+        "is_tsumogiri": False,
     }
 
     environment.apply(ArenaAction(player="south", move="C1", raw="C1"))
@@ -101,8 +114,20 @@ def test_riichi_4p_environment_exposes_standardish_opening_hands_and_turn_draws(
     east_second_turn = environment.observe("east")
     assert east_second_turn.metadata["active_player_id"] == "east"
     assert east_second_turn.metadata["private_state"]["hand"][-1] == "Red"
+    assert east_second_turn.metadata["private_state"]["draw_tile"] == "Red"
     assert len(east_second_turn.metadata["private_state"]["hand"]) == 14
     assert east_second_turn.metadata["public_state"]["discards"] == ["B1", "C1", "D1", "East"]
+    assert east_second_turn.metadata["public_state"]["discard_lanes"] == {
+        "east": ["B1"],
+        "south": ["C1"],
+        "west": ["D1"],
+        "north": ["East"],
+    }
+    assert east_second_turn.metadata["public_state"]["last_discard"] == {
+        "player_id": "north",
+        "tile": "East",
+        "is_tsumogiri": True,
+    }
     assert east_second_turn.metadata["public_state"]["num_cards_left"] == {
         "east": 14,
         "south": 13,

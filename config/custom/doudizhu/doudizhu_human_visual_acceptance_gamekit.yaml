@@ -46,6 +46,8 @@ role_adapters:
       env: classic_3p_real
       runtime_overrides:
         replay_live: true
+        chat_mode: all
+        chat_every_n: 1
         illegal_policy:
           retry: 0
           on_fail: random

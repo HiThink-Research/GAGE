@@ -764,17 +764,19 @@ def test_arena_visual_gateway_routes_actions_into_runtime_queue_and_driver_consu
         assert error is None
         assert isinstance(action_router, SampleActionRouter)
         queued_payload = json.loads(action_router.queue_for("Human").get(timeout=1.0))
-        assert queued_payload == {
-            "sample_id": "sample-human-1",
-            "player_id": "Human",
+        assert queued_payload["sample_id"] == "sample-human-1"
+        assert queued_payload["player_id"] == "Human"
+        assert queued_payload["action"] == "A1"
+        assert queued_payload["move"] == "A1"
+        assert queued_payload["source"] == "arena_visual_gateway"
+        assert queued_payload["metadata"] == {
+            "source": "frontend",
+            "hold_ticks": 3,
+        }
+        assert json.loads(queued_payload["raw"]) == {
             "action": "A1",
-            "move": "A1",
-            "raw": "A1",
-            "source": "arena_visual_gateway",
-            "metadata": {
-                "source": "frontend",
-                "hold_ticks": 3,
-            },
+            "source": "frontend",
+            "hold_ticks": 3,
         }
         queued_chat_payload = action_server.chat_queue.get(timeout=1.0)
         assert queued_chat_payload == {
@@ -787,7 +789,13 @@ def test_arena_visual_gateway_routes_actions_into_runtime_queue_and_driver_consu
         observation = session.observe()
         action = session.decide_current_player(observation)
         assert action.move == "A1"
-        assert action.raw == "A1"
+        assert json.loads(action.raw) == {
+            "action": "A1",
+            "source": "frontend",
+            "hold_ticks": 3,
+        }
+        assert action.metadata["hold_ticks"] == 3
+        assert action.metadata["source"] == "frontend"
         session.apply(action)
         session.finalize()
 

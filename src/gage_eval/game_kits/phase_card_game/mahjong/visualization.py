@@ -20,6 +20,13 @@ SCENE_PROJECTION_RULES = {
     "table_game": "mahjong",
     "seat_count": 4,
     "default_layout": "four-seat",
+    "scene_contract": {
+        "table": {
+            "seat_extensions": ["meldGroups", "drawTile", "hand.drawTile"],
+            "center_extensions": ["discardLanes"],
+            "status_extensions": ["lastDiscard"],
+        }
+    },
 }
 ACTION_SCHEMA = {
     **build_placeholder_descriptor(

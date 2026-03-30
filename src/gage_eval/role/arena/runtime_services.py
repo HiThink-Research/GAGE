@@ -334,7 +334,6 @@ def _normalize_action_intent(
         action=action_text,
         player_id=player_id,
         sample_id=str(session_id),
-        raw=action_text,
         source="arena_visual_gateway",
         run_id=run_id,
         metadata=metadata or None,

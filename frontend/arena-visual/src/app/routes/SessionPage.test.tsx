@@ -966,13 +966,125 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /replay/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^finish$/i })).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /replay/i }));
+      await Promise.resolve();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /^finish$/i }));
+    expect(screen.getByRole("button", { name: /^finish$/i })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^finish$/i }));
+      await Promise.resolve();
+    });
+
+    expect(submitControl).toHaveBeenNthCalledWith(1, {
+      commandType: "replay",
+    });
+    expect(submitControl).toHaveBeenNthCalledWith(2, {
+      commandType: "finish",
+    });
+
+    expect(screen.getByRole("button", { name: /finishing/i })).toBeDisabled();
+    expect(screen.getByText("Finishing session...")).toBeInTheDocument();
+  });
+
+  it("polls session refresh while finish is pending so the host can observe closure", async () => {
+    const { store } = createMutableStore({
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-1",
+      },
+      session: {
+        sessionId: "sample-1",
+        gameId: "mahjong",
+        pluginId: "arena.visualization.mahjong.table_v1",
+        lifecycle: "live_ended",
+        playback: {
+          mode: "paused",
+          cursorTs: 1006,
+          cursorEventSeq: 46,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "",
+          observerKind: "spectator",
+        },
+        scheduling: {
+          family: "turn",
+          phase: "completed",
+          acceptsHumanIntent: false,
+        },
+        capabilities: {},
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "idle",
+      currentSceneSeq: 46,
+      timeline: {
+        status: "ready",
+        events: [
+          {
+            seq: 46,
+            tsMs: 1006,
+            type: "result",
+            label: "result",
+            payload: {},
+          },
+        ],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      error: undefined,
+    });
+    const submitControl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        intentId: "control-replay",
+        state: "accepted",
+        reason: "playback_applied",
+      })
+      .mockResolvedValueOnce({
+        intentId: "control-finish",
+        state: "accepted",
+        reason: "playback_applied",
+      });
+    const refreshSession = vi.fn().mockResolvedValue(undefined);
+    store.submitControl = submitControl;
+    store.refreshSession = refreshSession;
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue(store);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-1"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /replay/i }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: /^finish$/i })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^finish$/i }));
+      await Promise.resolve();
+    });
 
     await waitFor(() => {
       expect(submitControl).toHaveBeenNthCalledWith(1, {
@@ -983,8 +1095,13 @@ describe("SessionPage", () => {
       });
     });
 
-    expect(screen.getByRole("button", { name: /finishing/i })).toBeDisabled();
     expect(screen.getByText("Finishing session...")).toBeInTheDocument();
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 350);
+    });
+
+    expect(refreshSession).toHaveBeenCalled();
   });
 
   it("disables scene-incompatible controls while the session stays on live tail", async () => {

@@ -247,6 +247,29 @@ function SessionControls({ store }: { store: ArenaSessionStore }) {
     };
   }, [autoFinishStartedAtMs, isPostLiveWindow, manualFinishRequired]);
 
+  useEffect(() => {
+    if (!finishRequested || status !== "ready" || !store.refreshSession) {
+      return;
+    }
+
+    void store.refreshSession().catch(() => {});
+
+    const timer = window.setInterval(() => {
+      const current = store.getSnapshot();
+      if (
+        current.status !== "ready" ||
+        current.session?.lifecycle === "closed"
+      ) {
+        return;
+      }
+      void store.refreshSession?.().catch(() => {});
+    }, LIVE_TIMELINE_POLL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [finishRequested, status, store]);
+
   async function runControl(
     commandType: ArenaControlPayload["commandType"],
     action: () => Promise<ActionIntentReceipt>,

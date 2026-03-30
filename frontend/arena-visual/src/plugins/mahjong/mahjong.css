@@ -182,6 +182,7 @@
 }
 
 .mahjong-discards {
+  position: relative;
   grid-area: center;
   display: grid;
   align-content: center;
@@ -211,6 +212,113 @@
   grid-template-columns: repeat(8, minmax(0, max-content));
   gap: 0.32rem;
   justify-content: center;
+}
+
+.mahjong-discard-lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.mahjong-call-panel {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: grid;
+  gap: 0.7rem;
+  min-width: min(24rem, calc(100% - 2rem));
+  max-width: calc(100% - 2rem);
+  padding: 0.95rem 1.05rem;
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(180deg, rgba(9, 32, 26, 0.94), rgba(7, 22, 18, 0.94)),
+    rgba(7, 22, 18, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(230, 241, 235, 0.08),
+    0 18px 32px rgba(4, 14, 11, 0.28);
+  backdrop-filter: blur(10px);
+}
+
+.mahjong-call-panel__eyebrow {
+  margin: 0;
+  color: rgba(242, 247, 244, 0.78);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.mahjong-call-panel__actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.mahjong-discard-lane {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.95rem;
+  background: rgba(4, 23, 19, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(227, 240, 233, 0.06);
+}
+
+.mahjong-discard-lane__label {
+  margin: 0;
+  color: rgba(236, 244, 239, 0.68);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mahjong-discard-lane__tiles {
+  display: flex;
+  gap: 0.24rem;
+  flex-wrap: wrap;
+  min-height: 2.2rem;
+}
+
+.mahjong-discard-lane__entry {
+  display: grid;
+  gap: 0.22rem;
+  justify-items: center;
+}
+
+.mahjong-discard-lane__entry.is-tedashi .mahjong-tile {
+  box-shadow:
+    inset 0 0 0 1px rgba(84, 70, 42, 0.12),
+    0 0 0 0.14rem rgba(246, 203, 112, 0.28),
+    0 8px 16px rgba(5, 18, 14, 0.16);
+}
+
+.mahjong-discard-lane__entry.is-tsumogiri .mahjong-tile {
+  opacity: 0.92;
+  transform: translateY(0.08rem);
+}
+
+.mahjong-discard-lane__marker {
+  border-radius: 999px;
+  padding: 0.12rem 0.42rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #f6f8f6;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.mahjong-discard-lane__entry.is-tedashi .mahjong-discard-lane__marker {
+  background: rgba(242, 194, 90, 0.24);
+  color: #ffeab5;
+}
+
+.mahjong-discard-lane__entry.is-tsumogiri .mahjong-discard-lane__marker {
+  background: rgba(216, 230, 238, 0.16);
+  color: #edf5f9;
 }
 
 .mahjong-tile {
@@ -268,6 +376,14 @@
     0 10px 18px rgba(5, 18, 14, 0.2);
 }
 
+.mahjong-tile.is-selected {
+  transform: translateY(-5px);
+  box-shadow:
+    inset 0 0 0 2px rgba(108, 196, 255, 0.42),
+    0 0 0 0.16rem rgba(108, 196, 255, 0.14),
+    0 14px 22px rgba(5, 18, 14, 0.24);
+}
+
 .mahjong-tile img {
   width: 100%;
   height: 100%;
@@ -322,6 +438,18 @@
     0 16px 26px rgba(5, 17, 14, 0.2);
 }
 
+.mahjong-action--confirm {
+  background: linear-gradient(180deg, rgba(36, 93, 71, 0.95), rgba(19, 61, 46, 0.95));
+}
+
+.mahjong-action--ghost {
+  background: rgba(8, 33, 27, 0.42);
+}
+
+.mahjong-action--call {
+  background: linear-gradient(180deg, rgba(70, 42, 18, 0.96), rgba(43, 24, 9, 0.96));
+}
+
 .mahjong-action__label {
   color: #f4faf7;
   font-size: 0.88rem;
@@ -352,6 +480,18 @@
 
   .mahjong-discards__pool {
     grid-template-columns: repeat(6, minmax(0, max-content));
+  }
+
+  .mahjong-discard-lanes {
+    grid-template-columns: 1fr;
+  }
+
+  .mahjong-call-panel {
+    position: static;
+    inset: auto;
+    transform: none;
+    min-width: 0;
+    max-width: none;
   }
 
   .mahjong-seat--bottom,
