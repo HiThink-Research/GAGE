@@ -68,7 +68,12 @@
       "center": {
         "label": "Discards",
         "cards": ["B1", "C1", "D1"],
-        "history": []
+        "history": [
+          "East discarded B1",
+          "South discarded C1",
+          "West discarded D1",
+          "South melded Pong C3"
+        ]
       }
     },
     "status": {
@@ -76,10 +81,21 @@
       "observerPlayerId": null,
       "moveCount": 4,
       "lastMove": "C1",
+      "remainingTiles": 61,
       "landlordId": null
     },
     "panels": {
-      "chatLog": [{ "playerId": "south", "text": "pon" }]
+      "chatLog": [{ "playerId": "south", "text": "pon" }],
+      "events": [
+        { "label": "Turn", "detail": "East to act" },
+        { "label": "Open meld", "detail": "South: Pong C3" }
+      ],
+      "trace": [
+        "East discarded B1",
+        "South discarded C1",
+        "West discarded D1",
+        "South melded Pong C3"
+      ]
     }
   }
 }

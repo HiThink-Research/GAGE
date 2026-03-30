@@ -106,6 +106,16 @@ def test_doudizhu_table_projection_masks_non_observer_private_hands() -> None:
         "lastMove": "3",
         "landlordId": "player_0",
     }
+    assert scene.body["panels"] == {
+        "chatLog": [{"playerId": "player_1", "text": "watch this"}],
+        "events": [
+            {"label": "Landlord", "detail": "Player 0"},
+            {"label": "Turn", "detail": "Player 0 to act"},
+            {"label": "Last move", "detail": "Player 0 played 3"},
+            {"label": "Move count", "detail": "1 moves recorded"},
+        ],
+        "trace": ["Player 0: 3"],
+    }
     assert scene.legal_actions == (
         {"id": "pass", "label": "pass", "text": "pass"},
         {"id": "4", "label": "4", "text": "4"},
@@ -172,6 +182,151 @@ def test_doudizhu_table_projection_keeps_spectator_status_distinct_from_private_
     assert scene.body["status"]["privateViewPlayerId"] == "player_0"
 
 
+def test_doudizhu_table_projection_falls_back_to_ui_state_semantics_for_host_panels() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="doudizhu-semantic-panels",
+            game_id="doudizhu",
+            plugin_id=DOUDIZHU_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="", observer_kind="global"),
+        ),
+        event=TimelineEvent(
+            seq=14,
+            ts_ms=1014,
+            type="snapshot",
+            label="snapshot",
+        ),
+        snapshot_body={
+            "active_player_id": "player_2",
+            "player_ids": ["player_0", "player_1", "player_2"],
+            "player_names": {
+                "player_0": "Player 0",
+                "player_1": "Player 1",
+                "player_2": "Player 2",
+            },
+            "public_state": {
+                "num_cards_left": {"player_0": 12, "player_1": 10, "player_2": 8},
+                "played_cards": [
+                    {"player_id": "player_0", "cards": ["3"]},
+                    {"player_id": "player_1", "cards": []},
+                    {"player_id": "player_2", "cards": ["4", "4"]},
+                ],
+                "seen_cards": ["4", "4"],
+            },
+            "private_state": {
+                "self_id": "player_1",
+                "current_hand": ["5", "5", "6"],
+            },
+            "ui_state": {
+                "roles": {
+                    "player_0": "landlord",
+                    "player_1": "peasant",
+                    "player_2": "peasant",
+                },
+                "seat_order": {
+                    "bottom": "player_1",
+                    "left": "player_2",
+                    "right": "player_0",
+                },
+                "hands": [["J", "Q"], ["5", "5", "6"], ["4", "4"]],
+                "latest_actions": [["3"], [], ["4", "4"]],
+                "landlord_id": "player_0",
+                "move_count": 3,
+                "move_history": [
+                    {"player_idx": 0, "move": "3"},
+                    {"player_idx": 1, "move": "pass"},
+                    {"player_idx": 2, "move": "44"},
+                ],
+                "chat_log": [{"player_id": "player_2", "text": "your turn"}],
+            },
+            "last_move": "44",
+        },
+        visualization_spec=DOUDIZHU_VISUALIZATION_SPEC,
+    )
+
+    assert scene.body["status"] == {
+        "activePlayerId": "player_2",
+        "observerPlayerId": None,
+        "privateViewPlayerId": "player_1",
+        "moveCount": 3,
+        "lastMove": "44",
+        "landlordId": "player_0",
+    }
+    assert scene.body["panels"] == {
+        "chatLog": [{"playerId": "player_2", "text": "your turn"}],
+        "events": [
+            {"label": "Landlord", "detail": "Player 0"},
+            {"label": "Turn", "detail": "Player 2 to act"},
+            {"label": "Last move", "detail": "Player 2 played 44"},
+            {"label": "Move count", "detail": "3 moves recorded"},
+        ],
+        "trace": ["Player 0: 3", "Player 1: pass", "Player 2: 44"],
+    }
+
+
+def test_doudizhu_table_projection_formats_pass_as_passed_in_host_events() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="doudizhu-pass-event",
+            game_id="doudizhu",
+            plugin_id=DOUDIZHU_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="", observer_kind="global"),
+        ),
+        event=TimelineEvent(
+            seq=15,
+            ts_ms=1015,
+            type="snapshot",
+            label="snapshot",
+        ),
+        snapshot_body={
+            "active_player_id": "player_2",
+            "player_ids": ["player_0", "player_1", "player_2"],
+            "player_names": {
+                "player_0": "Player 0",
+                "player_1": "Player 1",
+                "player_2": "Player 2",
+            },
+            "public_state": {
+                "landlord_id": "player_0",
+                "num_cards_left": {"player_0": 12, "player_1": 10, "player_2": 8},
+                "played_cards": [
+                    {"player_id": "player_0", "cards": ["3"]},
+                    {"player_id": "player_1", "cards": []},
+                    {"player_id": "player_2", "cards": ["4", "4"]},
+                ],
+                "seen_cards": ["4", "4"],
+                "trace": [
+                    {"player": 0, "action": "3"},
+                    {"player": 1, "action": "pass"},
+                ],
+            },
+            "ui_state": {
+                "roles": {
+                    "player_0": "landlord",
+                    "player_1": "peasant",
+                    "player_2": "peasant",
+                },
+                "seat_order": {
+                    "bottom": "player_1",
+                    "left": "player_2",
+                    "right": "player_0",
+                },
+            },
+            "move_count": 2,
+            "last_move": "pass",
+        },
+        visualization_spec=DOUDIZHU_VISUALIZATION_SPEC,
+    )
+
+    assert scene.body["panels"]["events"] == [
+        {"label": "Landlord", "detail": "Player 0"},
+        {"label": "Turn", "detail": "Player 2 to act"},
+        {"label": "Last move", "detail": "Player 1 passed"},
+        {"label": "Move count", "detail": "2 moves recorded"},
+    ]
+    assert scene.body["panels"]["trace"] == ["Player 0: 3", "Player 1: pass"]
+
+
 def test_doudizhu_table_projection_prefers_current_event_observation_over_stale_snapshot_anchor() -> None:
     scene = assemble_visual_scene(
         visual_session=VisualSession(
@@ -191,6 +346,7 @@ def test_doudizhu_table_projection_prefers_current_event_observation_over_stale_
                     "board_text": "Public State: updated",
                     "legal_moves": ["4"],
                     "active_player": "landlord",
+                    "last_move": "4",
                     "metadata": {
                         "public_state": {
                             "landlord_id": "landlord",
@@ -288,6 +444,13 @@ def test_doudizhu_table_projection_prefers_current_event_observation_over_stale_
     assert scene.legal_actions == ({"id": "4", "label": "4", "text": "4"},)
     assert scene.body["status"]["activePlayerId"] == "landlord"
     assert scene.body["status"]["privateViewPlayerId"] == "landlord"
+    assert scene.body["status"]["lastMove"] == "4"
+    assert scene.body["panels"]["events"] == [
+        {"label": "Landlord", "detail": "landlord"},
+        {"label": "Turn", "detail": "landlord to act"},
+        {"label": "Last move", "detail": "4"},
+    ]
+    assert scene.body["panels"]["trace"] == ["landlord: 3", "farmer_left: pass", "farmer_right: pass"]
     seats = {seat["playerId"]: seat for seat in scene.body["table"]["seats"]}
     assert seats["landlord"]["hand"] == {
         "isVisible": True,
@@ -353,7 +516,7 @@ def test_mahjong_table_projection_masks_private_hand_for_spectator() -> None:
     assert table["center"] == {
         "label": "Discards",
         "cards": ["B1", "C1", "D1"],
-        "history": [],
+        "history": ["South melded Pong C3"],
     }
     assert scene.body["status"] == {
         "activePlayerId": "east",
@@ -362,6 +525,9 @@ def test_mahjong_table_projection_masks_private_hand_for_spectator() -> None:
         "moveCount": 4,
         "lastMove": "C1",
         "landlordId": None,
+        "winner": None,
+        "result": None,
+        "resultReason": None,
     }
     assert scene.legal_actions == (
         {"id": "B1", "label": "B1", "text": "B1"},
@@ -585,6 +751,110 @@ def test_mahjong_table_projection_exposes_structured_draw_meld_and_discard_lane_
     }
 
 
+def test_mahjong_table_projection_exposes_host_semantic_panels_for_global_observer() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="mahjong-semantic-panels",
+            game_id="mahjong",
+            plugin_id=MAHJONG_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="", observer_kind="global"),
+        ),
+        event=TimelineEvent(
+            seq=18,
+            ts_ms=1018,
+            type="snapshot",
+            label="snapshot",
+        ),
+        snapshot_body={
+            "active_player_id": "south",
+            "observer_player_id": "east",
+            "player_ids": ["east", "south", "west", "north"],
+            "player_names": {
+                "east": "East",
+                "south": "South",
+                "west": "West",
+                "north": "North",
+            },
+            "public_state": {
+                "discards": ["B1", "C1", "D1", "East"],
+                "discard_lanes": {
+                    "east": ["B1"],
+                    "south": ["C1"],
+                    "west": ["D1"],
+                    "north": ["East"],
+                },
+                "melds": {"south": ["Pong C3"]},
+                "meld_groups": {
+                    "south": [
+                        {
+                            "type": "pong",
+                            "label": "Pong C3",
+                            "tiles": ["C3", "C3", "C3"],
+                        }
+                    ]
+                },
+                "last_discard": {
+                    "player_id": "north",
+                    "tile": "East",
+                    "is_tsumogiri": False,
+                },
+                "remaining_tiles": 55,
+            },
+            "private_state": {
+                "self_id": "east",
+                "hand": ["B1", "Red"],
+                "draw_tile": "Red",
+            },
+            "chat_log": [{"player_id": "west", "text": "riichi?"}],
+            "move_count": 11,
+            "last_move": "East",
+        },
+        visualization_spec=MAHJONG_VISUALIZATION_SPEC,
+    )
+
+    assert scene.body["status"] == {
+        "activePlayerId": "south",
+        "observerPlayerId": None,
+        "privateViewPlayerId": "east",
+        "moveCount": 11,
+        "lastMove": "East",
+        "landlordId": None,
+        "lastDiscard": {
+            "playerId": "north",
+            "tile": "East",
+            "isTsumogiri": False,
+        },
+        "winner": None,
+        "result": None,
+        "resultReason": None,
+        "remainingTiles": 55,
+    }
+    assert scene.body["table"]["center"]["history"] == [
+        "East discarded B1",
+        "South discarded C1",
+        "West discarded D1",
+        "North discarded East",
+        "South melded Pong C3",
+    ]
+    assert scene.body["panels"] == {
+        "chatLog": [{"playerId": "west", "text": "riichi?"}],
+        "events": [
+            {"label": "Turn", "detail": "South to act"},
+            {"label": "Last discard", "detail": "North discarded East"},
+            {"label": "Open meld", "detail": "South: Pong C3"},
+            {"label": "Remaining tiles", "detail": "55 tiles in wall"},
+            {"label": "Move count", "detail": "11 turns recorded"},
+        ],
+        "trace": [
+            "East discarded B1",
+            "South discarded C1",
+            "West discarded D1",
+            "North discarded East",
+            "South melded Pong C3",
+        ],
+    }
+
+
 def test_mahjong_table_projection_uses_result_final_board_for_terminal_scene() -> None:
     scene = assemble_visual_scene(
         visual_session=VisualSession(
@@ -602,6 +872,8 @@ def test_mahjong_table_projection_uses_result_final_board_for_terminal_scene() -
                 "result": {
                     "winner": "east",
                     "result": "win",
+                    "result_reason": "self_draw",
+                    "remaining_tiles": 65,
                     "move_count": 5,
                     "final_board": (
                         "Public State:\n"
@@ -656,6 +928,10 @@ def test_mahjong_table_projection_uses_result_final_board_for_terminal_scene() -
     assert scene.body["table"]["center"]["cards"] == ["B1", "C1", "D1", "East", "Red"]
     assert scene.body["status"]["moveCount"] == 5
     assert scene.body["status"]["lastMove"] == "Red"
+    assert scene.body["status"]["winner"] == "east"
+    assert scene.body["status"]["result"] == "win"
+    assert scene.body["status"]["resultReason"] == "self_draw"
+    assert scene.body["status"]["remainingTiles"] == 65
 
 
 def test_doudizhu_table_projection_applies_terminal_move_log_after_last_snapshot() -> None:

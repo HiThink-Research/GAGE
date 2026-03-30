@@ -1,19 +1,5 @@
 import type { VisualScene, VisualSession } from "../../gateway/types";
-
-const mahjongTileAssetModules = import.meta.glob(
-  "../../../../rlcard-showdown/src/assets/mahjong/*.svg",
-  {
-    eager: true,
-    import: "default",
-  },
-) as Record<string, string>;
-
-const mahjongTileAssets = Object.fromEntries(
-  Object.entries(mahjongTileAssetModules).map(([path, url]) => {
-    const fileName = path.split("/").pop() ?? path;
-    return [fileName.replace(".svg", ""), url];
-  }),
-);
+import { resolveMahjongTileAsset } from "../mahjong/mahjongTileAssets";
 
 export interface TableHand {
   isVisible: boolean;
@@ -53,6 +39,11 @@ interface TableChatEntry {
   text: string;
 }
 
+interface TablePanelEvent {
+  label: string;
+  detail?: string;
+}
+
 export interface TableSceneData {
   table: {
     layout: string;
@@ -67,6 +58,7 @@ export interface TableSceneData {
   status: {
     activePlayerId: string | null;
     observerPlayerId: string | null;
+    privateViewPlayerId: string | null;
     moveCount: number;
     lastMove: string | null;
     lastDiscard: {
@@ -74,10 +66,16 @@ export interface TableSceneData {
       tile: string | null;
       isTsumogiri: boolean;
     } | null;
+    winner: string | null;
+    result: string | null;
+    resultReason: string | null;
+    remainingTiles: number | null;
     landlordId: string | null;
   };
   panels: {
     chatLog: TableChatEntry[];
+    events: TablePanelEvent[];
+    trace: string[];
   };
 }
 
@@ -173,6 +171,10 @@ function readLastDiscard(value: unknown): TableSceneData["status"]["lastDiscard"
   };
 }
 
+function readOptionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function readChatLog(value: unknown): TableChatEntry[] {
   if (!Array.isArray(value)) {
     return [];
@@ -184,6 +186,18 @@ function readChatLog(value: unknown): TableChatEntry[] {
       text: readString(entry.text) ?? "",
     }))
     .filter((entry) => entry.text !== "");
+}
+
+function readPanelEvents(value: unknown): TablePanelEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(isRecord)
+    .map((entry) => ({
+      label: readString(entry.label) ?? "Event",
+      detail: readString(entry.detail) ?? undefined,
+    }));
 }
 
 export function readTableScene(scene?: VisualScene): TableSceneData | null {
@@ -231,13 +245,20 @@ export function readTableScene(scene?: VisualScene): TableSceneData | null {
     status: {
       activePlayerId: readString(status.activePlayerId),
       observerPlayerId: readString(status.observerPlayerId),
+      privateViewPlayerId: readString(status.privateViewPlayerId),
       moveCount: readNumber(status.moveCount),
       lastMove: readString(status.lastMove),
       lastDiscard: readLastDiscard(status.lastDiscard),
+      winner: readString(status.winner),
+      result: readString(status.result),
+      resultReason: readString(status.resultReason),
+      remainingTiles: readOptionalNumber(status.remainingTiles),
       landlordId: readString(status.landlordId),
     },
     panels: {
       chatLog: readChatLog(panels.chatLog),
+      events: readPanelEvents(panels.events),
+      trace: readStringArray(panels.trace),
     },
   };
 }
@@ -413,7 +434,7 @@ function MahjongTile({
   hidden?: boolean;
 }) {
   const assetKey = hidden ? "Back" : tile;
-  const src = mahjongTileAssets[assetKey] ?? null;
+  const src = resolveMahjongTileAsset(assetKey);
 
   return (
     <div

@@ -85,12 +85,19 @@
     "status": {
       "activePlayerId": "player_0",
       "observerPlayerId": "player_0",
+      "privateViewPlayerId": "player_0",
       "moveCount": 1,
       "lastMove": "3",
       "landlordId": "player_0"
     },
     "panels": {
-      "chatLog": [{ "playerId": "player_1", "text": "watch this" }]
+      "chatLog": [{ "playerId": "player_1", "text": "watch this" }],
+      "events": [
+        { "label": "Landlord", "detail": "Player 0" },
+        { "label": "Turn", "detail": "Player 0 to act" },
+        { "label": "Last move", "detail": "Player 0 played 3" }
+      ],
+      "trace": ["Player 0: 3"]
     }
   }
 }

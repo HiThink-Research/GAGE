@@ -636,6 +636,16 @@ def _coerce_int(value: Any, *, default: int) -> int:
         return default
 
 
+def _coerce_optional_int(value: Any) -> int | None:
+    value = _unwrap_scalar(value)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def _normalize_coord(value: Any) -> str | None:
     if value is None:
         return None
@@ -783,9 +793,10 @@ def _project_table_scene(
     visualization_spec: GameVisualizationSpec | None,
 ) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], str | None]:
     source = _build_projection_source(snapshot_body, event_payload)
+    result_payloads = _collect_result_payloads(event_payload, snapshot_body)
     _apply_table_result_overrides(
         source,
-        result_payloads=_collect_result_payloads(event_payload, snapshot_body),
+        result_payloads=result_payloads,
     )
     public_state = _mapping_or_empty(source.get("public_state"))
     private_state = _mapping_or_empty(source.get("private_state"))
@@ -814,10 +825,20 @@ def _project_table_scene(
         private_view_player_id=private_view_player_id,
     )
     observer_kind = visual_session.observer.observer_kind
-    chat_log = _normalize_chat_log(source.get("chat_log"))
-    move_count = _coerce_int(source.get("move_count"), default=0)
+    chat_log_source = source.get("chat_log")
+    if chat_log_source is None:
+        chat_log_source = ui_state.get("chat_log")
+    if chat_log_source is None:
+        chat_log_source = public_state.get("chat_log")
+    chat_log = _normalize_chat_log(chat_log_source)
+    raw_move_count = source.get("move_count")
+    if raw_move_count is None:
+        raw_move_count = ui_state.get("move_count")
+    move_count = _coerce_int(raw_move_count, default=0)
     last_move = source.get("last_move")
     landlord_id = public_state.get("landlord_id")
+    if landlord_id is None:
+        landlord_id = ui_state.get("landlord_id")
     legal_actions = _extract_table_legal_actions(source)
     table_game = str(
         _scene_projection_rule_value(visualization_spec, "table_game")
@@ -828,7 +849,7 @@ def _project_table_scene(
         _apply_doudizhu_result_move_overrides(
             source,
             player_ids=player_ids,
-            result_payloads=_collect_result_payloads(event_payload, snapshot_body),
+            result_payloads=result_payloads,
         )
         public_state = _mapping_or_empty(source.get("public_state"))
         private_state = _mapping_or_empty(source.get("private_state"))
@@ -859,6 +880,41 @@ def _project_table_scene(
             visualization_spec=visualization_spec,
         )
 
+    panels: dict[str, Any] = {
+        "chatLog": chat_log,
+    }
+    if table_game == "doudizhu":
+        move_history = ui_state.get("move_history")
+        if not isinstance(move_history, Sequence) or isinstance(move_history, (str, bytes)):
+            move_history = public_state.get("trace")
+        panels.update(
+            _build_doudizhu_panel_payload(
+                player_ids=player_ids,
+                player_names=player_names,
+                move_history=move_history,
+                active_player_id=active_player_id,
+                landlord_id=_string_or_none(landlord_id),
+                move_count=move_count,
+                last_move=_string_or_none(last_move),
+            )
+        )
+    else:
+        mahjong_result = _extract_mahjong_result_summary(
+            source=source,
+            public_state=public_state,
+            result_payloads=result_payloads,
+        )
+        panels.update(
+            _build_mahjong_panel_payload(
+                player_ids=player_ids,
+                player_names=player_names,
+                public_state=public_state,
+                active_player_id=active_player_id,
+                move_count=move_count,
+                mahjong_result=mahjong_result,
+            )
+        )
+
     body: dict[str, Any] = {
         "table": table_payload,
         "status": {
@@ -869,14 +925,22 @@ def _project_table_scene(
             "lastMove": None if last_move is None else str(last_move),
             "landlordId": None if landlord_id is None else str(landlord_id),
         },
-        "panels": {
-            "chatLog": chat_log,
-        },
+        "panels": panels,
     }
     if table_game == "mahjong":
         last_discard = _normalize_mahjong_last_discard(public_state.get("last_discard"))
         if last_discard is not None:
             body["status"]["lastDiscard"] = last_discard
+        mahjong_result = _extract_mahjong_result_summary(
+            source=source,
+            public_state=public_state,
+            result_payloads=result_payloads,
+        )
+        body["status"]["winner"] = mahjong_result["winner"]
+        body["status"]["result"] = mahjong_result["result"]
+        body["status"]["resultReason"] = mahjong_result["resultReason"]
+        if mahjong_result["remainingTiles"] is not None:
+            body["status"]["remainingTiles"] = mahjong_result["remainingTiles"]
     return body, legal_actions, active_player_id
 
 
@@ -1147,7 +1211,7 @@ def _project_frame_scene(
     )
     viewport = _extract_frame_viewport(source, observation, view=view)
     view_text = _string_or_none(view.get("text") or observation.get("board_text") or source.get("board_text"))
-    legal_actions = _extract_frame_legal_actions(source, observation)
+    legal_actions = _extract_frame_legal_actions(source, observation, metadata)
     subtitle = _resolve_frame_subtitle(
         game_id=visual_session.game_id,
         tick=tick,
@@ -1291,6 +1355,13 @@ def _project_mahjong_table(
     melds = _mapping_or_empty(public_state.get("melds"))
     meld_groups = _normalize_mahjong_meld_groups(public_state.get("meld_groups"))
     discard_lanes = _normalize_mahjong_discard_lanes(public_state.get("discard_lanes"), player_ids=player_ids)
+    center_history = _build_mahjong_history(
+        player_ids=player_ids,
+        player_names=player_names,
+        discard_lanes=discard_lanes,
+        meld_groups=meld_groups,
+        melds=melds,
+    )
     seats: list[dict[str, Any]] = []
     for player_id in player_ids:
         is_visible = _table_hand_visible(
@@ -1329,7 +1400,7 @@ def _project_mahjong_table(
     center_payload: dict[str, Any] = {
         "label": "Discards",
         "cards": _normalize_string_list(public_state.get("discards")),
-        "history": [],
+        "history": center_history,
     }
     if discard_lanes:
         center_payload["discardLanes"] = discard_lanes
@@ -1406,6 +1477,197 @@ def _normalize_mahjong_last_discard(value: Any) -> dict[str, Any] | None:
     }
 
 
+def _build_mahjong_history(
+    *,
+    player_ids: Sequence[str],
+    player_names: Mapping[str, str],
+    discard_lanes: Sequence[Mapping[str, Any]],
+    meld_groups: Mapping[str, Sequence[Mapping[str, Any]]],
+    melds: Mapping[str, Any],
+) -> list[str]:
+    history: list[str] = []
+    if discard_lanes:
+        ordered_lanes: list[tuple[str, list[str]]] = []
+        for lane in discard_lanes:
+            if not isinstance(lane, Mapping):
+                continue
+            player_id = _string_or_none(lane.get("playerId")) or _string_or_none(lane.get("seatId"))
+            if player_id is None:
+                continue
+            ordered_lanes.append((player_id, _normalize_string_list(lane.get("cards"))))
+        max_discards = max((len(cards) for _, cards in ordered_lanes), default=0)
+        for discard_index in range(max_discards):
+            for player_id, cards in ordered_lanes:
+                if discard_index >= len(cards):
+                    continue
+                player_name = _resolve_table_player_label(player_id, player_names=player_names)
+                history.append(f"{player_name} discarded {cards[discard_index]}")
+
+    appended_meld_players: set[str] = set()
+    for player_id in player_ids:
+        groups = meld_groups.get(player_id)
+        if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes)):
+            player_name = _resolve_table_player_label(player_id, player_names=player_names)
+            for group in groups:
+                if not isinstance(group, Mapping):
+                    continue
+                label = _string_or_none(group.get("label"))
+                if label is None:
+                    continue
+                history.append(f"{player_name} melded {label}")
+            appended_meld_players.add(player_id)
+
+    for player_id in player_ids:
+        if player_id in appended_meld_players:
+            continue
+        player_name = _resolve_table_player_label(player_id, player_names=player_names)
+        for label in _normalize_string_list(melds.get(player_id)):
+            history.append(f"{player_name} melded {label}")
+    return history
+
+
+def _extract_mahjong_result_summary(
+    *,
+    source: Mapping[str, Any],
+    public_state: Mapping[str, Any],
+    result_payloads: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    source_result = source.get("result")
+    source_result_text = (
+        None
+        if isinstance(source_result, Mapping)
+        else _string_or_none(source_result)
+    )
+    remaining_tiles = _coerce_optional_int(
+        source.get("remaining_tiles")
+        if "remaining_tiles" in source
+        else source.get("remainingTiles")
+    )
+    if remaining_tiles is None:
+        remaining_tiles = _coerce_optional_int(
+            public_state.get("remaining_tiles")
+            if "remaining_tiles" in public_state
+            else public_state.get("remainingTiles")
+        )
+    if remaining_tiles is None:
+        remaining_tiles = _coerce_optional_int(
+            _first_result_value(
+                result_payloads,
+                "remaining_tiles",
+                "remainingTiles",
+            )
+        )
+
+    return {
+        "winner": (
+            _string_or_none(source.get("winner"))
+            or _first_result_string(
+                result_payloads,
+                "winner",
+                "winner_player_id",
+                "winnerPlayerId",
+            )
+        ),
+        "result": (
+            source_result_text
+            or _first_result_string(result_payloads, "result")
+        ),
+        "resultReason": (
+            _string_or_none(source.get("result_reason"))
+            or _string_or_none(source.get("resultReason"))
+            or _first_result_string(result_payloads, "result_reason", "resultReason")
+        ),
+        "remainingTiles": remaining_tiles,
+    }
+
+
+def _build_mahjong_panel_payload(
+    *,
+    player_ids: Sequence[str],
+    player_names: Mapping[str, str],
+    public_state: Mapping[str, Any],
+    active_player_id: str | None,
+    move_count: int,
+    mahjong_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    discard_lanes = _normalize_mahjong_discard_lanes(public_state.get("discard_lanes"), player_ids=player_ids)
+    meld_groups = _normalize_mahjong_meld_groups(public_state.get("meld_groups"))
+    melds = _mapping_or_empty(public_state.get("melds"))
+    trace = _build_mahjong_history(
+        player_ids=player_ids,
+        player_names=player_names,
+        discard_lanes=discard_lanes,
+        meld_groups=meld_groups,
+        melds=melds,
+    )
+    last_discard = _normalize_mahjong_last_discard(public_state.get("last_discard"))
+
+    events: list[dict[str, str]] = []
+    if active_player_id is not None:
+        active_player = _resolve_table_player_label(active_player_id, player_names=player_names)
+        events.append({"label": "Turn", "detail": f"{active_player} to act"})
+    if last_discard is not None:
+        discard_player = _resolve_table_player_label(
+            _string_or_none(last_discard.get("playerId")),
+            player_names=player_names,
+        )
+        discard_tile = _string_or_none(last_discard.get("tile"))
+        if discard_tile is not None:
+            events.append(
+                {
+                    "label": "Last discard",
+                    "detail": f"{discard_player} discarded {discard_tile}",
+                }
+            )
+
+    first_open_meld: tuple[str, str] | None = None
+    for player_id in player_ids:
+        groups = meld_groups.get(player_id)
+        labels = [
+            _string_or_none(group.get("label"))
+            for group in groups
+            if isinstance(group, Mapping)
+        ] if isinstance(groups, Sequence) and not isinstance(groups, (str, bytes)) else []
+        labels = [label for label in labels if label is not None]
+        if not labels:
+            labels = _normalize_string_list(melds.get(player_id))
+        if labels:
+            first_open_meld = (
+                _resolve_table_player_label(player_id, player_names=player_names),
+                labels[0],
+            )
+            break
+    if first_open_meld is not None:
+        player_name, meld_label = first_open_meld
+        events.append({"label": "Open meld", "detail": f"{player_name}: {meld_label}"})
+
+    winner = _string_or_none(mahjong_result.get("winner"))
+    if winner is not None:
+        winner_label = _resolve_table_player_label(winner, player_names=player_names)
+        events.append({"label": "Winner", "detail": winner_label})
+    result = _string_or_none(mahjong_result.get("result"))
+    if result is not None:
+        events.append({"label": "Result", "detail": result})
+    result_reason = _string_or_none(mahjong_result.get("resultReason"))
+    if result_reason is not None:
+        events.append({"label": "Result reason", "detail": result_reason})
+    remaining_tiles = _coerce_optional_int(mahjong_result.get("remainingTiles"))
+    if remaining_tiles is not None:
+        events.append(
+            {
+                "label": "Remaining tiles",
+                "detail": f"{remaining_tiles} tiles in wall",
+            }
+        )
+    if move_count > 0:
+        events.append({"label": "Move count", "detail": f"{move_count} turns recorded"})
+
+    return {
+        "events": events,
+        "trace": trace,
+    }
+
+
 def _mapping_or_empty(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
@@ -1472,6 +1734,7 @@ def _coerce_float_or_none(value: Any) -> float | None:
 
 def _extract_frame_legal_actions(*payloads: Any) -> tuple[dict[str, Any], ...]:
     candidates: Any = None
+    action_labels = _extract_frame_action_labels(*payloads)
     for payload in payloads:
         if not isinstance(payload, Mapping):
             continue
@@ -1490,28 +1753,57 @@ def _extract_frame_legal_actions(*payloads: Any) -> tuple[dict[str, Any], ...]:
 
     actions: list[dict[str, Any]] = []
     for item in candidates:
-        normalized = _normalize_frame_legal_action(item)
+        normalized = _normalize_frame_legal_action(item, action_labels=action_labels)
         if normalized is not None:
             actions.append(normalized)
     return tuple(actions)
 
 
-def _normalize_frame_legal_action(item: Any) -> dict[str, Any] | None:
-    if isinstance(item, str):
-        text = item.strip()
-        if not text:
+def _extract_frame_action_labels(*payloads: Any) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for payload in payloads:
+        if not isinstance(payload, Mapping):
+            continue
+        raw_mapping = payload.get("action_mapping")
+        if raw_mapping is None:
+            raw_mapping = payload.get("actionMapping")
+        if raw_mapping is None:
+            metadata = payload.get("metadata")
+            if isinstance(metadata, Mapping):
+                raw_mapping = metadata.get("action_mapping")
+                if raw_mapping is None:
+                    raw_mapping = metadata.get("actionMapping")
+        if not isinstance(raw_mapping, Mapping):
+            continue
+        for raw_action_id, raw_label in raw_mapping.items():
+            action_id = _string_or_none(raw_action_id)
+            label = _string_or_none(raw_label)
+            if action_id is None or label is None:
+                continue
+            labels[action_id] = _format_frame_action_label(label)
+    return labels
+
+
+def _normalize_frame_legal_action(
+    item: Any,
+    *,
+    action_labels: Mapping[str, str] | None = None,
+) -> dict[str, Any] | None:
+    label_map = action_labels or {}
+    if not isinstance(item, Mapping):
+        text = _string_or_none(item)
+        if text is None:
             return None
+        label = label_map.get(text) or text
         return {
             "id": text,
-            "label": text,
-            "text": text,
+            "label": label,
+            "text": label,
         }
-    if not isinstance(item, Mapping):
-        return None
     action_id = _string_or_none(item.get("id")) or _string_or_none(item.get("text")) or _string_or_none(item.get("label"))
     if action_id is None:
         return None
-    label = _string_or_none(item.get("label")) or action_id
+    label = _string_or_none(item.get("label")) or label_map.get(action_id) or action_id
     text = _string_or_none(item.get("text")) or label
     normalized = {
         "id": action_id,
@@ -1523,6 +1815,20 @@ def _normalize_frame_legal_action(item: Any) -> dict[str, Any] | None:
             continue
         normalized[str(key)] = value
     return normalized
+
+
+def _format_frame_action_label(value: str) -> str:
+    text = str(value).strip()
+    if not text:
+        return ""
+    aliases = {
+        "ATTACK": "Fire",
+        "NOOP": "No-op",
+    }
+    canonical = text.replace("-", "_").replace(" ", "_").upper()
+    if canonical in aliases:
+        return aliases[canonical]
+    return text.replace("_", " ").replace("-", " ").strip().title()
 
 
 def _resolve_frame_observer_player(
@@ -1838,6 +2144,114 @@ def _format_doudizhu_history(value: Any, *, player_ids: Sequence[str]) -> list[s
         player_id = _string_or_none(player_ref)
         history.append(f"{player_id or 'unknown'}: {move}")
     return history
+
+
+def _build_doudizhu_panel_payload(
+    *,
+    player_ids: Sequence[str],
+    player_names: Mapping[str, str],
+    move_history: Any,
+    active_player_id: str | None,
+    landlord_id: str | None,
+    move_count: int,
+    last_move: str | None,
+) -> dict[str, Any]:
+    trace_entries = _normalize_doudizhu_trace_entries(
+        move_history,
+        player_ids=player_ids,
+        player_names=player_names,
+    )
+    normalized_last_move = _string_or_none(last_move)
+    events: list[dict[str, str]] = []
+    if landlord_id is not None:
+        events.append(
+            {
+                "label": "Landlord",
+                "detail": _resolve_table_player_label(landlord_id, player_names=player_names),
+            }
+        )
+    if active_player_id is not None:
+        events.append(
+            {
+                "label": "Turn",
+                "detail": f"{_resolve_table_player_label(active_player_id, player_names=player_names)} to act",
+            }
+        )
+    if trace_entries:
+        last_entry = trace_entries[-1]
+        if normalized_last_move is not None and normalized_last_move.strip().lower() != last_entry["move"].strip().lower():
+            events.append({"label": "Last move", "detail": normalized_last_move})
+        else:
+            events.append(
+                {
+                    "label": "Last move",
+                    "detail": _format_doudizhu_last_move_event(
+                        player_name=last_entry["playerName"],
+                        move=last_entry["move"],
+                    ),
+                }
+            )
+    elif normalized_last_move is not None:
+        events.append({"label": "Last move", "detail": normalized_last_move})
+    if move_count > 0:
+        events.append({"label": "Move count", "detail": f"{move_count} moves recorded"})
+    return {
+        "events": events,
+        "trace": [entry["trace"] for entry in trace_entries],
+    }
+
+
+def _format_doudizhu_last_move_event(*, player_name: str, move: str) -> str:
+    if move.strip().lower() == "pass":
+        return f"{player_name} passed"
+    return f"{player_name} played {move}"
+
+
+def _normalize_doudizhu_trace_entries(
+    value: Any,
+    *,
+    player_ids: Sequence[str],
+    player_names: Mapping[str, str],
+) -> list[dict[str, str]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        move = _string_or_none(item.get("move") or item.get("action") or item.get("action_text"))
+        if move is None:
+            continue
+        player_ref = item.get("player_id") or item.get("playerId")
+        if player_ref is None and isinstance(item.get("player_idx"), int):
+            player_idx = int(item["player_idx"])
+            if 0 <= player_idx < len(player_ids):
+                player_ref = player_ids[player_idx]
+        if player_ref is None and isinstance(item.get("player"), int):
+            player_idx = int(item["player"])
+            if 0 <= player_idx < len(player_ids):
+                player_ref = player_ids[player_idx]
+        player_id = _string_or_none(player_ref)
+        player_name = _resolve_table_player_label(player_id, player_names=player_names)
+        entries.append(
+            {
+                "playerId": player_id or "unknown",
+                "playerName": player_name,
+                "move": move,
+                "trace": f"{player_name}: {move}",
+            }
+        )
+    return entries
+
+
+def _resolve_table_player_label(
+    player_id: str | None,
+    *,
+    player_names: Mapping[str, str],
+) -> str:
+    if player_id is None:
+        return "Unknown"
+    return player_names.get(player_id, player_id)
 
 
 def _table_hand_visible(

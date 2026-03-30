@@ -171,4 +171,107 @@ describe("SharedSidePanel", () => {
     expect(within(items[1]!).getByText("Player 1")).toBeInTheDocument();
     expect(within(items[2]!).getByText("Player 2")).toBeInTheDocument();
   });
+
+  it("renders doudizhu semantic events and trace entries from host scene panels", () => {
+    render(
+      <SharedSidePanel
+        session={{
+          sessionId: "doudizhu-sample",
+          gameId: "doudizhu",
+          pluginId: "arena.visualization.doudizhu.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "paused",
+            cursorTs: 1007,
+            cursorEventSeq: 7,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0",
+          },
+          capabilities: {
+            observerModes: ["global", "spectator", "camera", "player"],
+          },
+          summary: {},
+          timeline: {},
+        }}
+        scene={doudizhuScene as VisualScene}
+      />,
+    );
+
+    expect(screen.getByRole("option", { name: "Host overview" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Camera view" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Spectator view" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Events" }));
+    expect(screen.getByText("Landlord: Player 0")).toBeInTheDocument();
+    expect(screen.getByText("Turn: Player 0 to act")).toBeInTheDocument();
+    expect(screen.getByText("Last move: Player 0 played 3")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Trace" }));
+    expect(screen.getByText("Player 0: 3")).toBeInTheDocument();
+  });
+
+  it("keeps doudizhu camera and spectator observer modes switchable in the host selector", () => {
+    const onObserverChange = vi.fn();
+
+    render(
+      <SharedSidePanel
+        session={{
+          sessionId: "doudizhu-observer-modes",
+          gameId: "doudizhu",
+          pluginId: "arena.visualization.doudizhu.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "paused",
+            cursorTs: 1007,
+            cursorEventSeq: 7,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "",
+            observerKind: "spectator",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0",
+          },
+          capabilities: {
+            observerModes: ["global", "spectator", "camera", "player"],
+          },
+          summary: {},
+          timeline: {},
+        }}
+        scene={doudizhuScene as VisualScene}
+        onObserverChange={onObserverChange}
+      />,
+    );
+
+    const selector = screen.getByLabelText(/observer view/i);
+    expect(screen.getByRole("option", { name: "Camera view" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Spectator view" })).toBeInTheDocument();
+
+    fireEvent.change(selector, { target: { value: "camera" } });
+    expect(onObserverChange).toHaveBeenCalledWith({
+      observerId: "",
+      observerKind: "camera",
+    });
+
+    fireEvent.change(selector, { target: { value: "spectator" } });
+    expect(onObserverChange).toHaveBeenCalledWith({
+      observerId: "",
+      observerKind: "spectator",
+    });
+  });
 });

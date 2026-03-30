@@ -355,8 +355,7 @@ export function SharedSidePanel({
             <ul className="side-panel__list">
               {panels.events.map((entry, index) => (
                 <li key={`${entry.label}-${index}`}>
-                  <strong>{entry.label}</strong>
-                  {entry.detail ? `: ${entry.detail}` : ""}
+                  {entry.detail ? `${entry.label}: ${entry.detail}` : entry.label}
                 </li>
               ))}
             </ul>

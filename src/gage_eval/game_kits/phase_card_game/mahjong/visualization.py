@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from gage_eval.game_kits.contracts import GameVisualizationSpec
-from gage_eval.game_kits.visualization_specs import build_placeholder_descriptor
 from gage_eval.registry import registry
 
 VISUALIZATION_SPEC_ID = "arena/visualization/mahjong_table_v1"
@@ -23,38 +22,95 @@ SCENE_PROJECTION_RULES = {
     "scene_contract": {
         "table": {
             "seat_extensions": ["meldGroups", "drawTile", "hand.drawTile"],
-            "center_extensions": ["discardLanes"],
-            "status_extensions": ["lastDiscard"],
+            "center_extensions": ["history", "discardLanes"],
+            "status_extensions": [
+                "privateViewPlayerId",
+                "lastDiscard",
+                "winner",
+                "result",
+                "resultReason",
+                "remainingTiles",
+            ],
+            "panel_extensions": ["chatLog", "events", "trace"],
         }
     },
 }
 ACTION_SCHEMA = {
-    **build_placeholder_descriptor(
-        spec_id=VISUALIZATION_SPEC_ID,
-        plugin_id=VISUALIZATION_PLUGIN_ID,
-        visual_kind=VISUAL_KIND,
-        kit_id="mahjong",
-        channel="action_schema",
-    ),
-    "action_metadata": {"descriptor": "placeholder"},
+    "descriptor": "mahjong_table_action_schema_v1",
+    "action_metadata": {
+        "descriptor": "mahjong_table_actions_v1",
+        "legal_action_source": "scene.legalActions",
+        "selection_source": "table.seats[].hand.cards",
+        "typed_actions": ["discard_tile", "call_meld", "declare_win", "pass"],
+    },
+    "action_types": [
+        {
+            "id": "discard_tile",
+            "label": "Discard tile",
+            "payload": {"actionText": "<tile code>"},
+        },
+        {
+            "id": "call_meld",
+            "label": "Call meld",
+            "payload": {"actionText": "Pong|Chow|Kong"},
+        },
+        {
+            "id": "declare_win",
+            "label": "Declare win",
+            "payload": {"actionText": "Hu"},
+        },
+        {
+            "id": "pass",
+            "label": "Pass",
+            "payload": {"actionText": "Pass"},
+        },
+    ],
+    "selection_model": {
+        "source": "hand.cards",
+        "draw_tile_source": "hand.drawTile",
+        "supports_multi_select": False,
+        "confirm_required": True,
+    },
 }
 OBSERVER_SCHEMA = {
-    **build_placeholder_descriptor(
-        spec_id=VISUALIZATION_SPEC_ID,
-        plugin_id=VISUALIZATION_PLUGIN_ID,
-        visual_kind=VISUAL_KIND,
-        kit_id="mahjong",
-        channel="observer_schema",
-    ),
-    "supported_modes": ["player", "global"],
+    "descriptor": "mahjong_table_observer_schema_v1",
+    "supported_modes": ["global", "spectator", "camera", "player"],
+    "default_mode": "spectator",
+    "host_selection": {
+        "default_mode": "spectator",
+        "player_requires_observer_id": True,
+        "supports_observer_switching": True,
+    },
+    "mode_semantics": {
+        "global": {"label": "Global table", "private_hand_visible": False},
+        "spectator": {"label": "Spectator", "private_hand_visible": False},
+        "camera": {"label": "Broadcast camera", "private_hand_visible": False},
+        "player": {"label": "Player seat", "private_hand_visible": True},
+    },
 }
-TIMELINE_ANNOTATION_RULES = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="mahjong",
-    channel="timeline_annotations",
-)
+TIMELINE_ANNOTATION_RULES = {
+    "descriptor": "mahjong_table_timeline_v1",
+    "focus_event_types": ["decision_window_open", "action_intent", "result"],
+    "event_labels": {
+        "decision_window_open": "Discard or call window",
+        "action_intent": "Mahjong action submitted",
+        "result": "Hand result",
+    },
+    "annotations": [
+        {
+            "id": "discard_commit",
+            "label": "Discard selected",
+            "match_action_type": "discard_tile",
+        },
+        {
+            "id": "call_declared",
+            "label": "Call declared",
+            "match_action_regex": "^(pong|chow|kong|gong)$",
+        },
+        {"id": "win_declared", "label": "Win declared", "match_action": "hu"},
+        {"id": "hand_result", "label": "Hand result", "match_event": "result"},
+    ],
+}
 
 VISUALIZATION_SPEC = GameVisualizationSpec(
     spec_id=VISUALIZATION_SPEC_ID,

@@ -39,7 +39,7 @@ const KNOWN_PLUGIN_META = [
     displayName: "Doudizhu",
     manifest: {
       sceneKinds: ["table"],
-      supportedObservers: ["player", "global"],
+      supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
     },
   },
@@ -48,7 +48,7 @@ const KNOWN_PLUGIN_META = [
     displayName: "Mahjong",
     manifest: {
       sceneKinds: ["table"],
-      supportedObservers: ["player", "global"],
+      supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
     },
   },

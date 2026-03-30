@@ -164,6 +164,54 @@ def test_vizdoom_frame_projection_exposes_pov_hud_and_viewport() -> None:
     assert {"kind": "badge", "label": "Stream", "value": "pov"} in scene.overlays
 
 
+def test_vizdoom_frame_projection_normalizes_numeric_legal_action_items() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="vizdoom-live-sample",
+            game_id="vizdoom",
+            plugin_id=VIZDOOM_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="p0", observer_kind="player"),
+        ),
+        event=TimelineEvent(
+            seq=18,
+            ts_ms=3018,
+            type="snapshot",
+            label="snapshot",
+        ),
+        snapshot_body={
+            "tick": 18,
+            "step": 18,
+            "actor": "p0",
+            "observation": {
+                "board_text": "Tick 18. Legal actions: 1, 2, 3",
+                "active_player": "p0",
+                "metadata": {
+                    "action_mapping": {
+                        "1": "ATTACK",
+                        "2": "TURN_LEFT",
+                        "3": "TURN_RIGHT",
+                    }
+                },
+                "legal_actions": {
+                    "items": [1, 2, 3],
+                },
+                "context": {
+                    "mode": "tick",
+                    "tick": 18,
+                    "step": 18,
+                },
+            },
+        },
+        visualization_spec=VIZDOOM_VISUALIZATION_SPEC,
+    )
+
+    assert scene.legal_actions == (
+        {"id": "1", "label": "Fire", "text": "Fire"},
+        {"id": "2", "label": "Turn Left", "text": "Turn Left"},
+        {"id": "3", "label": "Turn Right", "text": "Turn Right"},
+    )
+
+
 def test_retro_frame_projection_uses_single_player_status_and_controls() -> None:
     scene = assemble_visual_scene(
         visual_session=VisualSession(

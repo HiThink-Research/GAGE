@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { TableDiscardLane, TableMeldGroup, TableSceneData, TableSeat } from "../table/TableLayout";
 import { MahjongActionTray } from "./MahjongActionTray";
+import { resolveMahjongTileAsset } from "./mahjongTileAssets";
 import {
   isMahjongTileCode,
   normalizeTileCode,
@@ -12,21 +13,6 @@ import {
 } from "./mahjongScene";
 
 import "./mahjong.css";
-
-const mahjongTileAssetModules = import.meta.glob(
-  "../../../../rlcard-showdown/src/assets/mahjong/*.svg",
-  {
-    eager: true,
-    import: "default",
-  },
-) as Record<string, string>;
-
-const mahjongTileAssets = Object.fromEntries(
-  Object.entries(mahjongTileAssetModules).map(([path, url]) => {
-    const fileName = path.split("/").pop() ?? path;
-    return [fileName.replace(".svg", ""), url];
-  }),
-);
 
 type SeatAnchor = "bottom" | "right" | "top" | "left";
 
@@ -50,6 +36,27 @@ interface MahjongTileProps {
 }
 
 const MAHJONG_CALL_ACTIONS = new Set(["pong", "chow", "kong", "gong", "hu"]);
+
+function titleCase(value: string): string {
+  return value
+    .split(/[_\s]+/)
+    .filter((part) => part !== "")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function formatResultSummary(tableScene: TableSceneData): { title: string; detail: string[] } | null {
+  const { winner, result, resultReason, remainingTiles } = tableScene.status;
+  if (!result) {
+    return null;
+  }
+  const title = winner ? `${resolvePlayerLabel(tableScene, winner)} ${titleCase(result)}` : titleCase(result);
+  const detail = [
+    resultReason ? titleCase(resultReason) : null,
+    remainingTiles !== null ? `${remainingTiles} tiles left in wall` : null,
+  ].filter((entry): entry is string => entry !== null);
+  return { title, detail };
+}
 
 function rotateSeatIds(seatIds: string[], bottomSeatId: string): string[] {
   const anchorIndex = seatIds.indexOf(bottomSeatId);
@@ -83,6 +90,28 @@ function resolveAnchoredSeats(tableScene: TableSceneData): Array<{ anchor: SeatA
     .filter((entry): entry is { anchor: SeatAnchor; seat: TableSeat } => entry !== null);
 }
 
+function resolveLatestSeatChatMap(tableScene: TableSceneData): Map<string, string> {
+  const latestByPlayerId = new Map<string, string>();
+  tableScene.panels.chatLog.forEach((entry) => {
+    latestByPlayerId.set(entry.playerId, entry.text);
+  });
+  return latestByPlayerId;
+}
+
+function resolveSeatByPlayerId(tableScene: TableSceneData, playerId: string | null): TableSeat | null {
+  if (!playerId) {
+    return null;
+  }
+  return tableScene.table.seats.find((seat) => seat.playerId === playerId) ?? null;
+}
+
+function resolvePlayerLabel(tableScene: TableSceneData, playerId: string | null): string {
+  if (!playerId) {
+    return "Unknown";
+  }
+  return resolveSeatByPlayerId(tableScene, playerId)?.playerName ?? titleCase(playerId);
+}
+
 function renderMaskedHand(maskedCount: number, compact: boolean) {
   const previewCount = Math.min(Math.max(maskedCount, 3), compact ? 5 : 7);
   return (
@@ -111,7 +140,7 @@ function MahjongTile({
   onDoubleClick,
 }: MahjongTileProps) {
   const resolvedTile = hidden ? "Back" : normalizeTileCode(tile);
-  const src = mahjongTileAssets[resolvedTile] ?? null;
+  const src = resolveMahjongTileAsset(resolvedTile);
   const className = [
     "mahjong-tile",
     compact ? "is-compact" : "",
@@ -267,6 +296,7 @@ function MahjongSeat({
   canSubmitActions,
   tileActionSet,
   selectedTile,
+  chatBubbleText,
   onSelectTile,
   onConfirmTile,
 }: {
@@ -275,6 +305,7 @@ function MahjongSeat({
   canSubmitActions: boolean;
   tileActionSet: Set<string>;
   selectedTile: string | null;
+  chatBubbleText?: string;
   onSelectTile: (tile: string) => void;
   onConfirmTile: (tile: string) => void;
 }) {
@@ -305,6 +336,12 @@ function MahjongSeat({
           {seat.isActive ? <span className="mahjong-seat__badge">turn</span> : null}
         </div>
       </header>
+
+      {chatBubbleText ? (
+        <p className="mahjong-seat__bubble" data-testid={`mahjong-seat-${anchor}-bubble`}>
+          {chatBubbleText}
+        </p>
+      ) : null}
 
       {renderMelds(meldGroups, compact)}
 
@@ -346,10 +383,7 @@ function MahjongDiscardLane({
   const emphasizedIndex = resolveLastDiscardIndex(lane, lastDiscard);
 
   return (
-    <div
-      className="mahjong-discard-lane"
-      data-testid={`mahjong-discard-lane-${lane.playerId}`}
-    >
+    <div className="mahjong-discard-lane" data-testid={`mahjong-discard-lane-${lane.playerId}`}>
       <p className="mahjong-discard-lane__label">{lane.seatId}</p>
       <div className="mahjong-discard-lane__tiles">
         {lane.cards.length > 0 ? (
@@ -367,11 +401,7 @@ function MahjongDiscardLane({
                 key={`${lane.playerId}-${tileCode}-${index}`}
                 className={["mahjong-discard-lane__entry", discardStyle].filter(Boolean).join(" ")}
               >
-                <MahjongTile
-                  tile={tileCode}
-                  compact={true}
-                  emphasized={isLastDiscard}
-                />
+                <MahjongTile tile={tileCode} compact={true} emphasized={isLastDiscard} />
                 {isLastDiscard && lastDiscard ? (
                   <span
                     className="mahjong-discard-lane__marker"
@@ -431,6 +461,23 @@ function MahjongCallPanel({
   );
 }
 
+function MahjongResultBanner({ tableScene }: { tableScene: TableSceneData }) {
+  const summary = formatResultSummary(tableScene);
+  if (!summary) {
+    return null;
+  }
+
+  return (
+    <section className="mahjong-result-banner" data-testid="mahjong-result-banner">
+      <p className="mahjong-result-banner__eyebrow">Hand result</p>
+      <h3 className="mahjong-result-banner__title">{summary.title}</h3>
+      {summary.detail.length > 0 ? (
+        <p className="mahjong-result-banner__detail">{summary.detail.join(" · ")}</p>
+      ) : null}
+    </section>
+  );
+}
+
 export function MahjongTable({
   tableScene,
   actionTexts,
@@ -445,8 +492,21 @@ export function MahjongTable({
   const trayActions = uniqueActions.filter(
     (actionText) => !isMahjongTileCode(actionText) && !isMahjongCallAction(actionText),
   );
+  const latestSeatChats = resolveLatestSeatChatMap(tableScene);
   const lastDiscard = tableScene.status.lastDiscard;
   const discardLanes = resolveMahjongDiscardLanes(tableScene);
+  const viewingLabel = resolvePlayerLabel(
+    tableScene,
+    tableScene.status.privateViewPlayerId ?? tableScene.status.observerPlayerId,
+  );
+  const turnLabel = tableScene.status.activePlayerId
+    ? resolvePlayerLabel(tableScene, tableScene.status.activePlayerId)
+    : null;
+  const lastDiscardLabel =
+    lastDiscard?.tile && lastDiscard.playerId
+      ? `${resolvePlayerLabel(tableScene, lastDiscard.playerId)} ${normalizeTileCode(lastDiscard.tile)}`
+      : null;
+  const resultSummary = formatResultSummary(tableScene);
 
   useEffect(() => {
     if (!selectedTile) {
@@ -470,6 +530,27 @@ export function MahjongTable({
 
   return (
     <section className="mahjong-stage" data-testid="mahjong-stage">
+      <div className="mahjong-stage__status" data-testid="mahjong-stage-status">
+        {tableScene.status.moveCount > 0 ? (
+          <span className="mahjong-stage__status-chip">Hand {tableScene.status.moveCount}</span>
+        ) : null}
+        {turnLabel ? (
+          <span className="mahjong-stage__status-chip">Turn {turnLabel}</span>
+        ) : null}
+        {viewingLabel ? (
+          <span className="mahjong-stage__status-chip">Viewing {viewingLabel}</span>
+        ) : null}
+        {lastDiscardLabel && !resultSummary ? (
+          <span className="mahjong-stage__status-chip">Last discard {lastDiscardLabel}</span>
+        ) : null}
+        {tableScene.status.remainingTiles !== null ? (
+          <span className="mahjong-stage__status-chip">Wall {tableScene.status.remainingTiles}</span>
+        ) : null}
+        {resultSummary ? (
+          <span className="mahjong-stage__status-chip is-result">{resultSummary.title}</span>
+        ) : null}
+      </div>
+
       <div className="mahjong-stage__table">
         {anchoredSeats.map(({ anchor, seat }) => (
           <MahjongSeat
@@ -479,13 +560,30 @@ export function MahjongTable({
             canSubmitActions={canSubmitActions}
             tileActionSet={tileActionSet}
             selectedTile={selectedTile}
+            chatBubbleText={latestSeatChats.get(seat.playerId)}
             onSelectTile={handleSelectTile}
             onConfirmTile={handleConfirmTile}
           />
         ))}
 
         <section className="mahjong-discards">
-          <p className="mahjong-discards__label">{tableScene.table.center.label}</p>
+          <div className="mahjong-discards__header">
+            <div>
+              <p className="mahjong-discards__label">{tableScene.table.center.label}</p>
+              <p className="mahjong-discards__subcopy">
+                {tableScene.table.center.history.length > 0
+                  ? `${tableScene.table.center.history.length} public actions tracked`
+                  : "Live table snapshot"}
+              </p>
+            </div>
+            {lastDiscardLabel ? (
+              <div className="mahjong-discards__spotlight">
+                <span className="mahjong-discards__spotlight-label">Latest</span>
+                <strong className="mahjong-discards__spotlight-value">{lastDiscardLabel}</strong>
+              </div>
+            ) : null}
+          </div>
+
           <div className="mahjong-discards__pool" data-testid="mahjong-discard-pool">
             {tableScene.table.center.cards.length > 0 ? (
               tableScene.table.center.cards.map((tileCode, index) => (
@@ -500,6 +598,19 @@ export function MahjongTable({
               <p className="mahjong-discards__placeholder">No discards yet</p>
             )}
           </div>
+
+          {tableScene.table.center.history.length > 0 ? (
+            <div className="mahjong-history" data-testid="mahjong-history">
+              {tableScene.table.center.history.map((entry, index) => (
+                <span key={`${entry}-${index}`} className="mahjong-history__chip">
+                  {entry}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <MahjongResultBanner tableScene={tableScene} />
+
           {discardLanes.length > 0 ? (
             <div className="mahjong-discard-lanes">
               {discardLanes.map((lane) => (
@@ -511,6 +622,7 @@ export function MahjongTable({
               ))}
             </div>
           ) : null}
+
           <MahjongCallPanel
             callActions={callActions}
             canSubmitActions={canSubmitActions}

@@ -167,9 +167,31 @@ def _build_mahjong_scene(observer: ObserverRef) -> VisualScene:
             },
             "public_state": {
                 "discards": ["B1", "C1", "D1"],
+                "discard_lanes": {
+                    "east": ["B1"],
+                    "south": ["C1"],
+                    "west": ["D1"],
+                    "north": [],
+                },
                 "melds": {"south": ["Pong C3"]},
+                "meld_groups": {
+                    "south": [
+                        {
+                            "type": "pong",
+                            "label": "Pong C3",
+                            "tiles": ["C3", "C3", "C3"],
+                        }
+                    ]
+                },
+                "last_discard": {
+                    "player_id": "west",
+                    "tile": "D1",
+                    "is_tsumogiri": False,
+                },
+                "remaining_tiles": 61,
             },
             "private_state": {
+                "self_id": "east",
                 "hand": ["B1", "Red"],
                 "hand_raw": ["bamboo-1", "dragons-red"],
             },
@@ -1149,3 +1171,46 @@ def test_arena_visual_acceptance_table_observer_switch_reprojects_private_view(
     assert player_scene.body["status"]["observerPlayerId"] == player_id
     assert player_seats[player_id]["hand"]["isVisible"] is True
     assert player_seats[player_id]["hand"]["cards"] == expected_visible_cards
+
+
+def test_arena_visual_acceptance_doudizhu_scene_exposes_host_semantic_panels() -> None:
+    scene = _build_doudizhu_scene(ObserverRef(observer_id="player_0", observer_kind="player"))
+
+    assert scene.body["panels"] == {
+        "chatLog": [{"playerId": "player_1", "text": "watch this"}],
+        "events": [
+            {"label": "Landlord", "detail": "Player 0"},
+            {"label": "Turn", "detail": "Player 0 to act"},
+            {"label": "Last move", "detail": "Player 0 played 3"},
+            {"label": "Move count", "detail": "1 moves recorded"},
+        ],
+        "trace": ["Player 0: 3"],
+    }
+
+
+def test_arena_visual_acceptance_mahjong_scene_exposes_host_semantic_panels() -> None:
+    scene = _build_mahjong_scene(ObserverRef(observer_id="", observer_kind="global"))
+
+    assert scene.body["table"]["center"]["history"] == [
+        "East discarded B1",
+        "South discarded C1",
+        "West discarded D1",
+        "South melded Pong C3",
+    ]
+    assert scene.body["status"]["remainingTiles"] == 61
+    assert scene.body["panels"] == {
+        "chatLog": [{"playerId": "south", "text": "pon"}],
+        "events": [
+            {"label": "Turn", "detail": "East to act"},
+            {"label": "Last discard", "detail": "West discarded D1"},
+            {"label": "Open meld", "detail": "South: Pong C3"},
+            {"label": "Remaining tiles", "detail": "61 tiles in wall"},
+            {"label": "Move count", "detail": "4 turns recorded"},
+        ],
+        "trace": [
+            "East discarded B1",
+            "South discarded C1",
+            "West discarded D1",
+            "South melded Pong C3",
+        ],
+    }

@@ -113,7 +113,11 @@ const richScene: VisualScene = {
       center: {
         label: "Discards",
         cards: ["B1", "C1", "D1", "East", "B9", "C9", "D9", "White"],
-        history: [],
+        history: [
+          "East · B1 (tsumogiri)",
+          "South · Pong",
+          "North · East (tedashi)",
+        ],
         discardLanes: [
           { seatId: "east", playerId: "east", cards: ["B1", "B9"] },
           { seatId: "south", playerId: "south", cards: ["C1", "C9"] },
@@ -132,10 +136,21 @@ const richScene: VisualScene = {
         tile: "East",
         isTsumogiri: false,
       },
+      remainingTiles: 52,
       landlordId: null,
     },
     panels: {
       chatLog: [{ playerId: "south", text: "pon" }],
+      events: [
+        { label: "Turn", detail: "East to act" },
+        { label: "Last discard", detail: "North discarded East (tedashi)" },
+        { label: "Wall", detail: "52 tiles remaining" },
+      ],
+      trace: [
+        "East · B1 (tsumogiri)",
+        "South · Pong",
+        "North · East (tedashi)",
+      ],
     },
   },
 };

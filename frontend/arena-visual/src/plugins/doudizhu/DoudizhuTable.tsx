@@ -7,7 +7,7 @@ import { DoudizhuCardVisual } from "./doudizhuCards";
 import "./doudizhu.css";
 
 const portraitAssetModules = import.meta.glob(
-  "../../../../rlcard-showdown/src/assets/images/Portrait/*.{png,jpg,jpeg}",
+  "./assets/portraits/*.{png,jpg,jpeg}",
   {
     eager: true,
     import: "default",
@@ -40,6 +40,20 @@ function resolveSeatById(tableScene: TableSceneData, seatId: string): TableSeat 
   return tableScene.table.seats.find((seat) => seat.seatId === seatId) ?? null;
 }
 
+function resolveSeatByPlayerId(tableScene: TableSceneData, playerId: string | null): TableSeat | null {
+  if (!playerId) {
+    return null;
+  }
+  return tableScene.table.seats.find((seat) => seat.playerId === playerId) ?? null;
+}
+
+function resolvePlayerLabel(tableScene: TableSceneData, playerId: string | null): string | null {
+  if (!playerId) {
+    return null;
+  }
+  return resolveSeatByPlayerId(tableScene, playerId)?.playerName ?? playerId;
+}
+
 function resolvePortrait(role: string | null): string | null {
   if (role === "landlord") {
     return portraitAssets.Landlord_wName ?? portraitAssets.Landlord ?? null;
@@ -51,10 +65,10 @@ function resolvePortrait(role: string | null): string | null {
 }
 
 function renderMaskedHand(maskedCount: number, compact: boolean) {
-  const previewCount = Math.min(Math.max(maskedCount, 1), compact ? 6 : 8);
+  const previewCount = Math.max(maskedCount, 0);
   return (
     <div className="doudizhu-hand doudizhu-hand--masked">
-      <div className="doudizhu-hand__cards">
+      <div className={`doudizhu-hand__cards doudizhu-hand__cards--masked ${compact ? "is-compact" : ""}`}>
         {Array.from({ length: previewCount }, (_, index) => (
           <DoudizhuCardVisual key={`masked-${index}`} card="Back" faceDown={true} compact={compact} />
         ))}
@@ -172,6 +186,12 @@ export function DoudizhuTable({
   const leftSeat = resolveSeatById(tableScene, "left");
   const rightSeat = resolveSeatById(tableScene, "right");
   const latestSeatChats = resolveLatestSeatChatMap(tableScene);
+  const activePlayerLabel = resolvePlayerLabel(tableScene, tableScene.status.activePlayerId);
+  const landlordLabel = resolvePlayerLabel(tableScene, tableScene.status.landlordId);
+  const privateViewLabel = resolvePlayerLabel(
+    tableScene,
+    tableScene.status.privateViewPlayerId ?? tableScene.status.observerPlayerId,
+  );
 
   if (!bottomSeat || !leftSeat || !rightSeat) {
     return null;
@@ -193,6 +213,24 @@ export function DoudizhuTable({
 
   return (
     <section className="doudizhu-stage" data-testid="doudizhu-stage">
+      <div className="doudizhu-stage__status" aria-label="Doudizhu stage status">
+        {tableScene.status.moveCount > 0 ? (
+          <span className="doudizhu-stage__status-chip">Move {tableScene.status.moveCount}</span>
+        ) : null}
+        {activePlayerLabel ? (
+          <span className="doudizhu-stage__status-chip">Turn {activePlayerLabel}</span>
+        ) : null}
+        {tableScene.status.lastMove ? (
+          <span className="doudizhu-stage__status-chip">Last move {tableScene.status.lastMove}</span>
+        ) : null}
+        {landlordLabel ? (
+          <span className="doudizhu-stage__status-chip">Landlord {landlordLabel}</span>
+        ) : null}
+        {privateViewLabel ? (
+          <span className="doudizhu-stage__status-chip">Viewing {privateViewLabel}</span>
+        ) : null}
+      </div>
+
       <div className="doudizhu-stage__table">
         <DoudizhuSeat
           seat={leftSeat}
@@ -222,15 +260,20 @@ export function DoudizhuTable({
               <p className="doudizhu-seat__placeholder">No center cards</p>
             )}
           </div>
-          {tableScene.table.center.history.length > 0 ? (
-            <div className="doudizhu-center__history">
-              {tableScene.table.center.history.map((entry) => (
-                <span key={entry} className="doudizhu-center__history-chip">
-                  {entry}
-                </span>
-              ))}
-            </div>
-          ) : null}
+          <div className="doudizhu-center__history-block">
+            <p className="doudizhu-center__history-label">Recent plays</p>
+            {tableScene.table.center.history.length > 0 ? (
+              <div className="doudizhu-center__history">
+                {tableScene.table.center.history.map((entry) => (
+                  <span key={entry} className="doudizhu-center__history-chip">
+                    {entry}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="doudizhu-seat__placeholder">No recent plays</p>
+            )}
+          </div>
         </section>
       </div>
     </section>

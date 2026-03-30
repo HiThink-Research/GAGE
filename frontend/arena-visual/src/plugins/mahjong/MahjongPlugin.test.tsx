@@ -61,8 +61,11 @@ describe("MahjongPlugin", () => {
     );
 
     expect(screen.getByTestId("mahjong-stage")).toBeInTheDocument();
+    expect(screen.getByTestId("mahjong-stage-status")).toHaveTextContent("Wall 61");
     expect(screen.getByTestId("mahjong-discard-pool")).toHaveTextContent("B1");
     expect(screen.getByTestId("mahjong-discard-pool")).toHaveTextContent("C1");
+    expect(screen.getByTestId("mahjong-history")).toHaveTextContent("South melded Pong C3");
+    expect(screen.getByTestId("mahjong-seat-right-bubble")).toHaveTextContent("pon");
     expect(screen.getByTestId("mahjong-seat-bottom-hand")).toHaveTextContent("Hidden hand");
     expect(screen.getByText("Pong C3")).toBeInTheDocument();
     expect(screen.getByLabelText("Mahjong seat east")).toBeInTheDocument();
@@ -124,6 +127,10 @@ describe("MahjongPlugin", () => {
     expect(screen.getByText("Chow B2-B3-B4")).toBeInTheDocument();
     expect(screen.getByText("Kong D5")).toBeInTheDocument();
     expect(screen.getByTestId("mahjong-call-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("mahjong-history")).toHaveTextContent("East · B1");
+    expect(screen.getByTestId("mahjong-seat-right-bubble")).toHaveTextContent("pon");
+    expect(screen.getByTestId("mahjong-stage-status")).toHaveTextContent("Viewing East");
+    expect(screen.getByTestId("mahjong-stage-status")).toHaveTextContent("Wall 52");
     expect(within(screen.getByTestId("mahjong-call-panel")).getByRole("button", { name: /play pong/i })).toBeInTheDocument();
     expect(within(screen.getByTestId("mahjong-call-panel")).getByRole("button", { name: /play hu/i })).toBeInTheDocument();
     expect(
@@ -200,5 +207,61 @@ describe("MahjongPlugin", () => {
       playerId: "east",
       actionText: "B1",
     });
+  });
+
+  it("renders a result banner when the scene carries terminal hand semantics", () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+    const resultScene = structuredClone(mahjongRichScene) as VisualScene;
+    const resultBody = resultScene.body as Record<string, any>;
+
+    resultBody.status = {
+      ...(resultBody.status as Record<string, any>),
+      winner: "east",
+      result: "win",
+      resultReason: "self_draw",
+      remainingTiles: 37,
+    };
+
+    render(
+      <MahjongPlugin
+        session={{
+          sessionId: "mahjong-result",
+          gameId: "mahjong",
+          pluginId: "arena.visualization.mahjong.table_v1",
+          lifecycle: "closed",
+          playback: {
+            mode: "paused",
+            cursorTs: 3021,
+            cursorEventSeq: 30,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "east",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "completed",
+            acceptsHumanIntent: false,
+            activeActorId: "east",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={resultScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByTestId("mahjong-result-banner")).toHaveTextContent("East Win");
+    expect(screen.getByTestId("mahjong-result-banner")).toHaveTextContent("Self Draw");
+    expect(screen.getByTestId("mahjong-result-banner")).toHaveTextContent("37 tiles left in wall");
+    expect(screen.getByTestId("mahjong-stage-status")).toHaveTextContent("East Win");
+    expect(submitInput).not.toHaveBeenCalled();
   });
 });

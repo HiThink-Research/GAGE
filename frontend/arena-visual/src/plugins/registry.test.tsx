@@ -16,12 +16,12 @@ describe("resolveArenaPlugin", () => {
     },
     "arena.visualization.doudizhu.table_v1": {
       sceneKinds: ["table"],
-      supportedObservers: ["player", "global"],
+      supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
     },
     "arena.visualization.mahjong.table_v1": {
       sceneKinds: ["table"],
-      supportedObservers: ["player", "global"],
+      supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
     },
     "arena.visualization.pettingzoo.frame_v1": {

@@ -22,14 +22,30 @@ SCENE_PROJECTION_RULES = {
     "default_layout": "three-seat",
 }
 ACTION_SCHEMA = {
-    **build_placeholder_descriptor(
-        spec_id=VISUALIZATION_SPEC_ID,
-        plugin_id=VISUALIZATION_PLUGIN_ID,
-        visual_kind=VISUAL_KIND,
-        kit_id="doudizhu",
-        channel="action_schema",
-    ),
-    "action_metadata": {"descriptor": "placeholder"},
+    "descriptor": "doudizhu_table_action_schema_v1",
+    "action_metadata": {
+        "descriptor": "doudizhu_table_actions_v1",
+        "legal_action_source": "scene.legalActions",
+        "selection_source": "table.seats[].hand.cards",
+        "typed_actions": ["play_cards", "pass"],
+    },
+    "action_types": [
+        {
+            "id": "play_cards",
+            "label": "Play cards",
+            "payload": {"actionText": "<card pattern>"},
+        },
+        {
+            "id": "pass",
+            "label": "Pass",
+            "payload": {"actionText": "pass"},
+        },
+    ],
+    "selection_model": {
+        "source": "hand.cards",
+        "supports_multi_select": True,
+        "pass_action_text": "pass",
+    },
 }
 OBSERVER_SCHEMA = {
     **build_placeholder_descriptor(
@@ -39,15 +55,31 @@ OBSERVER_SCHEMA = {
         kit_id="doudizhu",
         channel="observer_schema",
     ),
-    "supported_modes": ["player", "global"],
+    "supported_modes": ["global", "spectator", "camera", "player"],
 }
-TIMELINE_ANNOTATION_RULES = build_placeholder_descriptor(
-    spec_id=VISUALIZATION_SPEC_ID,
-    plugin_id=VISUALIZATION_PLUGIN_ID,
-    visual_kind=VISUAL_KIND,
-    kit_id="doudizhu",
-    channel="timeline_annotations",
-)
+TIMELINE_ANNOTATION_RULES = {
+    "descriptor": "doudizhu_table_timeline_v1",
+    "focus_event_types": ["decision_window_open", "action_intent", "result"],
+    "event_labels": {
+        "decision_window_open": "Turn opens",
+        "action_intent": "Action submitted",
+        "result": "Round result",
+    },
+    "annotations": [
+        {"id": "pass_chain", "label": "Pass chain", "match_action": "pass"},
+        {"id": "lead_play", "label": "Lead play", "match_event": "decision_window_open"},
+        {"id": "round_result", "label": "Round result", "match_event": "result"},
+    ],
+}
+
+SCENE_PROJECTION_RULES["scene_contract"] = {
+    "table": {
+        "seat_extensions": ["role", "playedCards", "hand.maskedCount"],
+        "center_extensions": ["history"],
+        "status_extensions": ["privateViewPlayerId", "landlordId"],
+        "panel_extensions": ["chatLog", "events", "trace"],
+    }
+}
 
 VISUALIZATION_SPEC = GameVisualizationSpec(
     spec_id=VISUALIZATION_SPEC_ID,

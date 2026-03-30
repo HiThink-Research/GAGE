@@ -28,14 +28,14 @@ EXPECTED_VISUALIZATION_SPECS = {
         "spec_id": "arena/visualization/doudizhu_table_v1",
         "plugin_id": "arena.visualization.doudizhu.table_v1",
         "visual_kind": "table",
-        "supported_observers": ("player", "global"),
+        "supported_observers": ("global", "spectator", "camera", "player"),
     },
     "mahjong": {
         "env": "riichi_4p",
         "spec_id": "arena/visualization/mahjong_table_v1",
         "plugin_id": "arena.visualization.mahjong.table_v1",
         "visual_kind": "table",
-        "supported_observers": ("player", "global"),
+        "supported_observers": ("global", "spectator", "camera", "player"),
     },
     "pettingzoo": {
         "env": "space_invaders",
@@ -83,9 +83,24 @@ def test_visualization_spec_resolution_uses_explicit_spec_id(
     assert tuple(resolved.visualization_spec.observer_schema["supported_modes"]) == expected[
         "supported_observers"
     ]
-    assert resolved.visualization_spec.action_schema["action_metadata"] == {
-        "descriptor": "placeholder"
-    }
+    if kit_id == "doudizhu":
+        assert resolved.visualization_spec.action_schema["action_metadata"] == {
+            "descriptor": "doudizhu_table_actions_v1",
+            "legal_action_source": "scene.legalActions",
+            "selection_source": "table.seats[].hand.cards",
+            "typed_actions": ["play_cards", "pass"],
+        }
+    elif kit_id == "mahjong":
+        assert resolved.visualization_spec.action_schema["action_metadata"] == {
+            "descriptor": "mahjong_table_actions_v1",
+            "legal_action_source": "scene.legalActions",
+            "selection_source": "table.seats[].hand.cards",
+            "typed_actions": ["discard_tile", "call_meld", "declare_win", "pass"],
+        }
+    else:
+        assert resolved.visualization_spec.action_schema["action_metadata"] == {
+            "descriptor": "placeholder"
+        }
 
 
 def test_visualization_spec_plugin_ids_are_unique_across_current_games() -> None:
@@ -120,9 +135,129 @@ def test_mahjong_visualization_spec_declares_structured_table_scene_extensions()
     assert rules["scene_contract"] == {
         "table": {
             "seat_extensions": ["meldGroups", "drawTile", "hand.drawTile"],
-            "center_extensions": ["discardLanes"],
-            "status_extensions": ["lastDiscard"],
+            "center_extensions": ["history", "discardLanes"],
+            "status_extensions": [
+                "privateViewPlayerId",
+                "lastDiscard",
+                "winner",
+                "result",
+                "resultReason",
+                "remainingTiles",
+            ],
+            "panel_extensions": ["chatLog", "events", "trace"],
         }
+    }
+    assert resolved.visualization_spec.observer_schema["descriptor"] == (
+        "mahjong_table_observer_schema_v1"
+    )
+    assert resolved.visualization_spec.observer_schema["default_mode"] == "spectator"
+    assert resolved.visualization_spec.observer_schema["host_selection"] == {
+        "default_mode": "spectator",
+        "player_requires_observer_id": True,
+        "supports_observer_switching": True,
+    }
+    assert resolved.visualization_spec.observer_schema["mode_semantics"] == {
+        "global": {"label": "Global table", "private_hand_visible": False},
+        "spectator": {"label": "Spectator", "private_hand_visible": False},
+        "camera": {"label": "Broadcast camera", "private_hand_visible": False},
+        "player": {"label": "Player seat", "private_hand_visible": True},
+    }
+    assert resolved.visualization_spec.action_schema["action_types"] == [
+        {
+            "id": "discard_tile",
+            "label": "Discard tile",
+            "payload": {"actionText": "<tile code>"},
+        },
+        {
+            "id": "call_meld",
+            "label": "Call meld",
+            "payload": {"actionText": "Pong|Chow|Kong"},
+        },
+        {
+            "id": "declare_win",
+            "label": "Declare win",
+            "payload": {"actionText": "Hu"},
+        },
+        {
+            "id": "pass",
+            "label": "Pass",
+            "payload": {"actionText": "Pass"},
+        },
+    ]
+    assert resolved.visualization_spec.action_schema["selection_model"] == {
+        "source": "hand.cards",
+        "draw_tile_source": "hand.drawTile",
+        "supports_multi_select": False,
+        "confirm_required": True,
+    }
+    assert resolved.visualization_spec.timeline_annotation_rules == {
+        "descriptor": "mahjong_table_timeline_v1",
+        "focus_event_types": ["decision_window_open", "action_intent", "result"],
+        "event_labels": {
+            "decision_window_open": "Discard or call window",
+            "action_intent": "Mahjong action submitted",
+            "result": "Hand result",
+        },
+        "annotations": [
+            {
+                "id": "discard_commit",
+                "label": "Discard selected",
+                "match_action_type": "discard_tile",
+            },
+            {
+                "id": "call_declared",
+                "label": "Call declared",
+                "match_action_regex": "^(pong|chow|kong|gong)$",
+            },
+            {"id": "win_declared", "label": "Win declared", "match_action": "hu"},
+            {"id": "hand_result", "label": "Hand result", "match_event": "result"},
+        ],
+    }
+
+
+def test_doudizhu_visualization_spec_declares_structured_table_semantics() -> None:
+    resolved = _resolve_visualization_spec("doudizhu")
+    rules = resolved.visualization_spec.scene_projection_rules
+
+    assert rules["default_layout"] == "three-seat"
+    assert rules["scene_contract"] == {
+        "table": {
+            "seat_extensions": ["role", "playedCards", "hand.maskedCount"],
+            "center_extensions": ["history"],
+            "status_extensions": ["privateViewPlayerId", "landlordId"],
+            "panel_extensions": ["chatLog", "events", "trace"],
+        }
+    }
+    assert resolved.visualization_spec.action_schema["action_types"] == [
+        {
+            "id": "play_cards",
+            "label": "Play cards",
+            "payload": {"actionText": "<card pattern>"},
+        },
+        {
+            "id": "pass",
+            "label": "Pass",
+            "payload": {"actionText": "pass"},
+        },
+    ]
+    assert resolved.visualization_spec.action_schema["selection_model"] == {
+        "source": "hand.cards",
+        "supports_multi_select": True,
+        "pass_action_text": "pass",
+    }
+    assert resolved.visualization_spec.timeline_annotation_rules == {
+        "descriptor": "doudizhu_table_timeline_v1",
+        "focus_event_types": ["decision_window_open", "action_intent", "result"],
+        "event_labels": {
+            "decision_window_open": "Turn opens",
+            "action_intent": "Action submitted",
+            "result": "Round result",
+        },
+        "annotations": [
+            {"id": "pass_chain", "label": "Pass chain", "match_action": "pass"},
+            {"id": "lead_play", "label": "Lead play", "match_event": "decision_window_open"},
+            {"id": "round_result", "label": "Round result", "match_event": "result"},
+        ],
     }
 
 
