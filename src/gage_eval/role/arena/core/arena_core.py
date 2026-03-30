@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 from gage_eval.role.arena.core.game_session import GameSession
+from gage_eval.role.arena.resources.control import ResourceLifecycleError
 
 
 class GameArenaCore:
@@ -27,10 +28,19 @@ class GameArenaCore:
                 session = GameSession.from_resolved(sample, resolved, resources)
             resolved.scheduler.run(session)
             session.finalize()
-            return self.output_writer.finalize(session)
-        finally:
             if resources is not None:
-                self.resource_control.release(resources)
+                try:
+                    self.resource_control.release(resources)
+                except ResourceLifecycleError:
+                    pass
+            return self.output_writer.finalize(session)
+        except Exception:
+            if resources is not None:
+                try:
+                    self.resource_control.release(resources)
+                except ResourceLifecycleError:
+                    pass
+            raise
 
 
 def _accepts_keyword(callable_obj, keyword: str) -> bool:

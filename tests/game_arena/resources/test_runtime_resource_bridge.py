@@ -43,8 +43,10 @@ from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
 from gage_eval.game_kits.real_time_game.retro_platformer.envs.retro_mario import (
     build_retro_mario_environment,
 )
-from gage_eval.role.arena.games.retro.retro_env import StableRetroArenaEnvironment
-from gage_eval.role.arena.games.vizdoom.env import ViZDoomArenaEnvironment
+from gage_eval.game_kits.real_time_game.retro_platformer.environment import (
+    StableRetroArenaEnvironment,
+)
+from gage_eval.game_kits.real_time_game.vizdoom.environment import ViZDoomArenaEnvironment
 from gage_eval.game_kits.phase_card_game.doudizhu.envs.classic_3p import (
     build_classic_3p_environment,
 )

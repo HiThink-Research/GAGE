@@ -54,11 +54,13 @@ class GameSession:
     observation_workflow: object = None
     support_workflow: object = None
     visualization_spec: object | None = None
+    resources: object | None = None
     max_steps: int = 256
     final_result: object | None = None
     tick: int = 0
     step: int = 0
     arena_trace: list[dict[str, object]] = field(default_factory=list)
+    support_errors: list[dict[str, object]] = field(default_factory=list)
     invocation_context: GameArenaInvocationContext | None = None
     visual_recorder: ArenaVisualSessionRecorder | None = None
     _current_trace_entry: dict[str, Any] | None = field(default=None, init=False, repr=False)
@@ -110,6 +112,7 @@ class GameSession:
             observation_workflow=resolved.observation_workflow,
             support_workflow=getattr(resolved, "support_workflow", None),
             visualization_spec=getattr(resolved, "visualization_spec", None),
+            resources=resources,
             max_steps=_resolve_max_steps(sample=sample, resolved=resolved),
             invocation_context=invocation_context,
             visual_recorder=_build_visual_recorder(
@@ -326,6 +329,23 @@ class GameSession:
                 session_id,
                 self._visualization_viewer_url or "",
             )
+            self._bind_visualization_resource(
+                mode="arena_visual",
+                viewer_url=self._visualization_viewer_url,
+                session_id=session_id,
+                run_id=run_id,
+                replay_viewer_close=(
+                    None
+                    if session_id is None
+                    else (
+                        lambda: _unregister_arena_visual_live_session(
+                            visual_server,
+                            session_id=session_id,
+                            run_id=run_id,
+                        )
+                    )
+                ),
+            )
             self._maybe_launch_visualization_browser()
             return
         frame_source = _resolve_frame_source(self.environment)
@@ -359,6 +379,15 @@ class GameSession:
             "Arena live viewer ready display_id={} viewer_url={}",
             display_id,
             getattr(ws_hub, "viewer_url", ""),
+        )
+        self._bind_visualization_resource(
+            mode="ws_rgb",
+            viewer_url=getattr(ws_hub, "viewer_url", ""),
+            display_id=display_id,
+            replay_viewer_close=lambda: _unregister_ws_rgb_display(
+                ws_hub,
+                display_id=display_id,
+            ),
         )
         _maybe_open_browser(
             getattr(ws_hub, "viewer_url", ""),
@@ -421,6 +450,11 @@ class GameSession:
             return context
         result = runner(hook, context)
         if isinstance(result, SupportContext):
+            errors = result.state.get("support_errors")
+            if isinstance(errors, list):
+                for error in errors:
+                    if isinstance(error, Mapping) and error not in self.support_errors:
+                        self.support_errors.append(dict(error))
             return result
         return context
 
@@ -606,6 +640,7 @@ class GameSession:
             return
         try:
             artifacts = recorder.persist(replay_path)
+            self._switch_visualization_to_replay(str(replay_path))
             replay_manifest_path = Path(replay_path)
             if replay_manifest_path.exists():
                 updated = update_replay_manifest_visual_session_ref(
@@ -614,6 +649,7 @@ class GameSession:
                 )
                 if not updated:
                     self._visual_artifacts_error = "replay_manifest_update_failed"
+                    self._record_visualization_artifact_error(self._visual_artifacts_error)
                     logger.warning(
                         "Arena visual replay manifest update failed for replay_path={}",
                         replay_path,
@@ -625,6 +661,7 @@ class GameSession:
                 )
         except Exception as exc:  # pragma: no cover - defensive sidecar guard
             self._visual_artifacts_error = str(exc)
+            self._record_visualization_artifact_error(self._visual_artifacts_error)
             logger.warning(
                 "Arena visual sidecar persistence failed for replay_path={}: {}",
                 replay_path,
@@ -666,6 +703,171 @@ class GameSession:
                     unregister(sample_id)
         self._sample_action_router = None
         self._sample_action_server = None
+
+    def _bind_visualization_resource(
+        self,
+        *,
+        mode: str,
+        viewer_url: str | None = None,
+        display_id: str | None = None,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        replay_viewer_close=None,
+    ) -> None:
+        resources = self.resources
+        if resources is None:
+            return
+        from gage_eval.role.arena.resources.visualization import (
+            VisualizationPhase,
+            VisualizationSession,
+        )
+
+        artifacts: dict[str, object] = {
+            "visualization_mode": str(mode),
+        }
+        if viewer_url not in (None, ""):
+            artifacts["viewer_url"] = str(viewer_url)
+        if display_id not in (None, ""):
+            artifacts["display_id"] = str(display_id)
+        if session_id not in (None, ""):
+            artifacts["session_id"] = str(session_id)
+        if run_id not in (None, ""):
+            artifacts["run_id"] = str(run_id)
+
+        visualization = VisualizationSession(
+            phase=VisualizationPhase.LIVE,
+            display=_VisualizationDisplayAdapter(),
+            replay_viewer=_VisualizationReplayViewerAdapter(close_callback=replay_viewer_close),
+            artifacts=artifacts,
+        )
+        _set_resource_value(resources, "visualization", visualization)
+        _ensure_resource_category(resources, "visualization_resource")
+        _record_resource_lifecycle(
+            resources,
+            "allocated",
+            resource_category="visualization_resource",
+        )
+
+    def _switch_visualization_to_replay(self, replay_path: str) -> None:
+        visualization = _get_resource_value(self.resources, "visualization")
+        if visualization is None:
+            return
+        switch_to_replay = getattr(visualization, "switch_to_replay", None)
+        if not callable(switch_to_replay):
+            return
+        switch_to_replay(str(replay_path))
+
+    def _record_visualization_artifact_error(self, message: str) -> None:
+        if not message:
+            return
+        visualization = _get_resource_value(self.resources, "visualization")
+        artifacts = getattr(visualization, "artifacts", None)
+        if isinstance(artifacts, dict):
+            artifacts["artifact_error"] = {
+                "error_code": "visualization_failure",
+                "message": str(message),
+            }
+
+
+class _VisualizationDisplayAdapter:
+    def close_inputs(self) -> None:
+        return None
+
+
+class _VisualizationReplayViewerAdapter:
+    def __init__(self, *, close_callback=None) -> None:
+        self._close_callback = close_callback
+
+    def load(self, replay_uri: str) -> None:
+        del replay_uri
+        return None
+
+    def close(self) -> None:
+        if callable(self._close_callback):
+            self._close_callback()
+
+
+def _get_resource_value(resources: object | None, key: str, default: object | None = None):
+    if resources is None:
+        return default
+    if isinstance(resources, dict):
+        return resources.get(key, default)
+    return getattr(resources, key, default)
+
+
+def _set_resource_value(resources: object | None, key: str, value: object) -> None:
+    if resources is None:
+        return
+    if isinstance(resources, dict):
+        resources[key] = value
+        return
+    setattr(resources, key, value)
+
+
+def _ensure_resource_category(resources: object | None, category: str) -> None:
+    if resources is None:
+        return
+    existing = _get_resource_value(resources, "resource_categories", ())
+    if isinstance(existing, (list, tuple, set, frozenset)):
+        normalized = tuple(str(item) for item in existing if str(item).strip())
+    else:
+        normalized = ()
+    if category in normalized:
+        return
+    _set_resource_value(resources, "resource_categories", normalized + (str(category),))
+
+
+def _record_resource_lifecycle(
+    resources: object | None,
+    phase: str,
+    *,
+    resource_category: str | None = None,
+    details: dict[str, object] | None = None,
+) -> None:
+    if resources is None:
+        return
+    recorder = getattr(resources, "record_lifecycle", None)
+    if callable(recorder):
+        recorder(
+            phase,
+            resource_category=resource_category,
+            details=details,
+        )
+        return
+    event: dict[str, object] = {"phase": str(phase)}
+    if resource_category is not None:
+        event["resource_category"] = str(resource_category)
+    if details:
+        event["details"] = dict(details)
+    if isinstance(resources, dict):
+        resources["lifecycle_phase"] = str(phase)
+        events = resources.setdefault("lifecycle_events", [])
+        if isinstance(events, list):
+            events.append(event)
+        return
+    setattr(resources, "lifecycle_phase", str(phase))
+    events = getattr(resources, "lifecycle_events", None)
+    if isinstance(events, list):
+        events.append(event)
+        return
+    setattr(resources, "lifecycle_events", [event])
+
+
+def _unregister_arena_visual_live_session(
+    visual_server: object,
+    *,
+    session_id: str,
+    run_id: str | None,
+) -> None:
+    unregister = getattr(visual_server, "unregister_live_session", None)
+    if callable(unregister):
+        unregister(session_id=session_id, run_id=run_id)
+
+
+def _unregister_ws_rgb_display(ws_hub: object, *, display_id: str) -> None:
+    unregister = getattr(ws_hub, "unregister_display", None)
+    if callable(unregister):
+        unregister(display_id)
 
 
 def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:

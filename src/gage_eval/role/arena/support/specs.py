@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import gage_eval.role.arena.support.registry as _support_registry  # noqa: F401
+from gage_eval.role.arena.support.hooks import (
+    SupportDegradePolicy,
+    SupportHook,
+    SupportUnitKind,
+)
 from gage_eval.registry import registry
 
 
@@ -12,6 +17,9 @@ from gage_eval.registry import registry
 class SupportWorkflowSpec:
     workflow_id: str
     unit_ids: tuple[str, ...] = ()
+    hook_bindings: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
+    degrade_policy: str = SupportDegradePolicy.FAIL_FAST.value
     defaults: dict[str, object] = field(default_factory=dict)
 
 
@@ -19,6 +27,8 @@ class SupportWorkflowSpec:
 class SupportUnitSpec:
     unit_id: str
     impl: str
+    unit_kind: str = SupportUnitKind.EXECUTION_SUPPORT.value
+    metadata: dict[str, object] = field(default_factory=dict)
     defaults: dict[str, object] = field(default_factory=dict)
 
 
@@ -47,10 +57,13 @@ class PlayerDriverSpec:
 DEFAULT_SUPPORT_WORKFLOW = SupportWorkflowSpec(
     workflow_id="arena/default",
     unit_ids=("arena/default",),
+    hook_bindings={SupportHook.BEFORE_APPLY.value: ("arena/default",)},
+    metadata={"workflow_kind": "game_support"},
 )
 DEFAULT_SUPPORT_UNIT = SupportUnitSpec(
     unit_id="arena/default",
     impl="placeholder://arena/support_units/default",
+    unit_kind=SupportUnitKind.EXECUTION_SUPPORT.value,
 )
 DEFAULT_OBSERVATION_WORKFLOW = ObservationWorkflowSpec(
     workflow_id="arena/default",

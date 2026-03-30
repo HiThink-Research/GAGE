@@ -55,6 +55,30 @@ def test_support_workflow_runs_only_units_for_selected_hook() -> None:
     assert result.unit_trace == ["before_decide"]
 
 
+def test_support_workflow_continue_degrade_policy_records_error_and_keeps_running() -> None:
+    class _FailingUnit:
+        def invoke(self, context: SupportContext) -> SupportContext:
+            raise RuntimeError("support unit failed")
+
+    workflow = GameSupportWorkflow(
+        workflow_id="degrade",
+        metadata={"workflow_kind": "support"},
+        degrade_policy="continue",
+        units_by_hook={
+            SupportHook.BEFORE_APPLY: [_FailingUnit(), _RecordingUnit("after-failure")]
+        },
+    )
+
+    context = SupportContext(payload={"action": "A1"}, state={})
+    result = workflow.run(SupportHook.BEFORE_APPLY, context)
+
+    assert result is context
+    assert result.unit_trace == ["after-failure"]
+    assert workflow.metadata["workflow_kind"] == "support"
+    assert result.state["support_errors"][0]["error_code"] == "support_workflow_failure"
+    assert result.state["support_errors"][0]["hook"] == "before_apply"
+
+
 def test_support_workflow_registry_builds_noop_workflow() -> None:
     workflow = SupportWorkflowRegistry().build("noop_support_v1")
 
@@ -132,6 +156,46 @@ def test_support_workflow_registry_materializes_clone_local_override_for_default
     result = workflow.run(SupportHook.BEFORE_APPLY, context)
 
     assert result.payload["action"] == [2.0, -2.0]
+
+
+def test_support_workflow_registry_materializes_metadata_and_unit_kind() -> None:
+    support_specs = importlib.import_module("gage_eval.role.arena.support.specs")
+    registry_module = importlib.import_module("gage_eval.role.arena.support.registry")
+
+    clone = registry.clone()
+    clone.register(
+        "support_units",
+        "test/shaping",
+        support_specs.SupportUnitSpec(
+            unit_id="test/shaping",
+            impl="continuous_action_shaping",
+            unit_kind="execution_support",
+            metadata={"slot": "fast_loop"},
+            defaults={"low": -1.0, "high": 1.0},
+        ),
+        desc="Support unit with explicit kind metadata",
+    )
+    clone.register(
+        "support_workflows",
+        "test/workflow",
+        support_specs.SupportWorkflowSpec(
+            workflow_id="test/workflow",
+            hook_bindings={"before_apply": ("test/shaping",)},
+            metadata={"workflow_kind": "slow_fast_loop"},
+            degrade_policy="continue",
+        ),
+        desc="Support workflow with explicit metadata",
+    )
+
+    workflow = registry_module.SupportWorkflowRegistry(registry_view=clone).build(
+        "test/workflow"
+    )
+
+    assert workflow.metadata["workflow_kind"] == "slow_fast_loop"
+    assert workflow.degrade_policy == "continue"
+    assert workflow.unit_metadata[SupportHook.BEFORE_APPLY][0].unit_id == "test/shaping"
+    assert workflow.unit_metadata[SupportHook.BEFORE_APPLY][0].unit_kind == "execution_support"
+    assert workflow.unit_metadata[SupportHook.BEFORE_APPLY][0].metadata == {"slot": "fast_loop"}
 
 
 def test_support_workflow_registry_rejects_unsupported_spec_like_assets() -> None:

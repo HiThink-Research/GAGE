@@ -66,6 +66,17 @@ def _coerce_sequence_list(value: Any) -> list[Any] | None:
     return list(value)
 
 
+def _coerce_error_list(value: Any) -> list[dict[str, object]] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return None
+    normalized: list[dict[str, object]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        normalized.append({str(key): element for key, element in item.items()})
+    return normalized or None
+
+
 def _build_header_contract(sample: Any) -> dict[str, object]:
     runtime_overrides = _read_value(sample, "runtime_overrides")
     if not isinstance(runtime_overrides, Mapping):
@@ -142,6 +153,10 @@ def _build_footer_contract(
 
 def _build_artifacts_contract(session: Any, result: Any) -> dict[str, object] | None:
     artifacts: dict[str, object] = {}
+    resources = _read_value(session, "resources")
+    resource_artifacts = _read_value(resources, "resource_artifacts")
+    if isinstance(resource_artifacts, Mapping):
+        artifacts.update({str(key): value for key, value in resource_artifacts.items()})
     replay_path = _coerce_optional_str(_read_value(result, "replay_path"))
     if replay_path is not None:
         artifacts["replay_ref"] = replay_path
@@ -155,7 +170,45 @@ def _build_artifacts_contract(session: Any, result: Any) -> dict[str, object] | 
         )
     if visual_session_ref is not None:
         artifacts["visual_session_ref"] = visual_session_ref
+    visual_artifacts_error = _coerce_optional_str(_read_value(session, "_visual_artifacts_error"))
+    if visual_artifacts_error is not None:
+        artifacts["artifact_error"] = {
+            "error_code": "visualization_failure",
+            "message": visual_artifacts_error,
+        }
     return artifacts or None
+
+
+def _build_game_context_contract(session: Any) -> dict[str, object]:
+    sample = _read_value(session, "sample")
+    resources = _read_value(session, "resources")
+    payload: dict[str, object] = {
+        "game_kit": str(_read_value(sample, "game_kit") or "unknown"),
+        "env": _read_value(sample, "env"),
+    }
+    support_workflow = _coerce_optional_str(
+        _read_value(_read_value(session, "support_workflow"), "workflow_id")
+    )
+    if support_workflow is not None:
+        payload["support_workflow"] = support_workflow
+    visualization_spec = _coerce_optional_str(
+        _read_value(_read_value(session, "visualization_spec"), "spec_id")
+    )
+    if visualization_spec is not None:
+        payload["visualization_spec"] = visualization_spec
+    resource_categories = _read_value(resources, "resource_categories")
+    if isinstance(resource_categories, Sequence) and not isinstance(resource_categories, (str, bytes)):
+        payload["resource_categories"] = [str(item) for item in resource_categories]
+    lifecycle_phase = _coerce_optional_str(_read_value(resources, "lifecycle_phase"))
+    if lifecycle_phase is not None:
+        payload["resource_lifecycle_phase"] = lifecycle_phase
+    support_errors = _coerce_error_list(_read_value(session, "support_errors"))
+    if support_errors is not None:
+        payload["support_errors"] = support_errors
+    resource_errors = _coerce_error_list(_read_value(resources, "errors"))
+    if resource_errors is not None:
+        payload["resource_errors"] = resource_errors
+    return payload
 
 
 class ArenaOutputWriter:
@@ -164,6 +217,7 @@ class ArenaOutputWriter:
         result = session.ensure_result()
         frozen_result = _freeze_value(result)
         frozen_trace = tuple(_freeze_value(entry) for entry in session.arena_trace)
+        resource_artifacts = _freeze_value(_build_artifacts_contract(session, result))
         return ArenaOutput(
             sample=frozen_sample,
             tick=session.tick,
@@ -173,5 +227,7 @@ class ArenaOutputWriter:
             header=_freeze_value(_build_header_contract(session.sample)),
             trace=frozen_trace,
             footer=_freeze_value(_build_footer_contract(result, frozen_trace)),
-            artifacts=_freeze_value(_build_artifacts_contract(session, result)),
+            resource_artifacts=resource_artifacts,
+            game_context=_freeze_value(_build_game_context_contract(session)),
+            artifacts=resource_artifacts,
         )

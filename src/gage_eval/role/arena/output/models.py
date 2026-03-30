@@ -16,5 +16,7 @@ class ArenaOutput:
     header: Mapping[str, object] | None = None
     trace: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
     footer: Mapping[str, object] | None = None
+    resource_artifacts: Mapping[str, object] | None = None
+    game_context: Mapping[str, object] | None = None
     artifacts: Mapping[str, object] | None = None
     output_kind: str = "arena"

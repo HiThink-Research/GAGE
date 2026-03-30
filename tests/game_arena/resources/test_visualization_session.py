@@ -46,3 +46,9 @@ def test_visualization_session_switches_live_to_replay(
     assert session.phase is VisualizationPhase.REPLAY_READY
     assert fake_display.closed_inputs == 1
     assert fake_replay_viewer.loaded == ["replay://mario/sample-1"]
+    assert session.phase_history == [
+        VisualizationPhase.LIVE,
+        VisualizationPhase.PERSISTING,
+        VisualizationPhase.REPLAY_READY,
+    ]
+    assert session.artifacts["replay_ref"] == "replay://mario/sample-1"

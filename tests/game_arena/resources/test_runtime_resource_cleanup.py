@@ -38,6 +38,18 @@ def test_arena_resource_control_release_closes_terminates_and_reaps_runtime(
     assert fake_process_handle.reap_calls == 1
 
 
+def test_arena_resource_control_allocate_tracks_resource_categories_and_phase() -> None:
+    resources = ArenaResourceControl().allocate(
+        {"env_id": "gomoku_standard", "family": "gomoku"}
+    )
+
+    assert resources.resource_categories == (
+        "game_runtime_resource",
+        "game_bridge_resource",
+    )
+    assert resources.lifecycle_phase == "allocated"
+
+
 def test_arena_resource_control_release_still_terminates_and_reaps_if_close_fails() -> None:
     class CloseFailingHandle:
         def __init__(self) -> None:
@@ -58,8 +70,12 @@ def test_arena_resource_control_release_still_terminates_and_reaps_if_close_fail
     handle = CloseFailingHandle()
     resources = ArenaResources(game_runtime=handle)
 
-    with pytest.raises(RuntimeError, match="close failed"):
+    with pytest.raises(Exception, match="close failed") as exc_info:
         ArenaResourceControl().release(resources)
 
+    error = exc_info.value
+    assert getattr(error, "error_code", None) == "resource_lifecycle_error"
+    assert error.errors[0]["operation"] == "close"
+    assert error.errors[0]["resource_category"] == "game_runtime_resource"
     assert handle.terminated is True
     assert handle.reap_calls == 1

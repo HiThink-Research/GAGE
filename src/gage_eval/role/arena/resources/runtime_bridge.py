@@ -186,6 +186,7 @@ class _RetroRuntimeBackend:
 @dataclass
 class RuntimeLease:
     resource_spec: object = field(default_factory=dict)
+    resource_category: str = "game_runtime_resource"
     backend_kind: str | None = None
     backend: Any | None = None
     closed: bool = False
@@ -249,6 +250,7 @@ class RuntimeLease:
 class RuntimeBridge:
     runtime: RuntimeHandle | None = None
     resource_spec: object = field(default_factory=dict)
+    resource_category: str = "game_bridge_resource"
 
 
 def build_runtime_bridge(

@@ -15,6 +15,12 @@ from gage_eval.role.arena.schedulers.turn import TurnScheduler
 from gage_eval.role.arena.schedulers.real_time_tick import RealTimeTickScheduler
 from gage_eval.role.arena.output.writer import ArenaOutputWriter
 from gage_eval.role.arena.player_drivers.registry import PlayerDriverRegistry
+from gage_eval.role.arena.resources.control import ArenaResourceControl
+from gage_eval.role.arena.resources.specs import ArenaResources
+from gage_eval.role.arena.resources.visualization import (
+    VisualizationPhase,
+    VisualizationSession,
+)
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.support.units.action_shaping import (
@@ -89,6 +95,75 @@ def test_arena_output_writer_returns_frozen_snapshot() -> None:
 
     with pytest.raises(TypeError):
         output.arena_trace[0]["value"] = 3
+
+
+def test_game_arena_core_returns_output_after_release_failures() -> None:
+    class _FailingRuntimeHandle:
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+        def terminate(self) -> None:
+            return None
+
+        def reap(self) -> None:
+            return None
+
+    class _TerminalEnvironment:
+        def is_terminal(self) -> bool:
+            return True
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner="alpha",
+                result=result,
+                reason=reason,
+                move_count=0,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+    class _Resolver:
+        def resolve(self, sample):
+            del sample
+            return SimpleNamespace(
+                game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+                env_spec=SimpleNamespace(
+                    env_id="gomoku_standard",
+                    defaults={
+                        "env_factory": (
+                            lambda *, sample, resolved, resources, player_specs: _TerminalEnvironment()
+                        )
+                    },
+                ),
+                scheduler=SimpleNamespace(run=lambda session: None, defaults={}),
+                resource_spec={"env_id": "gomoku_standard"},
+                player_bindings=(),
+                player_driver_registry=PlayerDriverRegistry(),
+                observation_workflow=None,
+                support_workflow=None,
+                visualization_spec=None,
+            )
+
+    class _ResourceControl:
+        def allocate(self, resource_spec):
+            del resource_spec
+            return ArenaResources(game_runtime=_FailingRuntimeHandle())
+
+        def release(self, resources):
+            return ArenaResourceControl().release(resources)
+
+    core = GameArenaCore(
+        resolver=_Resolver(),
+        resource_control=_ResourceControl(),
+        output_writer=ArenaOutputWriter(),
+    )
+
+    output = core.run_sample(ArenaSample(game_kit="gomoku", env="gomoku_standard"))
+
+    assert output.game_context["resource_lifecycle_phase"] == "release_failed"
+    assert output.game_context["resource_errors"][0]["error_code"] == "resource_lifecycle_error"
+    assert output.game_context["resource_errors"][0]["operation"] == "close"
 
 
 def test_game_session_capture_output_tick_is_available_for_record_cadence() -> None:
@@ -681,6 +756,156 @@ def test_game_session_opens_arena_visual_workspace_after_persisting_visual_sidec
     assert runtime_hub.visualizer.started is True
     assert manifest_path.exists()
     assert browser_calls == ["http://127.0.0.1:5810/sessions/sample-live-2?run_id=run-live-2"]
+
+
+def test_game_session_attaches_visualization_resource_to_runtime_resources(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class _StubArenaVisualServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.live_sources: list[object] = []
+            self.unregistered: list[tuple[str, str | None]] = []
+
+        def start(self) -> None:
+            self.started = True
+
+        def stop(self) -> None:
+            self.started = False
+
+        def build_viewer_url(self, session_id: str, *, run_id: str | None = None) -> str:
+            suffix = "" if run_id is None else f"?run_id={run_id}"
+            return f"http://127.0.0.1:5810/sessions/{session_id}{suffix}"
+
+        def register_live_session(self, source: object) -> None:
+            self.live_sources.append(source)
+
+        def unregister_live_session(self, *, session_id: str, run_id: str | None = None) -> None:
+            self.unregistered.append((session_id, run_id))
+
+    class _StubRuntimeServiceHub:
+        def __init__(self) -> None:
+            self.visualizer = _StubArenaVisualServer()
+
+        def ensure_visualizer(self, factory):
+            _ = factory
+            return self.visualizer
+
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def observe(self, player):
+            return {
+                "board_text": f"board:{player}",
+                "legal_moves": ["A1"],
+                "active_player": "alpha",
+            }
+
+        def apply(self, action):
+            del action
+            self._terminal = True
+            return None
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner="alpha",
+                result=result,
+                reason=reason,
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"player": "alpha", "move": "A1"}],
+            )
+
+    runtime_hub = _StubRuntimeServiceHub()
+    monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path / "runs-root"))
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.webbrowser.open",
+        lambda url: True,
+    )
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session._build_arena_visual_server",
+        lambda config, *, service_hub: runtime_hub.visualizer,
+    )
+
+    resources = ArenaResources(
+        game_runtime=SimpleNamespace(
+            close=lambda: None,
+            terminate=lambda: None,
+            reap=lambda: None,
+        )
+    )
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={
+                "env_factory": (
+                    lambda *, sample, resolved, resources, player_specs: FakeEnvironment()
+                )
+            },
+        ),
+        scheduler=TurnScheduler(binding_id="turn/default"),
+        resource_spec={},
+        player_bindings=(),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=None,
+        visualization_spec=SimpleNamespace(
+            plugin_id="arena.visualization.gomoku.board_v1",
+            game_id="gomoku",
+            observer_schema={"supported_modes": ["global", "player"]},
+            visual_kind="board",
+        ),
+    )
+
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        resolved,
+        resources=resources,
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-live-resource",
+            trace=SimpleNamespace(
+                run_id="run-live-resource",
+                sample_id="sample-live-resource",
+            ),
+            visualizer_config={
+                "enabled": True,
+                "launch_browser": True,
+                "mode": "arena_visual",
+                "port": 5810,
+            },
+            runtime_service_hub=runtime_hub,
+        ),
+    )
+
+    assert isinstance(resources.visualization, VisualizationSession)
+    assert resources.visualization.phase is VisualizationPhase.LIVE
+    assert "visualization_resource" in resources.resource_categories
+
+    session.observe()
+    session.apply(ArenaAction(player="alpha", move="A1", raw="A1"))
+    session.finalize()
+
+    assert resources.visualization.phase is VisualizationPhase.REPLAY_READY
+    assert resources.visualization.artifacts["replay_ref"].endswith("replay.json")
+
+    ArenaResourceControl().release(resources)
+
+    assert resources.visualization.phase is VisualizationPhase.RELEASED
+    assert resources.resource_artifacts["visualization_phase"] == "released"
+    assert runtime_hub.visualizer.unregistered == [
+        ("sample-live-resource", "run-live-resource")
+    ]
 
 
 def test_game_session_registers_live_arena_visual_source_before_finalize(
