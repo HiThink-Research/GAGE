@@ -567,6 +567,14 @@ def graceful_loop_shutdown(loop: Any, loop_thread: Any, model: Any = None) -> No
     except Exception:
         logger.warning("backend model shutdown error", exc_info=True)
     try:
+        if isinstance(loop, asyncio.AbstractEventLoop) and loop.is_running():
+            with contextlib.suppress(Exception):
+                run_coroutine_threadsafe_with_timeout(
+                    loop,
+                    asyncio.sleep(0),
+                    timeout=1.0,
+                    logger_prefix="backend_shutdown",
+                )
         if loop and loop.is_running():
             loop.call_soon_threadsafe(loop.stop)
         if loop_thread and loop_thread.is_alive():
