@@ -22,9 +22,9 @@
     {
       "kind": "arena_impls",
       "name": "gomoku_local_v1",
-      "module": "gage_eval.role.arena.games.gomoku.env",
+      "module": "gage_eval.game_kits.board_game.gomoku.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/gomoku/env.py",
+      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/environment.py",
       "aliases": [],
       "optional": false
     },
@@ -58,9 +58,9 @@
     {
       "kind": "arena_impls",
       "name": "tictactoe_v1",
-      "module": "gage_eval.role.arena.games.tictactoe.env",
+      "module": "gage_eval.game_kits.board_game.tictactoe.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/tictactoe/env.py",
+      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/environment.py",
       "aliases": [],
       "optional": false
     },
@@ -130,18 +130,18 @@
     {
       "kind": "parser_impls",
       "name": "gomoku_v1",
-      "module": "gage_eval.role.arena.parsers.gomoku_parser",
+      "module": "gage_eval.game_kits.board_game.gomoku.parser",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/parsers/gomoku_parser.py",
+      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/parser.py",
       "aliases": [],
       "optional": false
     },
     {
       "kind": "parser_impls",
       "name": "grid_parser_v1",
-      "module": "gage_eval.role.arena.parsers.gomoku_parser",
+      "module": "gage_eval.game_kits.board_game.tictactoe.parser",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/parsers/gomoku_parser.py",
+      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/parser.py",
       "aliases": [],
       "optional": false
     },
@@ -211,9 +211,9 @@
     {
       "kind": "renderer_impls",
       "name": "gomoku_board_v1",
-      "module": "gage_eval.role.arena.games.gomoku.board_renderer",
+      "module": "gage_eval.game_kits.board_game.gomoku.board_renderer",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/gomoku/board_renderer.py",
+      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/board_renderer.py",
       "aliases": [],
       "optional": false
     },
@@ -229,9 +229,9 @@
     {
       "kind": "renderer_impls",
       "name": "tictactoe_board_v1",
-      "module": "gage_eval.role.arena.games.tictactoe.renderer",
+      "module": "gage_eval.game_kits.board_game.tictactoe.renderer",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/tictactoe/renderer.py",
+      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/renderer.py",
       "aliases": [],
       "optional": false
     },
@@ -268,6 +268,51 @@
       "module": "gage_eval.role.arena.support.specs",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "gomoku",
+      "module": "gage_eval.game_kits.board_game.gomoku.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "tictactoe",
+      "module": "gage_eval.game_kits.board_game.tictactoe.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "observation_workflows",
+      "name": "noop_observation_v1",
+      "module": "gage_eval.game_kits.observation",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/observation.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/visualization/gomoku_board_v1",
+      "module": "gage_eval.game_kits.board_game.gomoku.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/visualization.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/visualization/tictactoe_board_v1",
+      "module": "gage_eval.game_kits.board_game.tictactoe.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/visualization.py",
       "aliases": [],
       "optional": false
     }

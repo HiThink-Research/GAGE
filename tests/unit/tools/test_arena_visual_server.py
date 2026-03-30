@@ -12,7 +12,7 @@ from gage_eval.game_kits.board_game.tictactoe.visualization import (
     VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
 )
 from gage_eval.role.arena.core.game_session import _visual_payload_snapshot
-from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
+from gage_eval.game_kits.board_game.gomoku.environment import GomokuArenaEnvironment
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt

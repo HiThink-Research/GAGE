@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
-from gage_eval.role.arena.games.gomoku.env import GomokuArenaEnvironment
+from gage_eval.game_kits.board_game.gomoku.environment import GomokuArenaEnvironment
 
 
 class GomokuStandardEnvironment:
-    """GameKit adapter that reuses the legacy Gomoku local environment."""
+    """GameKit adapter that assembles the Gomoku local environment."""
 
     def __init__(
         self,
@@ -18,6 +18,7 @@ class GomokuStandardEnvironment:
         rule_profile: str,
         win_directions: Sequence[str],
         illegal_policy: dict[str, str | int] | None,
+        obs_image: bool = False,
         player_specs: Sequence[object],
         start_player_id: str | None = None,
     ) -> None:
@@ -26,7 +27,7 @@ class GomokuStandardEnvironment:
             str(getattr(player, "player_id")): str(getattr(player, "display_name"))
             for player in player_specs
         }
-        self._legacy = GomokuArenaEnvironment(
+        self._environment = GomokuArenaEnvironment(
             board_size=board_size,
             win_len=win_len,
             player_ids=player_ids,
@@ -36,6 +37,7 @@ class GomokuStandardEnvironment:
             rule_profile=rule_profile,
             win_directions=win_directions,
             illegal_policy=illegal_policy,
+            obs_image=obs_image,
         )
 
     @classmethod
@@ -58,28 +60,29 @@ class GomokuStandardEnvironment:
                 )
             ),
             illegal_policy=defaults.get("illegal_policy"),
+            obs_image=bool(defaults.get("obs_image", False)),
             player_specs=player_specs,
             start_player_id=defaults.get("start_player_id"),
         )
         return attach_runtime_resources(environment, resources)
 
     def get_active_player(self) -> str:
-        return self._legacy.get_active_player()
+        return self._environment.get_active_player()
 
     def observe(self, player: str):
-        return self._legacy.observe(player)
+        return self._environment.observe(player)
 
     def apply(self, action):
-        return self._legacy.apply(action)
+        return self._environment.apply(action)
 
     def get_last_frame(self):
-        return self._legacy.get_last_frame()
+        return self._environment.get_last_frame()
 
     def is_terminal(self) -> bool:
-        return self._legacy.is_terminal()
+        return self._environment.is_terminal()
 
     def build_result(self, *, result: str, reason: str | None):
-        return self._legacy.build_result(result=result, reason=reason)
+        return self._environment.build_result(result=result, reason=reason)
 
 
 def build_gomoku_standard_environment(*, sample, resolved, resources, player_specs) -> Any:

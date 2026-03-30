@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from gage_eval.role.arena.types import ArenaAction
-from gage_eval.role.arena.games.tictactoe.env import TicTacToeArenaEnvironment
+from gage_eval.game_kits.board_game.tictactoe.environment import TicTacToeArenaEnvironment
 
 
 def test_tictactoe_arena_exposes_get_last_frame() -> None:

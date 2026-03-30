@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from gage_eval.role.arena.games.gomoku.observation_image import (
+from gage_eval.game_kits.board_game.gomoku.observation_image import (
     build_gomoku_observation_image_payload,
 )
-from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
-from gage_eval.role.arena.games.gomoku.rules import GomokuRuleEngine
+from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
+from gage_eval.game_kits.board_game.gomoku.rules import GomokuRuleEngine
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 from gage_eval.registry import registry
 

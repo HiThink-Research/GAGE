@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.board_game.tictactoe.envs.tictactoe_standard import (
+    TicTacToeStandardEnvironment,
     build_tictactoe_standard_environment,
 )
 from gage_eval.game_kits.board_game.tictactoe.visualization import (
@@ -22,6 +23,9 @@ def build_tictactoe_game_kit() -> GameKit:
         family="board_game",
         scheduler_binding="turn/default",
         observation_workflow="noop_observation_v1",
+        game_display=VISUALIZATION_SPEC_ID,
+        replay_viewer=VISUALIZATION_SPEC_ID,
+        parser="grid_parser_v1",
         visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
@@ -42,3 +46,6 @@ def build_tictactoe_game_kit() -> GameKit:
             "coord_scheme": "ROW_COL",
         },
     )
+
+
+__all__ = ["TicTacToeStandardEnvironment", "build_tictactoe_game_kit"]

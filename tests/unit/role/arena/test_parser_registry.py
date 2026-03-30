@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from gage_eval.registry import registry
-from gage_eval.role.arena.parsers.gomoku_parser import GomokuParser, GridParser
-from gage_eval.role.arena.parsers.vizdoom_parser import VizDoomParser
+from gage_eval.game_kits.board_game.gomoku.parser import GomokuParser
+from gage_eval.game_kits.board_game.tictactoe.parser import GridParser
+from gage_eval.game_kits.real_time_game.vizdoom.parser import VizDoomParser
 
 
 def test_parser_registry_resolves_gomoku() -> None:

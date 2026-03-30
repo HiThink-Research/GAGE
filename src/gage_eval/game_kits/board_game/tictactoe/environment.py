@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from gage_eval.registry import registry
-from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
+from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 DEFAULT_PLAYER_IDS = ("player_0", "player_1")

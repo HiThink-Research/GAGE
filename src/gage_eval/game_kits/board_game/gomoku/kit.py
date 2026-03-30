@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from gage_eval.game_kits.contracts import EnvSpec, GameKit
 from gage_eval.game_kits.board_game.gomoku.envs.gomoku_standard import (
+    GomokuStandardEnvironment,
     build_gomoku_standard_environment,
 )
 from gage_eval.game_kits.board_game.gomoku.visualization import (
@@ -22,6 +23,9 @@ def build_gomoku_game_kit() -> GameKit:
         family="board_game",
         scheduler_binding="turn/default",
         observation_workflow="noop_observation_v1",
+        game_display=VISUALIZATION_SPEC_ID,
+        replay_viewer=VISUALIZATION_SPEC_ID,
+        parser="gomoku_v1",
         visualization_spec=VISUALIZATION_SPEC_ID,
         env_catalog=(
             EnvSpec(
@@ -52,3 +56,6 @@ def build_gomoku_game_kit() -> GameKit:
             "rule_profile": "freestyle",
         },
     )
+
+
+__all__ = ["GomokuStandardEnvironment", "build_gomoku_game_kit"]

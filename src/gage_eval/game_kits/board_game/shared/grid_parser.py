@@ -1,4 +1,4 @@
-"""Parsing utilities for Gomoku moves."""
+"""Shared coordinate parser for board-game GameKits."""
 
 from __future__ import annotations
 
@@ -6,8 +6,10 @@ from dataclasses import dataclass
 import re
 from typing import Iterable, Optional, Sequence, Tuple
 
-from gage_eval.registry import registry
-from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
+from gage_eval.game_kits.board_game.gomoku.coord_scheme import (
+    GomokuCoordCodec,
+    normalize_coord_scheme,
+)
 
 DEFAULT_RETHINK_TEMPLATE = (
     "Your previous move could not be processed.\n"
@@ -21,7 +23,7 @@ DEFAULT_RETHINK_TEMPLATE = (
 
 
 @dataclass(frozen=True)
-class GomokuParseResult:
+class GridCoordParseResult:
     """Represents the parsed move and any parsing error."""
 
     move: Optional[Tuple[int, int]]
@@ -30,28 +32,18 @@ class GomokuParseResult:
     error: Optional[str]
 
 
-@registry.asset(
-    "parser_impls",
-    "gomoku_v1",
-    desc="Gomoku move parser (configurable coordinate scheme)",
-    tags=("gomoku", "parser"),
-)
-class GomokuParser:
-    """Parse Gomoku move coordinates from model output."""
+class GridCoordParser:
+    """Parse board-game coordinates from text output."""
 
     def __init__(self, board_size: int = 15, coord_scheme: str = "A1") -> None:
-        """Initialize the parser.
-
-        Args:
-            board_size: Board dimension (board_size x board_size).
-            coord_scheme: Coordinate scheme identifier (default: A1).
-        """
-
         if board_size < 1:
             raise ValueError("board_size must be positive")
         self.board_size = board_size
         self.coord_scheme = normalize_coord_scheme(coord_scheme)
-        self._coord_codec = GomokuCoordCodec(board_size=board_size, coord_scheme=self.coord_scheme)
+        self._coord_codec = GomokuCoordCodec(
+            board_size=board_size,
+            coord_scheme=self.coord_scheme,
+        )
         self._coord_pattern = self._build_coord_pattern()
         self._pair_pattern = re.compile(r"(\d{1,3})\s*[,\s]+\s*(\d{1,3})")
 
@@ -60,25 +52,15 @@ class GomokuParser:
         text: str,
         *,
         legal_moves: Optional[Iterable[Tuple[int, int]] | Iterable[str]] = None,
-    ) -> GomokuParseResult:
-        """Parse a move from text and optionally validate against legal moves.
-
-        Args:
-            text: Raw model output or user input.
-            legal_moves: Optional list of legal moves (tuples or A1 coords).
-
-        Returns:
-            The parsed move result.
-        """
-
+    ) -> GridCoordParseResult:
         raw = text or ""
         stripped = raw.strip()
         if not stripped:
-            return GomokuParseResult(None, None, raw, "empty_text")
+            return GridCoordParseResult(None, None, raw, "empty_text")
 
         candidates, parse_error = self._parse_candidates(stripped)
         if not candidates:
-            return GomokuParseResult(None, None, raw, parse_error or "invalid_format")
+            return GridCoordParseResult(None, None, raw, parse_error or "invalid_format")
 
         legal_tuple_set, legal_coord_set = self._normalize_legal_moves(legal_moves)
         if legal_tuple_set is not None or legal_coord_set is not None:
@@ -90,12 +72,12 @@ class GomokuParser:
                     legal_candidates.append((move, coord))
             if legal_candidates:
                 move, coord = legal_candidates[-1]
-                return GomokuParseResult(move, coord, raw, None)
+                return GridCoordParseResult(move, coord, raw, None)
             move, coord = candidates[-1]
-            return GomokuParseResult(move, coord, raw, "illegal_move")
+            return GridCoordParseResult(move, coord, raw, "illegal_move")
 
         move, coord = candidates[-1]
-        return GomokuParseResult(move, coord, raw, None)
+        return GridCoordParseResult(move, coord, raw, None)
 
     def build_rethink_prompt(
         self,
@@ -104,17 +86,6 @@ class GomokuParser:
         reason: str,
         legal_moves: Sequence[str],
     ) -> str:
-        """Build a retry prompt when an illegal move is detected.
-
-        Args:
-            last_output: The previous model output.
-            reason: Explanation for why the move is invalid.
-            legal_moves: List of legal move coordinates.
-
-        Returns:
-            A formatted prompt for rethinking.
-        """
-
         legal_block = ", ".join(legal_moves)
         return DEFAULT_RETHINK_TEMPLATE.format(
             reason=reason,
@@ -122,7 +93,10 @@ class GomokuParser:
             legal_moves=legal_block,
         )
 
-    def _parse_candidates(self, text: str) -> Tuple[list[Tuple[Tuple[int, int], str]], Optional[str]]:
+    def _parse_candidates(
+        self,
+        text: str,
+    ) -> Tuple[list[Tuple[Tuple[int, int], str]], Optional[str]]:
         candidates: list[Tuple[Tuple[int, int], str]] = []
         parse_error: Optional[str] = None
         if self.coord_scheme == "ROW_COL":
@@ -206,11 +180,8 @@ class GomokuParser:
         raise ValueError("legal_moves must be coordinates or row/col tuples")
 
 
-@registry.asset(
-    "parser_impls",
-    "grid_parser_v1",
-    desc="Grid game move parser (configurable coordinate scheme)",
-    tags=("grid", "parser"),
-)
-class GridParser(GomokuParser):
-    """Parse grid game move coordinates from model output."""
+__all__ = [
+    "DEFAULT_RETHINK_TEMPLATE",
+    "GridCoordParseResult",
+    "GridCoordParser",
+]

@@ -7,10 +7,86 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
 def _load_config(relpath: str) -> dict:
     return yaml.safe_load((REPO_ROOT / relpath).read_text(encoding="utf-8"))
+
+
+
+@pytest.mark.parametrize(
+    ("relpath", "expected_overrides"),
+    [
+        (
+            "config/custom/gomoku/gomoku_human_visual_gamekit.yaml",
+            {
+                "board_size": 3,
+                "win_len": 3,
+                "coord_scheme": "A1",
+                "obs_image": True,
+            },
+        ),
+        (
+            "config/custom/gomoku/gomoku_human_visual_15x15_gamekit.yaml",
+            {
+                "board_size": 15,
+                "win_len": 5,
+                "max_turns": 225,
+                "coord_scheme": "A1",
+                "obs_image": True,
+            },
+        ),
+    ],
+)
+def test_gomoku_human_visual_configs_route_human_input_to_black(
+    relpath: str,
+    expected_overrides: dict[str, object],
+) -> None:
+    payload = _load_config(relpath)
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "gomoku"
+    assert params["env"] == "gomoku_standard"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == expected_overrides
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["linger_after_finish_s"] == 15.0
+    assert [player["seat"] for player in players] == ["black", "white"]
+    assert [player["player_id"] for player in players] == ["Black", "White"]
+    assert [player["player_kind"] for player in players] == ["human", "llm"]
+    assert players[1]["backend_id"] == "local_qwen35_litellm_backend"
+
+
+def test_tictactoe_human_visual_config_routes_human_input_to_x() -> None:
+    payload = _load_config("config/custom/tictactoe/tictactoe_human_visual_gamekit.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "tictactoe"
+    assert params["env"] == "tictactoe_standard"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == {
+        "coord_scheme": "ROW_COL",
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["linger_after_finish_s"] == 15.0
+    assert [player["seat"] for player in players] == ["x", "o"]
+    assert [player["player_id"] for player in players] == ["X", "O"]
+    assert [player["player_kind"] for player in players] == ["human", "llm"]
+    assert players[1]["backend_id"] == "local_qwen35_litellm_backend"
 
 
 @pytest.mark.parametrize(
@@ -58,6 +134,7 @@ def test_mahjong_human_visual_config_uses_real_env_and_llm_opponents(relpath: st
         player["backend_id"] == "local_qwen35_litellm_backend"
         for player in players[1:]
     )
+
 
 
 @pytest.mark.parametrize(

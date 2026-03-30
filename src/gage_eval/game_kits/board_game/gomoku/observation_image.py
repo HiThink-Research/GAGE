@@ -8,7 +8,7 @@ import zlib
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
+from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
 
 _COLOR_BACKGROUND = (240, 211, 154)
 _COLOR_BOARD = (216, 168, 91)

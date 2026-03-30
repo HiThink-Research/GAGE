@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from gage_eval.game_kits.contracts import GameVisualizationSpec
-from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
+from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
 from gage_eval.role.arena.visualization.contracts import (
     MediaSourceRef,
     TimelineEvent,

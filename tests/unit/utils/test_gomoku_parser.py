@@ -1,4 +1,4 @@
-from gage_eval.role.arena.parsers.gomoku_parser import GomokuParser
+from gage_eval.game_kits.board_game.gomoku.parser import GomokuParser
 
 
 def test_parse_coord_letter_number():

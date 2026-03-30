@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from gage_eval.role.arena.games.gomoku.env import GomokuLocalCore
-from gage_eval.role.arena.parsers.gomoku_parser import GomokuParser
+from gage_eval.game_kits.board_game.gomoku.environment import GomokuLocalCore
+from gage_eval.game_kits.board_game.gomoku.parser import GomokuParser
 
 
 def test_coord_scheme_aa1_supports_large_board() -> None:
