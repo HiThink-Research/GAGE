@@ -24,6 +24,6 @@ class ClientRunResult:
     stdout: str
     stderr: str
     patch_path: Optional[str] = None
+    patch_content: Optional[str] = None
     trajectory_path: Optional[str] = None
     artifacts: Dict[str, str] = field(default_factory=dict)
-

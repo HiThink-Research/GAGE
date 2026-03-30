@@ -71,3 +71,108 @@ def test_dut_agent_uses_agent_runtime_path(monkeypatch) -> None:
     assert result["status"] == "success"
     assert result["answer"] == "patched"
     assert result["patch_path"] == "/tmp/submission.patch"
+
+
+@pytest.mark.fast
+def test_dut_agent_runtime_writes_swebench_eval_result(monkeypatch) -> None:
+    class _FakeEnvironment:
+        pass
+
+    class _SwebenchScheduler:
+        def run(self, session):
+            return SchedulerResult(
+                status="success",
+                answer="diff --git a/answer.py b/answer.py\n+    return 42\n",
+                patch_path="/tmp/submission.patch",
+                stdout_path="/tmp/stdout.log",
+                trajectory_path="/tmp/trajectory.json",
+                raw_output={"patch_content": "diff --git a/answer.py b/answer.py\n+    return 42\n"},
+            )
+
+    class _SwebenchResolver(_FakeResolver):
+        def resolve(self, runtime_id: str):
+            return type(
+                "Plan",
+                (),
+                {
+                    "runtime_spec": AgentRuntimeSpec(
+                        agent_runtime_id=runtime_id,
+                        scheduler="installed_client",
+                        benchmark_kit_id="swebench",
+                    ),
+                    "benchmark_kit_id": "swebench",
+                    "params": {"verifier": {"mode": "patch_presence"}},
+                },
+            )()
+
+        def build_scheduler(self, plan):
+            return _SwebenchScheduler()
+
+    from gage_eval.agent_runtime.environment import provider as provider_module
+
+    monkeypatch.setattr(
+        provider_module.EnvironmentProvider,
+        "build",
+        lambda self, plan, sample: _FakeEnvironment(),
+    )
+    adapter = DUTAgentAdapter(
+        adapter_id="dut-swebench",
+        role_type="dut_agent",
+        capabilities=(),
+        agent_runtime_resolver=_SwebenchResolver(),
+        agent_runtime_id="runtime-swebench",
+    )
+    sample = {
+        "instruction": "Change answer.py so compute_answer returns 42.",
+        "instance_id": "swebench__smoke_1",
+        "metadata": {"expected_patch_contains": ["return 42"]},
+    }
+
+    result = adapter.invoke({"sample": sample, "trace": ObservabilityTrace()}, RoleAdapterState())
+
+    assert result["status"] == "success"
+    assert result["verifier_result"]["status"] == "pass"
+    assert sample["eval_result"]["status"] == "pass"
+
+
+@pytest.mark.fast
+def test_dut_agent_runtime_writes_terminal_bench_eval_result(monkeypatch) -> None:
+    class _FakeEnvironment:
+        pass
+
+    class _TerminalResolver(_FakeResolver):
+        def resolve(self, runtime_id: str):
+            return type(
+                "Plan",
+                (),
+                {
+                    "runtime_spec": AgentRuntimeSpec(
+                        agent_runtime_id=runtime_id,
+                        scheduler="installed_client",
+                        benchmark_kit_id="terminal_bench",
+                    ),
+                    "benchmark_kit_id": "terminal_bench",
+                },
+            )()
+
+    from gage_eval.agent_runtime.environment import provider as provider_module
+
+    monkeypatch.setattr(
+        provider_module.EnvironmentProvider,
+        "build",
+        lambda self, plan, sample: _FakeEnvironment(),
+    )
+    adapter = DUTAgentAdapter(
+        adapter_id="dut-terminal",
+        role_type="dut_agent",
+        capabilities=(),
+        agent_runtime_resolver=_TerminalResolver(),
+        agent_runtime_id="runtime-terminal",
+    )
+    sample = {"instruction": "Create hello.txt", "instance_id": "tb2__smoke_1"}
+
+    result = adapter.invoke({"sample": sample, "trace": ObservabilityTrace()}, RoleAdapterState())
+
+    assert result["status"] == "success"
+    assert result["verifier_result"]["status"] == "passed"
+    assert sample["eval_result"]["status"] == "passed"

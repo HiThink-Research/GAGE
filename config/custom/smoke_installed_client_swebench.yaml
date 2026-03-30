@@ -3,205 +3,25 @@ kind: PipelineConfig
 
 metadata:
   name: smoke_installed_client_swebench
-  description: Minimal installed-client SWE-bench smoke config.
+  description: Single-sample SWE-bench smoke for installed_client and judge-adapter verifier coverage.
 
 custom:
   steps:
-    - step: support
-      adapter_id: swebench_context_provider
-    - step: support
-      adapter_id: swebench_toolchain
     - step: inference
-      adapter_id: swebench_dut_agent
-    - step: judge
-      adapter_id: swebench_docker_judge
+      adapter_id: dut_codex_swebench
     - step: auto_eval
-
-prompts:
-  - prompt_id: swebench_pro_patch_prompt
-    renderer: jinja_delimited_chat
-    params:
-      mode: header_body_first_user
-      include_system: true
-      message_delimiter: "<<<MSG>>>"
-      section_delimiter: "<<<SECTION>>>"
-    template: |
-      You are an expert software engineer tasked with resolving a GitHub issue in a repository.
-
-      GOAL:
-      Fix the bug described in the issue and generate a valid git patch.
-
-      TOOLS:
-      You have access to a Linux shell in the repository root.
-      - `run_shell`: Execute bash commands.
-      - `read_file`: Read file contents.
-      - `write_file`: Overwrite file contents.
-      - `replace_in_file`: Replace text in a file.
-      - `submit_patch_tool`: Run `git diff` and return the unified diff in stdout.
-
-      IMPORTANT:
-      1. The final answer MUST be the unified diff text only.
-      2. The diff MUST start with `diff --git`.
-      3. Do NOT commit your changes.
-      4. If you create new files, stage them or call `submit_patch_tool` with `stage_untracked: true`.
-      5. Do not call `submit_patch_tool` more than once.
-
-      <<<SECTION>>>
-      {% set content = sample.messages[0].content %}
-      {% if content is string %}
-      {{ content }}
-      {% else %}
-      {% for item in content %}
-      {% if item.get("type") == "text" and item.get("text") %}
-      {{ item.get("text") }}
-      {% endif %}
-      {% endfor %}
-      {% endif %}
 
 datasets:
   - dataset_id: swebench_smoke
-    loader: inline
+    loader: jsonl
     params:
-      samples:
-        - id: swebench_smoke_1
-          instance_id: swebench_smoke_1
-          messages:
-            - role: user
-              content: Fix the failing test in this repository.
-          metadata:
-            instance_id: swebench_smoke_1
-            repo: example/repo
-            base_commit: abc123
-            fail_to_pass: []
-            pass_to_pass: []
-
-backends:
-  - backend_id: gpt52_openai_http
-    type: openai_http
-    config:
-      base_url: https://api.openai.com/v1
-      model: gpt-5.2
-      require_api_key: true
-      max_retries: 6
-
-agent_backends:
-  - agent_backend_id: swebench_agent_main
-    type: model_backend
-    backend_id: gpt52_openai_http
-
-sandbox_profiles:
-  - sandbox_id: swebench_runtime
-    runtime: docker
-    resources:
-      cpu: 4
-      memory: 8g
-    runtime_configs:
-      start_container: true
-      auto_remove: true
-      network_mode: none
-      platform: linux/amd64
-      entrypoint: /bin/bash
-      command:
-        - -c
-        - sleep 3600
-      exec_workdir: /app
+      path: config/custom/swebench/smoke_installed_client_swebench.jsonl
+      streaming: false
 
 role_adapters:
-  - adapter_id: swebench_context_provider
-    role_type: context_provider
-    sandbox:
-      sandbox_id: swebench_runtime
-      lifecycle: per_sample
-    params:
-      implementation: swebench_repo
-      implementation_params:
-        repo_source: docker_image
-        repo_root: /app
-        topk_files: 5
-        repo_map_max_files: 30
-        repo_map_max_lines: 120
-        repo_map_scan_lines: 400
-        repo_map_max_symbols_per_file: 4
-        max_tree_depth: 3
-        max_tree_lines: 200
-        max_file_lines: 500
-        max_file_chars: 20000
-        block_network: true
-
-  - adapter_id: swebench_dut_agent
+  - adapter_id: dut_codex_swebench
     role_type: dut_agent
-    agent_backend_id: swebench_agent_main
     agent_runtime_id: codex_swebench
-    prompt_id: swebench_pro_patch_prompt
-    sandbox:
-      sandbox_id: swebench_runtime
-      lifecycle: per_sample
-    params:
-      max_turns: 40
-
-  - adapter_id: swebench_toolchain
-    role_type: toolchain
-    params:
-      tools:
-        - name: run_shell
-          description: Run a shell command in the repo root.
-          parameters:
-            type: object
-            properties:
-              command: {type: string}
-              cmd: {type: string}
-              timeout_s: {type: integer}
-            required: []
-        - name: read_file
-          description: Read file content from a path.
-          parameters:
-            type: object
-            properties:
-              path: {type: string}
-            required: [path]
-        - name: write_file
-          description: Overwrite file content at a path.
-          parameters:
-            type: object
-            properties:
-              path: {type: string}
-              content: {type: string}
-            required: [path, content]
-        - name: replace_in_file
-          description: Replace text in a file.
-          parameters:
-            type: object
-            properties:
-              path: {type: string}
-              pattern: {type: string}
-              replacement: {type: string}
-              count: {type: integer}
-            required: [path, pattern, replacement]
-        - name: submit_patch_tool
-          description: Run git diff and return the unified diff.
-          x-gage:
-            final_answer_from: stdout
-          parameters:
-            type: object
-            properties:
-              timeout_s: {type: integer}
-              stage_untracked: {type: boolean}
-            required: []
-
-  - adapter_id: swebench_docker_judge
-    role_type: judge_extend
-    sandbox:
-      sandbox_id: swebench_runtime
-      lifecycle: per_sample
-    params:
-      implementation: swebench_docker
-      implementation_params:
-        scripts_dir: gage-eval-main/third_party/swebench_pro/run_scripts
-        dockerfiles_dir: gage-eval-main/third_party/swebench_pro/dockerfiles
-        dockerhub_username: jefzda
-        block_network: true
-        test_timeout_s: 900
-        docker_platform: linux/amd64
 
 tasks:
   - task_id: swebench_smoke_agent_eval
@@ -221,12 +41,19 @@ agent_runtimes:
     benchmark_kit_id: swebench
     client_id: codex
     resource_policy:
-      environment_kind: docker
-      timeout_sec: 600
+      environment_kind: remote
+      timeout_sec: 300
+    client_surface_policy:
+      required:
+        - terminal
+        - fs
     sandbox_policy:
-      sandbox_profile_id: swebench_runtime
+      prefer_remote: true
+      remote_mode: attached
+    params:
+      verifier:
+        mode: patch_presence
 
 benchmark_kits:
   - kit_id: swebench
     module: gage_eval.agent_eval_kits.swebench.kit
-

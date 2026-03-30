@@ -54,11 +54,16 @@ def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
             from gage_eval.agent_runtime.clients import ClientRunResult
 
             assert request.instruction == "fix the failing test"
+            assert request.metadata["patch_path"].endswith("submission.patch")
+            assert request.metadata["stdout_path"].endswith("stdout.log")
+            assert request.metadata["trajectory_path"].endswith("trajectory.json")
+            assert request.metadata["artifacts"]["patch_path"].endswith("submission.patch")
             return ClientRunResult(
                 exit_code=0,
                 stdout="ok",
                 stderr="",
                 patch_path="/tmp/submission.patch",
+                patch_content="diff --git a/foo b/foo\n",
                 trajectory_path="/tmp/trajectory.json",
                 artifacts={"stdout_path": "/tmp/stdout.log"},
             )
@@ -72,6 +77,7 @@ def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
     result = scheduler.run(session)
 
     assert result.status == "success"
+    assert result.answer.startswith("diff --git")
     assert result.patch_path == "/tmp/submission.patch"
     assert result.stdout_path == "/tmp/stdout.log"
 

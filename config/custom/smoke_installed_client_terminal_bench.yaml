@@ -13,11 +13,9 @@ custom:
 
 datasets:
   - dataset_id: tb2_smoke
-    hub: inline
-    hub_params:
-      path: config/custom/terminal_bench/smoke_installed_client_terminal_bench.jsonl
     loader: jsonl
     params:
+      path: config/custom/terminal_bench/smoke_installed_client_terminal_bench.jsonl
       streaming: false
 
 agent_runtimes:

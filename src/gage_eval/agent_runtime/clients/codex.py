@@ -28,7 +28,16 @@ class CodexClient:
 
     def run(self, request: ClientRunRequest, environment: Any) -> ClientRunResult:
         """Execute the client command and collect terminal output."""
-        command = _resolve_command(request, executable=self._executable, default_args=self._default_args)
+        stdout_path = _resolve_optional_path(
+            request.metadata,
+            ("stdout_path", "stdout_file", "output_path", "output_last_message_path"),
+        )
+        command = _resolve_command(
+            request,
+            executable=self._executable,
+            default_args=self._default_args,
+            output_path=stdout_path,
+        )
         timeout_sec = _coerce_timeout(request.metadata.get("timeout_sec"), default=1800)
         env = dict(request.env)
         result = None
@@ -36,26 +45,45 @@ class CodexClient:
             result = environment.exec(command, cwd=request.cwd, env=env, timeout_sec=timeout_sec)
         else:
             result = _run_local(command, request.cwd, env, timeout_sec)
+        result, command = _apply_fallback_if_needed(
+            result=result,
+            command=command,
+            metadata=request.metadata,
+            environment=environment,
+            cwd=request.cwd,
+            env=env,
+            timeout_sec=timeout_sec,
+        )
 
         stdout = _result_text(result, "stdout")
         stderr = _result_text(result, "stderr")
         exit_code = _result_exit_code(result)
         patch_path = _resolve_optional_path(request.metadata, ("patch_path", "submission_patch_path"))
         trajectory_path = _resolve_optional_path(request.metadata, ("trajectory_path", "trajectory_log_path"))
-        stdout_path = _resolve_optional_path(request.metadata, ("stdout_path", "stdout_file", "output_path"))
         artifacts = _collect_artifacts(request.metadata)
+        patch_content: Optional[str] = None
+        stdout_capture = _read_optional_file(environment, stdout_path)
+        if stdout_capture:
+            stdout = stdout_capture
         if patch_path:
+            patch_content = _collect_patch(environment, cwd=request.cwd, timeout_sec=timeout_sec)
+            if patch_content:
+                _write_optional_file(environment, patch_path, patch_content)
             artifacts.setdefault("patch_path", patch_path)
         if trajectory_path:
+            transcript = _build_transcript(command, stdout, stderr)
+            _write_optional_file(environment, trajectory_path, transcript)
             artifacts.setdefault("trajectory_path", trajectory_path)
         if stdout_path:
             artifacts.setdefault("stdout_path", stdout_path)
-            _write_optional_file(environment, stdout_path, stdout)
+            if not stdout_capture:
+                _write_optional_file(environment, stdout_path, stdout)
         return ClientRunResult(
             exit_code=exit_code,
             stdout=stdout,
             stderr=stderr,
             patch_path=patch_path,
+            patch_content=patch_content,
             trajectory_path=trajectory_path,
             artifacts=artifacts,
         )
@@ -70,6 +98,7 @@ def _resolve_command(
     *,
     executable: str,
     default_args: Sequence[str],
+    output_path: Optional[str],
 ) -> str:
     metadata = request.metadata or {}
     command = metadata.get("command") or metadata.get("cli_command")
@@ -78,12 +107,20 @@ def _resolve_command(
     argv = metadata.get("argv")
     if isinstance(argv, (list, tuple)) and argv:
         return " ".join(shlex.quote(str(arg)) for arg in argv)
-    args = [executable, *default_args]
-    instruction = request.instruction.strip()
-    if instruction:
-        args.extend(["--instruction", instruction])
+    prompt = request.instruction.strip()
+    args = [
+        executable,
+        "exec",
+        "--skip-git-repo-check",
+        "--full-auto",
+        *default_args,
+    ]
     if request.cwd:
-        args.extend(["--cwd", request.cwd])
+        args.extend(["--cd", request.cwd])
+    if output_path:
+        args.extend(["--output-last-message", output_path])
+    if prompt:
+        args.append(prompt)
     return " ".join(shlex.quote(str(arg)) for arg in args)
 
 
@@ -139,6 +176,112 @@ def _write_optional_file(environment: Any, path: str, content: str) -> None:
         target.write_text(content, encoding="utf-8")
     except Exception:
         return
+
+
+def _read_optional_file(environment: Any, path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    reader = getattr(environment, "read_file", None)
+    if callable(reader):
+        try:
+            content = reader(path)
+            if isinstance(content, bytes):
+                return content.decode("utf-8", errors="replace")
+            return str(content)
+        except Exception:
+            pass
+    target = Path(path)
+    try:
+        return target.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+
+def _collect_patch(environment: Any, *, cwd: str, timeout_sec: int) -> Optional[str]:
+    git_diff = "git diff --binary -- ."
+    if environment is not None and hasattr(environment, "exec"):
+        try:
+            result = environment.exec(git_diff, cwd=cwd, env=None, timeout_sec=timeout_sec)
+            if _result_exit_code(result) == 0:
+                stdout = _result_text(result, "stdout")
+                return stdout or None
+        except Exception:
+            return None
+        return None
+    return _run_local_capture(git_diff, cwd, timeout_sec)
+
+
+def _run_local_capture(command: str, cwd: str, timeout_sec: int) -> Optional[str]:
+    import subprocess
+
+    try:
+        completed = subprocess.run(  # noqa: S603,S607 - command is intentionally shell-form
+            command,
+            cwd=cwd or None,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+    except Exception:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout or None
+
+
+def _build_transcript(command: str, stdout: str, stderr: str) -> str:
+    lines = [f"$ {command}"]
+    if stdout:
+        lines.append(stdout.rstrip())
+    if stderr:
+        lines.append("[stderr]")
+        lines.append(stderr.rstrip())
+    return "\n".join(line for line in lines if line).rstrip() + "\n"
+
+
+def _apply_fallback_if_needed(
+    *,
+    result: Any,
+    command: str,
+    metadata: Mapping[str, Any],
+    environment: Any,
+    cwd: str,
+    env: Mapping[str, str],
+    timeout_sec: int,
+) -> tuple[Any, str]:
+    fallback_command = metadata.get("fallback_command")
+    if _result_exit_code(result) == 0:
+        return result, command
+    if not isinstance(fallback_command, str) or not fallback_command.strip():
+        return result, command
+    if environment is not None and hasattr(environment, "exec"):
+        fallback_result = environment.exec(fallback_command, cwd=cwd, env=env, timeout_sec=timeout_sec)
+    else:
+        fallback_result = _run_local(fallback_command, cwd, env, timeout_sec)
+    combined_stderr = _combine_streams(
+        _result_text(result, "stderr"),
+        f"[fallback command]\\n{_result_text(fallback_result, 'stderr')}",
+    )
+    merged = _MutableExecResult(
+        exit_code=_result_exit_code(fallback_result),
+        stdout=_result_text(fallback_result, "stdout"),
+        stderr=combined_stderr,
+    )
+    return merged, f"{command}\n# fallback\n{fallback_command}"
+
+
+def _combine_streams(primary: str, secondary: str) -> str:
+    chunks = [chunk for chunk in (primary.strip(), secondary.strip()) if chunk]
+    return "\n".join(chunks)
+
+
+class _MutableExecResult:
+    def __init__(self, *, exit_code: int, stdout: str, stderr: str) -> None:
+        self.exit_code = exit_code
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def _run_local(command: str, cwd: str, env: Mapping[str, str], timeout_sec: int) -> Any:

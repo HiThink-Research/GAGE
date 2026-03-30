@@ -30,9 +30,9 @@ def _scheduler_result_payload(scheduler_result: Any) -> dict[str, Any]:
         "patch_path": getattr(scheduler_result, "patch_path", None),
         "stdout_path": getattr(scheduler_result, "stdout_path", None),
         "trajectory_path": getattr(scheduler_result, "trajectory_path", None),
-        "artifacts": getattr(scheduler_result, "artifacts", {}) or {},
-        "metrics": getattr(scheduler_result, "metrics", {}) or {},
-        "raw_output": getattr(scheduler_result, "raw_output", {}) or {},
+        "artifacts": dict(getattr(scheduler_result, "artifacts", {}) or {}),
+        "metrics": dict(getattr(scheduler_result, "metrics", {}) or {}),
+        "raw_output": dict(getattr(scheduler_result, "raw_output", {}) or {}),
     }
 
 

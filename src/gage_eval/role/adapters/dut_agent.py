@@ -148,6 +148,10 @@ class DUTAgentAdapter(RoleAdapter):
         )
         result = scheduler.run(session)
         output = dict(result.raw_output or {})
+        verifier_output = self._run_runtime_verifier(plan, sample, result, artifacts)
+        if verifier_output:
+            output.setdefault("verifier_result", verifier_output)
+            output.setdefault("eval_result", verifier_output)
         if result.answer is not None:
             output.setdefault("answer", result.answer)
         output.setdefault("status", result.status)
@@ -161,7 +165,38 @@ class DUTAgentAdapter(RoleAdapter):
             output.setdefault("artifacts", dict(result.artifacts))
         if result.metrics:
             output.setdefault("metrics", dict(result.metrics))
+        if verifier_output:
+            sample["eval_result"] = dict(verifier_output)
         return output
+
+    def _run_runtime_verifier(
+        self,
+        plan,
+        sample: Dict[str, Any],
+        scheduler_result,
+        artifacts,
+    ) -> Optional[Dict[str, Any]]:
+        benchmark_kit_id = getattr(plan, "benchmark_kit_id", None)
+        if benchmark_kit_id == "terminal_bench":
+            from gage_eval.agent_eval_kits.terminal_bench.judge_bridge import build_verifier_input
+            from gage_eval.agent_runtime.verifier.terminal_bench import TerminalBenchVerifier
+
+            verifier_input = build_verifier_input(sample, scheduler_result, artifacts)
+            verifier_result = TerminalBenchVerifier().verify(verifier_input)
+            return _normalize_verifier_result(verifier_result)
+        if benchmark_kit_id == "swebench":
+            from gage_eval.agent_eval_kits.swebench.judge_bridge import build_verifier_input
+            from gage_eval.agent_runtime.verifier.judge_adapter import JudgeVerifierAdapter
+
+            verifier_input = build_verifier_input(sample, scheduler_result, artifacts)
+            verifier_params = {}
+            if isinstance(getattr(plan, "params", None), dict):
+                raw_verifier = plan.params.get("verifier")
+                if isinstance(raw_verifier, dict):
+                    verifier_params = dict(raw_verifier)
+            verifier_result = JudgeVerifierAdapter(**verifier_params).verify(verifier_input)
+            return _normalize_verifier_result(verifier_result)
+        return None
 
     def _resolve_sandbox_config(
         self,
@@ -278,3 +313,12 @@ def _extract_system_prompt(messages: Sequence[Dict[str, Any]]) -> Optional[str]:
         if content is not None:
             return str(content)
     return None
+
+
+def _normalize_verifier_result(verifier_result: Any) -> Dict[str, Any]:
+    return {
+        "status": verifier_result.status,
+        "score": verifier_result.score,
+        "summary": verifier_result.summary,
+        "raw_output": dict(verifier_result.raw_output or {}),
+    }

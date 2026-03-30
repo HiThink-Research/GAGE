@@ -40,10 +40,16 @@ def finalize_result(sample: dict, scheduler_result: Any, artifacts: Any) -> Dict
     """Post-process scheduler output for reporting."""
     artifact_paths = extract_artifact_paths(artifacts)
     payload = serialize_scheduler_result(scheduler_result)
+    if isinstance(payload.get("artifacts"), dict):
+        payload["artifacts"] = dict(payload["artifacts"])
+    if isinstance(payload.get("metrics"), dict):
+        payload["metrics"] = dict(payload["metrics"])
+    if isinstance(payload.get("raw_output"), dict):
+        payload["raw_output"] = dict(payload["raw_output"])
     payload.update(
         {
             "sample_id": resolve_sample_id(sample),
-            "sample": sample,
+            "sample_metadata": dict(sample.get("metadata") or {}),
             "artifacts": artifact_paths,
             "artifact_paths": artifact_paths,
             "patch_path": payload.get("patch_path") or artifact_paths.get("patch_path") or artifact_paths.get("patch_file"),

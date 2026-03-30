@@ -69,6 +69,7 @@ def test_terminal_bench_prepare_inputs() -> None:
         "instruction": "Create hello.txt",
         "workspace_root": "/tmp/tb2-smoke",
         "env": {"TB_MODE": "smoke"},
+        "metadata": {"expected_artifacts": ["hello.txt"]},
     }
     session = SimpleNamespace(
         plan=_build_plan(),
@@ -87,6 +88,7 @@ def test_terminal_bench_prepare_inputs() -> None:
     assert prepared["surface_requirements"] == TERMINAL_BENCH_REQUIRED_SURFACES
     assert prepared["resource_requirements"]["required_surfaces"] == TERMINAL_BENCH_REQUIRED_SURFACES
     assert prepared["metadata"]["benchmark_kit_id"] == TERMINAL_BENCH_KIT_ID
+    assert prepared["metadata"]["expected_artifacts"] == ["hello.txt"]
     assert prepared["artifact_paths"]["patch_file"].endswith("submission.patch")
 
 

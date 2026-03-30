@@ -82,6 +82,8 @@ def test_swebench_finalize_result() -> None:
 
     assert result["sample_id"] == "swebench_1"
     assert result["status"] == "success"
+    assert "sample" not in result
+    assert result["raw_output"] is not scheduler_result.raw_output
     assert result["artifacts"]["metadata_file"].endswith("runtime_metadata.json")
     assert result["stdout_path"].endswith("stdout.log")
 

@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GAGE_REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 gage_detect_workspace_root() {
-  local repo_root parent_root candidate
+  local repo_root parent_root candidate current
   repo_root="$(cd "${GAGE_REPO_ROOT}" && pwd)"
   parent_root="$(cd "${GAGE_REPO_ROOT}/.." && pwd)"
   for candidate in "${parent_root}" "${repo_root}"; do
@@ -25,6 +25,22 @@ gage_detect_workspace_root() {
       printf '%s\n' "${candidate}"
       return 0
     fi
+  done
+  current="${repo_root}"
+  while [[ "${current}" != "/" ]]; do
+    if [[ -d "${current}/env/.venv" ]]; then
+      printf '%s\n' "${current}"
+      return 0
+    fi
+    if [[ -f "${current}/env/scripts/run.env" ]]; then
+      printf '%s\n' "${current}"
+      return 0
+    fi
+    if [[ -f "${current}/env/localenv" ]]; then
+      printf '%s\n' "${current}"
+      return 0
+    fi
+    current="$(cd "${current}/.." && pwd)"
   done
   printf '%s\n' "${repo_root}"
 }

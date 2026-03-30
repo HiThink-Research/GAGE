@@ -48,7 +48,8 @@ def prepare_inputs(sample: dict, session) -> dict:
     task_context = build_task_context(sample, session=session)
     surface_requirements = tuple(task_context.required_surfaces)
     resource_requirements = build_resource_requirements(sample, plan)
-    metadata = dict(getattr(session, "metadata", {}) or {})
+    metadata = dict(sample.get("metadata") or {})
+    metadata.update(dict(getattr(session, "metadata", {}) or {}))
     metadata.update(
         {
             "benchmark_kit_id": TERMINAL_BENCH_KIT_ID,
@@ -85,9 +86,9 @@ def finalize_result(sample: dict, scheduler_result, artifacts) -> dict:
         "patch_path": getattr(scheduler_result, "patch_path", None),
         "stdout_path": getattr(scheduler_result, "stdout_path", None),
         "trajectory_path": getattr(scheduler_result, "trajectory_path", None),
-        "artifact_paths": getattr(scheduler_result, "artifacts", {}) or {},
-        "metrics": getattr(scheduler_result, "metrics", {}) or {},
-        "raw_output": getattr(scheduler_result, "raw_output", {}) or {},
+        "artifact_paths": dict(getattr(scheduler_result, "artifacts", {}) or {}),
+        "metrics": dict(getattr(scheduler_result, "metrics", {}) or {}),
+        "raw_output": dict(getattr(scheduler_result, "raw_output", {}) or {}),
         "verifier_input": verifier_input,
     }
     result_payload["artifact_layout"] = _artifact_paths(artifacts)
