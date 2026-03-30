@@ -39,6 +39,7 @@ class InferenceStep(SampleStep):
         trace.emit("inference_start", payload={"adapter_id": self._adapter_id})
         logger.debug("Inference step started adapter_id={}", self._adapter_id)
         payload = {"sample": sample}
+        payload["trace"] = trace
         if sandbox_provider is not None:
             payload["sandbox_provider"] = sandbox_provider
         invocation_context = (

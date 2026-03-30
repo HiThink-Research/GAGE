@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from gage_eval.registry import registry
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderer
@@ -17,6 +17,9 @@ from gage_eval.role.agent.backends.base import AgentBackend
 from gage_eval.mcp import McpClient
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider
+
+if TYPE_CHECKING:
+    from gage_eval.agent_runtime.resolver import AgentRuntimeResolver
 
 
 @registry.asset(
@@ -35,7 +38,9 @@ class DUTAgentAdapter(RoleAdapter):
         role_type: str,
         capabilities,
         *,
-        agent_backend: AgentBackend,
+        agent_backend: Optional[AgentBackend] = None,
+        agent_runtime_resolver: Optional["AgentRuntimeResolver"] = None,
+        agent_runtime_id: Optional[str] = None,
         prompt_renderer: Optional[PromptRenderer] = None,
         sandbox_manager: Optional[SandboxManager] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -60,9 +65,21 @@ class DUTAgentAdapter(RoleAdapter):
         self._pre_hooks = build_hook_chain(params.pop("pre_hooks", None) or params.pop("pre_hook", None))
         self._post_hooks = build_hook_chain(params.pop("post_hooks", None) or params.pop("post_hook", None))
         self._prompt_renderer = prompt_renderer
+        self._agent_runtime_resolver = agent_runtime_resolver
+        self._agent_runtime_id = agent_runtime_id
+        self.params = dict(params)
 
     async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
         sample = payload.get("sample", {}) if isinstance(payload, dict) else {}
+        runtime_id = (
+            payload.get("agent_runtime_id")
+            or sample.get("agent_runtime_id")
+            or self._agent_runtime_id
+        )
+        if runtime_id and self._agent_runtime_resolver is not None:
+            return self._run_via_agent_runtime(runtime_id, payload, sample, state)
+        if self._agent_backend is None:
+            raise ValueError("dut_agent requires agent_backend when agent_runtime is not configured")
         messages = list(sample.get("messages") or payload.get("messages") or [])
         messages = self._apply_prompt(payload, sample, messages)
         system_prompt = _extract_system_prompt(messages)
@@ -89,6 +106,62 @@ class DUTAgentAdapter(RoleAdapter):
         if system_prompt:
             result["system_prompt"] = system_prompt
         return result
+
+    def _run_via_agent_runtime(
+        self,
+        runtime_id: str,
+        payload: Dict[str, Any],
+        sample: Dict[str, Any],
+        state: RoleAdapterState,
+    ) -> Dict[str, Any]:
+        from gage_eval.agent_runtime.artifacts.layout import ArtifactLayout
+        from gage_eval.agent_runtime.environment.provider import EnvironmentProvider
+        from gage_eval.agent_runtime.resources.bundle import ResourceBundle
+        from gage_eval.agent_runtime.session import AgentRuntimeSession
+        from gage_eval.observability.trace import ObservabilityTrace
+
+        trace = payload.get("trace")
+        if not isinstance(trace, ObservabilityTrace):
+            trace = ObservabilityTrace()
+        plan = self._agent_runtime_resolver.resolve(runtime_id)
+        scheduler = self._agent_runtime_resolver.build_scheduler(plan)
+        environment = EnvironmentProvider().build(plan, sample)
+        resources = ResourceBundle(environment=environment)
+        sample_id = str(
+            sample.get("sample_id")
+            or sample.get("id")
+            or sample.get("instance_id")
+            or "unknown"
+        )
+        artifacts = ArtifactLayout.for_sample(
+            base_dir=str(sample.get("output_dir", "runs")),
+            run_id=str(sample.get("run_id") or trace.run_id),
+            sample_id=sample_id,
+        )
+        session = AgentRuntimeSession(
+            sample=sample,
+            trace=trace,
+            plan=plan,
+            resources=resources,
+            artifacts=artifacts,
+            metadata=dict(state.metadata or {}),
+        )
+        result = scheduler.run(session)
+        output = dict(result.raw_output or {})
+        if result.answer is not None:
+            output.setdefault("answer", result.answer)
+        output.setdefault("status", result.status)
+        if result.patch_path is not None:
+            output.setdefault("patch_path", result.patch_path)
+        if result.stdout_path is not None:
+            output.setdefault("stdout_path", result.stdout_path)
+        if result.trajectory_path is not None:
+            output.setdefault("trajectory_path", result.trajectory_path)
+        if result.artifacts:
+            output.setdefault("artifacts", dict(result.artifacts))
+        if result.metrics:
+            output.setdefault("metrics", dict(result.metrics))
+        return output
 
     def _resolve_sandbox_config(
         self,

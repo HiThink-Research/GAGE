@@ -164,6 +164,7 @@ class ConfigRegistry:
         backends: Optional[Dict[str, Any]] = None,
         prompts: Optional[Dict[str, PromptTemplateAsset]] = None,
         agent_backends: Optional[Dict[str, Any]] = None,
+        agent_runtime_resolver: Optional[Any] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         mcp_clients: Optional[Dict[str, Any]] = None,
     ) -> Any:
@@ -216,6 +217,10 @@ class ConfigRegistry:
             adapter_kwargs.setdefault("sandbox_profiles", sandbox_profiles)
         if spec.role_type == "dut_agent" and mcp_clients is not None:
             adapter_kwargs.setdefault("mcp_clients", mcp_clients)
+        if spec.role_type == "dut_agent" and agent_runtime_resolver is not None:
+            adapter_kwargs.setdefault("agent_runtime_resolver", agent_runtime_resolver)
+        if spec.role_type == "dut_agent" and spec.agent_runtime_id:
+            adapter_kwargs.setdefault("agent_runtime_id", spec.agent_runtime_id)
         if spec.role_type in {"helper_model", "context_provider", "judge_extend", "arena"}:
             adapter_kwargs.setdefault("registry_view", lookup)
         adapter = adapter_cls(
@@ -267,6 +272,11 @@ class ConfigRegistry:
     ) -> Dict[str, Any]:
         """Instantiate all role adapters declared in the pipeline config."""
 
+        agent_runtime_resolver = None
+        if config.agent_runtimes:
+            from gage_eval.agent_runtime.resolver import AgentRuntimeResolver
+
+            agent_runtime_resolver = AgentRuntimeResolver(config.agent_runtimes)
         instances: Dict[str, Any] = {}
         for spec in config.role_adapters:
             instances[spec.adapter_id] = self.resolve_role_adapter(
@@ -274,6 +284,7 @@ class ConfigRegistry:
                 backends=backends,
                 prompts=prompts,
                 agent_backends=agent_backends,
+                agent_runtime_resolver=agent_runtime_resolver,
                 sandbox_profiles=sandbox_profiles,
                 mcp_clients=mcp_clients,
             )
