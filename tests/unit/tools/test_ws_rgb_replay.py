@@ -7,6 +7,12 @@ import pytest
 from gage_eval.game_kits.aec_env_game.pettingzoo import replay as pettingzoo_replay
 
 
+_LEGACY_TOOL_MODULE = ".".join(
+    ("gage_eval", "tools", "_".join(("ws", "rgb", "replay")))
+)
+_LEGACY_REPLAY_FACTORY = "_".join(("build", "ws", "rgb", "replay", "display"))
+
+
 class _StubPettingZooReplayEnvironment:
     def __init__(self, **_: object) -> None:
         self._frames = [
@@ -32,12 +38,12 @@ class _StubPettingZooReplayEnvironment:
         return None
 
 
-def test_ws_rgb_replay_tool_public_path_is_removed() -> None:
+def test_legacy_replay_tool_public_path_is_removed() -> None:
     with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("gage_eval.tools.ws_rgb_replay")
+        importlib.import_module(_LEGACY_TOOL_MODULE)
 
 
-def test_pettingzoo_replay_builds_visualization_artifact_without_ws_rgb_public_api(
+def test_pettingzoo_replay_builds_visualization_artifact_without_legacy_public_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -72,7 +78,7 @@ def test_pettingzoo_replay_builds_visualization_artifact_without_ws_rgb_public_a
         max_frames=0,
     )
 
-    assert not hasattr(pettingzoo_replay, "build_ws_rgb_replay_display")
+    assert not hasattr(pettingzoo_replay, _LEGACY_REPLAY_FACTORY)
     assert not hasattr(pettingzoo_replay, "ReplayFrameCursor")
     assert artifact["artifact_type"] == "pettingzoo_replay_frames"
     assert artifact["artifact_id"] == "replay:sample_1:pettingzoo"

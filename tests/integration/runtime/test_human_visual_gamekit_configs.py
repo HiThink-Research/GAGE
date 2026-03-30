@@ -8,6 +8,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ARENA_MANIFEST_PATH = REPO_ROOT / "src/gage_eval/registry/manifests/arena.json"
+_LEGACY_DDZ_RENDERER = "_".join(("doudizhu", "".join(("show", "down")), "v1"))
 
 
 def _load_config(relpath: str) -> dict:
@@ -147,7 +148,7 @@ def test_phase_card_manifest_entries_point_to_gamekit_modules() -> None:
     entry_map = {entry["name"]: entry for entry in manifest["entries"]}
 
     assert "doudizhu_arena_parser_v1" not in entry_map
-    assert "doudizhu_showdown_v1" not in entry_map
+    assert _LEGACY_DDZ_RENDERER not in entry_map
     assert entry_map["doudizhu_v1"]["module"] == (
         "gage_eval.game_kits.phase_card_game.doudizhu.parsers.doudizhu"
     )

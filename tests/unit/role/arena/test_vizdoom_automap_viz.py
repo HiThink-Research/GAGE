@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from gage_eval.role.arena.games.vizdoom import automap_viz
+from gage_eval.game_kits.real_time_game.vizdoom import automap_viz
 
 
 def test_automap_window_falls_back_to_noop_when_cv2_window_init_fails(monkeypatch):

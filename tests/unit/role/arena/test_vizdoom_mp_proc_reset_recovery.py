@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from gage_eval.role.arena.games.vizdoom import env_vizdoom_mp_proc as mp_proc_module
+from gage_eval.game_kits.real_time_game.vizdoom import env_vizdoom_mp_proc as mp_proc_module
 
 
 def _make_reset_message(health: float) -> dict[str, Any]:

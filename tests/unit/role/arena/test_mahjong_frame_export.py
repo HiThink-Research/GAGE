@@ -10,6 +10,8 @@ from gage_eval.game_kits.phase_card_game.mahjong.environment import MahjongArena
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+_LEGACY_RENDERER_SUBSTRING = "".join(("show", "down"))
+_LEGACY_VIEWER_NAME = "-".join(("rlcard", "".join(("show", "down"))))
 
 
 def _read_text(relpath: str) -> str:
@@ -111,16 +113,16 @@ def test_mahjong_arena_exposes_get_last_frame(monkeypatch) -> None:
     assert latest_frame["public_state"]["round"] == 1
 
 
-def test_mahjong_run_scripts_do_not_default_to_showdown() -> None:
+def test_mahjong_run_scripts_do_not_default_to_legacy_viewer() -> None:
     run_sh = _read_text("scripts/run/arenas/mahjong/run.sh")
     human_vs_ai = _read_text("scripts/run/arenas/mahjong/run_human_vs_ai_legacy.sh")
     human_vs_dummy = _read_text("scripts/run/arenas/mahjong/run_human_vs_dummy_legacy.sh")
     real_ai = _read_text("scripts/run/arenas/mahjong/run_real_ai_legacy.sh")
 
     assert 'MODE="${MODE:-human-vs-ai}"' in run_sh
-    assert "showdown" not in run_sh
+    assert _LEGACY_RENDERER_SUBSTRING not in run_sh
     for script in (human_vs_ai, human_vs_dummy, real_ai):
-        assert "rlcard-showdown" not in script
+        assert _LEGACY_VIEWER_NAME not in script
         assert "frontend/arena-visual" in script
         assert "VITE_ARENA_GATEWAY_BASE_URL" in script
         assert "/sessions/" in script

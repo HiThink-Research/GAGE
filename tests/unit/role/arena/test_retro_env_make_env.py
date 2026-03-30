@@ -1,6 +1,6 @@
 import pytest
 
-from gage_eval.role.arena.games.retro import retro_env as retro_env_mod
+from gage_eval.game_kits.real_time_game.retro_platformer import environment as retro_env_mod
 
 
 def test_retro_env_make_env_raises_helpful_error_when_retro_missing(monkeypatch: pytest.MonkeyPatch):

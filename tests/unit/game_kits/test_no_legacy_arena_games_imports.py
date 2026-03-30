@@ -9,21 +9,18 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SCAN_ROOTS = (_REPO_ROOT / "src", _REPO_ROOT / "tests")
-_BOARD_LEGACY_GAME_PREFIXES = (
-    ".".join(("gage_eval", "role", "arena", "games", "gomoku")),
-    ".".join(("gage_eval", "role", "arena", "games", "tictactoe")),
-)
+_LEGACY_ARENA_GAMES_ROOT = ".".join(("gage_eval", "role", "arena", "games"))
 _BOARD_LEGACY_PARSER_MODULE = ".".join(
     ("gage_eval", "role", "arena", "parsers", "gomoku_parser")
 )
 _ARENA_MANIFEST_PATH = _REPO_ROOT / "src/gage_eval/registry/manifests/arena.json"
 
 
-def _is_legacy_board_game_import(target: str) -> bool:
+def _is_legacy_arena_game_import(target: str) -> bool:
     normalized = str(target or "").strip()
-    return any(
-        normalized == prefix or normalized.startswith(f"{prefix}.")
-        for prefix in _BOARD_LEGACY_GAME_PREFIXES
+    return (
+        normalized == _LEGACY_ARENA_GAMES_ROOT
+        or normalized.startswith(f"{_LEGACY_ARENA_GAMES_ROOT}.")
     )
 
 
@@ -35,17 +32,17 @@ def _is_legacy_board_parser_import(target: str) -> bool:
     )
 
 
-def _iter_legacy_board_game_imports(path: Path) -> list[str]:
+def _iter_legacy_arena_game_imports(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     matches: list[str] = []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if _is_legacy_board_game_import(alias.name):
+                if _is_legacy_arena_game_import(alias.name):
                     matches.append(f"{path.relative_to(_REPO_ROOT)}:{node.lineno} import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
-            if _is_legacy_board_game_import(node.module or ""):
+            if _is_legacy_arena_game_import(node.module or ""):
                 matches.append(f"{path.relative_to(_REPO_ROOT)}:{node.lineno} from {node.module}")
         elif isinstance(node, ast.Call):
             if not node.args:
@@ -60,7 +57,7 @@ def _iter_legacy_board_game_imports(path: Path) -> list[str]:
                 continue
             first_arg = node.args[0]
             if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-                if _is_legacy_board_game_import(first_arg.value):
+                if _is_legacy_arena_game_import(first_arg.value):
                     matches.append(
                         f"{path.relative_to(_REPO_ROOT)}:{node.lineno} dynamic {first_arg.value}"
                     )
@@ -102,13 +99,13 @@ def _iter_legacy_board_parser_imports(path: Path) -> list[str]:
 
 
 @pytest.mark.fast
-def test_legacy_board_game_imports_are_absent() -> None:
+def test_legacy_arena_game_imports_are_absent() -> None:
     matches: list[str] = []
     for root in _SCAN_ROOTS:
         for path in sorted(root.rglob("*.py")):
-            matches.extend(_iter_legacy_board_game_imports(path))
+            matches.extend(_iter_legacy_arena_game_imports(path))
 
-    assert not matches, "Legacy board-game imports remain:\n" + "\n".join(matches)
+    assert not matches, "Legacy arena-game imports remain:\n" + "\n".join(matches)
 
 
 @pytest.mark.fast

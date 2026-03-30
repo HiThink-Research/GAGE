@@ -37,6 +37,7 @@ def test_board_game_gamekit_runs_dummy_match_end_to_end(
     result = run_gamearena_config(config_path)
     sample = result["sample"]
     output = result["output"]
+    replay_path = Path(output["result"]["replay_path"])
 
     assert output["sample"]["game_kit"] == game_kit
     assert output["sample"]["env"] == env
@@ -45,7 +46,12 @@ def test_board_game_gamekit_runs_dummy_match_end_to_end(
     assert output["result"]["winner"] == winner
     assert output["result"]["result"] == "win"
     assert output["result"]["move_count"] == move_count
+    assert replay_path.exists()
+    assert replay_path.name == "replay.json"
+    assert replay_path.parent.parent.name == "replays"
+    assert replay_path.parent.name == str(sample["id"])
     assert len(output["arena_trace"]) == move_count
+    assert sample["predict_result"][0]["artifacts"]["replay_ref"] == str(replay_path)
     assert sample["predict_result"][0]["game_arena"]["winner_player_id"] == winner
     assert sample["predict_result"][0]["game_arena"]["total_steps"] == move_count
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])

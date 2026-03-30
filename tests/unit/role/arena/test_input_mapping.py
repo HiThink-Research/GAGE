@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import importlib
 import json
+import sys
 
-from gage_eval.role.arena.games.common.grid_coord_input_mapper import GridCoordInputMapper
-from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import DoudizhuInputMapper
-from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import MahjongInputMapper
-from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import PettingZooDiscreteInputMapper
-from gage_eval.role.arena.games.retro.retro_input_mapper import RetroInputMapper
-from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
+from gage_eval.game_kits.board_game.shared.grid_coord_input_mapper import GridCoordInputMapper
+from gage_eval.game_kits.phase_card_game.doudizhu.input_mapper import (
+    DoudizhuInputMapper,
+)
+from gage_eval.game_kits.phase_card_game.mahjong.input_mapper import (
+    MahjongInputMapper,
+)
+from gage_eval.game_kits.aec_env_game.pettingzoo.input_mapper import (
+    PettingZooDiscreteInputMapper,
+)
+from gage_eval.game_kits.real_time_game.retro_platformer.input_mapper import (
+    RetroInputMapper,
+)
+from gage_eval.game_kits.real_time_game.vizdoom.input_mapper import ViZDoomInputMapper
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
 
 
@@ -104,6 +114,20 @@ def test_mahjong_input_mapper_resolves_index_and_filters_illegal_action() -> Non
     assert illegal == []
 
 
+def test_mahjong_input_mapper_import_does_not_load_rlcard_core() -> None:
+    package_prefix = "gage_eval.game_kits.phase_card_game.mahjong"
+    for module_name in list(sys.modules):
+        if module_name == package_prefix or module_name.startswith(f"{package_prefix}."):
+            sys.modules.pop(module_name, None)
+
+    importlib.import_module("gage_eval.game_kits.phase_card_game.mahjong.input_mapper")
+
+    assert (
+        "gage_eval.game_kits.phase_card_game.mahjong.cores.rlcard_mahjong"
+        not in sys.modules
+    )
+
+
 def test_doudizhu_input_mapper_maps_pass_alias_and_chat() -> None:
     mapper = DoudizhuInputMapper()
     actions = mapper.handle_browser_event(
@@ -180,6 +204,13 @@ def test_grid_coord_input_mapper_supports_row_col_and_filters_illegal() -> None:
         context=context,
     )
     assert illegal == []
+
+
+def test_grid_coord_input_mapper_comes_from_game_kit_package_tree() -> None:
+    assert (
+        GridCoordInputMapper.__module__
+        == "gage_eval.game_kits.board_game.shared.grid_coord_input_mapper"
+    )
 
 
 def test_pettingzoo_discrete_input_mapper_maps_action_and_index() -> None:

@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from gage_eval.game_kits.phase_card_game.mahjong import (
+    environment as mahjong_env_module,
+)
+from gage_eval.game_kits.phase_card_game.mahjong.environment import MahjongArena
 from gage_eval.game_kits.phase_card_game.mahjong.envs.riichi_4p import (
     Riichi4pEnvironment,
 )
-from gage_eval.role.arena.games.mahjong import env as mahjong_env_module
-from gage_eval.role.arena.games.mahjong.env import MahjongArena
 from gage_eval.role.arena.types import ArenaAction
 
 

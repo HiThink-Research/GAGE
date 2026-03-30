@@ -2,6 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from gage_eval.game_kits.aec_env_game.pettingzoo.environment import (
+    PettingZooAecArenaEnvironment,
+)
 from gage_eval.game_kits.aec_env_game.pettingzoo.envs import space_invaders as module
 
 
@@ -10,6 +13,10 @@ def _player_specs():
         SimpleNamespace(player_id="pilot_alpha", display_name="Pilot Alpha"),
         SimpleNamespace(player_id="pilot_beta", display_name="Pilot Beta"),
     )
+
+
+def test_space_invaders_uses_gamekit_owned_pettingzoo_environment():
+    assert module.PettingZooAecArenaEnvironment is PettingZooAecArenaEnvironment
 
 
 def test_space_invaders_prefers_real_env_with_rgb_defaults(monkeypatch):

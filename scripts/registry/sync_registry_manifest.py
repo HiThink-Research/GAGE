@@ -84,6 +84,42 @@ MANUAL_OVERRIDES = (
         "aliases": [],
         "optional": False,
     },
+    {
+        "kind": "player_drivers",
+        "name": "player_driver/dummy",
+        "module": "gage_eval.role.arena.support.specs",
+        "load_phase": "prepare_only",
+        "declared_in": "src/gage_eval/role/arena/support/specs.py",
+        "aliases": [],
+        "optional": False,
+    },
+    {
+        "kind": "player_drivers",
+        "name": "player_driver/human_local_input",
+        "module": "gage_eval.role.arena.support.specs",
+        "load_phase": "prepare_only",
+        "declared_in": "src/gage_eval/role/arena/support/specs.py",
+        "aliases": [],
+        "optional": False,
+    },
+    {
+        "kind": "player_drivers",
+        "name": "player_driver/llm_backend",
+        "module": "gage_eval.role.arena.support.specs",
+        "load_phase": "prepare_only",
+        "declared_in": "src/gage_eval/role/arena/support/specs.py",
+        "aliases": [],
+        "optional": False,
+    },
+    {
+        "kind": "player_drivers",
+        "name": "player_driver/agent_role_stub",
+        "module": "gage_eval.role.arena.support.specs",
+        "load_phase": "prepare_only",
+        "declared_in": "src/gage_eval/role/arena/support/specs.py",
+        "aliases": [],
+        "optional": False,
+    },
 )
 
 
@@ -108,9 +144,16 @@ class AssetRecord:
 
 
 class AssetCollector(ast.NodeVisitor):
-    def __init__(self, *, path: Path, module_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        module_name: str,
+        string_constants: dict[str, str],
+    ) -> None:
         self._path = path
         self._module_name = module_name
+        self._string_constants = dict(string_constants)
         self.records: list[AssetRecord] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -126,7 +169,7 @@ class AssetCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
-        parsed = _parse_asset_call(node)
+        parsed = _parse_asset_call(node, string_constants=self._string_constants)
         if parsed is not None:
             kind, name = parsed
             self.records.append(
@@ -144,7 +187,7 @@ class AssetCollector(ast.NodeVisitor):
         for decorator in decorators:
             if not isinstance(decorator, ast.Call):
                 continue
-            parsed = _parse_asset_call(decorator)
+            parsed = _parse_asset_call(decorator, string_constants=self._string_constants)
             if parsed is None:
                 continue
             kind, name = parsed
@@ -159,12 +202,16 @@ class AssetCollector(ast.NodeVisitor):
             )
 
 
-def _parse_asset_call(node: ast.Call) -> tuple[str, str] | None:
+def _parse_asset_call(
+    node: ast.Call,
+    *,
+    string_constants: dict[str, str],
+) -> tuple[str, str] | None:
     func_name = _call_name(node.func)
     if func_name == "asset":
-        return _constant_pair(node.args[:2])
+        return _constant_pair(node.args[:2], string_constants=string_constants)
     if func_name == "register":
-        return _constant_pair(node.args[:2])
+        return _constant_pair(node.args[:2], string_constants=string_constants)
     return None
 
 
@@ -176,22 +223,48 @@ def _call_name(node: ast.expr) -> str | None:
     return None
 
 
-def _constant_pair(args: Iterable[ast.expr]) -> tuple[str, str] | None:
+def _constant_pair(
+    args: Iterable[ast.expr],
+    *,
+    string_constants: dict[str, str],
+) -> tuple[str, str] | None:
     values = list(args)
     if len(values) < 2:
         return None
-    left = _string_value(values[0])
-    right = _string_value(values[1])
+    left = _string_value(values[0], string_constants=string_constants)
+    right = _string_value(values[1], string_constants=string_constants)
     if not left or not right:
         return None
     return left, right
 
 
-def _string_value(node: ast.expr) -> str | None:
+def _string_value(node: ast.expr, *, string_constants: dict[str, str]) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         value = str(node.value).strip()
         return value or None
+    if isinstance(node, ast.Name):
+        value = str(string_constants.get(node.id) or "").strip()
+        return value or None
     return None
+
+
+def _collect_module_string_constants(tree: ast.AST) -> dict[str, str]:
+    constants: dict[str, str] = {}
+    for node in getattr(tree, "body", ()):
+        target_name: str | None = None
+        value_node: ast.expr | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target_name = node.targets[0].id
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target_name = node.target.id
+            value_node = node.value
+        if target_name is None or value_node is None:
+            continue
+        value = _string_value(value_node, string_constants=constants)
+        if value is not None:
+            constants[target_name] = value
+    return constants
 
 
 def _declared_in(path: Path) -> str:
@@ -224,7 +297,11 @@ def collect_assets() -> dict[tuple[str, str], AssetRecord]:
         except SyntaxError:
             continue
         module_name = _module_name_for_path(path)
-        collector = AssetCollector(path=path, module_name=module_name)
+        collector = AssetCollector(
+            path=path,
+            module_name=module_name,
+            string_constants=_collect_module_string_constants(tree),
+        )
         collector.visit(tree)
         for record in collector.records:
             if not _module_exists(record.module):

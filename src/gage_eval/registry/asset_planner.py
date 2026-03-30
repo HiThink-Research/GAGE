@@ -79,6 +79,30 @@ class RuntimeAssetPlanner:
             params.get("game_kit"),
             source=f"arena:{adapter_id}.game_kit",
         )
+        collector.add(
+            "arena_impls",
+            _resolve_runtime_ref_name(params.get("environment")),
+            source=f"arena:{adapter_id}.environment",
+        )
+        collector.add(
+            "parser_impls",
+            _resolve_runtime_ref_name(params.get("parser")),
+            source=f"arena:{adapter_id}.parser",
+        )
+        visualizer = params.get("visualizer")
+        collector.add(
+            "renderer_impls",
+            _resolve_runtime_ref_name(_mapping_value(visualizer, "renderer")),
+            source=f"arena:{adapter_id}.visualizer.renderer",
+        )
+        collector.add(
+            "visualization_specs",
+            (
+                _resolve_runtime_ref_name(_mapping_value(visualizer, "visualization_spec"))
+                or _resolve_runtime_ref_name(_mapping_value(visualizer, "game_display"))
+            ),
+            source=f"arena:{adapter_id}.visualizer.display",
+        )
 
     def _collect_prompt_requests(self, config: "PipelineConfig", collector: "_PlanCollector") -> None:
         for spec in config.prompts:
@@ -183,6 +207,25 @@ def _resolve_dataset_hub_name(loader: str | None, hub: str | None, params: dict[
         return hub_name
     if loader_name not in {"hf_hub", "modelscope"}:
         return "inline"
+    return None
+
+
+def _mapping_value(payload: Any, key: str) -> Any:
+    if isinstance(payload, dict):
+        return payload.get(key)
+    return None
+
+
+def _resolve_runtime_ref_name(value: Any) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if not isinstance(value, dict):
+        return None
+    for key in ("impl", "binding_id", "scheduler_binding", "id", "name", "spec_id"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
     return None
 
 

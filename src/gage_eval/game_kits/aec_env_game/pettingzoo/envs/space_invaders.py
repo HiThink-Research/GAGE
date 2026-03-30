@@ -8,6 +8,7 @@ from gage_eval.game_kits.aec_env_game.pettingzoo.environment import (
     PettingZooAecArenaEnvironment,
 )
 from gage_eval.game_kits.real_time_game.backend_mode import normalize_backend_mode
+from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 
 try:
@@ -116,6 +117,9 @@ class SpaceInvadersEnvironment:
         player_specs: Sequence[object],
         backend_mode: str = "auto",
         env_kwargs: dict[str, Any] | None = None,
+        replay_output_dir: str | None = None,
+        run_id: str | None = None,
+        sample_id: str | None = None,
     ) -> None:
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_names = {
@@ -131,6 +135,11 @@ class SpaceInvadersEnvironment:
             "use_action_meanings": use_action_meanings,
             "include_raw_obs": include_raw_obs,
             "illegal_policy": illegal_policy,
+            "replay_game_kit": "pettingzoo",
+            "replay_env": "space_invaders",
+            "replay_output_dir": replay_output_dir,
+            "run_id": run_id,
+            "sample_id": sample_id,
         }
         if resolved_backend_mode == "dummy":
             self._adapter = PettingZooAecArenaEnvironment(
@@ -163,12 +172,17 @@ class SpaceInvadersEnvironment:
             )
 
     @classmethod
-    def from_runtime(cls, *, sample, resolved, resources, player_specs):
+    def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
         defaults = {
             **dict(resolved.game_kit.defaults),
             **dict(resolved.env_spec.defaults),
             **dict(sample.runtime_overrides or {}),
         }
+        run_id, sample_id = resolve_invocation_run_sample_ids(
+            invocation_context=invocation_context,
+            run_id=defaults.get("run_id"),
+            sample_id=defaults.get("sample_id"),
+        )
         raw_action_labels = defaults.get("action_labels")
         action_labels = None
         if raw_action_labels is not None:
@@ -184,6 +198,9 @@ class SpaceInvadersEnvironment:
             player_specs=player_specs,
             backend_mode=str(defaults.get("backend_mode", "auto")),
             env_kwargs=defaults.get("env_kwargs"),
+            replay_output_dir=defaults.get("replay_output_dir"),
+            run_id=run_id,
+            sample_id=sample_id,
         )
         return attach_runtime_resources(environment, resources)
 
@@ -211,10 +228,18 @@ class SpaceInvadersEnvironment:
             closer()
 
 
-def build_space_invaders_environment(*, sample, resolved, resources, player_specs) -> Any:
+def build_space_invaders_environment(
+    *,
+    sample,
+    resolved,
+    resources,
+    player_specs,
+    invocation_context=None,
+) -> Any:
     return SpaceInvadersEnvironment.from_runtime(
         sample=sample,
         resolved=resolved,
         resources=resources,
         player_specs=player_specs,
+        invocation_context=invocation_context,
     )

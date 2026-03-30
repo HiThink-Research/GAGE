@@ -5,10 +5,12 @@ from __future__ import annotations
 import base64
 import importlib
 import io
+from dataclasses import replace
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
+from gage_eval.game_kits.replay_support import materialize_gamekit_replay
 from gage_eval.game_kits.aec_env_game.pettingzoo.constants import ACTION_MEANINGS
 from gage_eval.game_kits.aec_env_game.pettingzoo.action_codec import (
     DiscreteActionCodec,
@@ -54,6 +56,11 @@ class PettingZooAecArenaEnvironment:
         coord_scheme: str = "A1",
         rule_profile: Optional[str] = None,
         win_directions: Optional[Sequence[str]] = None,
+        replay_game_kit: Optional[str] = None,
+        replay_env: Optional[str] = None,
+        replay_output_dir: Optional[str] = None,
+        run_id: Optional[str] = None,
+        sample_id: Optional[str] = None,
     ) -> None:
         """Initialize the PettingZoo adapter.
 
@@ -76,6 +83,11 @@ class PettingZooAecArenaEnvironment:
             coord_scheme: Unused (kept for ArenaRoleAdapter compatibility).
             rule_profile: Unused (kept for ArenaRoleAdapter compatibility).
             win_directions: Unused (kept for ArenaRoleAdapter compatibility).
+            replay_game_kit: Optional GameKit id used for replay manifest metadata.
+            replay_env: Optional GameKit env id used for replay manifest metadata.
+            replay_output_dir: Optional replay root override.
+            run_id: Optional run id for canonical replay layout.
+            sample_id: Optional sample id for canonical replay layout.
         """
 
         _ = (
@@ -110,6 +122,11 @@ class PettingZooAecArenaEnvironment:
         self._illegal_policy = dict(illegal_policy or {})
         self._max_illegal = int(self._illegal_policy.get("retry", 0))
         self._illegal_on_fail = str(self._illegal_policy.get("on_fail", "loss"))
+        self._replay_game_kit = str(replay_game_kit) if replay_game_kit else None
+        self._replay_env = str(replay_env) if replay_env else None
+        self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
+        self._run_id = str(run_id) if run_id else None
+        self._sample_id = str(sample_id) if sample_id else None
 
         if env is not None:
             self._env = env
@@ -345,15 +362,18 @@ class PettingZooAecArenaEnvironment:
         if winner is not None and result not in {"loss", "draw"}:
             resolved_result = "win"
         final_board = self._format_final_board(reason)
-        return GameResult(
-            winner=winner,
-            result=resolved_result,
-            reason=reason,
-            move_count=self._move_count,
-            illegal_move_count=sum(self._illegal_counts.values()),
-            final_board=final_board,
-            move_log=list(self._move_log),
+        self._final_result = self._materialize_replay(
+            GameResult(
+                winner=winner,
+                result=resolved_result,
+                reason=reason,
+                move_count=self._move_count,
+                illegal_move_count=sum(self._illegal_counts.values()),
+                final_board=final_board,
+                move_log=list(self._move_log),
+            )
         )
+        return self._final_result
 
     def close(self) -> None:
         """Clean up resources when the environment is no longer needed."""
@@ -805,16 +825,33 @@ class PettingZooAecArenaEnvironment:
             winner = self._other_player(player)
             result = "loss"
 
-        self._final_result = GameResult(
-            winner=winner,
-            result=result,
-            reason=reason,
-            move_count=self._move_count,
-            illegal_move_count=sum(self._illegal_counts.values()),
-            final_board=self._format_final_board(reason),
-            move_log=list(self._move_log),
+        self._final_result = self._materialize_replay(
+            GameResult(
+                winner=winner,
+                result=result,
+                reason=reason,
+                move_count=self._move_count,
+                illegal_move_count=sum(self._illegal_counts.values()),
+                final_board=self._format_final_board(reason),
+                move_log=list(self._move_log),
+            )
         )
         return self._final_result
+
+    def _materialize_replay(self, result: GameResult) -> GameResult:
+        if self._replay_game_kit is None or self._replay_env is None:
+            return result
+        materialized = materialize_gamekit_replay(
+            result=result,
+            game_kit=self._replay_game_kit,
+            env=self._replay_env,
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+            replay_output_dir=self._replay_output_dir,
+        )
+        if materialized.arena_trace == result.arena_trace:
+            return materialized
+        return replace(materialized, arena_trace=result.arena_trace)
 
     def _other_player(self, player: str) -> Optional[str]:
         for candidate in self._player_ids:

@@ -92,6 +92,45 @@ class _DummyEnv:
         )
 
 
+class _DummyEnvWithoutReplayPath:
+    def __init__(self) -> None:
+        self._active_player = "player_0"
+        self._terminal = False
+        self.apply_calls: list[str] = []
+
+    def get_active_player(self) -> str:
+        return self._active_player
+
+    def observe(self, player_id: str) -> dict[str, object]:
+        return {
+            "board_text": "demo-board",
+            "active_player_id": player_id,
+            "legalActions": [
+                {"id": "A1", "label": "Action A1"},
+                {"id": "PASS", "label": "Pass"},
+            ],
+        }
+
+    def apply(self, action: ArenaAction):
+        self.apply_calls.append(action.move)
+        self._terminal = True
+        return None
+
+    def is_terminal(self) -> bool:
+        return self._terminal
+
+    def build_result(self, *, result: str, reason: str | None):
+        return GameResult(
+            winner=self._active_player,
+            result=result,
+            reason=reason,
+            move_count=1,
+            illegal_move_count=0,
+            final_board="demo-board",
+            move_log=[{"player": self._active_player, "move": "A1"}],
+        )
+
+
 class _DummyScheduler:
     family = "turn"
     defaults = {"max_steps": 1}
@@ -372,6 +411,55 @@ def test_arena_visual_gateway_records_and_persists_sidecar_artifacts(tmp_path: P
     seek_snapshots = json.loads(seek_snapshots_path.read_text(encoding="utf-8"))
     assert seek_snapshots["seekSnapshots"][0]["snapshotMode"] == "full"
     replay_manifest = json.loads(Path(artifacts["replay_ref"]).read_text(encoding="utf-8"))
+    assert replay_manifest["artifacts"]["visual_session_ref"].endswith(
+        "arena_visual_session/v1/manifest.json"
+    )
+
+
+def test_arena_visual_gateway_materializes_replay_manifest_when_result_replay_path_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path / "runs"))
+    sample_id = "sample-inferred"
+    run_id = "run-inferred"
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.tictactoe.board_v1",
+        game_id="tictactoe",
+        scheduling_family="turn",
+        session_id=sample_id,
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="tictactoe", env="tictactoe_standard", scheduler="turn/default"),
+        environment=_DummyEnvWithoutReplayPath(),
+        player_specs=(_DummyPlayer(),),
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="tictactoe_visual_gateway",
+            sample_id=sample_id,
+            trace=SimpleNamespace(run_id=run_id),
+            sample_payload={"id": sample_id},
+        ),
+        visual_recorder=recorder,
+    )
+
+    observation = session.observe()
+    action = session.decide_current_player(observation)
+    session.apply(action)
+    session.advance()
+    session.finalize()
+
+    output = ArenaOutputWriter().finalize(session)
+    serialized = ArenaRoleAdapter._serialize_gamearena_value(output)
+    artifacts = serialized["artifacts"]
+    replay_path = Path(artifacts["replay_ref"])
+
+    assert replay_path.exists()
+    assert replay_path.name == "replay.json"
+    assert replay_path.parent.parent.name == "replays"
+    assert serialized["result"]["replay_path"] == str(replay_path)
+
+    replay_manifest = json.loads(replay_path.read_text(encoding="utf-8"))
+    assert replay_manifest["schema"] == "gage_replay/v1"
     assert replay_manifest["artifacts"]["visual_session_ref"].endswith(
         "arena_visual_session/v1/manifest.json"
     )

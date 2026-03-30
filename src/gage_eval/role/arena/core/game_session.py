@@ -31,11 +31,14 @@ from gage_eval.role.arena.schedulers._scheduler_utils import (
 )
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
-from gage_eval.role.arena.types import ArenaAction
+from gage_eval.role.arena.types import ArenaAction, GameResult
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
-from gage_eval.role.arena.replay_schema_writer import update_replay_manifest_visual_session_ref
+from gage_eval.role.arena.replay_schema_writer import (
+    ReplaySchemaWriter,
+    update_replay_manifest_visual_session_ref,
+)
 
 try:
     from PIL import Image
@@ -270,6 +273,7 @@ class GameSession:
             {"result": self.final_result, "sample": self.sample},
         )
         self.final_result = final_context.payload.get("result", self.final_result)
+        self._materialize_replay_artifact_if_missing()
         self._record_visual_result()
         self._persist_visual_recorder()
         self._maybe_launch_visualization_browser()
@@ -667,6 +671,38 @@ class GameSession:
                 replay_path,
                 exc,
             )
+
+    def _materialize_replay_artifact_if_missing(self) -> None:
+        result = self.final_result
+        if result is None:
+            return
+        replay_path = _resolve_result_replay_path(result)
+        if replay_path not in (None, ""):
+            return
+        replay_path = _resolve_visual_replay_path(
+            result=result,
+            invocation_context=self.invocation_context,
+        )
+        if replay_path is None:
+            return
+        replay_file = Path(replay_path).expanduser()
+        replay_writer = ReplaySchemaWriter(
+            run_dir=_resolve_replay_writer_run_dir(replay_file),
+            sample_id=replay_file.parent.name,
+            output_dir=str(replay_file.parent.parent),
+        )
+        materialized_result = _coerce_result_with_replay_path(result, replay_path=str(replay_file))
+        replay_writer.write(
+            scheduler_type=str(self.sample.scheduler or getattr(self.visual_recorder, "scheduling_family", "turn")),
+            result=materialized_result,
+            move_log=_resolve_result_move_log(materialized_result),
+            arena_trace=self.arena_trace,
+            extra_meta={
+                "game_kit": self.sample.game_kit,
+                "env": self.sample.env,
+            },
+        )
+        self.final_result = materialized_result
 
     def _maybe_launch_visualization_browser(self) -> None:
         if self._visualization_mode != "arena_visual":
@@ -1182,6 +1218,65 @@ def _resolve_visual_replay_path(
     if resolved is None:
         return None
     return str(resolved)
+
+
+def _resolve_result_move_log(result: object | None) -> list[dict[str, Any]]:
+    if result is None:
+        return []
+    if isinstance(result, Mapping):
+        raw_move_log = result.get("move_log")
+    else:
+        raw_move_log = getattr(result, "move_log", None)
+    if not isinstance(raw_move_log, (list, tuple)):
+        return []
+    return [dict(entry) for entry in raw_move_log if isinstance(entry, Mapping)]
+
+
+def _coerce_result_with_replay_path(result: object, *, replay_path: str) -> GameResult:
+    if isinstance(result, GameResult):
+        return replace(result, replay_path=replay_path)
+    winner = result.get("winner") if isinstance(result, Mapping) else getattr(result, "winner", None)
+    status = result.get("result") if isinstance(result, Mapping) else getattr(result, "result", None)
+    reason = result.get("reason") if isinstance(result, Mapping) else getattr(result, "reason", None)
+    move_count = result.get("move_count") if isinstance(result, Mapping) else getattr(result, "move_count", 0)
+    illegal_move_count = (
+        result.get("illegal_move_count")
+        if isinstance(result, Mapping)
+        else getattr(result, "illegal_move_count", 0)
+    )
+    final_board = result.get("final_board") if isinstance(result, Mapping) else getattr(result, "final_board", "")
+    rule_profile = result.get("rule_profile") if isinstance(result, Mapping) else getattr(result, "rule_profile", None)
+    win_direction = (
+        result.get("win_direction") if isinstance(result, Mapping) else getattr(result, "win_direction", None)
+    )
+    line_length = result.get("line_length") if isinstance(result, Mapping) else getattr(result, "line_length", None)
+    winning_line = (
+        result.get("winning_line") if isinstance(result, Mapping) else getattr(result, "winning_line", None)
+    )
+    arena_trace = result.get("arena_trace") if isinstance(result, Mapping) else getattr(result, "arena_trace", ())
+    return GameResult(
+        winner=str(winner) if winner not in (None, "") else None,
+        result=str(status or "completed"),
+        reason=str(reason) if reason not in (None, "") else None,
+        move_count=int(move_count or 0),
+        illegal_move_count=int(illegal_move_count or 0),
+        final_board=str(final_board or ""),
+        move_log=_resolve_result_move_log(result),
+        rule_profile=str(rule_profile) if rule_profile not in (None, "") else None,
+        win_direction=str(win_direction) if win_direction not in (None, "") else None,
+        line_length=int(line_length) if line_length not in (None, "") else None,
+        winning_line=tuple(str(item) for item in winning_line) if isinstance(winning_line, (list, tuple)) else None,
+        replay_path=replay_path,
+        arena_trace=tuple(dict(entry) for entry in arena_trace) if isinstance(arena_trace, (list, tuple)) else (),
+    )
+
+
+def _resolve_replay_writer_run_dir(replay_file: Path) -> Path:
+    replay_path = replay_file.expanduser()
+    parents = replay_path.parents
+    if len(parents) >= 3:
+        return parents[2]
+    return replay_path.parent
 
 
 def _build_ws_rgb_hub(config: Mapping[str, Any]):

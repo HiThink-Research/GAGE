@@ -1,4 +1,4 @@
-from gage_eval.role.arena.games.retro import observation as retro_observation
+from gage_eval.game_kits.real_time_game.retro_platformer import observation as retro_observation
 
 
 def test_action_schema_prompt_includes_constraints_and_legal_moves():

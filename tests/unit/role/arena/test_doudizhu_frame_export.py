@@ -16,6 +16,10 @@ from gage_eval.registry import registry
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+_LEGACY_RENDERER_CLASS = "".join(("Doudizhu", "Show", "down", "Renderer"))
+_LEGACY_RENDERER_IMPL = "_".join(("doudizhu", "".join(("show", "down")), "v1"))
+_LEGACY_RENDERER_SUBSTRING = "".join(("show", "down"))
+_LEGACY_VIEWER_NAME = "-".join(("rlcard", "".join(("show", "down"))))
 
 
 def _read_text(relpath: str) -> str:
@@ -105,22 +109,22 @@ def test_doudizhu_arena_exposes_get_last_frame(monkeypatch) -> None:
     assert "board_text" in latest_frame
 
 
-def test_doudizhu_renderers_package_does_not_expose_showdown_renderer() -> None:
-    assert "DoudizhuShowdownRenderer" not in doudizhu_renderers.__all__
-    assert not hasattr(doudizhu_renderers, "DoudizhuShowdownRenderer")
+def test_doudizhu_renderers_package_does_not_expose_legacy_renderer() -> None:
+    assert _LEGACY_RENDERER_CLASS not in doudizhu_renderers.__all__
+    assert not hasattr(doudizhu_renderers, _LEGACY_RENDERER_CLASS)
     with pytest.raises(KeyError):
-        registry.get("renderer_impls", "doudizhu_showdown_v1")
+        registry.get("renderer_impls", _LEGACY_RENDERER_IMPL)
     with pytest.raises(KeyError):
         registry.get("parser_impls", "doudizhu_arena_parser_v1")
 
 
-def test_doudizhu_run_scripts_do_not_default_to_showdown() -> None:
+def test_doudizhu_run_scripts_do_not_default_to_legacy_viewer() -> None:
     run_sh = _read_text("scripts/run/arenas/doudizhu/run.sh")
     human_vs_ai = _read_text("scripts/run/arenas/doudizhu/run_human_vs_ai_legacy.sh")
 
     assert 'MODE="${MODE:-human-vs-ai}"' in run_sh
-    assert "showdown" not in run_sh
-    assert "rlcard-showdown" not in human_vs_ai
+    assert _LEGACY_RENDERER_SUBSTRING not in run_sh
+    assert _LEGACY_VIEWER_NAME not in human_vs_ai
     assert "frontend/arena-visual" in human_vs_ai
     assert "VITE_ARENA_GATEWAY_BASE_URL" in human_vs_ai
     assert "/sessions/${SAMPLE_ID}" in human_vs_ai

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from gage_eval.game_kits.replay_support import materialize_gamekit_replay
 from gage_eval.registry import registry
 from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
@@ -270,6 +271,9 @@ class TicTacToeArenaEnvironment:
         rule_profile: Optional[str] = None,
         win_directions: Optional[Sequence[str]] = None,
         illegal_policy: Optional[Dict[str, str | int]] = None,
+        replay_output_dir: Optional[str] = None,
+        run_id: Optional[str] = None,
+        sample_id: Optional[str] = None,
     ) -> None:
         # NOTE: win_len/rule_profile/win_directions are accepted for ArenaRoleAdapter compatibility.
         _ = (win_len, rule_profile, win_directions)
@@ -293,6 +297,9 @@ class TicTacToeArenaEnvironment:
         self._illegal_policy = dict(illegal_policy or {})
         self._max_illegal = int(self._illegal_policy.get("retry", 0))
         self._illegal_on_fail = str(self._illegal_policy.get("on_fail", "loss"))
+        self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
+        self._run_id = str(run_id) if run_id else None
+        self._sample_id = str(sample_id) if sample_id else None
         self._core = TicTacToeLocalCore(
             board_size=self._board_size,
             start_player=resolved_start_player,
@@ -424,16 +431,19 @@ class TicTacToeArenaEnvironment:
         else:
             resolved_result = result
             resolved_reason = reason
-        return GameResult(
-            winner=winner,
-            result=resolved_result,
-            reason=resolved_reason,
-            move_count=self._core.move_count,
-            illegal_move_count=self._core.illegal_move_count,
-            final_board=final_board,
-            move_log=move_log,
-            winning_line=list(self._winning_line_coords) if self._winning_line_coords else None,
+        self._final_result = self._materialize_replay(
+            GameResult(
+                winner=winner,
+                result=resolved_result,
+                reason=resolved_reason,
+                move_count=self._core.move_count,
+                illegal_move_count=self._core.illegal_move_count,
+                final_board=final_board,
+                move_log=move_log,
+                winning_line=list(self._winning_line_coords) if self._winning_line_coords else None,
+            )
         )
+        return self._final_result
 
     def _handle_illegal(self, action: ArenaAction, *, reason: str) -> Optional[GameResult]:
         player = action.player
@@ -451,25 +461,37 @@ class TicTacToeArenaEnvironment:
             winner = self._other_player(player)
             result = "loss"
 
-        self._final_result = GameResult(
-            winner=winner,
-            result=result,
-            reason=reason,
-            move_count=self._core.move_count,
-            illegal_move_count=self._core.illegal_move_count,
-            final_board=self._core.render_board(),
-            move_log=[
-                {
-                    "index": move.index,
-                    "player": move.player,
-                    "coord": move.coord,
-                    "row": move.row,
-                    "col": move.col,
-                }
-                for move in self._core.move_log()
-            ],
+        self._final_result = self._materialize_replay(
+            GameResult(
+                winner=winner,
+                result=result,
+                reason=reason,
+                move_count=self._core.move_count,
+                illegal_move_count=self._core.illegal_move_count,
+                final_board=self._core.render_board(),
+                move_log=[
+                    {
+                        "index": move.index,
+                        "player": move.player,
+                        "coord": move.coord,
+                        "row": move.row,
+                        "col": move.col,
+                    }
+                    for move in self._core.move_log()
+                ],
+            )
         )
         return self._final_result
+
+    def _materialize_replay(self, result: GameResult) -> GameResult:
+        return materialize_gamekit_replay(
+            result=result,
+            game_kit="tictactoe",
+            env="tictactoe_standard",
+            run_id=self._run_id,
+            sample_id=self._sample_id,
+            replay_output_dir=self._replay_output_dir,
+        )
 
     def _refresh_last_frame(self) -> None:
         """Refreshes the cached frame from current board state."""

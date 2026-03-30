@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.game_kits.board_game.gomoku.environment import GomokuArenaEnvironment
 
@@ -21,6 +22,9 @@ class GomokuStandardEnvironment:
         obs_image: bool = False,
         player_specs: Sequence[object],
         start_player_id: str | None = None,
+        replay_output_dir: str | None = None,
+        run_id: str | None = None,
+        sample_id: str | None = None,
     ) -> None:
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_names = {
@@ -38,15 +42,23 @@ class GomokuStandardEnvironment:
             win_directions=win_directions,
             illegal_policy=illegal_policy,
             obs_image=obs_image,
+            replay_output_dir=replay_output_dir,
+            run_id=run_id,
+            sample_id=sample_id,
         )
 
     @classmethod
-    def from_runtime(cls, *, sample, resolved, resources, player_specs):
+    def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
         defaults = {
             **dict(resolved.game_kit.defaults),
             **dict(resolved.env_spec.defaults),
             **dict(sample.runtime_overrides or {}),
         }
+        run_id, sample_id = resolve_invocation_run_sample_ids(
+            invocation_context=invocation_context,
+            run_id=defaults.get("run_id"),
+            sample_id=defaults.get("sample_id"),
+        )
         environment = cls(
             board_size=int(defaults.get("board_size", 15)),
             win_len=int(defaults.get("win_len", 5)),
@@ -63,6 +75,9 @@ class GomokuStandardEnvironment:
             obs_image=bool(defaults.get("obs_image", False)),
             player_specs=player_specs,
             start_player_id=defaults.get("start_player_id"),
+            replay_output_dir=defaults.get("replay_output_dir"),
+            run_id=run_id,
+            sample_id=sample_id,
         )
         return attach_runtime_resources(environment, resources)
 
@@ -85,10 +100,18 @@ class GomokuStandardEnvironment:
         return self._environment.build_result(result=result, reason=reason)
 
 
-def build_gomoku_standard_environment(*, sample, resolved, resources, player_specs) -> Any:
+def build_gomoku_standard_environment(
+    *,
+    sample,
+    resolved,
+    resources,
+    player_specs,
+    invocation_context=None,
+) -> Any:
     return GomokuStandardEnvironment.from_runtime(
         sample=sample,
         resolved=resolved,
         resources=resources,
         player_specs=player_specs,
+        invocation_context=invocation_context,
     )

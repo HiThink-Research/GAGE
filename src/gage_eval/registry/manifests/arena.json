@@ -40,18 +40,18 @@
     {
       "kind": "arena_impls",
       "name": "pettingzoo_aec_v1",
-      "module": "gage_eval.role.arena.games.pettingzoo.env",
+      "module": "gage_eval.game_kits.aec_env_game.pettingzoo.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/pettingzoo/env.py",
+      "declared_in": "src/gage_eval/game_kits/aec_env_game/pettingzoo/environment.py",
       "aliases": [],
       "optional": false
     },
     {
       "kind": "arena_impls",
       "name": "retro_env_v1",
-      "module": "gage_eval.role.arena.games.retro.retro_env",
+      "module": "gage_eval.game_kits.real_time_game.retro_platformer.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/retro/retro_env.py",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/retro_platformer/environment.py",
       "aliases": [],
       "optional": false
     },
@@ -67,9 +67,9 @@
     {
       "kind": "arena_impls",
       "name": "vizdoom_env_v1",
-      "module": "gage_eval.role.arena.games.vizdoom.env",
+      "module": "gage_eval.game_kits.real_time_game.vizdoom.environment",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/games/vizdoom/env.py",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/vizdoom/environment.py",
       "aliases": [],
       "optional": false
     },
@@ -92,6 +92,69 @@
       "optional": false
     },
     {
+      "kind": "game_kits",
+      "name": "doudizhu",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "gomoku",
+      "module": "gage_eval.game_kits.board_game.gomoku.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "mahjong",
+      "module": "gage_eval.game_kits.phase_card_game.mahjong.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "pettingzoo",
+      "module": "gage_eval.game_kits.aec_env_game.pettingzoo.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/aec_env_game/pettingzoo/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "retro_platformer",
+      "module": "gage_eval.game_kits.real_time_game.retro_platformer.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/retro_platformer/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "tictactoe",
+      "module": "gage_eval.game_kits.board_game.tictactoe.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "vizdoom",
+      "module": "gage_eval.game_kits.real_time_game.vizdoom.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/vizdoom/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
       "kind": "observation_workflows",
       "name": "arena/default",
       "module": "gage_eval.role.arena.support.specs",
@@ -101,11 +164,20 @@
       "optional": false
     },
     {
+      "kind": "observation_workflows",
+      "name": "noop_observation_v1",
+      "module": "gage_eval.game_kits.observation",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/observation.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
       "kind": "parser_impls",
       "name": "discrete_action_parser_v1",
-      "module": "gage_eval.role.arena.parsers.pettingzoo_actions",
+      "module": "gage_eval.game_kits.aec_env_game.pettingzoo.action_codec",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/parsers/pettingzoo_actions.py",
+      "declared_in": "src/gage_eval/game_kits/aec_env_game/pettingzoo/action_codec.py",
       "aliases": [],
       "optional": false
     },
@@ -148,27 +220,18 @@
     {
       "kind": "parser_impls",
       "name": "retro_action_v1",
-      "module": "gage_eval.role.arena.parsers.retro_action_parser",
+      "module": "gage_eval.game_kits.real_time_game.retro_platformer.parser",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/parsers/retro_action_parser.py",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/retro_platformer/parser.py",
       "aliases": [],
       "optional": false
     },
     {
       "kind": "parser_impls",
       "name": "vizdoom_parser_v1",
-      "module": "gage_eval.role.arena.parsers.vizdoom_parser",
+      "module": "gage_eval.game_kits.real_time_game.vizdoom.parser",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/parsers/vizdoom_parser.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "player_drivers",
-      "name": "player_driver/dummy",
-      "module": "gage_eval.role.arena.support.specs",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/vizdoom/parser.py",
       "aliases": [],
       "optional": false
     },
@@ -219,6 +282,33 @@
     },
     {
       "kind": "scheduler_bindings",
+      "name": "agent_cycle/default",
+      "module": "gage_eval.role.arena.schedulers.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/schedulers/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "scheduler_bindings",
+      "name": "real_time_tick/default",
+      "module": "gage_eval.role.arena.schedulers.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/schedulers/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "scheduler_bindings",
+      "name": "record_cadence/default",
+      "module": "gage_eval.role.arena.schedulers.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/schedulers/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "scheduler_bindings",
       "name": "turn/default",
       "module": "gage_eval.role.arena.schedulers.specs",
       "load_phase": "prepare_only",
@@ -238,9 +328,18 @@
     {
       "kind": "support_workflows",
       "name": "arena/default",
-      "module": "gage_eval.role.arena.support.specs",
+      "module": "gage_eval.role.arena.support.registry",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "declared_in": "src/gage_eval/role/arena/support/registry.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "support_workflows",
+      "name": "noop_support_v1",
+      "module": "gage_eval.role.arena.support.registry",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/registry.py",
       "aliases": [],
       "optional": false
     },
@@ -254,29 +353,11 @@
       "optional": false
     },
     {
-      "kind": "game_kits",
-      "name": "gomoku",
-      "module": "gage_eval.game_kits.board_game.gomoku.kit",
+      "kind": "visualization_specs",
+      "name": "arena/visualization/doudizhu_table_v1",
+      "module": "gage_eval.game_kits.phase_card_game.doudizhu.visualization",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/game_kits/board_game/gomoku/kit.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "game_kits",
-      "name": "tictactoe",
-      "module": "gage_eval.game_kits.board_game.tictactoe.kit",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/kit.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "observation_workflows",
-      "name": "noop_observation_v1",
-      "module": "gage_eval.game_kits.observation",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/game_kits/observation.py",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/doudizhu/visualization.py",
       "aliases": [],
       "optional": false
     },
@@ -291,10 +372,46 @@
     },
     {
       "kind": "visualization_specs",
+      "name": "arena/visualization/mahjong_table_v1",
+      "module": "gage_eval.game_kits.phase_card_game.mahjong.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/visualization.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/visualization/pettingzoo_frame_v1",
+      "module": "gage_eval.game_kits.aec_env_game.pettingzoo.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/aec_env_game/pettingzoo/visualization.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/visualization/retro_platformer_frame_v1",
+      "module": "gage_eval.game_kits.real_time_game.retro_platformer.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/retro_platformer/visualization.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
       "name": "arena/visualization/tictactoe_board_v1",
       "module": "gage_eval.game_kits.board_game.tictactoe.visualization",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/board_game/tictactoe/visualization.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/visualization/vizdoom_frame_v1",
+      "module": "gage_eval.game_kits.real_time_game.vizdoom.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/vizdoom/visualization.py",
       "aliases": [],
       "optional": false
     }

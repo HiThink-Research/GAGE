@@ -14,6 +14,7 @@ def test_pettingzoo_gamekit_runs_dummy_match_end_to_end(
     )
     sample = result["sample"]
     output = result["output"]
+    replay_path = Path(output["result"]["replay_path"])
 
     assert output["sample"]["game_kit"] == "pettingzoo"
     assert output["sample"]["env"] == "space_invaders"
@@ -24,7 +25,12 @@ def test_pettingzoo_gamekit_runs_dummy_match_end_to_end(
     assert output["result"]["winner"] == "pilot_alpha"
     assert output["result"]["result"] == "win"
     assert output["result"]["move_count"] == 4
+    assert replay_path.exists()
+    assert replay_path.name == "replay.json"
+    assert replay_path.parent.parent.name == "replays"
+    assert replay_path.parent.name == str(sample["id"])
     assert len(output["arena_trace"]) == 4
+    assert sample["predict_result"][0]["artifacts"]["replay_ref"] == str(replay_path)
     assert sample["predict_result"][0]["game_arena"]["winner_player_id"] == "pilot_alpha"
     assert sample["predict_result"][0]["game_arena"]["total_steps"] == 4
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 
 import pytest
 
@@ -94,6 +95,21 @@ def test_visualization_spec_plugin_ids_are_unique_across_current_games() -> None
     }
 
     assert len(plugin_ids) == len(EXPECTED_VISUALIZATION_SPECS)
+
+
+def test_visualization_resolution_does_not_load_legacy_arena_game_modules() -> None:
+    legacy_prefix = ".".join(("gage_eval", "role", "arena", "games"))
+    for module_name in list(sys.modules):
+        if module_name == legacy_prefix or module_name.startswith(f"{legacy_prefix}."):
+            sys.modules.pop(module_name, None)
+
+    _resolve_visualization_spec("gomoku")
+    _resolve_visualization_spec("tictactoe")
+
+    assert not any(
+        module_name == legacy_prefix or module_name.startswith(f"{legacy_prefix}.")
+        for module_name in sys.modules
+    )
 
 
 def test_mahjong_visualization_spec_declares_structured_table_scene_extensions() -> None:

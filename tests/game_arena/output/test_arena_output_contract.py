@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from gage_eval.evaluation.sample_envelope import append_arena_contract, ensure_arena_header
@@ -11,14 +12,20 @@ from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.arena.types import GameResult
 
 
-def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> None:
+def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    run_id = "test-run"
+    replay_path = f"runs/{run_id}/replays/sample-1/replay.json"
+    frame_capture_ref = f"runs/{run_id}/frames/sample-1/frame-0.png"
     recorder = ArenaVisualSessionRecorder(
         plugin_id="arena-role",
         game_id="gomoku",
         scheduling_family="turn",
         session_id="sample-1",
     )
-    replay_path = "artifacts/replays/sample-1/replay.json"
     recorder.record_decision_window_open(
         ts_ms=1001,
         step=0,
@@ -53,6 +60,17 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
         snapshot={"board_text": "board"},
     )
     recorder.persist(replay_path)
+    assert not Path("artifacts").exists()
+    assert (
+        tmp_path
+        / "runs"
+        / run_id
+        / "replays"
+        / "sample-1"
+        / "arena_visual_session"
+        / "v1"
+        / "manifest.json"
+    ).exists()
 
     session = GameSession(
         sample=ArenaSample(
@@ -103,7 +121,7 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
         resources=SimpleNamespace(
             resource_categories=("game_runtime_resource", "visualization_resource"),
             lifecycle_phase="allocated",
-            resource_artifacts={"frame_capture_ref": "artifacts/frames/sample-1/frame-0.png"},
+            resource_artifacts={"frame_capture_ref": frame_capture_ref},
         ),
         visual_recorder=recorder,
     )
@@ -121,10 +139,8 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
     assert serialized["footer"]["winner_player_id"] == "Black"
     assert serialized["footer"]["termination_reason"] == "five_in_row"
     assert serialized["footer"]["total_steps"] == 3
-    assert serialized["resource_artifacts"]["frame_capture_ref"] == (
-        "artifacts/frames/sample-1/frame-0.png"
-    )
-    assert serialized["resource_artifacts"]["replay_ref"] == "artifacts/replays/sample-1/replay.json"
+    assert serialized["resource_artifacts"]["frame_capture_ref"] == frame_capture_ref
+    assert serialized["resource_artifacts"]["replay_ref"] == replay_path
     assert serialized["game_context"]["game_kit"] == "gomoku"
     assert serialized["game_context"]["env"] == "gomoku_standard"
     assert serialized["game_context"]["support_workflow"] == "arena/default"
@@ -133,9 +149,9 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
         "game_runtime_resource",
         "visualization_resource",
     )
-    assert serialized["artifacts"]["replay_ref"] == "artifacts/replays/sample-1/replay.json"
-    assert serialized["artifacts"]["visual_session_ref"].endswith(
-        "arena_visual_session/v1/manifest.json"
+    assert serialized["artifacts"]["replay_ref"] == replay_path
+    assert serialized["artifacts"]["visual_session_ref"] == (
+        f"runs/{run_id}/replays/sample-1/arena_visual_session/v1/manifest.json"
     )
 
     sample = {
@@ -155,7 +171,7 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample() -> No
     assert entry["game_arena"]["winner_player_id"] == "Black"
     assert entry["game_arena"]["termination_reason"] == "five_in_row"
     assert entry["game_arena"]["total_steps"] == 3
-    assert entry["artifacts"]["replay_ref"] == "artifacts/replays/sample-1/replay.json"
+    assert entry["artifacts"]["replay_ref"] == replay_path
 
 
 def test_arena_output_writer_serializes_support_and_resource_failures() -> None:
