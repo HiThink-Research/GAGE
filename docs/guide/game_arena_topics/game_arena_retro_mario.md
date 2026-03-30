@@ -21,12 +21,12 @@ The actual runtime behavior still comes from the YAML config, but startup and re
 | --- | --- | --- |
 | Standard startup script | `scripts/run/arenas/retro_mario/run.sh` | Main entry for common Mario startup modes |
 | Replay script | `scripts/run/arenas/retro_mario/replay.sh` | Replay one finished run by `run_id` |
-| Dummy websocketRGB config | `config/custom/retro_mario_phase1_dummy_ws.yaml` | Fastest live-view smoke test |
-| Human websocketRGB config | `config/custom/retro_mario_phase1_human_ws.yaml` | Human-controlled Mario session |
-| OpenAI websocketRGB config | `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml` | API-backed live-view demo |
-| OpenAI headless config | `config/custom/retro_mario_openai_headless_auto_eval.yaml` | API-backed headless demo |
-| Dummy headless config | `config/custom/retro_mario_phase1_dummy_headless_auto_eval.yaml` | Offline smoke test without viewer |
-| Dataset | `config/custom/retro_mario_phase1.jsonl` | Default sample input |
+| Dummy websocketRGB config | `config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml` | Fastest live-view smoke test |
+| Human websocketRGB config | `config/custom/retro_mario/retro_mario_phase1_human_ws.yaml` | Human-controlled Mario session |
+| OpenAI websocketRGB config | `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml` | API-backed live-view demo |
+| OpenAI headless config | `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml` | API-backed headless demo |
+| Dummy headless config | `config/custom/retro_mario/retro_mario_phase1_dummy_headless_auto_eval.yaml` | Offline smoke test without viewer |
+| Dataset | `config/custom/retro_mario/retro_mario_phase1.jsonl` | Default sample input |
 | Environment implementation | `src/gage_eval/role/arena/games/retro/retro_env.py` | Runtime behavior and replay writing |
 | Parser | `src/gage_eval/role/arena/parsers/retro_action_parser.py` | Parse `{"move": "...", "hold_ticks": ...}` actions |
 
@@ -118,7 +118,7 @@ bash scripts/run/arenas/retro_mario/run.sh \
 Where to change the model/API for this command:
 
 - API key: export `OPENAI_API_KEY` before launch. `scripts/run/arenas/retro_mario/run.sh` also accepts `LITELLM_API_KEY` and copies it into `OPENAI_API_KEY`.
-- `openai_ws` reads `config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml`. `openai_headless` reads `config/custom/retro_mario_openai_headless_auto_eval.yaml`.
+- `openai_ws` reads `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml`. `openai_headless` reads `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml`.
 - Hosted OpenAI-compatible API: edit `backends[0].config.base_url` to switch the endpoint. Edit `backends[0].config.model`, or set `RETRO_OPENAI_MODEL`, to switch the deployed model name.
 - Local OpenAI-compatible service: point `backends[0].config.base_url` to the local server and set `backends[0].config.model` to the served model id. These configs currently set `require_api_key: true`, so keep `OPENAI_API_KEY` non-empty or change that flag if your local service does not require auth.
 
@@ -177,7 +177,7 @@ Use `--config` if you want the script wrapper but need a custom YAML path:
 
 ```bash
 bash scripts/run/arenas/retro_mario/run.sh \
-  --config config/custom/retro_mario_phase1_dummy_ws.yaml \
+  --config config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml \
   --run-id "retro_mario_custom_$(date +%Y%m%d_%H%M%S)"
 ```
 

@@ -21,7 +21,7 @@ from gage_eval.role.model.config.dummy import DummyBackendConfig
 class DummyBackend(EngineBackend):
     def load_model(self, config: Dict[str, Any]):
         self.config = DummyBackendConfig(**config)
-        self._responses = list(self.config.responses or ["dummy response"])
+        self._responses = list(self.config.responses)
         self._index = 0
         self._rng: Optional[random.Random] = None
         if self.config.random:

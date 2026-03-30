@@ -21,6 +21,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Optional
 
 from gage_eval.registry import registry
+from gage_eval.role.arena.registry_loader import import_arena_asset_module
 from gage_eval.role.arena.types import ArenaAction
 
 
@@ -51,7 +52,11 @@ def handle_request(
         impl = params.get("impl")
         if not impl:
             raise ValueError("init requires impl")
-        env_cls = registry.get("arena_impls", impl)
+        try:
+            env_cls = registry.get("arena_impls", impl)
+        except KeyError:
+            import_arena_asset_module("arena_impls", impl)
+            env_cls = registry.get("arena_impls", impl)
         init_kwargs = dict(params)
         init_kwargs.pop("impl", None)
         state.env = env_cls(**init_kwargs)

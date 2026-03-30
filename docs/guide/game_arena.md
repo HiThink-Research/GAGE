@@ -201,8 +201,7 @@ This screenshot shows `space_invaders` from the PettingZoo Atari family. The cur
 
 Related topic guides:
 
-- [PettingZoo Guide](game_arena_topics/game_arena_pettingzoo.md)
-- [PettingZoo Atari Run Commands](game_arena_topics/pettingzoo_atari_run_commands.md)
+ - [PettingZoo Atari Guide](game_arena_topics/pettingzoo_atari_run_commands.md)
 - [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)
 
 ### 7.5 Retro Mario

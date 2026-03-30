@@ -14,7 +14,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
-from gage_eval.config.schema import SchemaValidationError, normalize_pipeline_payload
 from gage_eval.observability.logger import ObservableLogger
 
 _logger = ObservableLogger()
@@ -202,9 +201,16 @@ class TaskSpec:
     max_samples: Optional[int] = None
     shuffle: Optional[bool] = None
     shuffle_seed: Optional[int] = None
+    shuffle_strategy: Optional[str] = None
+    shuffle_small_dataset_threshold: Optional[int] = None
+    keep_shuffle_artifacts: Optional[bool] = None
     concurrency: Optional[int] = None
     prefetch_factor: Optional[int] = None
     max_inflight: Optional[int] = None
+    failure_policy: Optional[str] = None
+    metric_concurrency: Optional[int] = None
+    report_partial_on_failure: Optional[bool] = None
+    support_payload_policy: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -247,193 +253,17 @@ class PipelineConfig:
         immutable. Only a subset of validations are performed here;
         deeper checks belong to :class:`gage_eval.config.registry.ConfigRegistry`.
         """
+        from gage_eval.config.pipeline_builder import PipelineConfigBuilder
 
-        # STEP 1: Normalize and validate the raw payload against the schema.
-        try:
-            normalized = normalize_pipeline_payload(payload)
-        except SchemaValidationError as exc:
-            raise ValueError(str(exc)) from exc
-
-        # STEP 2: Parse the pipeline root blocks (metadata/builtin/custom).
-        metadata = normalized.get("metadata", {})
-        builtin = None
-        if normalized.get("builtin"):
-            builtin_entry = normalized["builtin"]
-            builtin = BuiltinPipelineSpec(
-                pipeline_id=builtin_entry.get("pipeline_id"),
-                params=builtin_entry.get("params") or builtin_entry.get("args", {}),
-            )
-
-        custom = None
-        if normalized.get("custom"):
-            steps = []
-            for step in normalized["custom"].get("steps", []):
-                steps.append(
-                    CustomPipelineStep(
-                        step_type=step.get("step"),
-                        adapter_id=step.get("adapter_id") or step.get("role_ref"),
-                        params=step.get("params") or {},
-                    )
-                )
-            custom = CustomPipelineSpec(steps=tuple(steps))
-
-        # STEP 3: Parse asset blocks (models/datasets/backends/prompts/adapters/metrics/tasks).
-        models = tuple(
-            ModelSpec(
-                model_id=item.get("model_id"),
-                source=item.get("source"),
-                hub=item.get("hub"),
-                hub_params=item.get("hub_params") or item.get("hub_args", {}),
-                params=item.get("params") or {},
-            )
-            for item in normalized.get("models", [])
-        )
-
-        datasets = tuple(
-            DatasetSpec(
-                dataset_id=item.get("dataset_id"),
-                loader=item.get("loader"),
-                hub=item.get("hub"),
-                hub_params=item.get("hub_params") or item.get("hub_args", {}),
-                preprocess_chain=tuple(item.get("preprocess_chain", [])),
-                params=item.get("params") or {},
-                schema=item.get("schema"),
-            )
-            for item in normalized.get("datasets", [])
-        )
-
-        backends = tuple(
-            BackendSpec(
-                backend_id=item.get("backend_id"),
-                type=item.get("type"),
-                config=item.get("config", {}),
-            )
-            for item in normalized.get("backends", [])
-        )
-
-        agent_backends = tuple(
-            AgentBackendSpec(
-                agent_backend_id=item.get("agent_backend_id"),
-                type=item.get("type"),
-                config=item.get("config", {}),
-                backend_id=item.get("backend_id"),
-            )
-            for item in normalized.get("agent_backends", [])
-        )
-
-        sandbox_profiles = tuple(
-            SandboxProfileSpec(
-                sandbox_id=item.get("sandbox_id") or item.get("template_name"),
-                runtime=item.get("runtime"),
-                image=item.get("image"),
-                resources=item.get("resources") or {},
-                runtime_configs=item.get("runtime_configs") or {},
-                params=item.get("params") or {},
-                extra=_strip_known_keys(
-                    item,
-                    {
-                        "sandbox_id",
-                        "template_name",
-                        "runtime",
-                        "image",
-                        "resources",
-                        "runtime_configs",
-                        "params",
-                    },
-                ),
-            )
-            for item in normalized.get("sandbox_profiles", [])
-        )
-
-        mcp_clients = tuple(
-            McpClientSpec(
-                mcp_client_id=item.get("mcp_client_id"),
-                transport=item.get("transport"),
-                endpoint=item.get("endpoint"),
-                timeout_s=item.get("timeout_s"),
-                allowlist=tuple(item.get("allowlist", [])),
-                params=item.get("params") or {},
-            )
-            for item in normalized.get("mcp_clients", [])
-        )
-
-        prompts = tuple(
-            PromptTemplateSpec(
-                prompt_id=item.get("prompt_id"),
-                renderer=item.get("renderer"),
-                template=item.get("template"),
-                params=item.get("params") or {},
-            )
-            for item in normalized.get("prompts", [])
-        )
-
-        role_adapters = tuple(
-            RoleAdapterSpec(
-                adapter_id=item.get("adapter_id"),
-                role_type=item.get("role_type"),
-                class_path=item.get("class_path"),
-                parallel=item.get("parallel", {}),
-                sandbox=item.get("sandbox", {}),
-                resource_requirement=item.get("resource_requirement", {}),
-                capabilities=tuple(item.get("capabilities", [])),
-                params=item.get("params") or {},
-                backend_id=item.get("backend_id"),
-                backend=dict(item.get("backend", {})) if item.get("backend") else None,
-                agent_backend_id=item.get("agent_backend_id"),
-                agent_backend=dict(item.get("agent_backend", {})) if item.get("agent_backend") else None,
-                mcp_client_id=item.get("mcp_client_id"),
-                prompt_id=item.get("prompt_id"),
-                prompt_params=item.get("prompt_params") or item.get("prompt_args", {}),
-            )
-            for item in normalized.get("role_adapters", [])
-        )
-
-        metrics = tuple(MetricSpec(**_normalize_metric_entry(item)) for item in normalized.get("metrics", []))
-
-        tasks = tuple(
-            TaskSpec(
-                task_id=item.get("task_id"),
-                dataset_id=item.get("dataset_id") or item.get("dataset_ref"),
-                steps=tuple(
-                    CustomPipelineStep(
-                        step_type=step.get("step"),
-                        adapter_id=step.get("adapter_id") or step.get("role_ref"),
-                        params=step.get("params") or {},
-                    )
-                    for step in item.get("steps", [])
-                ),
-                metric_overrides=tuple(MetricSpec(**_normalize_metric_entry(metric)) for metric in item.get("metric_overrides", [])),
-                reporting=item.get("reporting", {}),
-                max_samples=item.get("max_samples"),
-                shuffle=item.get("shuffle"),
-                shuffle_seed=item.get("shuffle_seed"),
-                concurrency=item.get("concurrency"),
-                prefetch_factor=item.get("prefetch_factor"),
-                max_inflight=item.get("max_inflight"),
-            )
-            for item in normalized.get("tasks", [])
-        )
-
-        summary_generators = tuple(_normalize_summary_generator_entry(entry) for entry in normalized.get("summary_generators", []))
-        observability = normalized.get("observability") or {}
-
-        # STEP 4: Materialize the immutable dataclass config.
-        return PipelineConfig(
-            metadata=metadata,
-            builtin=builtin,
-            custom=custom,
-            datasets=datasets,
-            models=models,
-            backends=backends,
-            agent_backends=agent_backends,
-            sandbox_profiles=sandbox_profiles,
-            mcp_clients=mcp_clients,
-            prompts=prompts,
-            role_adapters=role_adapters,
-            metrics=metrics,
-            tasks=tasks,
-            summary_generators=summary_generators,
-            observability=observability,
+        return (
+            PipelineConfigBuilder(payload)
+            .normalize()
+            .build_root()
+            .build_assets()
+            .build_role_adapters()
+            .build_metrics()
+            .build_tasks()
+            .build()
         )
 
 

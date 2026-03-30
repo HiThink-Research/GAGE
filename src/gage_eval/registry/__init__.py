@@ -5,7 +5,39 @@ from __future__ import annotations
 from typing import Dict
 
 from gage_eval.registry.entry import RegistryEntry
+from gage_eval.registry.asset_planner import DiscoveryPlan, DiscoveryRequest, RuntimeAssetPlanner
+from gage_eval.registry.bootstrap_importer import (
+    BootstrapImporter,
+    DiscoveryImport,
+    DiscoveryIssue,
+    DiscoveryReport,
+    import_asset_from_manifest,
+    import_kind_from_manifest,
+)
+from gage_eval.registry.discovery_manifest import (
+    DiscoveryManifestEntry,
+    DiscoveryManifestRepository,
+    clear_manifest_repository_cache,
+    load_default_manifest_repository,
+)
+from gage_eval.registry.discovery_telemetry import (
+    DiscoveryTelemetry,
+    DiscoveryTelemetrySnapshot,
+    telemetry as discovery_telemetry,
+)
 from gage_eval.registry.manager import RegistryManager
+from gage_eval.registry.runtime import (
+    DiscoveryFailureRecord,
+    DiscoveryPolicy,
+    FrozenRegistryView,
+    RegistryBootstrapCoordinator,
+    RegistryDiscoveryError,
+    RegistryFacade,
+    RegistryOverlayAsset,
+    RegistryRuntimeMutationError,
+    RegistryViewLease,
+    RuntimeRegistryContext,
+)
 from gage_eval.registry.utils import ensure_async, run_sync
 
 registry = RegistryManager()
@@ -18,6 +50,7 @@ DEFAULT_KINDS: Dict[str, str] = {
     "judge_impls": "裁判扩展实现（Docker/脚本等）",
     "helper_impls": "助手扩展实现（预测/检索等）",
     "arena_impls": "对局环境实现（游戏规则/状态机）",
+    "arena_game_providers": "对局域装配器（环境/渲染/输入默认装配）",
     "parser_impls": "对局解析器实现（动作解析与坐标校验）",
     "renderer_impls": "对局渲染器实现（棋盘/UI 渲染）",
     "dataset_hubs": "数据集源（HF、ModelScope、本地等）",
@@ -39,7 +72,33 @@ for _kind, _desc in DEFAULT_KINDS.items():
 
 __all__ = [
     "RegistryEntry",
+    "BootstrapImporter",
+    "DiscoveryImport",
+    "DiscoveryIssue",
+    "DiscoveryManifestEntry",
+    "DiscoveryManifestRepository",
     "RegistryManager",
+    "DiscoveryPlan",
+    "DiscoveryReport",
+    "DiscoveryRequest",
+    "DiscoveryFailureRecord",
+    "DiscoveryPolicy",
+    "DiscoveryTelemetry",
+    "DiscoveryTelemetrySnapshot",
+    "FrozenRegistryView",
+    "RegistryBootstrapCoordinator",
+    "RegistryDiscoveryError",
+    "RegistryFacade",
+    "RegistryOverlayAsset",
+    "RegistryRuntimeMutationError",
+    "RegistryViewLease",
+    "RuntimeRegistryContext",
+    "RuntimeAssetPlanner",
+    "clear_manifest_repository_cache",
+    "discovery_telemetry",
+    "import_asset_from_manifest",
+    "import_kind_from_manifest",
+    "load_default_manifest_repository",
     "registry",
     "ensure_async",
     "run_sync",

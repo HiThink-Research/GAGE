@@ -7,6 +7,7 @@ from typing import Any, Optional, Sequence
 
 from gage_eval.role.arena.interfaces import ArenaEnvironment, Player, Scheduler
 from gage_eval.role.arena.schedulers._scheduler_utils import (
+    SchedulerWaitPolicy,
     apply_action_map,
     build_fallback_action,
     clock_ms,
@@ -77,6 +78,10 @@ class SimultaneousScheduler(Scheduler):
         )
         self._trace_finalize_timing = normalize_trace_finalize_timing(trace_finalize_timing)
         self._trace_action_format = normalize_trace_action_format(trace_action_format)
+        self._wait_policy = SchedulerWaitPolicy()
+
+    def close(self) -> None:
+        self._wait_policy.close()
 
     def run_loop(self, environment: ArenaEnvironment, players: Sequence[Player]) -> GameResult:
         """Run simultaneous action collection loop.
@@ -121,6 +126,7 @@ class SimultaneousScheduler(Scheduler):
                     player=player,
                     observation=observation,
                     timeout_ms=self._action_timeout_ms,
+                    wait_policy=self._wait_policy,
                 )
                 if action is None:
                     fallback_reason = "timeout" if timed_out else (error_type or "think_exception")

@@ -264,3 +264,30 @@ def test_arena_metrics_fallback_paths(mock_trace) -> None:
     assert _coerce_bool(0, default=True) is False
     assert _percentile([], 95.0) == 0.0
     assert _percentile([3.0], 95.0) == 3.0
+
+
+def test_arena_metrics_respect_selected_predict_result(mock_trace) -> None:
+    sample = _build_sample()
+    sample["predict_result"].append(
+        {
+            "index": 1,
+            "arena_trace": sample["predict_result"][0]["arena_trace"],
+            "game_arena": {
+                "end_time_ms": 5000,
+                "total_steps": 4,
+                "winner_player_id": "p1",
+                "termination_reason": "finished",
+                "ranks": ["p1", "p0"],
+                "final_scores": {"p0": 3, "p1": 7},
+                "episode_returns": {"p0": 1.0, "p1": 2.0},
+            },
+        }
+    )
+    sample["selected_predict_result_index"] = 1
+    context = _ctx(sample, mock_trace)
+
+    winner_metric = WinnerPlayerIdMetric(MetricSpec("winner_player_id", "winner_player_id", None, {}))
+    score_metric = FinalScorePerPlayerMetric(MetricSpec("final_score_per_player", "final_score_per_player", None, {}))
+
+    assert winner_metric.compute(context).metadata == {"winner_player_id": "p1"}
+    assert score_metric.compute(context).values == {"p0": 3.0, "p1": 7.0}

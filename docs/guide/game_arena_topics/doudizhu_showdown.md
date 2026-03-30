@@ -36,7 +36,7 @@ Common Environment Variables:
 (Corresponding to `scripts/run/arenas/doudizhu/run.sh --mode showdown`)
 
 The main flow of the script:
-1. Parses project root and Python path, then reads the default config `config/custom/doudizhu_litellm_local.yaml`.
+1. Parses project root and Python path, then reads the default config `config/custom/doudizhu/doudizhu_litellm_local.yaml`.
 2. Checks whether `OPENAI_API_KEY` / `LITELLM_API_KEY`, Node.js/npm, and frontend dependencies are ready.
 3. Automatically selects free ports and starts the replay server.
 4. Starts the frontend with `npm run start` and tries to open the replay page.
@@ -44,7 +44,7 @@ The main flow of the script:
 
 Built-in defaults (can be changed in the script if needed):
 - `PYTHON_BIN`: Python interpreter path (defaults to the project venv)
-- `CFG`: Run config path (defaults to `config/custom/doudizhu_litellm_local.yaml`)
+- `CFG`: Run config path (defaults to `config/custom/doudizhu/doudizhu_litellm_local.yaml`)
 - `SAMPLE_ID`: Replay sample ID (defaults to `doudizhu_litellm_0001`)
 
 ## Replay and Output
@@ -216,7 +216,7 @@ Notes:
 ### 2) Chat Toggle and Frequency
 
 Configuration location:
-`config/custom/doudizhu_litellm_local.yaml`
+`config/custom/doudizhu/doudizhu_litellm_local.yaml`
 
 Example:
 ```yaml
@@ -259,7 +259,7 @@ REACT_APP_GAGE_API_URL="http://127.0.0.1:8000" NODE_OPTIONS="--openssl-legacy-pr
 
 3) Run backend inference:
 ```bash
-python run.py --config config/custom/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
+python run.py --config config/custom/doudizhu/doudizhu_litellm_local.yaml --output-dir runs --run-id doudizhu_showdown_local
 ```
 
 ## FAQ

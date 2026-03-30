@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from gage_eval.registry import registry
+from gage_eval.registry import import_asset_from_manifest, registry
 from gage_eval.role.adapters.model_role_adapter import ModelRoleAdapter
 
 
@@ -28,6 +28,7 @@ class HelperModelAdapter(ModelRoleAdapter):
         role_type: str = "helper_model",
         implementation: Optional[str] = None,
         implementation_params: Optional[Dict[str, Any]] = None,
+        registry_view=None,
         **params,
     ) -> None:
         super().__init__(
@@ -43,10 +44,18 @@ class HelperModelAdapter(ModelRoleAdapter):
         self._implementation_params = dict(implementation_params or {})
         self._impl = None
         if implementation:
+            lookup = registry_view or registry
             try:
-                impl_cls = registry.get("helper_impls", implementation)
+                impl_cls = lookup.get("helper_impls", implementation)
             except KeyError:
-                registry.auto_discover("helper_impls", "gage_eval.role.helper")
+                if registry_view is not None:
+                    raise
+                import_asset_from_manifest(
+                    "helper_impls",
+                    implementation,
+                    registry=lookup,
+                    source=f"helper_model:{adapter_id}",
+                )
                 impl_cls = registry.get("helper_impls", implementation)
             self._impl = impl_cls(**self._implementation_params)
 

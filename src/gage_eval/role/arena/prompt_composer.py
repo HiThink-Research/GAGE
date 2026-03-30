@@ -16,12 +16,14 @@ from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 
 _DEFAULT_SCHEME_ID = "S3_text_image_current"
 _DEFAULT_HISTORY_LEN = 4
+_DEFAULT_IMAGE_HISTORY_LEN = 4
 _DEFAULT_DELTA_KEY_LIMIT = 6
 _DEFAULT_TELEMETRY_LIMIT = 12
 _SUPPORTED_SCHEME_IDS = {
     "S1_rich_text_only",
     "S2_image_only_current",
     "S3_text_image_current",
+    "S4_text_image_4f_action_hist",
     "S5_image_compact_state",
     "S6_text_image_action_hist",
     "S6_v2_text_image_action_outcome_hist",
@@ -30,16 +32,21 @@ _SUPPORTED_SCHEME_IDS = {
 _IMAGE_ENABLED_SCHEME_IDS = {
     "S2_image_only_current",
     "S3_text_image_current",
+    "S4_text_image_4f_action_hist",
     "S5_image_compact_state",
     "S6_text_image_action_hist",
     "S6_v2_text_image_action_outcome_hist",
     "S7_text_image_delta_summary",
 }
 _COMPACT_TEXT_SCHEME_IDS = {"S5_image_compact_state"}
-_ACTION_HISTORY_SCHEME_IDS = {"S6_text_image_action_hist"}
+_ACTION_HISTORY_SCHEME_IDS = {
+    "S4_text_image_4f_action_hist",
+    "S6_text_image_action_hist",
+}
 _ACTION_OUTCOME_HISTORY_SCHEME_IDS = {"S6_v2_text_image_action_outcome_hist"}
 _DELTA_SUMMARY_SCHEME_IDS = {"S7_text_image_delta_summary"}
 _MINIMAL_TEXT_SCHEME_IDS = {"S2_image_only_current"}
+_IMAGE_HISTORY_SCHEME_IDS = {"S4_text_image_4f_action_hist"}
 _VIZDOOM_ACTION_MAPPING_HINT = "1=ATTACK, 2=MOVE_LEFT, 3=MOVE_RIGHT"
 _VIZDOOM_PRIORITY_KEYS = (
     "HEALTH",
@@ -147,6 +154,10 @@ class ArenaPromptComposer:
             self._scheme_params.get("action_history_len"),
             default=_DEFAULT_HISTORY_LEN,
         )
+        self._image_history_len = self._coerce_positive_int(
+            self._scheme_params.get("image_history_len"),
+            default=_DEFAULT_IMAGE_HISTORY_LEN,
+        )
         self._history_limit = max(
             self._action_history_len,
             self._coerce_positive_int(
@@ -249,7 +260,8 @@ class ArenaPromptComposer:
         base_messages: Sequence[Dict[str, Any]],
         observation: ArenaObservation,
         prompt_text: str,
-        image_fragment: Optional[Dict[str, Any]],
+        image_fragments: Optional[Sequence[Dict[str, Any]]] = None,
+        image_fragment: Optional[Dict[str, Any]] = None,
         retry_reason: Optional[str] = None,
         last_output: Optional[str] = None,
     ) -> TurnMessagesResult:
@@ -261,7 +273,8 @@ class ArenaPromptComposer:
             base_messages: Static sample messages.
             observation: Current observation.
             prompt_text: User prompt seed text.
-            image_fragment: Optional image fragment.
+            image_fragments: Optional image fragments attached to the same turn.
+            image_fragment: Backward-compatible single image fragment input.
             retry_reason: Optional retry reason from previous parse failure.
             last_output: Optional previous model output.
 
@@ -269,7 +282,13 @@ class ArenaPromptComposer:
             Rendered messages and fallback metadata.
         """
 
-        legacy_messages = list(base_messages) + [self.build_user_message(prompt_text, image_fragment)]
+        normalized_fragments = self._normalize_image_fragments(
+            image_fragments=image_fragments,
+            image_fragment=image_fragment,
+        )
+        legacy_messages = list(base_messages) + [
+            self.build_user_message(prompt_text, image_fragments=normalized_fragments)
+        ]
         if not self._prompt_renderer:
             return TurnMessagesResult(messages=legacy_messages, fallback_reason="missing_prompt_renderer")
 
@@ -281,7 +300,8 @@ class ArenaPromptComposer:
             retry_reason=retry_reason,
             last_output=last_output,
             legacy_messages=legacy_messages,
-            has_image=image_fragment is not None,
+            has_image=bool(normalized_fragments),
+            image_count=len(normalized_fragments),
         )
         context = PromptContext(
             sample=self._sample,
@@ -303,17 +323,21 @@ class ArenaPromptComposer:
             )
 
         if rendered.messages is not None:
-            messages = self.append_image_fragment(
+            messages = self.append_image_fragments(
                 rendered.messages,
-                image_fragment=image_fragment,
+                image_fragments=normalized_fragments,
                 fallback_text=prompt_text,
             )
             if not self.has_user_message(messages):
-                messages.append(self.build_user_message(prompt_text, image_fragment))
+                messages.append(
+                    self.build_user_message(prompt_text, image_fragments=normalized_fragments)
+                )
             return TurnMessagesResult(messages=messages)
 
         if rendered.prompt:
-            messages = list(base_messages) + [self.build_user_message(rendered.prompt, image_fragment)]
+            messages = list(base_messages) + [
+                self.build_user_message(rendered.prompt, image_fragments=normalized_fragments)
+            ]
             return TurnMessagesResult(messages=messages)
 
         return TurnMessagesResult(messages=legacy_messages, fallback_reason="empty_render")
@@ -329,6 +353,7 @@ class ArenaPromptComposer:
         last_output: Optional[str],
         legacy_messages: Sequence[Dict[str, Any]],
         has_image: bool,
+        image_count: int = 0,
     ) -> Dict[str, Any]:
         """Builds merged payload for prompt template rendering.
 
@@ -341,6 +366,7 @@ class ArenaPromptComposer:
             last_output: Optional previous model output.
             legacy_messages: Backward-compatible assembled messages.
             has_image: Whether this turn includes an image fragment.
+            image_count: Number of image fragments attached to the request.
 
         Returns:
             Prompt payload used by prompt renderer.
@@ -376,6 +402,7 @@ class ArenaPromptComposer:
             "retry_reason": str(retry_reason or ""),
             "last_model_output": str(last_output or ""),
             "has_image": bool(has_image),
+            "image_count": max(0, int(image_count)),
             "mode": mode,
             "scheduler_mode": mode,
             "observation_mode": str(observation_mode) if observation_mode is not None else "",
@@ -413,6 +440,7 @@ class ArenaPromptComposer:
         payload["retry_reason"] = str(retry_reason or "")
         payload["last_model_output"] = str(last_output or "")
         payload["has_image"] = bool(has_image)
+        payload["image_count"] = max(0, int(image_count))
 
         # STEP 2: Keep scheduler mode aligned with the active scheduler.
         payload["mode"] = mode
@@ -445,8 +473,29 @@ class ArenaPromptComposer:
         payload.setdefault("vizdoom_strategy", self._build_empty_vizdoom_strategy_payload())
         return payload
 
+    def build_image_fragments(self, observation: ArenaObservation) -> list[Dict[str, Any]]:
+        """Build image fragments from observation view payload.
+
+        Args:
+            observation: Current arena observation.
+
+        Returns:
+            Ordered image fragments attached to the request.
+        """
+
+        if self._scheme_id not in _IMAGE_ENABLED_SCHEME_IDS:
+            return []
+
+        images = self._select_observation_images(observation)
+        fragments: list[Dict[str, Any]] = []
+        for image in images:
+            fragment = self._build_image_fragment_from_payload(image)
+            if fragment is not None:
+                fragments.append(fragment)
+        return fragments
+
     def build_image_fragment(self, observation: ArenaObservation) -> Optional[Dict[str, Any]]:
-        """Builds image fragment from observation view payload.
+        """Build the primary image fragment for backward-compatible callers.
 
         Args:
             observation: Current arena observation.
@@ -455,12 +504,30 @@ class ArenaPromptComposer:
             OpenAI-compatible image fragment, or None when unavailable.
         """
 
-        if self._scheme_id not in _IMAGE_ENABLED_SCHEME_IDS:
-            return None
         view = observation.view or {}
         image = view.get("image")
         if image is None:
             return None
+        return self._build_image_fragment_from_payload(image)
+
+    def _select_observation_images(self, observation: ArenaObservation) -> list[Any]:
+        """Select ordered image payloads according to the configured scheme."""
+
+        view = observation.view or {}
+        if self._scheme_id in _IMAGE_HISTORY_SCHEME_IDS:
+            history = view.get("image_history")
+            if isinstance(history, list):
+                normalized = [item for item in history if item is not None]
+                if normalized:
+                    return normalized[-self._image_history_len :]
+        image = view.get("image")
+        if image is None:
+            return []
+        return [image]
+
+    def _build_image_fragment_from_payload(self, image: Any) -> Optional[Dict[str, Any]]:
+        """Convert one observation image payload into an outbound message fragment."""
+
         data_url = self.resolve_image_data_url(image)
         if not data_url:
             return None
@@ -599,6 +666,65 @@ class ArenaPromptComposer:
         return merged
 
     @staticmethod
+    def _normalize_image_fragments(
+        *,
+        image_fragments: Optional[Sequence[Dict[str, Any]]],
+        image_fragment: Optional[Dict[str, Any]],
+    ) -> list[Dict[str, Any]]:
+        """Normalize single-image and multi-image inputs into one list."""
+
+        normalized: list[Dict[str, Any]] = []
+        if image_fragments is not None:
+            for fragment in image_fragments:
+                if isinstance(fragment, dict):
+                    normalized.append(copy.deepcopy(fragment))
+            return normalized
+        if isinstance(image_fragment, dict):
+            normalized.append(copy.deepcopy(image_fragment))
+        return normalized
+
+    @staticmethod
+    def append_image_fragments(
+        messages: Sequence[Dict[str, Any]],
+        *,
+        image_fragments: Optional[Sequence[Dict[str, Any]]],
+        fallback_text: str,
+    ) -> list[Dict[str, Any]]:
+        """Append image fragments to the latest user message when needed."""
+
+        normalized: list[Dict[str, Any]] = [
+            copy.deepcopy(message) for message in messages if isinstance(message, dict)
+        ]
+        fragments = ArenaPromptComposer._normalize_image_fragments(
+            image_fragments=image_fragments,
+            image_fragment=None,
+        )
+        if not fragments:
+            return normalized
+
+        for idx in range(len(normalized) - 1, -1, -1):
+            message = normalized[idx]
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                if ArenaPromptComposer.has_image_content(content):
+                    return normalized
+                content.extend(copy.deepcopy(fragments))
+                return normalized
+            if isinstance(content, str):
+                message["content"] = [{"type": "text", "text": content}, *copy.deepcopy(fragments)]
+                return normalized
+
+        normalized.append(
+            ArenaPromptComposer.build_user_message(
+                fallback_text,
+                image_fragments=fragments,
+            )
+        )
+        return normalized
+
+    @staticmethod
     def append_image_fragment(
         messages: Sequence[Dict[str, Any]],
         *,
@@ -616,29 +742,11 @@ class ArenaPromptComposer:
             Normalized messages with image fragment attached once.
         """
 
-        normalized: list[Dict[str, Any]] = [
-            copy.deepcopy(message) for message in messages if isinstance(message, dict)
-        ]
-        if not image_fragment:
-            return normalized
-
-        fragment = copy.deepcopy(image_fragment)
-        for idx in range(len(normalized) - 1, -1, -1):
-            message = normalized[idx]
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, list):
-                if ArenaPromptComposer.has_image_content(content):
-                    return normalized
-                content.append(fragment)
-                return normalized
-            if isinstance(content, str):
-                message["content"] = [{"type": "text", "text": content}, fragment]
-                return normalized
-
-        normalized.append(ArenaPromptComposer.build_user_message(fallback_text, fragment))
-        return normalized
+        return ArenaPromptComposer.append_image_fragments(
+            messages,
+            image_fragments=[image_fragment] if isinstance(image_fragment, dict) else None,
+            fallback_text=fallback_text,
+        )
 
     @staticmethod
     def has_user_message(messages: Sequence[Dict[str, Any]]) -> bool:
@@ -675,20 +783,28 @@ class ArenaPromptComposer:
         return False
 
     @staticmethod
-    def build_user_message(text: str, image_fragment: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Builds a user message with optional image fragment.
+    def build_user_message(
+        text: str,
+        image_fragment: Optional[Dict[str, Any]] = None,
+        image_fragments: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Builds a user message with optional image fragment list.
 
         Args:
             text: User text.
             image_fragment: Optional image fragment.
+            image_fragments: Optional ordered image fragments.
 
         Returns:
             User message payload.
         """
 
         content = [{"type": "text", "text": text}]
-        if image_fragment:
-            content.append(image_fragment)
+        normalized = ArenaPromptComposer._normalize_image_fragments(
+            image_fragments=image_fragments,
+            image_fragment=image_fragment,
+        )
+        content.extend(normalized)
         return {"role": "user", "content": content}
 
     def format_grid_observation(self, observation: ArenaObservation) -> str:
@@ -815,6 +931,11 @@ class ArenaPromptComposer:
         action_history_block = str(strategy_payload.get("action_history_block") or "")
         outcome_history_block = str(strategy_payload.get("action_outcome_history_block") or "")
         delta_block = str(strategy_payload.get("delta_summary_block") or "")
+        image_history_count = int(strategy_payload.get("image_history_count") or 0)
+        image_history_note = (
+            "Attached image sequence is ordered from oldest to newest; "
+            "the last image is the current frame."
+        )
 
         if self._prompt_renderer and self._scheme_explicitly_configured:
             sections = [
@@ -822,6 +943,11 @@ class ArenaPromptComposer:
                 f"Perspective:\n{perspective_block}",
                 f"Legal actions:\n{legal_hint}",
             ]
+            if image_history_count > 1:
+                sections.append(
+                    f"Attached images:\n- {image_history_count} ordered POV frames.\n"
+                    f"- {image_history_note}"
+                )
             if state_block:
                 sections.append(f"Current state:\n{state_block}")
             if outcome_history_block:
@@ -862,6 +988,12 @@ class ArenaPromptComposer:
             f"Legal actions:\n{legal_hint}",
             f"Action mapping:\n{_VIZDOOM_ACTION_MAPPING_HINT}",
         ]
+        if image_history_count > 1:
+            sections.append(
+                "Attached images:\n"
+                f"- {image_history_count} ordered POV frames.\n"
+                f"- {image_history_note}"
+            )
         if outcome_history_block:
             sections.append(
                 f"Recent action and outcome history (oldest to newest):\n{outcome_history_block}"
@@ -895,10 +1027,12 @@ class ArenaPromptComposer:
             "action_mapping_hint": _VIZDOOM_ACTION_MAPPING_HINT,
             "perspective_block": "",
             "state_block": "",
+            "image_history_count": 0,
             "action_history_block": "",
             "action_outcome_history_block": "",
             "delta_summary_block": "",
             "has_state_block": False,
+            "has_image_history_block": False,
             "has_action_history_block": False,
             "has_action_outcome_history_block": False,
             "has_delta_summary_block": False,
@@ -915,6 +1049,7 @@ class ArenaPromptComposer:
             if self._scheme_id in _MINIMAL_TEXT_SCHEME_IDS
             else self._build_vizdoom_state_block(observation)
         )
+        image_history_count = len(self._select_observation_images(observation))
 
         action_history_block = ""
         if self._scheme_id in _ACTION_HISTORY_SCHEME_IDS:
@@ -934,10 +1069,12 @@ class ArenaPromptComposer:
             "action_mapping_hint": _VIZDOOM_ACTION_MAPPING_HINT,
             "perspective_block": perspective_block,
             "state_block": state_block,
+            "image_history_count": image_history_count,
             "action_history_block": action_history_block,
             "action_outcome_history_block": action_outcome_history_block,
             "delta_summary_block": delta_summary_block,
             "has_state_block": bool(state_block),
+            "has_image_history_block": image_history_count > 1,
             "has_action_history_block": bool(action_history_block),
             "has_action_outcome_history_block": bool(action_outcome_history_block),
             "has_delta_summary_block": bool(delta_summary_block),

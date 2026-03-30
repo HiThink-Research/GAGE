@@ -23,6 +23,27 @@ class GenerationParameters(BaseModel):
     best_of: Optional[int] = Field(default=None, ge=1)
     min_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     top_logprobs: Optional[int] = Field(default=None, ge=1)
+    thinking_mode: Optional[str] = Field(
+        default=None,
+        description=(
+            "Thinking mode: 'enabled', 'disabled', or None (use model default). "
+            "Maps to enable_thinking=True/False for Qwen3-like hybrid-thinking models."
+        ),
+    )
+    chat_template_kwargs: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Extra kwargs passed to tokenizer.apply_chat_template(), "
+            "e.g. {'enable_thinking': False} or {'reasoning_effort': 'high'}."
+        ),
+    )
+    reasoning_effort: Optional[str] = Field(
+        default=None,
+        description=(
+            "Reasoning effort level for thinking models (e.g. GPT-OSS): "
+            "'low', 'medium', or 'high'."
+        ),
+    )
 
     def stop_sequences(self) -> Optional[List[str]]:
         return self.stop

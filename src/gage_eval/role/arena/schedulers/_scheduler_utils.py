@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from functools import lru_cache
 import threading
 import time
 from queue import Queue
 from typing import Any, Optional
+
+from loguru import logger
 
 from gage_eval.role.arena.action_trace import (
     resolve_trace_action_applied,
@@ -25,6 +29,8 @@ _ILLEGAL_REASONS = {
 _VALID_TRACE_CLOCKS = {"wall_clock", "monotonic"}
 _VALID_TRACE_FINALIZE_TIMINGS = {"after_action_submit", "after_env_apply"}
 _VALID_TRACE_ACTION_FORMATS = {"flat", "envelope"}
+_DEFAULT_POLL_INTERVAL_MS = 20
+_DEFAULT_SYNC_EXECUTOR_WORKERS = 64
 
 
 def wall_clock_ms() -> int:
@@ -290,11 +296,179 @@ def build_fallback_action(
     )
 
 
+class SchedulerWaitPolicy:
+    """Shared wait strategy for async polling players and sync think timeouts."""
+
+    def __init__(
+        self,
+        *,
+        executor: Optional[ThreadPoolExecutor] = None,
+        poll_interval_ms: int = _DEFAULT_POLL_INTERVAL_MS,
+    ) -> None:
+        self._executor = executor or ThreadPoolExecutor(
+            max_workers=_DEFAULT_SYNC_EXECUTOR_WORKERS,
+            thread_name_prefix="arena-think",
+        )
+        self._owns_executor = executor is None
+        self._poll_interval_ms = max(1, int(poll_interval_ms))
+
+    def close(self) -> None:
+        if not self._owns_executor:
+            return
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def run_sync_think(
+        self,
+        *,
+        player: Any,
+        observation: ArenaObservation,
+        timeout_ms: Optional[int],
+    ) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
+        if timeout_ms is None:
+            try:
+                return player.think(observation), False, None
+            except Exception as exc:
+                logger.warning(
+                    "Scheduler think failed for player {} without timeout: {}",
+                    getattr(player, "name", "<unknown>"),
+                    exc,
+                )
+                return None, False, "think_exception"
+
+        timeout_s = max(0.0, float(timeout_ms) / 1000.0)
+        if timeout_s <= 0:
+            return None, True, "timeout"
+
+        future = self._executor.submit(player.think, observation)
+        try:
+            return future.result(timeout=timeout_s), False, None
+        except FutureTimeoutError:
+            return None, True, "timeout"
+        except Exception as exc:
+            logger.warning(
+                "Scheduler think failed for player {} under timeout control: {}",
+                getattr(player, "name", "<unknown>"),
+                exc,
+            )
+            return None, False, "think_exception"
+
+    def wait_async_action(
+        self,
+        *,
+        player: Any,
+        observation: ArenaObservation,
+        timeout_ms: Optional[int],
+        deadline_ms: Optional[int] = None,
+    ) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
+        ready, action, error_type = self._try_pop_ready_action(player)
+        if error_type is not None:
+            return None, False, error_type
+        if ready:
+            return action, False, None
+
+        start_thinking = getattr(player, "start_thinking")
+        resolved_deadline_ms = timeout_ms if deadline_ms is None else deadline_ms
+        try:
+            start_thinking(observation, deadline_ms=resolved_deadline_ms)
+        except Exception as exc:
+            logger.warning(
+                "Scheduler async think start failed for player {}: {}",
+                getattr(player, "name", "<unknown>"),
+                exc,
+            )
+            return None, False, "think_exception"
+
+        if timeout_ms is not None and int(timeout_ms) <= 0:
+            ready, action, error_type = self._try_pop_ready_action(player)
+            if error_type is not None:
+                return None, False, error_type
+            if ready:
+                return action, False, None
+            return None, True, "timeout"
+
+        wait_for_action = getattr(player, "wait_for_action", None)
+        if callable(wait_for_action):
+            try:
+                waited = wait_for_action(timeout_ms=timeout_ms)
+            except TypeError:
+                waited = wait_for_action(timeout_ms)
+            except Exception as exc:
+                logger.warning(
+                    "Scheduler native async wait failed for player {}: {}",
+                    getattr(player, "name", "<unknown>"),
+                    exc,
+                )
+                return None, False, "think_exception"
+            if isinstance(waited, ArenaAction):
+                return waited, False, None
+            ready, action, error_type = self._try_pop_ready_action(player)
+            if error_type is not None:
+                return None, False, error_type
+            if ready:
+                return action, False, None
+            if timeout_ms is not None:
+                return None, True, "timeout"
+            return None, False, "empty_result"
+
+        deadline_monotonic: Optional[float] = None
+        if timeout_ms is not None:
+            deadline_monotonic = time.monotonic() + max(0.0, float(timeout_ms) / 1000.0)
+
+        while True:
+            ready, action, error_type = self._try_pop_ready_action(player)
+            if error_type is not None:
+                return None, False, error_type
+            if ready:
+                return action, False, None
+
+            if deadline_monotonic is not None:
+                remaining_s = deadline_monotonic - time.monotonic()
+                if remaining_s <= 0:
+                    return None, True, "timeout"
+                time.sleep(min(self._poll_interval_ms / 1000.0, remaining_s))
+                continue
+
+            time.sleep(self._poll_interval_ms / 1000.0)
+
+    @staticmethod
+    def _try_pop_ready_action(
+        player: Any,
+    ) -> tuple[bool, Optional[ArenaAction], Optional[str]]:
+        has_action = getattr(player, "has_action")
+        pop_action = getattr(player, "pop_action")
+        try:
+            if not has_action():
+                return False, None, None
+        except Exception as exc:
+            logger.warning(
+                "Scheduler async action polling failed for player {}: {}",
+                getattr(player, "name", "<unknown>"),
+                exc,
+            )
+            return False, None, "think_exception"
+
+        try:
+            return True, pop_action(), None
+        except Exception as exc:
+            logger.warning(
+                "Scheduler async action pop failed for player {}: {}",
+                getattr(player, "name", "<unknown>"),
+                exc,
+            )
+            return False, None, "think_exception"
+
+
+@lru_cache(maxsize=1)
+def _default_wait_policy() -> SchedulerWaitPolicy:
+    return SchedulerWaitPolicy()
+
+
 def think_with_timeout(
     *,
     player: Any,
     observation: ArenaObservation,
     timeout_ms: Optional[int],
+    wait_policy: Optional[SchedulerWaitPolicy] = None,
 ) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
     """Run player.think with optional timeout enforcement.
 
@@ -307,45 +481,18 @@ def think_with_timeout(
         Tuple ``(action, timed_out, error_type)``.
     """
 
+    policy = wait_policy or _default_wait_policy()
     if _supports_async_action_api(player):
-        return _think_with_async_action_api(
+        return policy.wait_async_action(
             player=player,
             observation=observation,
             timeout_ms=timeout_ms,
         )
-
-    if timeout_ms is None:
-        try:
-            return player.think(observation), False, None
-        except Exception:
-            return None, False, "think_exception"
-
-    timeout_s = max(0.0, float(timeout_ms) / 1000.0)
-    if timeout_s <= 0:
-        return None, True, "timeout"
-
-    result_queue: Queue[tuple[str, Any]] = Queue(maxsize=1)
-
-    def _run_think() -> None:
-        try:
-            action = player.think(observation)
-            result_queue.put_nowait(("ok", action))
-        except Exception as exc:  # pragma: no cover - defensive runtime guard
-            result_queue.put_nowait(("error", exc))
-
-    worker = threading.Thread(target=_run_think, daemon=True)
-    worker.start()
-    worker.join(timeout=timeout_s)
-    if worker.is_alive():
-        return None, True, "timeout"
-
-    if result_queue.empty():
-        return None, False, "empty_result"
-
-    tag, payload = result_queue.get_nowait()
-    if tag == "ok":
-        return payload, False, None
-    return None, False, "think_exception"
+    return policy.run_sync_think(
+        player=player,
+        observation=observation,
+        timeout_ms=timeout_ms,
+    )
 
 
 def _supports_async_action_api(player: Any) -> bool:
@@ -353,51 +500,6 @@ def _supports_async_action_api(player: Any) -> bool:
         callable(getattr(player, method_name, None))
         for method_name in ("start_thinking", "has_action", "pop_action")
     )
-
-
-def _think_with_async_action_api(
-    *,
-    player: Any,
-    observation: ArenaObservation,
-    timeout_ms: Optional[int],
-) -> tuple[Optional[ArenaAction], bool, Optional[str]]:
-    """Collect action via async player polling API.
-
-    Args:
-        player: Player object implementing async action methods.
-        observation: Observation payload to feed the player.
-        timeout_ms: Optional timeout in milliseconds.
-
-    Returns:
-        Tuple ``(action, timed_out, error_type)``.
-    """
-
-    start_thinking = getattr(player, "start_thinking")
-    has_action = getattr(player, "has_action")
-    pop_action = getattr(player, "pop_action")
-
-    try:
-        start_thinking(observation, deadline_ms=timeout_ms)
-    except Exception:
-        return None, False, "think_exception"
-
-    deadline_monotonic: Optional[float] = None
-    if timeout_ms is not None:
-        timeout_s = max(0.0, float(timeout_ms) / 1000.0)
-        if timeout_s <= 0:
-            return None, True, "timeout"
-        deadline_monotonic = time.monotonic() + timeout_s
-
-    while True:
-        try:
-            if has_action():
-                return pop_action(), False, None
-        except Exception:
-            return None, False, "think_exception"
-
-        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-            return None, True, "timeout"
-        time.sleep(0.005)
 
 
 def apply_action_map(environment: Any, action_map: dict[str, ArenaAction]) -> Optional[GameResult]:
@@ -413,8 +515,12 @@ def apply_action_map(environment: Any, action_map: dict[str, ArenaAction]) -> Op
 
     try:
         return environment.apply(action_map)  # type: ignore[arg-type]
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as exc:
+        logger.debug(
+            "Scheduler batch apply unsupported by {}: {}; falling back to sequential apply.",
+            type(environment).__name__,
+            exc,
+        )
 
     for action in action_map.values():
         outcome = environment.apply(action)

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -11,9 +13,8 @@ from loguru import logger
 
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
-from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.registry import registry
-from gage_eval.utils.messages import stringify_message_content
+from gage_eval.utils.messages import normalize_messages_for_template, stringify_message_content
 
 
 @registry.asset(
@@ -26,7 +27,10 @@ from gage_eval.utils.messages import stringify_message_content
 class LiteLLMBackend(EngineBackend):
     """LiteLLM backend with provider inference and sampling normalization."""
 
+    _litellm_module_state_lock = threading.RLock()
+
     def __init__(self, config: Dict[str, Any]) -> None:
+        self.http_retry_mode = "native"
         self.transport = "http"
         self._litellm = None
         self._supports_reasoning_fn = None
@@ -37,22 +41,14 @@ class LiteLLMBackend(EngineBackend):
     # Engine interface                                                   #
     # ------------------------------------------------------------------ #
     def load_model(self, config_dict: Dict[str, Any]):
+        # STEP 1: Resolve provider-specific routing, credentials, and sampling defaults.
         self._cfg = LiteLLMBackendConfig(**config_dict)
         self._tool_choice_default = config_dict.get("tool_choice")
         self.model_name = self._cfg.model
         self.provider = self._cfg.provider or self._infer_provider(self.model_name)
         self.api_base = self._cfg.api_base
-        self.api_key = (
-            self._cfg.api_key
-            or os.getenv("LITELLM_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-            or os.getenv("XAI_API_KEY")
-            or os.getenv("GROK_API_KEY")
-            or os.getenv("AZURE_API_KEY")
-            or os.getenv("AZURE_OPENAI_API_KEY")
-            or os.getenv("KIMI_API_KEY")
-            or os.getenv("MOONSHOT_API_KEY")
-        )
+        self._is_deepseek_target = self._looks_like_deepseek(self.provider, self.model_name, self.api_base)
+        self.api_key = None
         self.headers = dict(self._cfg.extra_headers or {})
         self._timeout = self._cfg.timeout
         self._max_retries = max(1, int(self._cfg.max_retries))
@@ -63,6 +59,8 @@ class LiteLLMBackend(EngineBackend):
         self._is_kimi_target = self._looks_like_kimi(self.provider, self.model_name, self.api_base)
         self._is_grok_target = self._looks_like_grok(self.provider, self.model_name, self.api_base)
         self._is_azure_target = self._looks_like_azure(self.provider, self.model_name, self.api_base)
+        if self._is_deepseek_target and (not self.provider or self.provider.lower() == "openai"):
+            self.provider = "deepseek"
         if not self.provider and self._is_grok_target:
             self.provider = "grok"
         if not self.provider and self._is_kimi_target:
@@ -70,7 +68,9 @@ class LiteLLMBackend(EngineBackend):
         if not self.provider and self._is_azure_target:
             self.provider = "azure"
         if not self.api_base:
-            if self._is_kimi_target:
+            if self._is_deepseek_target:
+                self.api_base = "https://api.deepseek.com"
+            elif self._is_kimi_target:
                 self.api_base = "https://api.moonshot.cn/v1"
             elif self._is_grok_target:
                 self.api_base = "https://api.x.ai/v1"
@@ -79,6 +79,7 @@ class LiteLLMBackend(EngineBackend):
                 if self.api_base:
                     self.api_base = self.api_base.rstrip("/")
 
+        self.api_key = self._resolve_api_key()
         self._azure_api_version = self._cfg.azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION")
         if self._is_azure_target and not self._azure_api_version:
             self._azure_api_version = "2024-02-15-preview"
@@ -97,25 +98,9 @@ class LiteLLMBackend(EngineBackend):
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("liteLLM is not installed") from exc
 
+        # STEP 2: Capture the imported module and defer mutable flag changes to request scope.
         self._litellm = litellm
         self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
-        litellm.drop_params = True
-        litellm.verbose = bool(self._cfg.verbose)
-        if self.api_key:
-            litellm.api_key = self.api_key
-        if self.api_base:
-            litellm.api_base = self.api_base
-        if self.headers:
-            litellm.headers = self.headers
-        self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
-        litellm.drop_params = True
-        litellm.verbose = bool(self._cfg.verbose)
-        if self.api_key:
-            litellm.api_key = self.api_key
-        if self.api_base:
-            litellm.api_base = self.api_base
-        if self.headers:
-            litellm.headers = self.headers
         return None
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -129,8 +114,7 @@ class LiteLLMBackend(EngineBackend):
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-        if self._should_sanitize_openai_messages():
-            messages = self._sanitize_openai_messages(messages)
+        messages = self._normalize_messages_for_provider(messages)
 
         sampling_params = dict(self._base_sampling)
         sampling_params.update(sample.get("sampling_params") or {})
@@ -155,35 +139,77 @@ class LiteLLMBackend(EngineBackend):
     # LiteLLM call path                                                 #
     # ------------------------------------------------------------------ #
     def _generate_litellm(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        # STEP 1: Build isolated request kwargs and execute the LiteLLM call path.
         kwargs, _ = self._build_litellm_kwargs(inputs)
         stream = kwargs.pop("stream", False)
         start = time.time()
 
         def _call():
-            return self._litellm.completion(stream=stream, **kwargs)
+            with self._temporary_litellm_module_state():
+                return self._litellm.completion(stream=stream, **kwargs)
 
         completion = self._call_with_retries(_call)
+
+        # STEP 2: Normalize the response for downstream consumers and safe diagnostics.
         if stream:
             answer, raw_response = self._collect_stream(completion)
         else:
             answer = self._extract_answer(completion)
             raw_response = completion
         raw_response = self._to_jsonable(raw_response)
-        result = {"answer": answer, "raw_response": raw_response}
+        result: Dict[str, Any] = {"answer": answer, "raw_response": raw_response}
         if not stream and hasattr(completion, "usage"):
             usage = getattr(completion, "usage")
             if hasattr(usage, "model_dump"):
                 result["usage"] = usage.model_dump()
         result.setdefault("latency_ms", (time.time() - start) * 1000)
-        logger.info("LiteLLM response json: {}", self._format_response_json(raw_response))
+        logger.info(
+            "LiteLLM response summary: {}",
+            self._format_response_json(
+                self._build_response_log_summary(
+                    raw_response,
+                    answer=answer,
+                    usage=result.get("usage"),
+                    stream=stream,
+                    request_model=kwargs.get("model"),
+                    latency_ms=result.get("latency_ms"),
+                )
+            ),
+        )
         return result
+
+    @contextmanager
+    def _temporary_litellm_module_state(self):
+        """Apply LiteLLM module flags for one request and restore previous values."""
+
+        if self._litellm is None:
+            yield
+            return
+        with self._litellm_module_state_lock:
+            previous_drop_params = getattr(self._litellm, "drop_params", None)
+            previous_verbose = getattr(self._litellm, "verbose", None)
+            had_drop_params = hasattr(self._litellm, "drop_params")
+            had_verbose = hasattr(self._litellm, "verbose")
+            self._litellm.drop_params = True
+            self._litellm.verbose = bool(self._cfg.verbose)
+            try:
+                yield
+            finally:
+                if had_drop_params:
+                    self._litellm.drop_params = previous_drop_params
+                else:
+                    delattr(self._litellm, "drop_params")
+                if had_verbose:
+                    self._litellm.verbose = previous_verbose
+                else:
+                    delattr(self._litellm, "verbose")
 
     def _build_litellm_kwargs(self, inputs: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         sampling_params = self._normalize_sampling_params(inputs.get("sampling_params") or {}, inputs.get("num_samples"))
         stop_sequences = self._prepare_stop_sequences(sampling_params.get("stop"))
 
         kwargs: Dict[str, Any] = {
-            "model": inputs.get("model") or self.model_name,
+            "model": self._normalize_request_model(inputs.get("model") or self.model_name),
             "messages": inputs.get("messages") or [],
             "response_format": {"type": "text"},
             "stream": inputs.get("stream", False),
@@ -201,7 +227,7 @@ class LiteLLMBackend(EngineBackend):
             if self._azure_api_version:
                 kwargs["api_version"] = self._azure_api_version
         if self.headers:
-            kwargs["headers"] = self.headers
+            kwargs["headers"] = dict(self.headers)
         tool_defs = inputs.get("tools")
         if tool_defs:
             formatted_tools = self._format_tools(tool_defs)
@@ -214,6 +240,19 @@ class LiteLLMBackend(EngineBackend):
         if stop_sequences:
             kwargs["stop"] = stop_sequences
         kwargs.setdefault("n", inputs.get("num_samples"))
+
+        # STEP: Inject thinking-related parameters from base class config
+        thinking_config = self.get_thinking_config()
+        if "enable_thinking" in thinking_config:
+            kwargs["enable_thinking"] = thinking_config["enable_thinking"]
+        # Support reasoning_effort from config or per-request sampling params
+        reasoning_effort = (
+            sampling_params.get("reasoning_effort")
+            or thinking_config.get("reasoning_effort")
+        )
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
         return kwargs, sampling_params
 
     def _extract_answer(self, completion: Any) -> str:
@@ -262,6 +301,19 @@ class LiteLLMBackend(EngineBackend):
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
+    def _normalize_messages_for_provider(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize message content according to the target provider's input contract."""
+
+        if self._should_flatten_multimodal_messages():
+            return normalize_messages_for_template(messages, image_placeholder="<image>")
+        if self._should_sanitize_openai_messages():
+            return self._sanitize_openai_messages(messages)
+        return messages
+
+    def _should_flatten_multimodal_messages(self) -> bool:
+        provider = (self._custom_llm_provider or self.provider or "").lower()
+        return provider == "deepseek" or self._looks_like_deepseek(self.provider, self.model_name, self.api_base)
+
     def _should_sanitize_openai_messages(self) -> bool:
         provider = (self._custom_llm_provider or self.provider or "").lower()
         return provider in {"openai", "azure"}
@@ -429,9 +481,13 @@ class LiteLLMBackend(EngineBackend):
     def _infer_provider(model_name: str | None) -> Optional[str]:
         if not model_name:
             return None
+        if model_name.startswith("deepseek/"):
+            return "deepseek"
         if "/" in model_name:
             return model_name.split("/")[0]
         lower = model_name.lower()
+        if lower.startswith("deepseek"):
+            return "deepseek"
         if lower.startswith("grok"):
             return "grok"
         if lower.startswith("moonshot"):
@@ -439,6 +495,13 @@ class LiteLLMBackend(EngineBackend):
         if lower.startswith("azure:"):
             return "azure"
         return None
+
+    @staticmethod
+    def _looks_like_deepseek(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
+        target = (provider or "").lower()
+        model_lower = (model or "").lower()
+        base = (api_base or "").lower()
+        return target == "deepseek" or model_lower.startswith("deepseek") or "deepseek.com" in base
 
     @staticmethod
     def _looks_like_kimi(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
@@ -467,6 +530,7 @@ class LiteLLMBackend(EngineBackend):
             return None
         lower = provider.lower()
         alias_map = {
+            "deepseek": "deepseek",
             "kimi": "moonshot",
             "moonshot": "moonshot",
             "grok": "xai",
@@ -483,6 +547,33 @@ class LiteLLMBackend(EngineBackend):
         if isinstance(part, dict) and "text" in part:
             return str(part["text"])
         return str(part)
+
+    def _normalize_request_model(self, model_name: str) -> str:
+        """Return the provider-qualified model name when LiteLLM expects one."""
+
+        if self._looks_like_deepseek(self.provider, model_name, self.api_base) and "/" not in model_name:
+            return f"deepseek/{model_name}"
+        return model_name
+
+    def _resolve_api_key(self) -> Optional[str]:
+        """Resolve API credentials without leaking DeepSeek keys to other providers."""
+
+        candidates: List[Optional[str]] = [self._cfg.api_key]
+        if self._is_deepseek_target:
+            candidates.append(os.getenv("DEEPSEEK_API_KEY"))
+        candidates.extend(
+            [
+                os.getenv("LITELLM_API_KEY"),
+                os.getenv("OPENAI_API_KEY"),
+                os.getenv("XAI_API_KEY"),
+                os.getenv("GROK_API_KEY"),
+                os.getenv("AZURE_API_KEY"),
+                os.getenv("AZURE_OPENAI_API_KEY"),
+                os.getenv("KIMI_API_KEY"),
+                os.getenv("MOONSHOT_API_KEY"),
+            ]
+        )
+        return next((candidate for candidate in candidates if candidate), None)
 
     @staticmethod
     def _to_jsonable(obj: Any) -> Any:
@@ -503,6 +594,105 @@ class LiteLLMBackend(EngineBackend):
             return str(obj)
         except Exception:  # pragma: no cover - defensive
             return str(obj)
+
+    @staticmethod
+    def _build_response_log_summary(
+        raw_response: Any,
+        *,
+        answer: str,
+        usage: Optional[Dict[str, Any]],
+        stream: bool,
+        request_model: Optional[str],
+        latency_ms: Optional[float],
+    ) -> Dict[str, Any]:
+        """Builds a non-sensitive response summary for logs.
+
+        Args:
+            raw_response: JSON-safe LiteLLM response payload.
+            answer: Extracted answer text returned to callers.
+            usage: Usage payload captured from the completion object.
+            stream: Whether the request used streaming mode.
+            request_model: Model name sent to LiteLLM for this request.
+            latency_ms: End-to-end request latency in milliseconds.
+
+        Returns:
+            A compact summary that excludes response content and tool payloads.
+        """
+
+        summary: Dict[str, Any] = {
+            "stream": stream,
+            "request_model": request_model,
+            "latency_ms": round(float(latency_ms), 3) if latency_ms is not None else None,
+            "answer_chars": len(answer or ""),
+            "response_type": type(raw_response).__name__,
+        }
+
+        if isinstance(raw_response, dict):
+            choices = raw_response.get("choices") or []
+            first_choice = choices[0] if choices else {}
+            summary.update(
+                {
+                    "response_model": raw_response.get("model"),
+                    "response_object": raw_response.get("object"),
+                    "choice_count": len(choices),
+                    "finish_reason": LiteLLMBackend._extract_finish_reason(first_choice),
+                    "has_tool_calls": LiteLLMBackend._choice_has_tool_calls(first_choice),
+                }
+            )
+        elif isinstance(raw_response, list):
+            first_chunk = next((chunk for chunk in raw_response if isinstance(chunk, dict)), {})
+            finish_choice = LiteLLMBackend._find_stream_finish_choice(raw_response)
+            summary.update(
+                {
+                    "response_object": first_chunk.get("object"),
+                    "response_model": first_chunk.get("model") or request_model,
+                    "chunk_count": len(raw_response),
+                    "finish_reason": LiteLLMBackend._extract_finish_reason(finish_choice),
+                    "has_tool_calls": LiteLLMBackend._choice_has_tool_calls(finish_choice),
+                }
+            )
+
+        resolved_usage = usage
+        if resolved_usage is None and isinstance(raw_response, dict):
+            resolved_usage = raw_response.get("usage")
+        if resolved_usage:
+            summary["usage"] = LiteLLMBackend._to_jsonable(resolved_usage)
+
+        return {key: value for key, value in summary.items() if value is not None}
+
+    @staticmethod
+    def _find_stream_finish_choice(raw_response: List[Any]) -> Dict[str, Any]:
+        """Returns the most informative stream choice for logging metadata."""
+
+        for chunk in reversed(raw_response):
+            if not isinstance(chunk, dict):
+                continue
+            choices = chunk.get("choices") or []
+            if choices:
+                return choices[0]
+        return {}
+
+    @staticmethod
+    def _extract_finish_reason(choice: Any) -> Optional[str]:
+        """Extracts finish_reason from a choice payload without touching content."""
+
+        if isinstance(choice, dict):
+            finish_reason = choice.get("finish_reason")
+            if finish_reason is not None:
+                return str(finish_reason)
+        return None
+
+    @staticmethod
+    def _choice_has_tool_calls(choice: Any) -> bool:
+        """Returns whether the choice contains tool-call metadata."""
+
+        if not isinstance(choice, dict):
+            return False
+        message = choice.get("message") or choice.get("delta") or {}
+        if not isinstance(message, dict):
+            return False
+        tool_calls = message.get("tool_calls")
+        return bool(tool_calls)
 
     @staticmethod
     def _format_response_json(raw_response: Any) -> str:

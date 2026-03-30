@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional, Sequence, Type
+from typing import Any, Dict, Optional, Sequence, Type
 
 from loguru import logger
 from gage_eval.assets.models.store import resolve_model_handle
+from gage_eval.registry import import_asset_from_manifest, registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config import (
     BackendConfigBase,
@@ -61,7 +62,6 @@ _BACKEND_CONFIG_SCHEMAS: Dict[str, Type[BackendConfigBase]] = {
     "openai_batch_http": OpenAIBatchBackendConfig,
 }
 
-
 def register_backend(
     kind: str,
     backend_cls: Type[EngineBackend],
@@ -72,8 +72,6 @@ def register_backend(
     **extra: Any,
 ) -> None:
     """Compatibility helper for imperative backend registration."""
-
-    from gage_eval.registry import registry
 
     registry.register(
         "backends",
@@ -87,7 +85,7 @@ def register_backend(
     logger.info("Registered backend '{}' (version={})", kind, version)
 
 
-def build_backend(spec: Dict[str, Any]) -> EngineBackend:
+def build_backend(spec: Dict[str, Any], *, registry_view=None) -> EngineBackend:
     """Builds a backend instance from a registry-backed backend spec.
 
     Args:
@@ -112,12 +110,12 @@ def build_backend(spec: Dict[str, Any]) -> EngineBackend:
     if not backend_type:
         raise ValueError("Backend spec must declare 'type'")
     
-    from gage_eval.registry import registry
-    
-    try:
-        backend_cls = registry.get("backends", backend_type)
-    except KeyError as exc:
-        raise KeyError(f"Backend '{backend_type}' is not registered") from exc
+    lookup = registry_view or registry
+    backend_cls = _resolve_backend_class(
+        lookup,
+        backend_type,
+        allow_runtime_fallback=registry_view is None,
+    )
 
     # STEP 2: Prepare config payload (including model-id resolution).
     config = dict(spec.get("config", {}))
@@ -148,3 +146,25 @@ def build_backend(spec: Dict[str, Any]) -> EngineBackend:
     # STEP 4: Instantiate the backend class.
     logger.debug("Building backend instance type='{}'", backend_type)
     return backend_cls(typed_config)
+
+
+def _resolve_backend_class(
+    lookup,
+    backend_type: str,
+    *,
+    allow_runtime_fallback: bool = True,
+) -> Type[EngineBackend]:
+    try:
+        return lookup.get("backends", backend_type)
+    except KeyError as exc:
+        if not allow_runtime_fallback:
+            raise KeyError(f"Backend '{backend_type}' is not registered") from exc
+        _import_backend_asset_module(backend_type)
+        try:
+            return lookup.get("backends", backend_type)
+        except KeyError as exc:
+            raise KeyError(f"Backend '{backend_type}' is not registered") from exc
+
+
+def _import_backend_asset_module(backend_type: str) -> None:
+    import_asset_from_manifest("backends", str(backend_type), registry=registry, source="backend_builder")

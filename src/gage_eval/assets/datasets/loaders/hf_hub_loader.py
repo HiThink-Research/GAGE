@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -40,7 +41,13 @@ logger = logging.getLogger(__name__)
 )
 class HuggingFaceDatasetLoader(DatasetLoader):
     def load(self, hub_handle: Optional[DatasetHubHandle], *, trace=None) -> DataSource:
-        return load_hf_hub_dataset(self.spec, hub_handle, trace=trace)
+        return load_hf_hub_dataset(
+            self.spec,
+            hub_handle,
+            trace=trace,
+            registry_lookup=self.registry_lookup,
+            allow_lazy_import=self.allow_asset_lazy_import,
+        )
 
 
 registry.register(
@@ -62,7 +69,14 @@ registry.register(
 )
 
 
-def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle] = None, *, trace=None) -> DataSource:
+def load_hf_hub_dataset(
+    spec: DatasetSpec,
+    hub_handle: Optional[DatasetHubHandle] = None,
+    *,
+    trace=None,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
+) -> DataSource:
     """Download/cache a remote dataset and expose it as a DataSource."""
 
     try:
@@ -92,10 +106,11 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
     load_kwargs = dict(loader_params.get("load_kwargs", {}))
     builder_name = loader_params.get("builder_name")
     data_files = loader_params.get("data_files")
+    local_path = loader_params.get("local_path")
 
     subset_for_metadata = subset
     streaming = streaming_override if streaming_override is not None else _should_stream_hf(loader_params, source)
-    if data_files:
+    if data_files or local_path:
         streaming = False  # Local file mode does not support streaming.
     cache_path = None
 
@@ -135,6 +150,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             records,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -144,6 +161,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             records,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -163,6 +182,7 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             cache_dir=loader_params.get("cache_dir"),
             builder_name=builder_name,
             data_files=data_files,
+            local_path=local_path,
         )
 
         if loader_params.get("shuffle"):
@@ -176,6 +196,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             dataset,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -186,6 +208,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             dataset,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -246,7 +270,19 @@ def _load_or_cache_dataset(
     cache_dir: Optional[str],
     builder_name: Optional[str],
     data_files,
+    local_path,
 ):
+    if local_path:
+        local_dataset = _load_local_dataset(
+            datasets_module=datasets_module,
+            local_path=local_path,
+            split=split,
+            subset=subset,
+            load_kwargs=load_kwargs,
+            builder_name=builder_name,
+        )
+        return local_dataset, str(Path(local_path).expanduser())
+
     cache_root = Path(cache_dir or os.getenv("GAGE_EVAL_DATA_CACHE") or Path(".cache/gage-eval/datasets")).expanduser()
     cache_root.mkdir(parents=True, exist_ok=True)
     cache_path = cache_root / f"{_safe_name(hub_id)}-{_hash_config(hub_id, split, subset, revision, load_kwargs)}"
@@ -294,11 +330,13 @@ def _download_dataset(
     if data_files:
         builder = builder_name or "json"
         resolved_files = _resolve_data_files_spec(data_files, revision)
-        return datasets_module.load_dataset(
+        return _load_dataset_with_optional_trust_remote(
+            datasets_module=datasets_module,
             path=builder,
             data_files=resolved_files,
             split=split,
             streaming=streaming,
+            trust_remote=trust_remote,
             **load_kwargs,
         )
     if source == "modelscope":
@@ -320,13 +358,14 @@ def _download_dataset(
         return dataset
 
     try:
-        return datasets_module.load_dataset(
+        return _load_dataset_with_optional_trust_remote(
+            datasets_module=datasets_module,
             path=hub_id,
             name=normalized_subset,
             split=split,
             revision=revision,
-            trust_remote_code=trust_remote,
             streaming=streaming,
+            trust_remote=trust_remote,
             **load_kwargs,
         )
     except UnicodeDecodeError as exc:
@@ -340,31 +379,167 @@ def _download_dataset(
                     filename=script_name,
                     revision=revision,
                 )
-                return datasets_module.load_dataset(
+                return _load_dataset_with_optional_trust_remote(
+                    datasets_module=datasets_module,
                     path=local_script,
                     name=normalized_subset,
                     split=split,
                     revision=revision,
-                    trust_remote_code=trust_remote,
                     streaming=streaming,
+                    trust_remote=trust_remote,
                     **load_kwargs,
                 )
             except Exception:
                 pass
         raise exc
 
+
+def _load_local_dataset(
+    *,
+    datasets_module,
+    local_path,
+    split: str,
+    subset: Optional[str],
+    load_kwargs: Dict[str, Any],
+    builder_name: Optional[str],
+):
+    resolved = Path(str(local_path)).expanduser()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Dataset local_path '{resolved}' does not exist")
+
+    if resolved.is_dir():
+        try:
+            return datasets_module.load_from_disk(str(resolved))
+        except Exception:
+            pass
+
+        try:
+            return _load_dataset_with_optional_trust_remote(
+                datasets_module=datasets_module,
+                path=str(resolved),
+                name=None if subset in (None, "default") else subset,
+                split=split,
+                streaming=False,
+                trust_remote=False,
+                **load_kwargs,
+            )
+        except Exception:
+            pass
+
+        builder, data_files = _discover_local_data_files(resolved, builder_name=builder_name)
+        if builder and data_files:
+            data_files_arg: Any = data_files[0] if len(data_files) == 1 else data_files
+            return _load_dataset_with_optional_trust_remote(
+                datasets_module=datasets_module,
+                path=builder,
+                data_files=data_files_arg,
+                split=split,
+                streaming=False,
+                trust_remote=False,
+                **load_kwargs,
+            )
+
+        raise RuntimeError(
+            f"Dataset local_path '{resolved}' is not a datasets.save_to_disk directory and "
+            "no supported local data files were found beneath it"
+        )
+
+    builder = builder_name or _infer_local_builder(resolved)
+    if not builder:
+        raise ValueError(
+            f"Cannot infer dataset builder for local_path '{resolved}'. "
+            "Set 'builder_name' or use a .json/.jsonl/.csv/.tsv/.parquet/.arrow file."
+        )
+
+    return _load_dataset_with_optional_trust_remote(
+        datasets_module=datasets_module,
+        path=builder,
+        data_files=str(resolved),
+        split=split,
+        streaming=False,
+        trust_remote=False,
+        **load_kwargs,
+    )
+
+
+def _load_dataset_with_optional_trust_remote(*, datasets_module, trust_remote: bool, **kwargs):
+    if trust_remote and _datasets_supports_trust_remote_code(datasets_module):
+        kwargs.setdefault("trust_remote_code", True)
+    return datasets_module.load_dataset(**kwargs)
+
+
+def _datasets_supports_trust_remote_code(datasets_module) -> bool:
+    version = getattr(datasets_module, "__version__", "")
+    if version:
+        major_text = str(version).split(".", 1)[0]
+        if major_text.isdigit() and int(major_text) >= 3:
+            return False
+
+    try:
+        signature = inspect.signature(datasets_module.load_dataset)
+    except (TypeError, ValueError):
+        return True
+    return "trust_remote_code" in signature.parameters
+
+
+def _infer_local_builder(path: Path) -> Optional[str]:
+    suffix = path.suffix.lower()
+    if suffix in {".json", ".jsonl"}:
+        return "json"
+    if suffix in {".csv", ".tsv"}:
+        return "csv"
+    if suffix in {".parquet", ".pq"}:
+        return "parquet"
+    if suffix == ".arrow":
+        return "arrow"
+    return None
+
+
+def _discover_local_data_files(root: Path, *, builder_name: Optional[str]) -> tuple[Optional[str], list[str]]:
+    if builder_name:
+        files = sorted(str(path) for path in root.rglob("*") if path.is_file())
+        return builder_name, files
+
+    builder_to_files: Dict[str, list[str]] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        builder = _infer_local_builder(path)
+        if not builder:
+            continue
+        builder_to_files.setdefault(builder, []).append(str(path))
+
+    if not builder_to_files:
+        return None, []
+    if len(builder_to_files) > 1:
+        builders = ", ".join(sorted(builder_to_files))
+        raise RuntimeError(
+            f"Local dataset directory '{root}' contains multiple supported file formats ({builders}). "
+            "Set 'builder_name' to disambiguate."
+        )
+
+    builder, files = next(iter(builder_to_files.items()))
+    return builder, sorted(files)
+
 def _maybe_apply_bundle(
     dataset,
     spec: DatasetSpec,
     *,
     data_path: str,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
     doc_to_text=None,
     doc_to_visual=None,
     doc_to_audio=None,
     trace=None,
     observability_config=None,
 ):
-    ctx = build_bundle_context(spec, data_path=data_path)
+    ctx = build_bundle_context(
+        spec,
+        data_path=data_path,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if not ctx:
         return dataset
     config = observability_config or get_observability_config()
@@ -390,13 +565,20 @@ def _maybe_apply_preprocess(
     spec: DatasetSpec,
     *,
     data_path: str,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
     doc_to_text=None,
     doc_to_visual=None,
     doc_to_audio=None,
     trace=None,
     observability_config=None,
 ):
-    ctx = build_preprocess_context(spec, data_path=data_path)
+    ctx = build_preprocess_context(
+        spec,
+        data_path=data_path,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if not ctx:
         return dataset
     config = observability_config or get_observability_config()

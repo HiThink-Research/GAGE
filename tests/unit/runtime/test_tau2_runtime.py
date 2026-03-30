@@ -10,7 +10,7 @@ from gage_eval.sandbox.protocols import (
     ToolExecutionProtocol,
 )
 from gage_eval.sandbox.tau2_runtime import Tau2Runtime
-from tests.tau2_stub import install_tau2_stub, STOP
+from tests._support.stubs.tau2_stub import STOP, install_tau2_stub
 
 
 def _build_sample(domain: str = "airline") -> dict:

@@ -10,7 +10,12 @@ def _build_pipeline_config(metrics_config):
     base = {
         "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
         "role_adapters": [{"adapter_id": "r1", "role_type": "dut_model"}],
-        "custom": {"steps": [{"step": "auto_eval"}]},
+        "custom": {
+            "steps": [
+                {"step": "inference", "adapter_id": "r1"},
+                {"step": "auto_eval"},
+            ]
+        },
     }
     return PipelineConfig.from_dict({**base, "metrics": metrics_config})
 

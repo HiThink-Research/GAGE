@@ -12,9 +12,16 @@ from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.arena.action_trace import attach_trace_action_applied
+from gage_eval.role.arena.human_input_protocol import (
+    action_matches_route,
+    dump_action_payload,
+    extract_action_text,
+    parse_action_payload,
+)
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.utils.messages import stringify_message_content
+from gage_eval.utils.samples import extract_sample_id
 
 
 class HumanPlayer:
@@ -37,6 +44,7 @@ class HumanPlayer:
         self._adapter_id = adapter_id
         self._role_manager = role_manager
         self._sample = sample
+        self._sample_id = extract_sample_id(sample)
         self._parser = parser
         self._trace = trace
         self._action_queue = action_queue
@@ -57,6 +65,8 @@ class HumanPlayer:
         prompt_text = self._format_observation(observation)
         payload = {
             "sample": self._sample,
+            "sample_id": self._sample_id,
+            "player_id": self.name,
             "prompt": prompt_text,
             "messages": [self._build_user_message(prompt_text)],
         }
@@ -68,31 +78,32 @@ class HumanPlayer:
             payload["action_queue"] = self._action_queue
         if self._trace:
             payload["trace"] = self._trace
-        with self._role_manager.borrow_role(self._adapter_id) as role:
-            output = role.invoke(payload, self._trace) if role else {}
-        raw_text = _extract_text(output)
-        target_player_id, parsed_input = self._extract_queued_action_payload(raw_text)
-        if target_player_id and target_player_id != self.name:
-            metadata = {"player_type": "human", "retry_count": 0, "error": "target_player_mismatch"}
-            return ArenaAction(player=self.name, move="", raw=raw_text, metadata=metadata)
-        parse_text = parsed_input if parsed_input is not None else raw_text
-        parse_result = self._parser.parse(parse_text, legal_moves=observation.legal_actions_items)
-        if parse_result.error:
-            logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
-        metadata = self._build_action_metadata(parse_result)
-        metadata = attach_trace_action_applied(
-            metadata,
-            observation=observation,
-            move=parse_result.coord or "",
-        )
-        if parse_result.error:
-            metadata["error"] = parse_result.error
-        return ArenaAction(
-            player=self.name,
-            move=parse_result.coord or "",
-            raw=raw_text,
-            metadata=metadata,
-        )
+        deferred_actions: list[Any] = []
+        raw_payload: Any = None
+        try:
+            while True:
+                if raw_payload is None:
+                    with self._role_manager.borrow_role(self._adapter_id) as role:
+                        output = role.invoke(payload, self._trace) if role else {}
+                    raw_payload = _extract_text(output)
+
+                action_payload = parse_action_payload(raw_payload)
+                if not self._matches_action_payload(action_payload):
+                    self._log_route_mismatch(action_payload, source="sync")
+                    if self._action_queue is not None:
+                        deferred_actions.append(raw_payload)
+                        raw_payload = self._dequeue_action_blocking()
+                        continue
+                    raw_payload = None
+                    continue
+
+                action = self._parse_human_action(observation, action_payload)
+                if action is not None:
+                    return action
+                raw_payload = None
+        finally:
+            for queued_action in deferred_actions:
+                self._requeue_action(queued_action)
 
     def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
         """Start thinking asynchronously if no request is in-flight."""
@@ -129,11 +140,12 @@ class HumanPlayer:
         if callable(poll_action):
             action_text = poll_action(timeout_ms=0, default_action=None)
             if action_text:
-                target_player_id, _ = self._extract_queued_action_payload(action_text)
-                if target_player_id and target_player_id != self.name:
-                    self._requeue_action(action_text)
+                action_payload = parse_action_payload(action_text)
+                if not self._matches_action_payload(action_payload):
+                    self._log_route_mismatch(action_payload, source="async_adapter")
+                    self._requeue_action(dump_action_payload(action_payload))
                     return False
-                action = self._parse_human_action(observation, action_text)
+                action = self._parse_human_action(observation, action_payload)
                 if action is not None:
                     self._async_queue.put(action)
                     return True
@@ -145,13 +157,14 @@ class HumanPlayer:
                 except Empty:
                     queued_action = None
                 if queued_action is not None:
-                    target_player_id, queued_text = self._extract_queued_action_payload(queued_action)
-                    if target_player_id and target_player_id != self.name:
-                        self._requeue_action(queued_action)
+                    action_payload = parse_action_payload(queued_action)
+                    if not self._matches_action_payload(action_payload):
+                        self._log_route_mismatch(action_payload, source="async_queue")
+                        self._requeue_action(dump_action_payload(action_payload))
                         return False
-                    if queued_text is None:
+                    if extract_action_text(action_payload) is None:
                         return False
-                    action = self._parse_human_action(observation, queued_text)
+                    action = self._parse_human_action(observation, action_payload)
                     if action is not None:
                         self._async_queue.put(action)
                         return True
@@ -239,50 +252,6 @@ class HumanPlayer:
                 pass
         return metadata
 
-    def _extract_queued_action_payload(
-        self,
-        raw_payload: Any,
-    ) -> tuple[Optional[str], Optional[str]]:
-        payload: Optional[Dict[str, Any]] = None
-        if isinstance(raw_payload, dict):
-            payload = dict(raw_payload)
-        elif isinstance(raw_payload, str):
-            stripped = raw_payload.strip()
-            if stripped.startswith("{") and stripped.endswith("}"):
-                try:
-                    parsed = json.loads(stripped)
-                except json.JSONDecodeError:
-                    parsed = None
-                if isinstance(parsed, dict):
-                    payload = parsed
-
-        if payload is None:
-            text = str(raw_payload).strip()
-            return None, text or None
-
-        target_player_value = self._first_non_none(
-            payload.get("player_id"),
-            payload.get("playerId"),
-            payload.get("player"),
-        )
-        target_player_id = str(target_player_value).strip() if target_player_value is not None else None
-        if target_player_id == "":
-            target_player_id = None
-
-        action_value = self._first_non_none(
-            payload.get("move"),
-            payload.get("action"),
-            payload.get("raw"),
-            payload.get("text"),
-            payload.get("value"),
-        )
-        if action_value is None:
-            return target_player_id, None
-        action_text = str(action_value).strip()
-        if not action_text:
-            return target_player_id, None
-        return target_player_id, action_text
-
     def _requeue_action(self, queued_action: Any) -> None:
         queue = self._action_queue
         if queue is None:
@@ -298,20 +267,40 @@ class HumanPlayer:
         except Exception:
             return
 
-    @staticmethod
-    def _first_non_none(*values: Any) -> Any:
-        for value in values:
-            if value is not None:
-                return value
-        return None
+    def _dequeue_action_blocking(self) -> Any:
+        queue = self._action_queue
+        if queue is None:
+            return None
+        get = getattr(queue, "get", None)
+        if not callable(get):
+            return None
+        return get()
+
+    def _log_route_mismatch(self, payload: Dict[str, Any], *, source: str) -> None:
+        target_player_id = payload.get("player_id")
+        target_sample_id = payload.get("sample_id")
+        logger.debug(
+            "HumanPlayer {} ignored input for player={} sample={} from {} while waiting for sample={}.",
+            self.name,
+            target_player_id,
+            target_sample_id,
+            source,
+            self._sample_id,
+        )
 
     def _parse_human_action(
-        self, observation: ArenaObservation, action_text: str
+        self,
+        observation: ArenaObservation,
+        action_payload: Any,
     ) -> Optional[ArenaAction]:
-        target_player_id, parsed_input = self._extract_queued_action_payload(action_text)
-        if target_player_id and target_player_id != self.name:
+        payload = parse_action_payload(action_payload)
+        if not self._matches_action_payload(payload):
+            self._log_route_mismatch(payload, source="parse")
             return None
-        parse_text = parsed_input if parsed_input is not None else str(action_text)
+        parse_text = extract_action_text(payload)
+        if parse_text is None:
+            return None
+        raw_text = str(payload.get("raw") or parse_text)
         parse_result = self._parser.parse(parse_text, legal_moves=observation.legal_actions_items)
         if parse_result.error:
             logger.warning("HumanPlayer {} provided illegal move: {}", self.name, parse_result.error)
@@ -326,8 +315,15 @@ class HumanPlayer:
         return ArenaAction(
             player=self.name,
             move=parse_result.coord or "",
-            raw=action_text,
+            raw=raw_text,
             metadata=metadata,
+        )
+
+    def _matches_action_payload(self, payload: Dict[str, Any]) -> bool:
+        return action_matches_route(
+            payload,
+            sample_id=self._sample_id,
+            player_id=self.name,
         )
 
 

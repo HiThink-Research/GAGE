@@ -93,7 +93,13 @@ def _load_data(filename_list):
 )
 class HuggingFaceDatasetLoader(DatasetLoader):
     def load(self, hub_handle: Optional[DatasetHubHandle], *, trace=None) -> DataSource:
-        return openai_mrcr_loader_hf_hub_dataset(self.spec, hub_handle, trace=trace)
+        return openai_mrcr_loader_hf_hub_dataset(
+            self.spec,
+            hub_handle,
+            trace=trace,
+            registry_lookup=self.registry_lookup,
+            allow_lazy_import=self.allow_asset_lazy_import,
+        )
 
 def _normalize_source(raw: str) -> str:
     normalized = raw.lower()
@@ -113,7 +119,14 @@ def _apply_limit(dataset, limit):
     return dataset[:limit]
 
 
-def openai_mrcr_loader_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle] = None, *, trace=None) -> DataSource:
+def openai_mrcr_loader_hf_hub_dataset(
+    spec: DatasetSpec,
+    hub_handle: Optional[DatasetHubHandle] = None,
+    *,
+    trace=None,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
+) -> DataSource:
     """Download/cache a remote dataset and expose it as a DataSource."""
 
     try:
@@ -175,6 +188,8 @@ def openai_mrcr_loader_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[Da
             benchmark,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             trace=trace,
     )
     #print("records:", records)

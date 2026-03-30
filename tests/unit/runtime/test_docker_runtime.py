@@ -17,6 +17,7 @@ def test_build_docker_run_command_basic() -> None:
             "ports": ["8000:8000"],
             "env": {"APPWORLD_ROOT": "/run"},
             "extra_hosts": ["example:host"],
+            "labels": {"gage_eval.managed": "true"},
             "network_mode": "bridge_host",
             "workdir": "/run",
             "user": "1000:1000",
@@ -34,6 +35,7 @@ def test_build_docker_run_command_basic() -> None:
     assert "--rm" in args
     assert _arg_value(args, "--name") == "gage-test"
     assert _arg_value(args, "--network") == "bridge"
+    assert "gage_eval.managed=true" in args
     assert "8000:8000" in args
     assert "APPWORLD_ROOT=/run" in args
     assert "example:host" in args

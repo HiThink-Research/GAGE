@@ -4,12 +4,16 @@ import asyncio
 import threading
 import time
 from typing import Any
+from uuid import uuid4
 
+from gage_eval.registry import registry
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.reporting.recorders import InMemoryRecorder
 from gage_eval.role.adapters import arena as arena_module
 from gage_eval.role.adapters.arena import ArenaRoleAdapter, _VisualizedEnvironment
 from gage_eval.role.adapters.base import RoleAdapterState
 from gage_eval.role.arena.sandboxed_env import SandboxedArenaEnvironment
+from gage_eval.role.arena.visualizers import gradio_visualizer as gradio_visualizer_module
 from gage_eval.role.arena.games.common.grid_coord_input_mapper import (
     GridCoordInputMapper,
 )
@@ -22,6 +26,7 @@ from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInput
 from gage_eval.role.arena.players.llm_player import LLMPlayer
 from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
 from gage_eval.role.arena.types import ArenaObservation, GameResult
+from gage_eval.tools import action_server as action_server_module
 
 
 def _make_result(
@@ -60,6 +65,84 @@ def test_build_scheduler_supports_turn_type() -> None:
     scheduler = adapter._build_scheduler({"eval_config": {"max_turns": 7}})
 
     assert isinstance(scheduler, TurnScheduler)
+
+
+def test_build_parser_prefers_runtime_registry_view(monkeypatch) -> None:
+    impl_name = f"test_parser_{uuid4().hex}"
+    clone = registry.clone()
+
+    class _Parser:
+        def __init__(self, *, board_size: int, coord_scheme: str = "A1") -> None:
+            self.board_size = board_size
+            self.coord_scheme = coord_scheme
+
+        def parse(self, text: str, *, legal_moves=None) -> dict[str, Any]:
+            return {"text": text, "legal_moves": legal_moves}
+
+        def build_rethink_prompt(
+            self,
+            *,
+            last_output: str,
+            reason: str,
+            legal_moves: list[str],
+        ) -> str:
+            return f"{last_output}|{reason}|{legal_moves}"
+
+    clone.register("parser_impls", impl_name, _Parser, desc="test parser")
+    view = clone.freeze(view_id=f"parser-view-{uuid4().hex}")
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        parser={"impl": impl_name, "board_size": 9, "coord_scheme": "ROW_COL"},
+        registry_view=view,
+    )
+
+    monkeypatch.setattr(
+        arena_module,
+        "import_arena_asset_module",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runtime registry view must not trigger manifest fallback")
+        ),
+    )
+
+    parser = adapter._build_parser({"metadata": {"board_size": 7}})
+
+    assert parser.board_size == 7
+    assert parser.coord_scheme == "ROW_COL"
+
+
+def test_build_environment_prefers_runtime_registry_view(monkeypatch) -> None:
+    impl_name = f"test_env_{uuid4().hex}"
+    clone = registry.clone()
+
+    class _Environment:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+    class _Provider:
+        def enrich_environment_kwargs(self, **kwargs: Any) -> dict[str, Any]:
+            return dict(kwargs["env_kwargs"])
+
+    clone.register("arena_impls", impl_name, _Environment, desc="test environment")
+    view = clone.freeze(view_id=f"env-view-{uuid4().hex}")
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": impl_name},
+        registry_view=view,
+    )
+
+    monkeypatch.setattr(adapter, "_resolve_game_provider", lambda env_impl: _Provider())
+    monkeypatch.setattr(
+        arena_module,
+        "import_arena_asset_module",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("runtime registry view must not trigger manifest fallback")
+        ),
+    )
+
+    environment = adapter._build_environment({"metadata": {}})
+
+    assert isinstance(environment, _Environment)
+    assert environment.kwargs["board_size"] == 15
 
 
 def test_normalize_player_specs_prefers_adapter_ref_for_generic_name() -> None:
@@ -234,6 +317,65 @@ def test_invoke_sync_waits_for_pending_players(monkeypatch) -> None:
     assert output["result"] == "draw"
     assert pending_player.wait_calls == 1
     assert 0.0 < pending_player.last_timeout_s <= 1.5
+
+
+def test_invoke_sync_emits_loop_lifecycle_events(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        players=[{"player_id": "p0", "type": "backend", "ref": "backend.alpha"}],
+    )
+    trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="arena-loop-events"),
+        run_id="arena-loop-events",
+    )
+
+    class _StubScheduler:
+        @staticmethod
+        def run_loop(environment, players) -> GameResult:
+            _ = environment, players
+            return _make_result(move_log=[{"move": "A1"}])
+
+    monkeypatch.setattr(
+        adapter,
+        "_normalize_player_specs",
+        lambda sample: (
+            [{"player_id": "p0", "type": "backend", "ref": "backend.alpha"}],
+            ["p0"],
+            {"p0": "P0"},
+            "p0",
+        ),
+    )
+    monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
+    monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
+    monkeypatch.setattr(
+        adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter, "_ensure_action_server", lambda player_specs: (None, None)
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_environment",
+        lambda sample, **kwargs: object(),
+    )
+    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
+    monkeypatch.setattr(
+        adapter,
+        "_format_result",
+        lambda result, sample, trace, frame_events=None: {"result": result.result},
+    )
+
+    output = adapter._invoke_sync(
+        {"sample": {"metadata": {}}, "role_manager": object(), "trace": trace},
+        RoleAdapterState(),
+    )
+
+    assert output["result"] == "draw"
+    events = [event["event"] for event in trace.events]
+    assert "arena_loop_start" in events
+    assert "arena_loop_end" in events
+    assert "arena_start" not in events
+    assert "arena_end" not in events
 
 
 def test_build_environment_returns_sandboxed_env_when_provider_present() -> None:
@@ -882,6 +1024,117 @@ def test_invoke_sync_waits_for_ws_rgb_process_confirmation(monkeypatch) -> None:
     assert holder["output"]["result"] == "draw"
 
 
+def test_invoke_sync_times_out_ws_rgb_process_confirmation(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "vizdoom_env_v1", "display_mode": "websocket"},
+        human_input={"process_end_timeout_s": 0.01},
+        players=[{"player_id": "player_0", "type": "human", "ref": "human"}],
+    )
+
+    class _Hub:
+        def __init__(self) -> None:
+            self.registrations: list[Any] = []
+
+        def register_display(self, registration: Any) -> None:
+            self.registrations.append(registration)
+
+    class _StubEnvironment:
+        @staticmethod
+        def reset() -> None:
+            return None
+
+        @staticmethod
+        def get_last_frame() -> dict[str, Any]:
+            return {"frame_id": 1}
+
+        @staticmethod
+        def get_active_player() -> str:
+            return "player_0"
+
+        @staticmethod
+        def observe(player: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text="board",
+                legal_moves=["0"],
+                active_player=player,
+            )
+
+        @staticmethod
+        def apply(action: Any) -> None:
+            _ = action
+            return None
+
+        @staticmethod
+        def is_terminal() -> bool:
+            return True
+
+        @staticmethod
+        def build_result(*, result: str, reason: str | None) -> GameResult:
+            return GameResult(
+                winner=None,
+                result=result,
+                reason=reason,
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+    class _StubScheduler:
+        @staticmethod
+        def run_loop(environment: Any, players: Any) -> GameResult:
+            _ = environment, players
+            return _make_result(move_log=[{"player": "player_0", "move": "0"}])
+
+    hub = _Hub()
+    monkeypatch.setattr(
+        adapter,
+        "_normalize_player_specs",
+        lambda sample: (
+            [{"player_id": "player_0", "type": "human", "ref": "human"}],
+            ["player_0"],
+            {"player_0": "P0"},
+            "player_0",
+        ),
+    )
+    monkeypatch.setattr(adapter, "_build_parser", lambda sample: object())
+    monkeypatch.setattr(adapter, "_build_scheduler", lambda sample: _StubScheduler())
+    monkeypatch.setattr(adapter, "_ensure_visualizer", lambda sample, player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_ensure_action_server", lambda player_specs: (None, None))
+    monkeypatch.setattr(adapter, "_build_environment", lambda sample, **kwargs: _StubEnvironment())
+    monkeypatch.setattr(adapter, "_build_players", lambda *args, **kwargs: [object()])
+    adapter._ensure_ws_rgb_hub = lambda: hub  # type: ignore[method-assign]
+
+    holder: dict[str, Any] = {}
+
+    def _run() -> None:
+        holder["output"] = adapter._invoke_sync(
+            {"sample": {"id": "sample-timeout", "task_id": "task-timeout", "metadata": {}}, "role_manager": object()},
+            RoleAdapterState(),
+        )
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    deadline = time.time() + 2.0
+    while not hub.registrations and time.time() < deadline:
+        time.sleep(0.01)
+    assert hub.registrations
+
+    registration = hub.registrations[0]
+    assert callable(registration.session_state_source)
+    while registration.session_state_source()["phase"] != "game_ended":
+        assert time.time() < deadline
+        time.sleep(0.01)
+
+    thread.join(timeout=1.0)
+
+    assert thread.is_alive() is False
+    assert registration.session_state_source()["phase"] == "process_ended"
+    assert holder["output"]["result"] == "draw"
+
+
 def test_format_result_keeps_small_game_log_and_trace_fields() -> None:
     adapter = ArenaRoleAdapter(adapter_id="arena")
     result = _make_result(
@@ -895,6 +1148,98 @@ def test_format_result_keeps_small_game_log_and_trace_fields() -> None:
     assert output["game_log"] == [{"turn": 1}]
     assert output["replay_path"] == "replay/sample.json"
     assert output["arena_trace"] == [{"step_index": 1}]
+
+
+def test_ensure_visualizer_skips_string_false_enabled(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        visualizer={"enabled": "false"},
+    )
+
+    def _fail_constructor(**kwargs: Any) -> None:
+        raise AssertionError(f"visualizer should not be created: {kwargs}")
+
+    monkeypatch.setattr(gradio_visualizer_module, "GradioVisualizer", _fail_constructor)
+
+    visualizer, action_queue = adapter._ensure_visualizer(
+        {"metadata": {}},
+        [{"player_id": "p0", "type": "human"}],
+    )
+
+    assert visualizer is None
+    assert action_queue is None
+
+
+def test_ensure_visualizer_coerces_string_bool_flags(monkeypatch) -> None:
+    clone = registry.clone()
+    view = clone.freeze(view_id=f"visualizer-view-{uuid4().hex}")
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        environment={"impl": "doudizhu_arena_v1"},
+        registry_view=view,
+        visualizer={
+            "enabled": "true",
+            "launch_browser": "false",
+            "wait_for_finish": "off",
+            "sanitize_output": "0",
+            "max_output_entries": "7",
+            "show_parsed_move": "no",
+            "show_chat": "false",
+            "allow_status_html": "0",
+            "demo_mode": "off",
+            "auto_close": "false",
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    class _StubVisualizer:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+            self.action_queue = object()
+
+        def start(self) -> None:
+            captured["started"] = True
+
+    monkeypatch.setattr(gradio_visualizer_module, "GradioVisualizer", _StubVisualizer)
+
+    visualizer, action_queue = adapter._ensure_visualizer(
+        {"metadata": {}},
+        [{"player_id": "p0", "type": "human"}],
+    )
+
+    assert visualizer is not None
+    assert action_queue is visualizer.action_queue
+    assert captured["started"] is True
+    assert captured["launch_browser"] is False
+    assert captured["wait_for_finish"] is False
+    assert captured["sanitize_output"] is False
+    assert captured["max_output_entries"] == 7
+    assert captured["renderer_impl"] == "doudizhu_showdown_v1"
+    assert captured["show_parsed_move"] is False
+    assert captured["show_chat"] is False
+    assert captured["allow_status_html"] is False
+    assert captured["demo_mode"] is False
+    assert captured["auto_close"] is False
+    assert captured["registry_lookup"] is view
+
+
+def test_ensure_action_server_skips_string_false_enabled(monkeypatch) -> None:
+    adapter = ArenaRoleAdapter(
+        adapter_id="arena",
+        human_input={"enabled": "false"},
+    )
+
+    def _fail_constructor(**kwargs: Any) -> None:
+        raise AssertionError(f"action server should not be created: {kwargs}")
+
+    monkeypatch.setattr(action_server_module, "ActionQueueServer", _fail_constructor)
+
+    server, action_queue = adapter._ensure_action_server(
+        [{"player_id": "p0", "type": "human"}]
+    )
+
+    assert server is None
+    assert action_queue is None
 
 
 def test_format_game_log_returns_preview_when_no_run_dir(monkeypatch) -> None:

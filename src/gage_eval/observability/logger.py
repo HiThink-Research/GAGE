@@ -9,7 +9,7 @@ from typing import Any, Deque, Dict, List, Optional
 from loguru import logger as base_logger
 
 from gage_eval.observability.config import ObservabilityConfig, get_observability_config
-from gage_eval.observability.log_sink import is_log_sink_active
+from gage_eval.observability.log_sink import is_log_sink_active, register_observable_trace
 from gage_eval.observability.trace import ObservabilityTrace
 
 
@@ -72,7 +72,16 @@ class ObservableLogger:
         self._buffer_record(stage, record, cfg)
 
         if emit_to_logger:
-            bound = base_logger.bind(stage=stage, sample_id=sample_id, sample_idx=sample_idx)
+            bind_kwargs = {
+                "stage": stage,
+                "sample_id": sample_id,
+                "sample_idx": sample_idx,
+            }
+            if trace is not None:
+                bind_kwargs["trace_run_id"] = trace.run_id
+                if is_log_sink_active() and trace.accepts_new_events():
+                    register_observable_trace(trace)
+            bound = base_logger.bind(**bind_kwargs)
             (bound or base_logger).log(level, templated, *args, **fmt_kwargs)
         if trace and cfg.enabled and not is_log_sink_active():
             trace.emit("log", {"stage": stage, "message": formatted, "level": level}, sample_id=sample_id)

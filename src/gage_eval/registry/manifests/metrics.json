@@ -1,0 +1,707 @@
+{
+  "manifest_version": 1,
+  "entries": [
+    {
+      "kind": "metrics",
+      "name": "aea2",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.aea2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/aea2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "aime2024_accuracy",
+      "module": "gage_eval.metrics.builtin.aime",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/aime.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "appworld_difficulty",
+      "module": "gage_eval.metrics.builtin.appworld",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "appworld_fail_count",
+      "module": "gage_eval.metrics.builtin.appworld",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "appworld_pass_count",
+      "module": "gage_eval.metrics.builtin.appworld",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "appworld_sgc",
+      "module": "gage_eval.metrics.builtin.appworld",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "appworld_success_rate",
+      "module": "gage_eval.metrics.builtin.appworld",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "appworld_tgc",
+      "module": "gage_eval.metrics.builtin.appworld",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/appworld.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "arcagi2_accuracy",
+      "module": "gage_eval.metrics.builtin.arcagi2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arcagi2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "charxiv_reasoning_match",
+      "module": "gage_eval.metrics.builtin.charxiv",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/charxiv.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "completion_flag",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "contains",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "docvqa_anls",
+      "module": "gage_eval.metrics.builtin.docvqa_anls",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/docvqa_anls.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "draw_flag",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "episode_duration_ms",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "episode_length_steps",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "eval_emotion",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.emotion",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/emotion.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "exact_match",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "fin_cal_2",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.fin_cal_2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/fin_cal_2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "fin_desc",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.fin_desc",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/fin_desc.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "fin_logic",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.fin_logic",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/fin_logic.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "fin_multi_round_desc",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.fin_multi_round_desc",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/fin_multi_round_desc.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "final_score_per_player",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "global_piqa_accuracy_local",
+      "module": "gage_eval.metrics.builtin.global_piqa.acc",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/global_piqa/acc.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "gomoku_avg_turns",
+      "module": "gage_eval.metrics.builtin.gomoku",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "gomoku_illegal_rate",
+      "module": "gage_eval.metrics.builtin.gomoku",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "gomoku_win_rate",
+      "module": "gage_eval.metrics.builtin.gomoku",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "hle_accuracy_deepseek",
+      "module": "gage_eval.metrics.builtin.hle.hle_deepseek",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/hle/hle_deepseek.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "hle_accuracy_local",
+      "module": "gage_eval.metrics.builtin.hle.hle_local",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/hle/hle_local.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "hle_accuracy_openai",
+      "module": "gage_eval.metrics.builtin.hle.hle_openai",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/hle/hle_openai.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "hle_accuracy_openai_default",
+      "module": "gage_eval.metrics.builtin.hle.hle_openai_default",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/hle/hle_openai_default.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "illegal_action_count",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "illegal_reason_distribution",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "judge_threshold",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "latency",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "legal_action_rate",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "likelihood",
+      "module": "gage_eval.metrics.builtin.likelihood",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/likelihood.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "live_code_bench_pass",
+      "module": "gage_eval.metrics.builtin.live_code_bench.pass_k",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/live_code_bench/pass_k.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "math500_accuracy",
+      "module": "gage_eval.metrics.builtin.math500",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/math500.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mathvista_accuracy",
+      "module": "gage_eval.metrics.builtin.mathvista",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mathvista.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mathvista_chat_accuracy",
+      "module": "gage_eval.metrics.builtin.mathvista",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mathvista.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mmau_pro_aif",
+      "module": "gage_eval.metrics.builtin.mmau_pro",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mmau_pro.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mmau_pro_closed_nvembed",
+      "module": "gage_eval.metrics.builtin.mmau_pro",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mmau_pro.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mmau_pro_open_judge",
+      "module": "gage_eval.metrics.builtin.mmau_pro",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mmau_pro.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mme_accuracy",
+      "module": "gage_eval.metrics.builtin.mme",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mme.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mmlu_pro_acc",
+      "module": "gage_eval.metrics.builtin.mmlu_pro.acc",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mmlu_pro/acc.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mmmu_accuracy",
+      "module": "gage_eval.metrics.builtin.mmmu",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mmmu.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mmsu_acc",
+      "module": "gage_eval.metrics.builtin.mmsu.acc",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mmsu/acc.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "mrcr_grade",
+      "module": "gage_eval.metrics.builtin.mrcr.mrcr_grade",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/mrcr/mrcr_grade.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "multi_choice_accuracy",
+      "module": "gage_eval.metrics.builtin.multi_choice",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/multi_choice.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "numeric_match",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "obs_to_action_latency_ms_mean",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "obs_to_action_latency_ms_p50",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "obs_to_action_latency_ms_p95",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "on_time_rate",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "rank_list",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "ranking",
+      "module": "gage_eval.metrics.builtin.ranking",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/ranking.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "regex_match",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "retry_count_mean",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "retry_count_p95",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "reward_per_second_per_player",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "score_margin",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "screenspot_point_in_bbox",
+      "module": "gage_eval.metrics.builtin.screenspot_pro",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/screenspot_pro.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "simpleqa_verified_accuracy",
+      "module": "gage_eval.metrics.builtin.simpleqa_verified",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/simpleqa_verified.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "simpleqa_verified_judge_accuracy",
+      "module": "gage_eval.metrics.builtin.simpleqa_verified",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/simpleqa_verified.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "stock_price_predict_short_term",
+      "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.stock_price_predict_short_term",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/biz_fin_bench_v2/stock_price_predict_short_term.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "swebench_failure_reason",
+      "module": "gage_eval.metrics.builtin.swebench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/swebench.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "swebench_resolve_rate",
+      "module": "gage_eval.metrics.builtin.swebench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/swebench.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "tau2_agent_cost",
+      "module": "gage_eval.metrics.builtin.tau2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/tau2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "tau2_pass",
+      "module": "gage_eval.metrics.builtin.tau2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/tau2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "tau2_pass_hat_k",
+      "module": "gage_eval.metrics.builtin.tau2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/tau2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "tau2_reward",
+      "module": "gage_eval.metrics.builtin.tau2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/tau2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "tau2_user_cost",
+      "module": "gage_eval.metrics.builtin.tau2",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/tau2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "termination_reason",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "text_length",
+      "module": "gage_eval.metrics.builtin.text",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/text.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "timeout_count",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "win_flag_per_player",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "winner_player_id",
+      "module": "gage_eval.metrics.builtin.arena",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    }
+  ]
+}

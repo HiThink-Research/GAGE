@@ -7,8 +7,11 @@ from typing import Optional
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.pipeline.steps._backend_error import raise_for_backend_error
+from gage_eval.pipeline.steps._role_borrow import borrow_role_with_optional_context
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
+from gage_eval.role.runtime.invocation import SampleExecutionContext
 from gage_eval.sandbox.provider import SandboxProvider
 
 
@@ -30,6 +33,7 @@ class InferenceStep(SampleStep):
         role_manager,
         trace: ObservabilityTrace,
         *,
+        execution_context: Optional[SampleExecutionContext] = None,
         sandbox_provider: Optional[SandboxProvider] = None,
     ):
         trace.emit("inference_start", payload={"adapter_id": self._adapter_id})
@@ -37,25 +41,27 @@ class InferenceStep(SampleStep):
         payload = {"sample": sample}
         if sandbox_provider is not None:
             payload["sandbox_provider"] = sandbox_provider
-        with role_manager.borrow_role(self._adapter_id) as role:
+        invocation_context = (
+            execution_context.for_invocation(
+                step_type="inference",
+                adapter_id=str(self._adapter_id),
+            )
+            if execution_context is not None and self._adapter_id
+            else None
+        )
+        with borrow_role_with_optional_context(
+            role_manager,
+            self._adapter_id,
+            execution_context=invocation_context,
+        ) as role:
             output = role.invoke(payload, trace) if role else {}
-        if isinstance(output, dict) and output.get("error"):
-            error_text = str(output.get("error"))
-            trace.emit(
-                "inference_error",
-                payload={
-                    "adapter_id": self._adapter_id,
-                    "error_type": "backend_error",
-                    "failure_reason": "backend_returned_error",
-                    "error": error_text,
-                },
-            )
-            logger.error(
-                "Inference step failed adapter_id={} error_type=backend_error error={}",
-                self._adapter_id,
-                error_text,
-            )
-            raise RuntimeError(f"inference backend returned error: {error_text}")
+        raise_for_backend_error(
+            event_prefix="inference",
+            step_label="Inference step",
+            adapter_id=self._adapter_id,
+            output=output,
+            trace=trace,
+        )
         trace.emit("inference_end", payload={"adapter_id": self._adapter_id})
         logger.debug("Inference step finished adapter_id={}", self._adapter_id)
         return output

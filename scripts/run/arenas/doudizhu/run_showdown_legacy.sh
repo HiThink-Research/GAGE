@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/run/common/env.sh"
 PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
-CFG="${ROOT}/config/custom/doudizhu_litellm_local.yaml"
+CFG="${ROOT}/config/custom/doudizhu/doudizhu_litellm_local.yaml"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
 RUN_ID="${RUN_ID:-doudizhu_showdown_$(date +%Y%m%d_%H%M%S)}"
 SAMPLE_ID="${SAMPLE_ID:-doudizhu_litellm_0001}"

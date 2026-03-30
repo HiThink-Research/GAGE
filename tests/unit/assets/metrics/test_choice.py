@@ -1,0 +1,42 @@
+import sys
+import unittest
+
+ROOT = __file__.rsplit("/tests/", 1)[0] + "/src"
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+from gage_eval.metrics.choice import extract_single_choice_letter
+
+
+class ChoiceTests(unittest.TestCase):
+    def test_choice(self):
+        ss = "answer is \boxed{A}"
+        ch = extract_single_choice_letter(ss)
+        self.assertEqual(ch, "A")
+
+        ss = "<answer> B"
+        ch = extract_single_choice_letter(ss)
+        self.assertEqual(ch, "B")
+
+        ss = "A B C"
+        ch = extract_single_choice_letter(ss)
+        self.assertEqual(ch, "C")
+
+        ss = "The Choice is D"
+        ch = extract_single_choice_letter(ss)
+        self.assertEqual(ch, "D")
+
+    def test_choice_supports_custom_patterns(self):
+        ch = extract_single_choice_letter("choice 7", patterns=[r"([0-9])"])
+        self.assertEqual(ch, "7")
+
+    def test_choice_respects_case_sensitive_defaults(self):
+        ch = extract_single_choice_letter("answer: a", ignore_case=False)
+        self.assertIsNone(ch)
+
+    def test_choice_returns_none_for_missing_prediction(self):
+        ch = extract_single_choice_letter(None)
+        self.assertIsNone(ch)
+
+if __name__ == "__main__":
+    unittest.main()

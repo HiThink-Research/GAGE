@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from gage_eval.registry.utils import ensure_async
+
 
 class AgentBackend:
     """Base interface for agent execution backends."""
@@ -12,6 +14,16 @@ class AgentBackend:
         """Execute the agent and return the normalized output."""
 
         raise NotImplementedError
+
+    async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the agent asynchronously.
+
+        Subclasses with a native async path should override this method.
+        The default implementation runs ``invoke()`` in an executor so
+        sync-only backends remain awaitable.
+        """
+
+        return await ensure_async(self.invoke)(payload)
 
     def shutdown(self) -> None:  # pragma: no cover - optional
         """Release backend resources when the pipeline shuts down."""

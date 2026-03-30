@@ -9,7 +9,7 @@ Usage:
   appworld_eval.sh [--config PATH] [--output-dir DIR] [--run-id ID]
 
 Defaults:
-  --config     config/custom/appworld_official_jsonl.yaml
+  --config     config/custom/appworld/appworld_official_jsonl.yaml
   --output-dir ${GAGE_EVAL_SAVE_DIR:-/Users/shuo/code/GAGE/runs}
   --run-id     appworld_official_jsonl
 USAGE
@@ -18,7 +18,7 @@ USAGE
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT_DIR}/scripts/run/common/env.sh"
-CONFIG_PATH="${ROOT_DIR}/config/custom/appworld_official_jsonl.yaml"
+CONFIG_PATH="${ROOT_DIR}/config/custom/appworld/appworld_official_jsonl.yaml"
 OUTPUT_DIR="${GAGE_EVAL_SAVE_DIR:-$(gage_default_runs_dir)}"
 RUN_ID="${APPWORLD_RUN_ID:-appworld_official_jsonl}"
 

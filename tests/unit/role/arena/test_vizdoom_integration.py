@@ -15,7 +15,7 @@ from gage_eval.role.adapters.human import HumanAdapter
 from gage_eval.role.arena.games.vizdoom import env as vizdoom_env_module
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
-from gage_eval.role.arena.types import ArenaObservation
+from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 
 
 @dataclass
@@ -66,19 +66,33 @@ class _DummyRole:
         return {"answer": self._answer}
 
 
+class _QueueRole:
+    def invoke(self, payload: dict[str, Any], trace: Any) -> dict[str, Any]:
+        _ = trace
+        queue = payload["action_queue"]
+        return {"answer": queue.get()}
+
+
 class _RoleManagerStub:
     def __init__(self, *, answer: str = "2", adapter: Any = None) -> None:
         self._answer = answer
         self._adapter = adapter
 
     @contextlib.contextmanager
-    def borrow_role(self, adapter_id: str) -> Iterator[_DummyRole]:
+    def borrow_role(self, adapter_id: str, **_kwargs) -> Iterator[_DummyRole]:
         _ = adapter_id
         yield _DummyRole(self._answer)
 
     def get_adapter(self, adapter_id: str) -> Any:
         _ = adapter_id
         return self._adapter
+
+
+class _QueueRoleManagerStub(_RoleManagerStub):
+    @contextlib.contextmanager
+    def borrow_role(self, adapter_id: str) -> Iterator[_QueueRole]:
+        _ = adapter_id
+        yield _QueueRole()
 
 
 class _FrameStub:
@@ -95,9 +109,12 @@ class _VizDoomBackendStub:
     def __init__(self) -> None:
         self._pov_frames = {0: _FrameStub(11), 1: _FrameStub(22)}
         self.view_history: list[str] = []
+        self._step_count = 0
 
     def reset(self, seed: Optional[int] = None) -> dict[int, dict[str, Any]]:
         _ = seed
+        self._step_count = 0
+        self._pov_frames = {0: _FrameStub(11), 1: _FrameStub(22)}
         return {0: {"HEALTH": 100.0}, 1: {"HEALTH": 100.0}}
 
     def close(self) -> None:
@@ -105,6 +122,20 @@ class _VizDoomBackendStub:
 
     def get_pov_frames(self) -> dict[int, _FrameStub]:
         return dict(self._pov_frames)
+
+    def step(self, actions: dict[int, int]) -> tuple[dict[int, dict[str, Any]], dict[int, float], bool, dict[str, Any]]:
+        _ = actions
+        self._step_count += 1
+        self._pov_frames = {
+            0: _FrameStub(11 + self._step_count),
+            1: _FrameStub(22 + self._step_count),
+        }
+        observations = {
+            0: {"HEALTH": 100.0 - self._step_count},
+            1: {"HEALTH": 100.0 - self._step_count},
+        }
+        rewards = {0: 0.0, 1: 0.0}
+        return observations, rewards, False, {}
 
     def set_view(self, view: str) -> None:
         self.view_history.append(view)
@@ -210,13 +241,23 @@ def test_human_player_async_polls_queue_source_adapter() -> None:
     assert action.metadata["trace_action_applied"] == "TURN_LEFT"
 
 
-def test_human_player_async_queue_payload_respects_target_player_id() -> None:
+def test_human_player_async_queue_payload_respects_sample_and_player_route() -> None:
     from queue import Queue
 
     observation = _build_vizdoom_observation()
     queue: Queue[str] = Queue()
-    queue.put(json.dumps({"player_id": "p1", "move": "1"}, ensure_ascii=False))
-    queue.put(json.dumps({"player_id": "p0", "move": "2"}, ensure_ascii=False))
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-other", "player_id": "p0", "move": "1"},
+            ensure_ascii=False,
+        )
+    )
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-self", "player_id": "p0", "move": "2"},
+            ensure_ascii=False,
+        )
+    )
 
     adapter = HumanAdapter(adapter_id="human_queue", source="queue")
     role_manager = _RoleManagerStub(adapter=adapter)
@@ -224,7 +265,7 @@ def test_human_player_async_queue_payload_respects_target_player_id() -> None:
         name="p0",
         adapter_id="human_queue",
         role_manager=role_manager,
-        sample={},
+        sample={"id": "sample-self"},
         parser=_ParserStub(),
         action_queue=queue,
         timeout_ms=100,
@@ -241,7 +282,46 @@ def test_human_player_async_queue_payload_respects_target_player_id() -> None:
     assert action.metadata["player_type"] == "human"
 
     requeued = json.loads(queue.get_nowait())
-    assert requeued["player_id"] == "p1"
+    assert requeued["sample_id"] == "sample-other"
+    assert requeued["player_id"] == "p0"
+    assert requeued["move"] == "1"
+
+
+def test_human_player_sync_queue_payload_waits_for_matching_sample_route() -> None:
+    from queue import Queue
+
+    observation = _build_vizdoom_observation()
+    queue: Queue[str] = Queue()
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-other", "player_id": "p0", "move": "1"},
+            ensure_ascii=False,
+        )
+    )
+    queue.put(
+        json.dumps(
+            {"sample_id": "sample-sync", "player_id": "p0", "move": "2"},
+            ensure_ascii=False,
+        )
+    )
+
+    player = HumanPlayer(
+        name="p0",
+        adapter_id="human_queue",
+        role_manager=_QueueRoleManagerStub(),
+        sample={"id": "sample-sync"},
+        parser=_ParserStub(),
+        action_queue=queue,
+    )
+
+    action = player.think(observation)
+
+    assert action.move == "2"
+    assert action.metadata["player_type"] == "human"
+
+    requeued = json.loads(queue.get_nowait())
+    assert requeued["sample_id"] == "sample-other"
+    assert requeued["player_id"] == "p0"
     assert requeued["move"] == "1"
 
 
@@ -301,7 +381,12 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
         def __init__(self, **kwargs: Any) -> None:
             captured_env_kwargs.update(kwargs)
 
-    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    original_get = arena_module.registry.get
+    monkeypatch.setattr(
+        arena_module.registry,
+        "get",
+        lambda kind, impl: _CapturedEnv if kind == "arena_impls" else original_get(kind, impl),
+    )
     adapter = ArenaRoleAdapter(
         adapter_id="arena",
         environment={
@@ -309,6 +394,7 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
             "render_mode": "both",
             "show_automap": False,
             "show_pov": True,
+            "obs_image_history_len": 4,
             "max_steps": 123,
             "action_repeat": 2,
             "allow_partial_actions": True,
@@ -326,6 +412,7 @@ def test_arena_adapter_forwards_vizdoom_env_kwargs(monkeypatch) -> None:
     assert captured_env_kwargs["render_mode"] == "both"
     assert captured_env_kwargs["show_automap"] is False
     assert captured_env_kwargs["show_pov"] is True
+    assert captured_env_kwargs["obs_image_history_len"] == 4
     assert captured_env_kwargs["max_steps"] == 123
     assert captured_env_kwargs["action_repeat"] == 2
     assert captured_env_kwargs["allow_partial_actions"] is True
@@ -340,7 +427,12 @@ def test_arena_adapter_enables_capture_pov_when_replay_mode_includes_frame(monke
         def __init__(self, **kwargs: Any) -> None:
             captured_env_kwargs.update(kwargs)
 
-    monkeypatch.setattr(arena_module.registry, "get", lambda kind, impl: _CapturedEnv)
+    original_get = arena_module.registry.get
+    monkeypatch.setattr(
+        arena_module.registry,
+        "get",
+        lambda kind, impl: _CapturedEnv if kind == "arena_impls" else original_get(kind, impl),
+    )
     adapter = ArenaRoleAdapter(
         adapter_id="arena",
         environment={
@@ -439,3 +531,37 @@ def test_vizdoom_last_frame_respects_configured_pov_view(monkeypatch) -> None:
     assert backend.view_history[-1] == "p0"
     assert frame_payload["player_index"] == 0
     assert frame_payload["actor"] == "p0"
+
+
+def test_vizdoom_observe_exposes_ordered_image_history(monkeypatch) -> None:
+    backend = _VizDoomBackendStub()
+    monkeypatch.setattr(
+        vizdoom_env_module.ViZDoomArenaEnvironment,
+        "_build_env",
+        lambda self, cfg: backend,
+    )
+    env = vizdoom_env_module.ViZDoomArenaEnvironment(
+        player_ids=["p0", "p1"],
+        show_pov=False,
+        capture_pov=True,
+        obs_image=True,
+        obs_image_history_len=4,
+        replay_in_env=False,
+    )
+    env.reset()
+
+    for _ in range(3):
+        result = env.apply(
+            ArenaAction(
+                player="system",
+                move={"p0": "1", "p1": "2"},
+                raw="batch",
+            )
+        )
+        assert result is None
+
+    p1_obs = env.observe("p1")
+
+    markers = [_decode_raw_frame_marker(frame) for frame in p1_obs.view["image_history"]]
+    assert markers == [22, 23, 24, 25]
+    assert _decode_raw_frame_marker(p1_obs.view["image"]) == 25

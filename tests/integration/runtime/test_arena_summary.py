@@ -99,14 +99,29 @@ def test_arena_summary_helper_paths(tmp_path: Path) -> None:
     cache = EvalCache(base_dir=str(tmp_path), run_id="arena-summary-helper")
     sample = _make_sample("s3", "p1", "finished", None)
     sample["predict_result"][0]["game_arena"]["ranks"] = [{"player_id": "p1", "rank": 1}]
+    sample["predict_result"].append(
+        {
+            "index": 1,
+            "arena_trace": sample["predict_result"][0]["arena_trace"],
+            "game_arena": {
+                "end_time_ms": 2000,
+                "total_steps": 1,
+                "winner_player_id": "p0",
+                "termination_reason": "finished",
+                "ranks": ["p0", "p1"],
+            },
+        }
+    )
+    sample["selected_predict_result_index"] = 1
     cache.write_sample("s3", {"sample": sample})
 
     payload = _build_arena_summary(cache)
     assert payload is not None
-    assert payload["rank_top1"] == {"p1": 1}
+    assert payload["rank_top1"] == {"p0": 1}
 
     assert _arena_entry({"predict_result": []}) == {}
     assert _arena_entry({"predict_result": [None]}) == {}
+    assert _arena_entry(sample)["index"] == 1
     assert _coerce_float("3.5") == 3.5
     assert _coerce_float("x") is None
 

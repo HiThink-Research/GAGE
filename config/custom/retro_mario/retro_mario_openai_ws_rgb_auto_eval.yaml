@@ -1,0 +1,142 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: retro_mario_openai_ws_rgb_headless_auto_eval
+  description: Stable-retro Mario OpenAI demo with ws_rgb visualization (headless runtime) and auto-eval.
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: retro_mario_arena
+    - step: auto_eval
+
+datasets:
+  - dataset_id: retro_mario_demo
+    loader: jsonl
+    params:
+      path: config/custom/retro_mario/retro_mario_phase1.jsonl
+      streaming: false
+
+backends:
+  - backend_id: retro_openai_http_player
+    type: openai_http
+    config:
+      base_url: https://api.openai.com/v1
+      model: ${RETRO_OPENAI_MODEL:-gpt-4o-mini}
+      require_api_key: true
+      default_params:
+        temperature: 0.2
+        max_tokens: 96
+
+prompts:
+  - prompt_id: retro_mario_turn_prompt_v1
+    renderer: jinja_chat
+    params:
+      role: system
+      include_existing: false
+    template: |
+      You are a precise retro game action planner for {{ payload.game_type }}.
+      Scheduler mode: {{ payload.mode }}.
+      Output policy:
+      - Return exactly ONE JSON object on the last line.
+      - JSON schema: {"move":"<legal_move_or_key_combo>","hold_ticks":<int>}.
+      - "move" must be selected from the legal moves list.
+      - "hold_ticks" must be in {{ payload.hold_ticks.min }}-{{ payload.hold_ticks.max }} (default {{ payload.hold_ticks.default }}).
+      - Do not output extra text before or after the JSON object.
+      {% if payload.retry_reason %}
+      Retry reason from previous output: {{ payload.retry_reason }}.
+      {% endif %}
+      {% if payload.last_model_output %}
+      Previous model output: {{ payload.last_model_output }}.
+      {% endif %}
+
+role_adapters:
+  - adapter_id: retro_openai_player_0
+    role_type: dut_model
+    backend_id: retro_openai_http_player
+    capabilities:
+      - chat_completion
+
+  - adapter_id: retro_mario_arena
+    role_type: arena
+    prompt_id: retro_mario_turn_prompt_v1
+    params:
+      human_input:
+        enabled: true
+        ws_host: ${RETRO_WS_RGB_HOST:-0.0.0.0}
+        ws_port: ${RETRO_WS_RGB_PORT:-5800}
+        ws_allow_origin: "*"
+      environment:
+        impl: retro_env_v1
+        game: SuperMarioBros3-Nes-v0
+        state: Start
+        # display_mode=websocket is rendered via ws_rgb, with headless env runtime.
+        display_mode: websocket
+        # Keep obs_image enabled so the latest frame can be attached in-memory to LLM messages.
+        obs_image: true
+        record_bk2: false
+        legal_moves:
+          - noop
+          - right
+          - right_run
+          - right_jump
+          - right_run_jump
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 12
+          hold_ticks_default: 6
+        info_feeder:
+          impl: info_none_v1
+        replay:
+          enabled: true
+          primary_mode: true
+          mode: both
+          frame:
+            enabled: true
+            stride: 3
+            max_frames: 5000
+            encoding: jpeg
+            quality: 75
+      scheduler:
+        type: tick
+        tick_ms: 1500
+        max_ticks: 60
+      parser:
+        impl: retro_action_v1
+        hold_ticks_min: 1
+        hold_ticks_max: 12
+        hold_ticks_default: 6
+      players:
+        - name: player_0
+          type: backend
+          ref: retro_openai_player_0
+          max_retries: 1
+          fallback_policy: first_legal
+
+metrics:
+  - metric_id: retro_episode_length_steps
+    implementation: episode_length_steps
+  - metric_id: retro_legal_action_rate
+    implementation: legal_action_rate
+  - metric_id: retro_illegal_action_count
+    implementation: illegal_action_count
+  - metric_id: retro_on_time_rate
+    implementation: on_time_rate
+  - metric_id: retro_completion_flag
+    implementation: completion_flag
+  - metric_id: retro_termination_reason
+    implementation: termination_reason
+    aggregation: categorical_count
+
+tasks:
+  - task_id: retro_mario_openai_ws_rgb_headless_auto_eval
+    dataset_id: retro_mario_demo
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/retro_mario_openai_ws_rgb_headless_auto_eval_events.jsonl

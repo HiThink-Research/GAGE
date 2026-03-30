@@ -7,7 +7,7 @@ Quick links:
 - Project home: `README.md` / `README_zh.md`
 - Framework overview: `docs/guide/framework_overview.md` / `docs/guide/framework_overview_zh.md`
 - Sample schema: `docs/guide/sample.md` / `docs/guide/sample_zh.md`
-- Benchmark onboarding (support module): `docs/guide/support_cli.md` / `docs/guide/support_cli_zh.md`
+- Benchmark guide: `docs/guide/benchmark.md` / `docs/guide/benchmark_zh.md`
 - Testing guide: `TESTING.md`
 
 ## Before you start
@@ -63,30 +63,22 @@ python run.py \
 
 If you change user-facing behavior, update docs and keep links valid.
 
-### Add a benchmark (recommended: use the support module)
+### Add a benchmark
 
-gage-eval provides a workflow to onboard datasets with less custom glue code:
+Keep benchmark onboarding registry-first and runnable from day one:
 
-1) Inspect (sample + schema):
+1. Inspect a small sample of the raw dataset and pin down the normalized Sample fields you need.
+2. Add or extend the loader / preprocessor assets under `src/gage_eval/assets/datasets/`, then register them.
+3. Add a runnable config under `config/custom/<topic>/`.
+4. Validate the config, run a small smoke evaluation, and add focused tests for the new logic.
 
-```bash
-PYTHONPATH=src python -m gage_eval.support inspect <dataset_or_path> --max-samples 5
-```
-
-2) Generate `design.md` (single source of truth):
-
-```bash
-PYTHONPATH=src python -m gage_eval.support design <slug>
-```
-
-3) Implement (dry-run first, then write):
+Common validation commands:
 
 ```bash
-PYTHONPATH=src python -m gage_eval.support implement <slug>
-PYTHONPATH=src python -m gage_eval.support implement <slug> --force
+cd gage-eval-main
+python -m gage_eval.tools.config_checker --config config/custom/<topic>/<config>.yaml
+python run.py --config config/custom/<topic>/<config>.yaml --max-samples 5
 ```
-
-See `docs/guide/support_cli.md` for details and guardrails.
 
 ### Add / modify a dataset preprocessor
 

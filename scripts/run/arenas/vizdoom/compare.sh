@@ -8,8 +8,8 @@ PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
 ROUNDS="${ROUNDS:-1}"
 
-CFG_A="${CFG_A:-${ROOT}/config/custom/vizdoom_llm_vs_llm_s1_vs_s2.yaml}"
-CFG_B="${CFG_B:-${ROOT}/config/custom/vizdoom_llm_vs_llm_s2_vs_s1.yaml}"
+CFG_A="${CFG_A:-${ROOT}/config/custom/vizdoom/vizdoom_llm_vs_llm_s1_vs_s2.yaml}"
+CFG_B="${CFG_B:-${ROOT}/config/custom/vizdoom/vizdoom_llm_vs_llm_s2_vs_s1.yaml}"
 
 if [ -z "${OPENAI_API_KEY:-}" ] && [ -n "${LITELLM_API_KEY:-}" ]; then
   export OPENAI_API_KEY="${LITELLM_API_KEY}"

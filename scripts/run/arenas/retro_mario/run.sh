@@ -79,19 +79,19 @@ resolve_config() {
 
   case "${MODE}" in
     dummy_ws)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario_phase1_dummy_ws.yaml"
+      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml"
       ;;
     openai_ws)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario_openai_ws_rgb_auto_eval.yaml"
+      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml"
       ;;
     human_ws)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario_phase1_human_ws.yaml"
+      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_phase1_human_ws.yaml"
       ;;
     dummy_headless)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario_phase1_dummy_headless_auto_eval.yaml"
+      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_phase1_dummy_headless_auto_eval.yaml"
       ;;
     openai_headless)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario_openai_headless_auto_eval.yaml"
+      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml"
       ;;
     *)
       echo "[retro_mario][error] Unsupported mode: ${MODE}" >&2

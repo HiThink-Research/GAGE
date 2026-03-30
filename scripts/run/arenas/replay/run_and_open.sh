@@ -280,10 +280,10 @@ dummy_max_frames = {
 }
 
 ai_source = {
-    "gomoku": "config/custom/gomoku_litellm_local.yaml",
-    "tictactoe": "config/custom/tictactoe_litellm_local.yaml",
-    "doudizhu": "config/custom/doudizhu_litellm_local.yaml",
-    "mahjong": "config/custom/mahjong_4_ai.yaml",
+    "gomoku": "config/custom/gomoku/gomoku_litellm_local.yaml",
+    "tictactoe": "config/custom/tictactoe/tictactoe_litellm_local.yaml",
+    "doudizhu": "config/custom/doudizhu/doudizhu_litellm_local.yaml",
+    "mahjong": "config/custom/mahjong/mahjong_4_ai.yaml",
     "pettingzoo": "config/custom/pettingzoo/pong_ai.yaml",
 }
 

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, Optional
 
 from loguru import logger
 
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.metrics.aggregators import MetricAggregator
 from gage_eval.metrics.base import AggregatedMetric, MetricResult
+from gage_eval.metrics.runtime_context import AggregationRuntimeContext
 
 
 class Tau2PassHatAggregator(MetricAggregator):
@@ -20,49 +21,49 @@ class Tau2PassHatAggregator(MetricAggregator):
     the binomial estimator described in the Tau2 evaluation protocol.
     """
 
-    def __init__(self, spec: MetricSpec) -> None:
-        super().__init__(spec)
-        self._results: List[MetricResult] = []
+    def __init__(
+        self,
+        spec: MetricSpec,
+        runtime_context: Optional[AggregationRuntimeContext] = None,
+    ) -> None:
+        super().__init__(spec, runtime_context=runtime_context)
         self._task_field = str(spec.params.get("task_field", "task_id"))
         self._value_key = str(spec.params.get("value_key", "pass"))
         self._max_k = _coerce_int(spec.params.get("max_k"))
         self._k_values = _parse_k_values(spec.params.get("k_values"))
+        self._task_stats: Dict[str, Dict[str, int]] = defaultdict(
+            lambda: {"total": 0, "success": 0}
+        )
+        self._skipped_missing_reward = 0
+        self._missing_task_id = 0
+        self._total_samples = 0
 
     def add(self, result: MetricResult) -> None:
-        self._results.append(result)
+        self._total_samples += 1
+        if result.metadata.get("missing_reward"):
+            self._skipped_missing_reward += 1
+            return
+        task_id = result.metadata.get(self._task_field)
+        if not task_id:
+            self._missing_task_id += 1
+            return
+        stats = self._task_stats[str(task_id)]
+        stats["total"] += 1
+        if _is_success_value(result.values.get(self._value_key, 0.0)):
+            stats["success"] += 1
 
     def finalize(self) -> AggregatedMetric:
-        # STEP 1: Group per-sample pass indicators by task_id.
-        task_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0})
-        skipped_missing_reward = 0
-        missing_task_id = 0
-        total_samples = 0
-
-        for result in self._results:
-            total_samples += 1
-            if result.metadata.get("missing_reward"):
-                skipped_missing_reward += 1
-                continue
-            task_id = result.metadata.get(self._task_field)
-            if not task_id:
-                missing_task_id += 1
-                continue
-            stats = task_stats[str(task_id)]
-            stats["total"] += 1
-            if _is_success_value(result.values.get(self._value_key, 0.0)):
-                stats["success"] += 1
-
         # STEP 2: Resolve k-values and compute pass-hat@k.
-        min_trials = _resolve_min_trials(task_stats)
+        min_trials = _resolve_min_trials(self._task_stats)
         k_values = _resolve_k_values(min_trials, self._max_k, self._k_values)
-        values = {f"pass_hat@{k}": _pass_hat_k(task_stats, k) for k in k_values}
+        values = {f"pass_hat@{k}": _pass_hat_k(self._task_stats, k) for k in k_values}
 
-        used_samples = sum(stats["total"] for stats in task_stats.values())
+        used_samples = sum(stats["total"] for stats in self._task_stats.values())
         logger.debug(
             "Tau2PassHatAggregator finalized metric={} tasks={} samples={} used_samples={} min_trials={} k_values={}",
             self.spec.metric_id,
-            len(task_stats),
-            total_samples,
+            len(self._task_stats),
+            self._total_samples,
             used_samples,
             min_trials,
             k_values,
@@ -74,11 +75,11 @@ class Tau2PassHatAggregator(MetricAggregator):
             values=values,
             count=used_samples,
             metadata={
-                "total_samples": total_samples,
+                "total_samples": self._total_samples,
                 "used_samples": used_samples,
-                "missing_task_id": missing_task_id,
-                "skipped_missing_reward": skipped_missing_reward,
-                "task_count": len(task_stats),
+                "missing_task_id": self._missing_task_id,
+                "skipped_missing_reward": self._skipped_missing_reward,
+                "task_count": len(self._task_stats),
                 "min_trials": min_trials,
                 "k_values": k_values,
             },

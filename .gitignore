@@ -47,13 +47,13 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
-.cache
+/.cache/
 nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
-.pytest_cache/
+/.pytest_cache/
 cover/
 
 # Translations
@@ -166,9 +166,10 @@ cython_debug/
 .idea/
 
 # custom .gitignore
+/DEVLOG.md
 user.config
 saves/
-cache/
+/cache/
 *.xlsx
 0529/
 0530/
@@ -197,7 +198,7 @@ demo_hf_backend.py
 # VS Code
 .vscode/
 
-runs/
+/runs/
 node_modules/
 frontend/rlcard-showdown/build/
 scripts/oneclick/.generated/
@@ -210,7 +211,11 @@ scripts/oneclick/.env.example
 /local-datasets/
 /models/
 
-.gage_cache/
+/.gage_cache/
+/.ruff_cache/
+/.scannerwork/
+/.tmp/
+/tmp/
 
 # python artifacts
 __pycache__/

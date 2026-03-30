@@ -6,6 +6,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, TYPE_CHECKING
 
+from gage_eval.assets.datasets.registry_loader import import_dataset_asset_module
 from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.assets.datasets.utils.reflection import resolve_callable as _resolve_callable, coerce_kwargs as _coerce_kwargs
 from gage_eval.assets.datasets.utils.tokenizers import (
@@ -16,10 +17,12 @@ from gage_eval.assets.datasets.utils.tokenizers import (
 )
 from gage_eval.registry import registry
 from gage_eval.observability.config import get_observability_config
+from gage_eval.assets.datasets.sample import Sample
 
 if TYPE_CHECKING:  # pragma: no cover
     from gage_eval.observability.config import ObservabilityConfig
     from gage_eval.observability.trace import ObservabilityTrace
+    from gage_eval.registry.runtime import RegistryLookup
 @dataclass(frozen=True)
 class PreprocessContext:
     """Container describing how to invoke a preprocess handle."""
@@ -81,7 +84,13 @@ def resolve_doc_to_callable(spec: DatasetSpec, field: str) -> Optional[Callable[
     return func
 
 
-def build_preprocess_context(spec: DatasetSpec, *, data_path: Optional[str]) -> Optional[PreprocessContext]:
+def build_preprocess_context(
+    spec: DatasetSpec,
+    *,
+    data_path: Optional[str],
+    registry_lookup: Optional["RegistryLookup"] = None,
+    allow_lazy_import: bool = True,
+) -> Optional[PreprocessContext]:
     """Create a preprocess context shared by JSONL/HF loaders."""
 
     module = spec.params.get("preprocess")
@@ -95,12 +104,25 @@ def build_preprocess_context(spec: DatasetSpec, *, data_path: Optional[str]) -> 
     tokenizer = spec.params.get("tokenizer_object") or load_tokenizer(spec.params)
     if tokenizer is not None:
         kwargs.setdefault("tokenizer", tokenizer)
-    handle = _resolve_registered_preprocessor(module, kwargs)
+    handle = _resolve_registered_preprocessor(
+        module,
+        kwargs,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if handle:
         return PreprocessContext(handle=handle, kwargs=dict(kwargs))
-    return None
+    raise LookupError(
+        f"Configured dataset preprocessor '{module}' could not be resolved from the active registry lookup"
+    )
 
-def build_bundle_context(spec: DatasetSpec, *, data_path: Optional[str]) -> Optional[BundleContext]:
+def build_bundle_context(
+    spec: DatasetSpec,
+    *,
+    data_path: Optional[str],
+    registry_lookup: Optional["RegistryLookup"] = None,
+    allow_lazy_import: bool = True,
+) -> Optional[BundleContext]:
     """Create a bundle context shared by JSONL/HF loaders."""
 
     module = spec.params.get("bundle")
@@ -109,30 +131,63 @@ def build_bundle_context(spec: DatasetSpec, *, data_path: Optional[str]) -> Opti
     kwargs = coerce_kwargs(spec.params.get("bundle_kwargs"))
     if data_path is not None:
         kwargs.setdefault("data_path", data_path)
-    handle = _resolve_registered_bundle(module, kwargs)
+    handle = _resolve_registered_bundle(
+        module,
+        kwargs,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if handle:
         return BundleContext(handle=handle, kwargs=dict(kwargs))
-    return None
+    raise LookupError(
+        f"Configured dataset bundle '{module}' could not be resolved from the active registry lookup"
+    )
 
-def _resolve_registered_bundle(name: str, kwargs: Dict[str, Any]):
+def _resolve_registered_bundle(
+    name: str,
+    kwargs: Dict[str, Any],
+    *,
+    registry_lookup: Optional["RegistryLookup"] = None,
+    allow_lazy_import: bool = True,
+):
     """Resolve registered class-based bundle by registry name."""
     if not name:
         return None
+    lookup = registry_lookup or registry
     try:
-        bundle_cls = registry.get("bundles", name)
+        bundle_cls = lookup.get("bundles", name)
     except KeyError:
-        return None
+        if not allow_lazy_import:
+            return None
+        import_dataset_asset_module("bundles", name, registry_lookup=lookup)
+        try:
+            bundle_cls = lookup.get("bundles", name)
+        except KeyError:
+            return None
     bundle = bundle_cls(**kwargs)
     return _BundleAdapter(bundle)
 
-def _resolve_registered_preprocessor(name: str, kwargs: Dict[str, Any]):
+def _resolve_registered_preprocessor(
+    name: str,
+    kwargs: Dict[str, Any],
+    *,
+    registry_lookup: Optional["RegistryLookup"] = None,
+    allow_lazy_import: bool = True,
+):
     """Resolve registered class-based preprocessor by registry name."""
     if not name:
         return None
+    lookup = registry_lookup or registry
     try:
-        preprocessor_cls = registry.get("dataset_preprocessors", name)
+        preprocessor_cls = lookup.get("dataset_preprocessors", name)
     except KeyError:
-        return None
+        if not allow_lazy_import:
+            return None
+        import_dataset_asset_module("dataset_preprocessors", name, registry_lookup=lookup)
+        try:
+            preprocessor_cls = lookup.get("dataset_preprocessors", name)
+        except KeyError:
+            return None
     preprocessor = preprocessor_cls(**kwargs)
     return _PreprocessorAdapter(preprocessor)
 
@@ -154,6 +209,8 @@ def apply_bundle(
     spec: DatasetSpec,
     *,
     data_path: Optional[str],
+    registry_lookup: Optional["RegistryLookup"] = None,
+    allow_lazy_import: bool = True,
     doc_to_text: Optional[Callable[[Dict[str, Any]], Any]] = None,
     doc_to_visual: Optional[Callable[[Dict[str, Any]], Any]] = None,
     doc_to_audio: Optional[Callable[[Dict[str, Any]], Any]] = None,
@@ -161,7 +218,12 @@ def apply_bundle(
     observability_config: Optional["ObservabilityConfig"] = None,
 ) -> Iterable[Dict[str, Any]]:
     config = observability_config or get_observability_config()
-    ctx = build_bundle_context(spec, data_path=data_path)
+    ctx = build_bundle_context(
+        spec,
+        data_path=data_path,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if not ctx:
         def default_generator():
             for record in records:
@@ -194,6 +256,8 @@ def apply_preprocess(
     spec: DatasetSpec,
     *,
     data_path: Optional[str],
+    registry_lookup: Optional["RegistryLookup"] = None,
+    allow_lazy_import: bool = True,
     doc_to_text: Optional[Callable[[Dict[str, Any]], Any]] = None,
     doc_to_visual: Optional[Callable[[Dict[str, Any]], Any]] = None,
     doc_to_audio: Optional[Callable[[Dict[str, Any]], Any]] = None,
@@ -201,7 +265,12 @@ def apply_preprocess(
     observability_config: Optional["ObservabilityConfig"] = None,
 ) -> Iterable[Dict[str, Any]]:
     config = observability_config or get_observability_config()
-    ctx = build_preprocess_context(spec, data_path=data_path)
+    ctx = build_preprocess_context(
+        spec,
+        data_path=data_path,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     # NOTE: If no explicit preprocess is configured, fall back to DefaultPreprocessor
     # (llm-eval compatible defaults + fallback prompt templating).
     if not ctx:
@@ -263,7 +332,7 @@ def _apply_default_preprocessor(
             new_record.setdefault("_dataset_id", spec.dataset_id)
             if data_path and "_dataset_metadata" not in new_record:
                 new_record["_dataset_metadata"] = {"path": data_path}
-            inputs_val = default_pre.transform(
+            transformed = default_pre.transform(
                 new_record,
                 dataset_id=spec.dataset_id,
                 dataset_metadata={"path": data_path} if data_path else None,
@@ -273,11 +342,14 @@ def _apply_default_preprocessor(
                 trace=trace,
                 observability_config=observability_config,
             )
-            if inputs_val is None:
+            if transformed is None:
                 continue
-            if tok_path and "_tokenizer_path" not in new_record:
-                new_record["_tokenizer_path"] = tok_path
-            yield new_record
+            if tok_path:
+                if isinstance(transformed, dict) and "_tokenizer_path" not in transformed:
+                    transformed["_tokenizer_path"] = tok_path
+                elif isinstance(transformed, Sample) and not getattr(transformed, "_tokenizer_path", None):
+                    transformed._tokenizer_path = tok_path
+            yield transformed
 
     return generator()
 

@@ -8,7 +8,7 @@ import pytest
 
 from gage_eval.assets.datasets.loaders.tau2_hf_loader import Tau2TasksLoader
 from gage_eval.config.pipeline_config import DatasetSpec
-from tests.tau2_stub import install_tau2_stub
+from tests._support.stubs.tau2_stub import install_tau2_stub
 
 
 def _write_tau2_data(root: Path, *, domain: str = "airline") -> Path:

@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/run/common/env.sh"
 PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
-CFG="${CFG:-${ROOT}/config/custom/vizdoom_human_vs_llm_record.yaml}"
+CFG="${CFG:-${ROOT}/config/custom/vizdoom/vizdoom_human_vs_llm_record.yaml}"
 RUN_ID="${RUN_ID:-vizdoom_human_vs_llm_record_$(date +%Y%m%d_%H%M%S)}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
 

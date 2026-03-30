@@ -12,10 +12,12 @@ from gage_eval.metrics.base import (
     MultiReferenceTextMetric,
     NumericThresholdMetric,
 )
+from gage_eval.metrics.runtime_context import AggregationRuntimeContext
 
 __all__ = [
     "MetricRegistry",
     "MetricInstance",
+    "AggregationRuntimeContext",
     "MetricContext",
     "MetricResult",
     "BaseMetric",

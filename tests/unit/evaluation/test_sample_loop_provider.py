@@ -11,6 +11,7 @@ from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_manager import RoleManager
+from gage_eval.role.runtime.invocation import SampleExecutionContext
 from gage_eval.sandbox.manager import SandboxManager
 
 
@@ -35,12 +36,18 @@ class FakeSandbox:
 
 
 class ProviderProbeAdapter(RoleAdapter):
-    def __init__(self, adapter_id: str, calls: List[object]) -> None:
+    def __init__(
+        self,
+        adapter_id: str,
+        calls: List[object],
+        *,
+        sandbox_config: Dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(
             adapter_id=adapter_id,
             role_type="toolchain",
             capabilities=(),
-            sandbox_config={"runtime": "fake"},
+            sandbox_config=sandbox_config or {"runtime": "fake"},
         )
         self._calls = calls
 
@@ -79,6 +86,205 @@ def test_sample_loop_injects_sandbox_provider() -> None:
     sample_loop.run(planner=planner, role_manager=role_manager, trace=trace)
 
     assert calls and calls[0] is not None
+    assert FakeSandbox.start_calls == 1
+    assert FakeSandbox.teardown_calls == 1
+
+
+@pytest.mark.fast
+def test_sample_loop_routes_distinct_sandbox_providers_per_support_adapter() -> None:
+    FakeSandbox.start_calls = 0
+    FakeSandbox.teardown_calls = 0
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    calls_a: List[object] = []
+    calls_b: List[object] = []
+    adapter_a = ProviderProbeAdapter(
+        "probe_a",
+        calls_a,
+        sandbox_config={"runtime": "fake", "sandbox_id": "box_a"},
+    )
+    adapter_b = ProviderProbeAdapter(
+        "probe_b",
+        calls_b,
+        sandbox_config={"runtime": "fake", "sandbox_id": "box_b"},
+    )
+    resource_profile = ResourceProfile(
+        nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+    )
+    role_manager = RoleManager(resource_profile, concurrency_hint=1)
+    role_manager.register_role_adapter("probe_a", adapter_a)
+    role_manager.register_role_adapter("probe_b", adapter_b)
+    planner = TaskPlanner()
+    planner.configure_custom_steps(
+        [
+            {"step": "support", "adapter_id": "probe_a"},
+            {"step": "support", "adapter_id": "probe_b"},
+        ]
+    )
+    sample_loop = SampleLoop(
+        [{"id": "s1", "messages": [{"role": "user", "content": "hi"}]}],
+        concurrency=1,
+        sandbox_manager=manager,
+    )
+    trace = ObservabilityTrace()
+
+    sample_loop.run(planner=planner, role_manager=role_manager, trace=trace)
+
+    assert calls_a and calls_a[0] is not None
+    assert calls_b and calls_b[0] is not None
+    assert calls_a[0] is not calls_b[0]
+    assert calls_a[0].sandbox_config["sandbox_id"] == "box_a"
+    assert calls_b[0].sandbox_config["sandbox_id"] == "box_b"
+    assert FakeSandbox.start_calls == 2
+    assert FakeSandbox.teardown_calls == 2
+    assert not any(
+        event["event"] == "legacy_context_bridge_used" for event in trace.events
+    )
+
+
+@pytest.mark.fast
+def test_sample_loop_applies_step_scoped_sandbox_route_override() -> None:
+    FakeSandbox.start_calls = 0
+    FakeSandbox.teardown_calls = 0
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    calls: List[object] = []
+    adapter = ProviderProbeAdapter(
+        "probe",
+        calls,
+        sandbox_config={"runtime": "fake", "sandbox_id": "default_box"},
+    )
+    resource_profile = ResourceProfile(
+        nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+    )
+    role_manager = RoleManager(resource_profile, concurrency_hint=1)
+    role_manager.register_role_adapter("probe", adapter)
+    planner = TaskPlanner()
+    planner.configure_custom_steps([{"step": "support", "adapter_id": "probe"}])
+    sample_loop = SampleLoop(
+        [
+            {
+                "id": "s1",
+                "messages": [{"role": "user", "content": "hi"}],
+                "sandbox_routes": {
+                    "support.probe": {
+                        "sandbox_id": "override_box",
+                    }
+                },
+            }
+        ],
+        concurrency=1,
+        sandbox_manager=manager,
+    )
+    trace = ObservabilityTrace()
+
+    sample_loop.run(planner=planner, role_manager=role_manager, trace=trace)
+
+    assert calls and calls[0] is not None
+    assert calls[0].sandbox_config["sandbox_id"] == "override_box"
+    assert any(event["event"] == "runtime_route_selected" for event in trace.events)
+
+
+@pytest.mark.fast
+def test_support_invocation_cache_key_includes_slot_id() -> None:
+    context = SampleExecutionContext(sample={"id": "s1"}, sample_id="s1")
+
+    key_a = context.for_invocation(
+        step_type="support",
+        adapter_id="probe",
+        step_slot_id="support:00:probe",
+    ).cache_key("route")
+    key_b = context.for_invocation(
+        step_type="support",
+        adapter_id="probe",
+        step_slot_id="support:01:probe",
+    ).cache_key("route")
+
+    assert key_a != key_b
+
+
+@pytest.mark.fast
+def test_sample_loop_routes_same_support_adapter_by_slot_override() -> None:
+    FakeSandbox.start_calls = 0
+    FakeSandbox.teardown_calls = 0
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    calls: List[object] = []
+    adapter = ProviderProbeAdapter(
+        "probe",
+        calls,
+        sandbox_config={"runtime": "fake", "sandbox_id": "default_box"},
+    )
+    resource_profile = ResourceProfile(
+        nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+    )
+    role_manager = RoleManager(resource_profile, concurrency_hint=1)
+    role_manager.register_role_adapter("probe", adapter)
+    planner = TaskPlanner()
+    planner.configure_custom_steps(
+        [
+            {"step": "support", "adapter_id": "probe"},
+            {"step": "support", "adapter_id": "probe"},
+        ]
+    )
+    sample_loop = SampleLoop(
+        [
+            {
+                "id": "s1",
+                "messages": [{"role": "user", "content": "hi"}],
+                "sandbox_routes": {
+                    "support.support:00:probe": {"sandbox_id": "box_a"},
+                    "support:01:probe": {"sandbox_id": "box_b"},
+                },
+            }
+        ],
+        concurrency=1,
+        sandbox_manager=manager,
+    )
+    trace = ObservabilityTrace()
+
+    sample_loop.run(planner=planner, role_manager=role_manager, trace=trace)
+
+    assert len(calls) == 2
+    assert calls[0] is not None
+    assert calls[1] is not None
+    assert calls[0] is not calls[1]
+    assert calls[0].sandbox_config["sandbox_id"] == "box_a"
+    assert calls[1].sandbox_config["sandbox_id"] == "box_b"
+    slot_ids = {
+        event["payload"].get("step_slot_id")
+        for event in trace.events
+        if event["event"] == "runtime_route_selected"
+    }
+    assert slot_ids == {"support:00:probe", "support:01:probe"}
+
+
+@pytest.mark.fast
+def test_sample_loop_executes_support_role_ref_binding() -> None:
+    FakeSandbox.start_calls = 0
+    FakeSandbox.teardown_calls = 0
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    calls: List[object] = []
+    adapter = ProviderProbeAdapter("probe", calls)
+    resource_profile = ResourceProfile(
+        nodes=[NodeResource(node_id="local", gpus=0, cpus=1)]
+    )
+    role_manager = RoleManager(resource_profile, concurrency_hint=1)
+    role_manager.register_role_adapter("probe", adapter)
+    planner = TaskPlanner()
+    planner.configure_custom_steps([{"step": "support", "role_ref": "probe"}])
+    sample_loop = SampleLoop(
+        [{"id": "s1", "messages": [{"role": "user", "content": "hi"}]}],
+        concurrency=1,
+        sandbox_manager=manager,
+    )
+    trace = ObservabilityTrace()
+
+    sample_loop.run(planner=planner, role_manager=role_manager, trace=trace)
+
+    assert len(calls) == 1
+    assert calls[0] is not None
     assert FakeSandbox.start_calls == 1
     assert FakeSandbox.teardown_calls == 1
 

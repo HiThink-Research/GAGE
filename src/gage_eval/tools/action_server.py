@@ -6,11 +6,16 @@ import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from queue import Queue
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
+
+from gage_eval.role.arena.human_input_protocol import (
+    build_action_payload,
+    dump_action_payload,
+)
 
 
 def _first_param(params: dict[str, list[str]], key: str) -> Optional[str]:
@@ -35,17 +40,39 @@ class ActionRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - match BaseHTTPRequestHandler signature
         parsed = urlparse(self.path)
         if parsed.path == "/tournament/action":
-            action_text = self._extract_action(parsed)
-            if not action_text:
+            action_payload = self._extract_action_payload(parsed)
+            if not action_payload.get("action"):
                 self._send_json({"error": "Missing action"}, status=HTTPStatus.BAD_REQUEST)
                 return
 
-            queue: Optional[Queue[str]] = getattr(self.server, "action_queue", None)  # type: ignore[attr-defined]
+            queue_server: Optional[ActionQueueServer] = getattr(  # type: ignore[attr-defined]
+                self.server,
+                "action_server_ref",
+                None,
+            )
+            if queue_server is not None and queue_server.has_action_routes():
+                if not action_payload.get("sample_id"):
+                    self._send_json({"error": "missing_sample_id"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                if not action_payload.get("player_id"):
+                    self._send_json({"error": "missing_player_id"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+            queue: Optional[Any] = None
+            error: Optional[str] = None
+            if queue_server is not None:
+                queue, error = queue_server.resolve_action_queue(action_payload.get("sample_id"))
+            else:
+                queue = getattr(self.server, "action_queue", None)  # type: ignore[attr-defined]
             if queue is None:
-                self._send_json({"error": "Action queue not available"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                status = HTTPStatus.BAD_REQUEST if error == "missing_sample_id" else HTTPStatus.NOT_FOUND
+                if error is None:
+                    status = HTTPStatus.INTERNAL_SERVER_ERROR
+                    error = "action_queue_not_available"
+                self._send_json({"error": error}, status=status)
                 return
 
-            queue.put(action_text)
+            queue.put(dump_action_payload(action_payload))
             self._send_json({"status": "queued"}, status=HTTPStatus.OK)
             return
 
@@ -76,48 +103,49 @@ class ActionRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - match base signature
         logger.debug("ActionServer {}", format % args)
 
-    def _extract_action(self, parsed_url) -> str:
+    def _extract_action_payload(self, parsed_url) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw_body = self.rfile.read(length) if length > 0 else b""
         body_text = raw_body.decode("utf-8", errors="ignore").strip()
         if body_text:
             payload = self._try_parse_json(body_text)
             if isinstance(payload, dict):
-                action = payload.get("action") or payload.get("move")
-                chat = payload.get("chat")
-                player_id = (
-                    payload.get("player_id")
-                    or payload.get("playerId")
-                    or payload.get("player")
-                    or payload.get("player_idx")
-                    or payload.get("playerIdx")
+                return build_action_payload(
+                    action=payload.get("action") or payload.get("move"),
+                    player_id=(
+                        payload.get("player_id")
+                        or payload.get("playerId")
+                        or payload.get("player")
+                        or payload.get("player_idx")
+                        or payload.get("playerIdx")
+                    ),
+                    sample_id=payload.get("sample_id") or payload.get("sampleId"),
+                    raw=payload.get("raw"),
+                    source="action_server",
+                    run_id=payload.get("run_id") or payload.get("runId"),
+                    task_id=payload.get("task_id") or payload.get("taskId"),
+                    display_id=payload.get("display_id") or payload.get("displayId"),
+                    chat=payload.get("chat"),
+                    metadata=payload.get("metadata"),
                 )
-                if action:
-                    if chat or player_id:
-                        action_payload = {"action": str(action)}
-                        if chat:
-                            action_payload["chat"] = str(chat)
-                        if player_id:
-                            action_payload["player_id"] = str(player_id)
-                        return json.dumps(action_payload, ensure_ascii=False)
-                    return str(action)
-            if body_text:
-                return body_text
+            return build_action_payload(
+                action=body_text,
+                raw=body_text,
+                source="action_server",
+            )
 
         params = parse_qs(parsed_url.query)
-        action = _first_param(params, "action") or _first_param(params, "move")
-        player_id = (
-            _first_param(params, "player_id")
-            or _first_param(params, "playerId")
-            or _first_param(params, "player_idx")
-            or _first_param(params, "playerIdx")
+        return build_action_payload(
+            action=_first_param(params, "action") or _first_param(params, "move"),
+            player_id=(
+                _first_param(params, "player_id")
+                or _first_param(params, "playerId")
+                or _first_param(params, "player_idx")
+                or _first_param(params, "playerIdx")
+            ),
+            sample_id=_first_param(params, "sample_id") or _first_param(params, "sampleId"),
+            source="action_server",
         )
-        if action and player_id:
-            return json.dumps(
-                {"action": str(action), "player_id": str(player_id)},
-                ensure_ascii=False,
-            )
-        return str(action) if action else ""
 
     def _extract_chat(self, parsed_url) -> tuple[str, Optional[str]]:
         length = int(self.headers.get("Content-Length", "0") or 0)
@@ -193,10 +221,13 @@ class ActionQueueServer:
         self._allow_origin = str(allow_origin)
         self._queue: Queue[str] = Queue()
         self._chat_queue: Queue[dict[str, str]] = Queue()
+        self._action_routes: dict[str, Any] = {}
+        self._route_lock = Lock()
         self._server = HTTPServer((self._host, self._port), ActionRequestHandler)
         setattr(self._server, "action_queue", self._queue)
         setattr(self._server, "chat_queue", self._chat_queue)
         setattr(self._server, "allow_origin", self._allow_origin)
+        setattr(self._server, "action_server_ref", self)
         self._thread: Optional[Thread] = None
 
     @property
@@ -210,6 +241,42 @@ class ActionQueueServer:
         """Return the queue that buffers incoming chat messages."""
 
         return self._chat_queue
+
+    def register_action_queue(self, sample_id: str, action_queue: Any) -> None:
+        """Register a sample-scoped queue or router for action delivery."""
+
+        normalized_sample_id = str(sample_id)
+        with self._route_lock:
+            self._action_routes[normalized_sample_id] = action_queue
+
+    def unregister_action_queue(self, sample_id: str) -> None:
+        """Remove a sample-scoped action route."""
+
+        normalized_sample_id = str(sample_id)
+        with self._route_lock:
+            self._action_routes.pop(normalized_sample_id, None)
+
+    def resolve_action_queue(
+        self,
+        sample_id: Optional[str],
+    ) -> tuple[Optional[Any], Optional[str]]:
+        """Resolve the target queue for one incoming action payload."""
+
+        with self._route_lock:
+            if self._action_routes:
+                if sample_id is None:
+                    return None, "missing_sample_id"
+                queue = self._action_routes.get(str(sample_id))
+                if queue is None:
+                    return None, "sample_route_not_found"
+                return queue, None
+        return self._queue, None
+
+    def has_action_routes(self) -> bool:
+        """Return whether sample-scoped action routes are registered."""
+
+        with self._route_lock:
+            return bool(self._action_routes)
 
     def start(self) -> None:
         """Start the HTTP server in a background thread."""

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ContextManager, Optional, Protocol
+from typing import Any, ContextManager, Optional, Protocol
 
 from gage_eval.role.role_instance import Role
 
@@ -17,6 +17,9 @@ class BasePool(Protocol):
         ...
 
     def shutdown(self) -> None:
+        ...
+
+    def snapshot(self) -> dict[str, Any]:
         ...
 
 

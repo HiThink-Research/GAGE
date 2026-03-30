@@ -43,7 +43,13 @@ def test_streamable_mcp_output_parsing() -> None:
 
 @pytest.mark.io
 def test_appworld_output_type_configured() -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / "appworld_agent_demo.yaml"
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "appworld"
+        / "appworld_agent_demo.yaml"
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     mcp_client = payload["mcp_clients"][0]
 

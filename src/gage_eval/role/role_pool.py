@@ -6,7 +6,7 @@ import threading
 import time
 from collections import deque
 from contextlib import AbstractContextManager
-from typing import Callable, Deque, Optional
+from typing import Any, Callable, Deque, Optional
 
 from gage_eval.role.role_instance import Role
 from gage_eval.role.runtime.base_pool import BasePool
@@ -53,6 +53,27 @@ class RolePool(BasePool):
             self._available.clear()
             self._in_use.clear()
             self._condition.notify_all()
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a lightweight runtime snapshot for diagnostics."""
+
+        with self._condition:
+            in_use = len(self._in_use)
+            capacity = self._max_size
+            available = None if capacity is None else max(0, capacity - in_use)
+            if self._closed:
+                available = 0 if capacity is not None else None
+            return {
+                "pool_type": "role_pool",
+                "adapter_id": self.adapter_id,
+                "capacity": capacity,
+                "in_use": in_use,
+                "available": available,
+                "created": self._created,
+                "healthy": not self._closed,
+                "closed": self._closed,
+                "extensions": {},
+            }
 
     # ------------------------------------------------------------------
     # Internal helpers

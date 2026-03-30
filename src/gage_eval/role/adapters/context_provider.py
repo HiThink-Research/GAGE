@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.mcp.utils import sync_mcp_endpoint
-from gage_eval.registry import ensure_async, registry
+from gage_eval.registry import ensure_async, import_asset_from_manifest, registry
 from gage_eval.sandbox.provider import SandboxProvider
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 
@@ -24,6 +24,7 @@ class ContextProviderAdapter(RoleAdapter):
         *,
         implementation: str,
         implementation_params: Optional[Dict[str, Any]] = None,
+        registry_view=None,
         capabilities=(),
         role_type: str = "context_provider",
         mcp_client_id: Optional[str] = None,
@@ -48,10 +49,18 @@ class ContextProviderAdapter(RoleAdapter):
             self._implementation_params.setdefault("mcp_client_id", mcp_client_id)
         if mcp_client is not None:
             self._implementation_params.setdefault("mcp_client", mcp_client)
+        lookup = registry_view or registry
         try:
-            impl_cls = registry.get("context_impls", implementation)
+            impl_cls = lookup.get("context_impls", implementation)
         except KeyError:
-            registry.auto_discover("context_impls", "gage_eval.role.context")
+            if registry_view is not None:
+                raise
+            import_asset_from_manifest(
+                "context_impls",
+                implementation,
+                registry=lookup,
+                source=f"context_provider:{adapter_id}",
+            )
             impl_cls = registry.get("context_impls", implementation)
         self._impl = impl_cls(**self._implementation_params)
         provider = getattr(self._impl, "aprovide", None) or getattr(self._impl, "provide", None)

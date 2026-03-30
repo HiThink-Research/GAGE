@@ -30,6 +30,7 @@ datasets:
         tokenizer_path: ${MMLU_PRO_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
         max_length: 4096
         max_new_tokens: 2048
+backends:
   - backend_id: litellm_backend
     type: litellm
     config:
@@ -41,7 +42,6 @@ datasets:
         temperature: 0.0
       streaming: false
       max_retries: 6
-backends:
   - backend_id: mmlu_pro_vllm_backend
     type: vllm
     config:

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from gage_eval.registry import registry
 from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderer
+from gage_eval.evaluation.support_artifacts import resolve_support_tools
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.role.agent.hooks import build_hook_chain
 from gage_eval.role.agent.human_gateway import HumanGateway, build_default_human_gateway
@@ -76,7 +77,7 @@ class DUTAgentAdapter(RoleAdapter):
             pre_hooks=self._pre_hooks,
             post_hooks=self._post_hooks,
         )
-        result = loop.run(
+        result = await loop.arun(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
@@ -128,12 +129,7 @@ class DUTAgentAdapter(RoleAdapter):
 
     @staticmethod
     def _resolve_tools(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
-        tools: List[Dict[str, Any]] = []
-        tools = _merge_tools(tools, sample.get("tools") or [])
-        for output in sample.get("support_outputs") or []:
-            if isinstance(output, dict):
-                tools = _merge_tools(tools, output.get("tools_schema") or output.get("tools") or [])
-        return tools
+        return resolve_support_tools(sample)
 
 
 def _merge_tools(existing: List[Dict[str, Any]], new_tools: Any) -> List[Dict[str, Any]]:

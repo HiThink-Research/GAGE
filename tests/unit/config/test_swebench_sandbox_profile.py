@@ -14,7 +14,13 @@ from gage_eval.config.pipeline_config import PipelineConfig
     ["swebench_pro_smoke_agent.yaml"],
 )
 def test_swebench_smoke_sandbox_profile(config_name: str) -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / config_name
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "swebench_pro"
+        / config_name
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)
 

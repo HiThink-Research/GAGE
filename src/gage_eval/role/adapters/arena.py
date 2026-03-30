@@ -15,13 +15,18 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 from loguru import logger
 
 from gage_eval.assets.prompts.renderers import PromptRenderer
+from gage_eval.evaluation.sample_ingress import resolve_runtime_sample_id
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
+from gage_eval.role.arena.game_providers import resolve_arena_game_provider
+from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.interfaces import MoveParser
 from gage_eval.role.arena.players.agent_player import AgentPlayer
 from gage_eval.role.arena.players.human_player import HumanPlayer
 from gage_eval.role.arena.players.llm_player import LLMPlayer
+from gage_eval.role.arena.registry_loader import import_arena_asset_module
+from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.schedulers.multi_timeline_scheduler import (
     MultiTimelineScheduler,
 )
@@ -189,6 +194,7 @@ class ArenaRoleAdapter(RoleAdapter):
     _DEFAULT_GAME_LOG_INLINE_LIMIT = 1000
     _DEFAULT_GAME_LOG_INLINE_BYTES = 200_000
     _DEFAULT_GAME_LOG_PREVIEW_LIMIT = 50
+    _DEFAULT_PROCESS_END_TIMEOUT_S = 10.0
 
     def __init__(
         self,
@@ -202,6 +208,7 @@ class ArenaRoleAdapter(RoleAdapter):
         human_input: Optional[Dict[str, Any]] = None,
         players: Optional[Sequence[Dict[str, Any]]] = None,
         prompt_renderer: Optional[PromptRenderer] = None,
+        registry_view=None,
         capabilities=(),
         role_type: str = "arena",
         **_,
@@ -218,10 +225,8 @@ class ArenaRoleAdapter(RoleAdapter):
         self._human_input_cfg = dict(human_input or {})
         self._player_specs = list(players or [])
         self._prompt_renderer = prompt_renderer
-        self._shared_visualizer = None
-        self._action_server = None
-        self._ws_rgb_hub = None
-        self._registered_displays: set[str] = set()
+        self._registry_view = registry_view
+        self._runtime_services = ArenaRuntimeServiceHub(adapter_id=self.adapter_id)
 
     def invoke(
         self, payload: Dict[str, Any], state: RoleAdapterState
@@ -259,6 +264,7 @@ class ArenaRoleAdapter(RoleAdapter):
         player_specs, player_ids, player_names, start_player_id = (
             self._normalize_player_specs(sample)
         )
+        sample_id = self._resolve_sample_id(sample)
         env_impl = self._environment_cfg.get("impl", "gomoku_local_v1")
         env_impl_lower = str(env_impl).lower()
         model_labels: Dict[str, str] = {}
@@ -272,71 +278,95 @@ class ArenaRoleAdapter(RoleAdapter):
             model_labels = self._resolve_player_labels(player_specs, role_manager)
         parser = self._build_parser(sample)
         scheduler = self._build_scheduler(sample)
-        visualizer, action_queue = self._ensure_visualizer(sample, player_specs)
+        visualizer, fallback_action_queue = self._ensure_visualizer(sample, player_specs)
         action_server, action_queue_server = self._ensure_action_server(player_specs)
-        if action_queue is None:
-            action_queue = action_queue_server
-        environment = self._build_environment(
-            sample,
-            player_ids=player_ids,
-            player_names=player_names,
-            player_models=model_labels if "mahjong" in env_impl_lower else None,
-            start_player_id=start_player_id,
-            chat_queue=action_server.chat_queue if action_server is not None else None,
-            trace=trace,
-            sandbox_provider=sandbox_provider,
-        )
-        ws_session = self._maybe_build_ws_session_controller(sample=sample, env_impl=env_impl_lower)
-        if ws_session is not None:
-            environment = _SessionControlledEnvironment(environment, ws_session)
-        frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
-        if frame_recorder is not None:
-            environment = _FrameCaptureEnvironment(environment, frame_recorder)
-        ws_display_registered = self._maybe_register_ws_display(
-            sample=sample,
-            environment=environment,
-            action_queue=action_queue,
+        if fallback_action_queue is None:
+            fallback_action_queue = action_queue_server
+        action_router = self._build_sample_action_router(
+            sample_id=sample_id,
             player_specs=player_specs,
-            env_impl=env_impl_lower,
-            session_controller=ws_session,
         )
-        if not ws_display_registered:
-            ws_session = None
-        if visualizer is not None:
-            visualizer.reset_state()
-            visualizer.set_players(
+        player_action_queues = (
+            action_router.player_queues if action_router is not None else fallback_action_queue
+        )
+        players: list[Any] = []
+
+        self._runtime_services.bind_sample_routes(
+            sample_id=sample_id,
+            action_server=action_server,
+            action_router=action_router,
+            visualizer=visualizer,
+        )
+
+        try:
+            environment = self._build_environment(
+                sample,
                 player_ids=player_ids,
                 player_names=player_names,
-                player_labels=self._resolve_player_labels(player_specs, role_manager),
-                active_player=start_player_id,
+                player_models=model_labels if "mahjong" in env_impl_lower else None,
+                start_player_id=start_player_id,
+                chat_queue=action_server.chat_queue if action_server is not None else None,
+                trace=trace,
+                sandbox_provider=sandbox_provider,
             )
-            environment = _VisualizedEnvironment(environment, visualizer)
-        players = self._build_players(
-            sample,
-            role_manager,
-            parser,
-            trace=trace,
-            action_queue=action_queue,
-            player_specs=player_specs,
-        )
-
-        logger.info("ArenaRoleAdapter {} starting game", self.adapter_id)
-        if trace:
-            trace.emit(
-                "arena_start",
-                {"adapter_id": self.adapter_id, "player_count": len(players)},
+            ws_session = self._maybe_build_ws_session_controller(
+                sample=sample,
+                env_impl=env_impl_lower,
+            )
+            if ws_session is not None:
+                environment = _SessionControlledEnvironment(environment, ws_session)
+            frame_recorder = self._build_frame_capture_recorder(sample=sample, trace=trace)
+            if frame_recorder is not None:
+                environment = _FrameCaptureEnvironment(environment, frame_recorder)
+            ws_display_registered = self._maybe_register_ws_display(
+                sample=sample,
+                environment=environment,
+                action_queue=action_router if action_router is not None else fallback_action_queue,
+                player_specs=player_specs,
+                env_impl=env_impl_lower,
+                session_controller=ws_session,
+            )
+            if not ws_display_registered:
+                ws_session = None
+            if visualizer is not None:
+                visualizer.reset_state()
+                visualizer.set_players(
+                    player_ids=player_ids,
+                    player_names=player_names,
+                    player_labels=self._resolve_player_labels(player_specs, role_manager),
+                    active_player=start_player_id,
+                )
+                environment = _VisualizedEnvironment(environment, visualizer)
+            players = self._build_players(
+                sample,
+                role_manager,
+                parser,
+                trace=trace,
+                action_queue=player_action_queues,
+                player_specs=player_specs,
             )
 
-        # STEP 2: Run the scheduler loop and capture the final result.
-        try:
+            logger.info("ArenaRoleAdapter {} starting game", self.adapter_id)
+            if trace:
+                trace.emit(
+                    "arena_loop_start",
+                    {"adapter_id": self.adapter_id, "player_count": len(players)},
+                )
+
+            # STEP 2: Run the scheduler loop and capture the final result.
             result = scheduler.run_loop(environment, players)
         finally:
             self._wait_for_pending_players(players)
+            self._runtime_services.clear_sample_routes(
+                sample_id=sample_id,
+                action_server=action_server,
+                visualizer=visualizer,
+            )
+            self._close_scheduler(scheduler)
             # NOTE: We do NOT stop the visualizer here because it is shared across samples.
-            pass
         if trace:
             trace.emit(
-                "arena_end",
+                "arena_loop_end",
                 {
                     "adapter_id": self.adapter_id,
                     "winner": result.winner,
@@ -353,7 +383,17 @@ class ArenaRoleAdapter(RoleAdapter):
                 self.adapter_id,
                 ws_session.display_id,
             )
-            ws_session.wait_for_process_end()
+            process_end_timeout_s = self._resolve_process_end_timeout_s()
+            process_end_confirmed = ws_session.wait_for_process_end(
+                timeout_s=process_end_timeout_s
+            )
+            if not process_end_confirmed:
+                logger.warning(
+                    "ArenaRoleAdapter {} timed out waiting {:.2f}s for process exit confirmation; continuing shutdown.",
+                    self.adapter_id,
+                    process_end_timeout_s,
+                )
+                ws_session.request_process_end(confirm=True)
 
         output = self._format_result(
             result,
@@ -362,7 +402,9 @@ class ArenaRoleAdapter(RoleAdapter):
             frame_events=frame_recorder.build_frame_events() if frame_recorder is not None else None,
         )
 
-        if visualizer is not None and self._visualizer_cfg.get("wait_for_finish"):
+        if visualizer is not None and self._coerce_bool(
+            self._visualizer_cfg.get("wait_for_finish"), default=False
+        ):
             visualizer.wait_for_finish()
 
         logger.info("ArenaRoleAdapter {} finished result={}", self.adapter_id, result.result)
@@ -538,11 +580,6 @@ class ArenaRoleAdapter(RoleAdapter):
         chat_mode = env_cfg.get("chat_mode", metadata.get("chat_mode"))
 
         impl = env_cfg.get("impl", "gomoku_local_v1")
-        if "mahjong" in str(impl).lower():
-            try:
-                import gage_eval.role.arena.games.mahjong.env
-            except ImportError:
-                pass
         env_kwargs = {
             "board_size": board_size,
             "win_len": win_len,
@@ -555,170 +592,18 @@ class ArenaRoleAdapter(RoleAdapter):
             "win_directions": win_directions,
             "illegal_policy": illegal_policy,
         }
-        if "pettingzoo" in str(impl).lower():
-            if env_cfg.get("env_id") is not None:
-                env_kwargs["env_id"] = env_cfg.get("env_id")
-            if env_cfg.get("env_kwargs") is not None:
-                env_kwargs["env_kwargs"] = env_cfg.get("env_kwargs")
-            if env_cfg.get("seed") is not None:
-                env_kwargs["seed"] = env_cfg.get("seed")
-            if env_cfg.get("action_labels") is not None:
-                env_kwargs["action_labels"] = env_cfg.get("action_labels")
-            if env_cfg.get("use_action_meanings") is not None:
-                env_kwargs["use_action_meanings"] = env_cfg.get("use_action_meanings")
-            if env_cfg.get("include_raw_obs") is not None:
-                env_kwargs["include_raw_obs"] = env_cfg.get("include_raw_obs")
-            if env_cfg.get("agent_map") is not None:
-                env_kwargs["agent_map"] = env_cfg.get("agent_map")
-        if "vizdoom" in str(impl).lower():
-            for key in (
-                "use_single_process",
-                "render_mode",
-                "pov_view",
-                "show_automap",
-                "automap_scale",
-                "automap_follow",
-                "automap_stride",
-                "show_pov",
-                "capture_pov",
-                "pov_stride",
-                "allow_respawn",
-                "respawn_grace_steps",
-                "no_attack_seconds",
-                "max_steps",
-                "action_repeat",
-                "sleep_s",
-                "port",
-                "config_path",
-                "replay_output_dir",
-                "game_id",
-                "tick_rate_hz",
-                "frame_stride",
-                "time_source",
-                "obs_image",
-                "replay_in_env",
-                "action_labels",
-                "allow_partial_actions",
-                "reset_retry_count",
-                "death_check_warmup_steps",
-            ):
-                if env_cfg.get(key) is not None:
-                    env_kwargs[key] = env_cfg.get(key)
-            if self._replay_mode_includes_frame(self._resolve_replay_recording_mode()):
-                env_kwargs.setdefault("capture_pov", True)
-        if "retro" in str(impl).lower():
-            for key in (
-                "game",
-                "state",
-                "default_state",
-                "rom_path",
-                "runtime_policy",
-                "display_mode",
-                "record_bk2",
-                "record_dir",
-                "record_filename",
-                "record_path",
-                "action_mapping",
-                "legal_moves",
-                "info_feeder",
-                "action_schema",
-                "token_budget",
-                "frame_stride",
-                "snapshot_stride",
-                "obs_image",
-                "replay_output_dir",
-                "replay_filename",
-                "frame_output_dir",
-                "seed",
-            ):
-                if env_cfg.get(key) is not None:
-                    env_kwargs[key] = env_cfg.get(key)
-            run_id = (
-                trace.run_id
-                if trace is not None
-                else os.environ.get("GAGE_EVAL_RUN_ID")
-            )
-            sample_id = (
-                sample.get("id")
-                or sample.get("sample_id")
-                or os.environ.get("GAGE_EVAL_SAMPLE_ID")
-            )
-            if run_id:
-                env_kwargs["run_id"] = str(run_id)
-            if sample_id:
-                env_kwargs["sample_id"] = str(sample_id)
-        if "gomoku" in str(impl).lower():
-            for key in ("obs_image",):
-                if env_cfg.get(key) is not None:
-                    env_kwargs[key] = env_cfg.get(key)
         if chat_mode is not None:
             env_kwargs["chat_mode"] = chat_mode
-        if "mahjong" in str(impl).lower():
-            run_id = (
-                trace.run_id
-                if trace is not None
-                else os.environ.get("GAGE_EVAL_RUN_ID")
-            )
-            sample_id = (
-                sample.get("id")
-                or sample.get("sample_id")
-                or os.environ.get("GAGE_EVAL_SAMPLE_ID")
-            )
-            if run_id:
-                env_kwargs["run_id"] = str(run_id)
-            if sample_id:
-                env_kwargs["sample_id"] = str(sample_id)
-            if env_cfg.get("chat_every_n") is not None:
-                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
-            if env_cfg.get("replay_live") is not None:
-                env_kwargs["replay_live"] = env_cfg.get("replay_live")
-            if env_cfg.get("replay_output_dir") is not None:
-                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
-            if env_cfg.get("replay_filename") is not None:
-                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
-            if chat_queue is not None:
-                env_kwargs["chat_queue"] = chat_queue
-            if resolved_player_models:
-                env_kwargs["player_models"] = resolved_player_models
-        if "doudizhu" in str(impl).lower():
-            run_id = (
-                trace.run_id
-                if trace is not None
-                else os.environ.get("GAGE_EVAL_RUN_ID")
-            )
-            sample_id = (
-                sample.get("id")
-                or sample.get("sample_id")
-                or os.environ.get("GAGE_EVAL_SAMPLE_ID")
-            )
-            if run_id:
-                env_kwargs["run_id"] = str(run_id)
-            if sample_id:
-                env_kwargs["sample_id"] = str(sample_id)
-            if env_cfg.get("chat_every_n") is not None:
-                env_kwargs["chat_every_n"] = env_cfg.get("chat_every_n")
-            if env_cfg.get("replay_live") is not None:
-                env_kwargs["replay_live"] = env_cfg.get("replay_live")
-            if env_cfg.get("replay_output_dir") is not None:
-                env_kwargs["replay_output_dir"] = env_cfg.get("replay_output_dir")
-            if env_cfg.get("replay_filename") is not None:
-                env_kwargs["replay_filename"] = env_cfg.get("replay_filename")
-            if env_cfg.get("context_include_public") is not None:
-                env_kwargs["context_include_public"] = env_cfg.get(
-                    "context_include_public"
-                )
-            if env_cfg.get("context_include_ui_state") is not None:
-                env_kwargs["context_include_ui_state"] = env_cfg.get(
-                    "context_include_ui_state"
-                )
-            if env_cfg.get("fast_finish_action") is not None:
-                env_kwargs["fast_finish_action"] = env_cfg.get("fast_finish_action")
-            if env_cfg.get("fast_finish_human_only") is not None:
-                env_kwargs["fast_finish_human_only"] = env_cfg.get(
-                    "fast_finish_human_only"
-                )
-            if chat_queue is not None:
-                env_kwargs["chat_queue"] = chat_queue
+        provider = self._resolve_game_provider(impl)
+        env_kwargs = provider.enrich_environment_kwargs(
+            env_impl=str(impl),
+            env_cfg=env_cfg,
+            sample=sample,
+            trace=trace,
+            chat_queue=chat_queue,
+            player_models=resolved_player_models,
+            env_kwargs=env_kwargs,
+        )
         if sandbox_provider is not None:
             handle = sandbox_provider.get_handle()
             sandbox = getattr(handle, "sandbox", None) if handle is not None else None
@@ -732,7 +617,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         env_cfg.get("arena_rpc_timeout_s"), default=30
                     ),
                 )
-        env_cls = registry.get("arena_impls", impl)
+        env_cls = self._resolve_registry_asset("arena_impls", str(impl))
         return env_cls(**env_kwargs)
 
     def _build_parser(self, sample: Dict[str, Any]) -> MoveParser:
@@ -741,7 +626,7 @@ class ArenaRoleAdapter(RoleAdapter):
         impl = cfg.get("impl") or cfg.get("implementation") or "grid_parser_v1"
         board_size = int(metadata.get("board_size", cfg.get("board_size", 15)))
         coord_scheme = cfg.get("coord_scheme", metadata.get("coord_scheme", "A1"))
-        parser_cls = registry.get("parser_impls", impl)
+        parser_cls = self._resolve_registry_asset("parser_impls", str(impl))
         try:
             return parser_cls(board_size=board_size, coord_scheme=coord_scheme)
         except TypeError:
@@ -953,6 +838,11 @@ class ArenaRoleAdapter(RoleAdapter):
             elif player_type == "human":
                 if not adapter_ref:
                     raise ValueError("human player requires ref human_adapter")
+                human_action_queue = (
+                    action_queue.get(player_id)
+                    if isinstance(action_queue, Mapping)
+                    else action_queue
+                )
                 players.append(
                     HumanPlayer(
                         name=player_id,
@@ -961,7 +851,7 @@ class ArenaRoleAdapter(RoleAdapter):
                         sample=sample,
                         parser=parser,
                         trace=trace,
-                        action_queue=action_queue,
+                        action_queue=human_action_queue,
                         timeout_ms=spec.get("timeout_ms"),
                         timeout_fallback_move=spec.get("timeout_fallback_move"),
                     )
@@ -969,6 +859,21 @@ class ArenaRoleAdapter(RoleAdapter):
             else:
                 raise ValueError(f"Unsupported player type: {player_type}")
         return players
+
+    def _build_sample_action_router(
+        self,
+        *,
+        sample_id: str,
+        player_specs: Sequence[Dict[str, Any]],
+    ) -> Optional[SampleActionRouter]:
+        human_player_ids = [
+            str(spec.get("player_id"))
+            for spec in player_specs
+            if spec.get("type") == "human" and spec.get("player_id")
+        ]
+        if not human_player_ids:
+            return None
+        return SampleActionRouter(sample_id=sample_id, player_ids=human_player_ids)
 
     def _wait_for_pending_players(self, players: Sequence[Any]) -> None:
         """Wait briefly for async player workers before adapter return.
@@ -1152,8 +1057,7 @@ class ArenaRoleAdapter(RoleAdapter):
 
     @staticmethod
     def _resolve_sample_id(sample: Dict[str, Any]) -> str:
-        sample_id = sample.get("id") or sample.get("sample_id") or "sample"
-        return str(sample_id)
+        return resolve_runtime_sample_id(sample)
 
     def _write_game_log(
         self,
@@ -1387,15 +1291,71 @@ class ArenaRoleAdapter(RoleAdapter):
         except (TypeError, ValueError):
             return int(default)
 
+    def _resolve_process_end_timeout_s(self) -> Optional[float]:
+        if "process_end_timeout_s" in self._human_input_cfg:
+            raw_value = self._human_input_cfg.get("process_end_timeout_s")
+        elif "process_end_timeout_s" in self._visualizer_cfg:
+            raw_value = self._visualizer_cfg.get("process_end_timeout_s")
+        else:
+            return self._DEFAULT_PROCESS_END_TIMEOUT_S
+        if raw_value is None:
+            return None
+        try:
+            return max(0.0, float(raw_value))
+        except (TypeError, ValueError):
+            return self._DEFAULT_PROCESS_END_TIMEOUT_S
+
+    def _registry_lookup(self):
+        return self._registry_view or registry
+
+    def _resolve_registry_asset(self, kind: str, name: str) -> Any:
+        lookup = self._registry_lookup()
+        try:
+            return lookup.get(kind, name)
+        except KeyError as exc:
+            if self._registry_view is not None:
+                raise
+            report = import_arena_asset_module(
+                kind,
+                name,
+                registry_lookup=lookup,
+                source=f"arena:{self.adapter_id}",
+            )
+            if report.ok:
+                return lookup.get(kind, name)
+            detail = "; ".join(
+                f"{issue.code}: {issue.detail}" for issue in report.issues[:2]
+            )
+            if len(report.issues) > 2:
+                detail = f"{detail}; +{len(report.issues) - 2} more"
+            if not detail:
+                detail = "manifest import did not register the requested asset"
+            raise KeyError(
+                f"Unknown registry asset '{kind}:{name}' ({detail})"
+            ) from exc
+
+    @staticmethod
+    def _close_scheduler(scheduler: Any) -> None:
+        close = getattr(scheduler, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Arena scheduler close failed: {}", exc)
+
+    def _resolve_game_provider(self, env_impl: Any):
+        return resolve_arena_game_provider(
+            str(env_impl or ""),
+            registry_lookup=self._registry_lookup(),
+        )
+
     def _ensure_visualizer(
         self, sample: Dict[str, Any], player_specs: Sequence[Dict[str, Any]]
     ):
-        if self._shared_visualizer is not None:
-            return self._shared_visualizer, self._shared_visualizer.action_queue
-
         if not self._visualizer_cfg:
             return None, None
-        enabled = bool(self._visualizer_cfg.get("enabled", False))
+        enabled = self._coerce_bool(self._visualizer_cfg.get("enabled"), default=False)
         if not enabled:
             return None, None
 
@@ -1406,56 +1366,87 @@ class ArenaRoleAdapter(RoleAdapter):
             metadata.get("board_size", self._visualizer_cfg.get("board_size", 15))
         )
         port = int(self._visualizer_cfg.get("port", 7860))
-        launch_browser = bool(self._visualizer_cfg.get("launch_browser", False))
+        launch_browser = self._coerce_bool(
+            self._visualizer_cfg.get("launch_browser"), default=False
+        )
         refresh_s = float(self._visualizer_cfg.get("refresh_s", 0.3))
-        wait_for_finish = bool(self._visualizer_cfg.get("wait_for_finish", False))
+        wait_for_finish = self._coerce_bool(
+            self._visualizer_cfg.get("wait_for_finish"), default=False
+        )
         has_human = any(spec.get("type") == "human" for spec in player_specs)
         mode = "interactive" if has_human else "observer"
         coord_scheme = metadata.get(
             "coord_scheme", self._visualizer_cfg.get("coord_scheme", "A1")
         )
         renderer_cfg = dict(self._visualizer_cfg.get("renderer") or {})
-        renderer_impl = renderer_cfg.get(
-            "impl",
-            self._visualizer_cfg.get("renderer_impl", "gomoku_board_v1"),
+        provider = self._resolve_game_provider(
+            self._environment_cfg.get("impl", "gomoku_local_v1")
+        )
+        renderer_impl = renderer_cfg.get("impl") or self._visualizer_cfg.get(
+            "renderer_impl"
+        ) or provider.resolve_renderer_impl(
+            env_impl=str(self._environment_cfg.get("impl", "gomoku_local_v1")),
+            visualizer_cfg=self._visualizer_cfg,
+            environment_cfg=self._environment_cfg,
+        )
+        renderer_impl = str(
+            renderer_impl or "gomoku_board_v1"
         )
         renderer_params = dict(renderer_cfg.get("params") or {})
-        sanitize_output = bool(self._visualizer_cfg.get("sanitize_output", True))
+        sanitize_output = self._coerce_bool(
+            self._visualizer_cfg.get("sanitize_output"), default=True
+        )
         max_output_chars = int(self._visualizer_cfg.get("max_output_chars", 2000))
-        show_parsed_move = bool(self._visualizer_cfg.get("show_parsed_move", True))
-        show_chat = bool(self._visualizer_cfg.get("show_chat", False))
+        max_output_entries = self._coerce_int(
+            self._visualizer_cfg.get("max_output_entries"),
+            default=200,
+        )
+        show_parsed_move = self._coerce_bool(
+            self._visualizer_cfg.get("show_parsed_move"), default=True
+        )
+        show_chat = self._coerce_bool(self._visualizer_cfg.get("show_chat"), default=False)
         chat_max_entries = int(self._visualizer_cfg.get("chat_max_entries", 60))
+        allow_status_html = self._coerce_bool(
+            self._visualizer_cfg.get("allow_status_html"), default=False
+        )
+        demo_mode = self._coerce_bool(self._visualizer_cfg.get("demo_mode"), default=False)
         title = self._visualizer_cfg.get("title")
 
-        visualizer = GradioVisualizer(
-            board_size=board_size,
-            port=port,
-            launch_browser=launch_browser,
-            mode=mode,
-            refresh_s=refresh_s,
-            auto_close=bool(self._visualizer_cfg.get("auto_close", False)),
-            wait_for_finish=wait_for_finish,
-            renderer_impl=renderer_impl,
-            renderer_params=renderer_params,
-            coord_scheme=coord_scheme,
-            sanitize_output=sanitize_output,
-            max_output_chars=max_output_chars,
-            show_parsed_move=show_parsed_move,
-            show_chat=show_chat,
-            chat_max_entries=chat_max_entries,
-            title=title,
-        )
-        visualizer.start()
-        self._shared_visualizer = visualizer
+        def _factory() -> Any:
+            visualizer = GradioVisualizer(
+                board_size=board_size,
+                port=port,
+                launch_browser=launch_browser,
+                mode=mode,
+                refresh_s=refresh_s,
+                auto_close=self._coerce_bool(
+                    self._visualizer_cfg.get("auto_close"), default=False
+                ),
+                wait_for_finish=wait_for_finish,
+                renderer_impl=renderer_impl,
+                renderer_params=renderer_params,
+                coord_scheme=coord_scheme,
+                sanitize_output=sanitize_output,
+                max_output_chars=max_output_chars,
+                max_output_entries=max_output_entries,
+                show_parsed_move=show_parsed_move,
+                show_chat=show_chat,
+                chat_max_entries=chat_max_entries,
+                allow_status_html=allow_status_html,
+                demo_mode=demo_mode,
+                title=title,
+                registry_lookup=self._registry_lookup(),
+            )
+            visualizer.start()
+            return visualizer
+
+        visualizer = self._runtime_services.ensure_visualizer(_factory)
         return visualizer, visualizer.action_queue
 
     def _ensure_action_server(self, player_specs: Sequence[Dict[str, Any]]):
-        if self._action_server is not None:
-            return self._action_server, self._action_server.action_queue
-
         if not self._human_input_cfg:
             return None, None
-        enabled = bool(self._human_input_cfg.get("enabled", False))
+        enabled = self._coerce_bool(self._human_input_cfg.get("enabled"), default=False)
         if not enabled:
             return None, None
         has_human = any(spec.get("type") == "human" for spec in player_specs)
@@ -1467,12 +1458,22 @@ class ArenaRoleAdapter(RoleAdapter):
         host = self._human_input_cfg.get("host", "127.0.0.1")
         port = int(self._human_input_cfg.get("port", 8001))
         allow_origin = self._human_input_cfg.get("allow_origin", "*")
-        server = ActionQueueServer(
-            host=str(host), port=port, allow_origin=str(allow_origin)
+        server = self._runtime_services.ensure_action_server(
+            lambda: self._start_action_server(
+                host=str(host),
+                port=port,
+                allow_origin=str(allow_origin),
+            )
         )
-        server.start()
-        self._action_server = server
         return server, server.action_queue
+
+    @staticmethod
+    def _start_action_server(*, host: str, port: int, allow_origin: str):
+        from gage_eval.tools.action_server import ActionQueueServer
+
+        server = ActionQueueServer(host=host, port=port, allow_origin=allow_origin)
+        server.start()
+        return server
 
     def _maybe_build_ws_session_controller(
         self,
@@ -1567,15 +1568,16 @@ class ArenaRoleAdapter(RoleAdapter):
                 "human_player_id": self._resolve_human_player_id(player_specs),
             },
         )
-        hub.register_display(registration)
-        self._registered_displays.add(display_id)
+        self._runtime_services.register_display(
+            display_id=display_id,
+            hub=hub,
+            registration=registration,
+        )
         return True
 
     def _ensure_ws_rgb_hub(self):
         """Start and cache a local WsRgbHubServer instance."""
 
-        if self._ws_rgb_hub is not None:
-            return self._ws_rgb_hub
         host = str(
             self._human_input_cfg.get(
                 "ws_host", self._human_input_cfg.get("host", "127.0.0.1")
@@ -1589,130 +1591,27 @@ class ArenaRoleAdapter(RoleAdapter):
         )
         from gage_eval.tools.ws_rgb_server import WsRgbHubServer
 
-        hub = WsRgbHubServer(host=host, port=port, allow_origin=allow_origin)
-        hub.start()
-        logger.info(
-            "ArenaRoleAdapter {} ws_rgb hub ready at {}", self.adapter_id, hub.base_url
-        )
-        self._ws_rgb_hub = hub
-        return self._ws_rgb_hub
+        def _factory() -> Any:
+            hub = WsRgbHubServer(host=host, port=port, allow_origin=allow_origin)
+            hub.start()
+            logger.info(
+                "ArenaRoleAdapter {} ws_rgb hub ready at {}",
+                self.adapter_id,
+                hub.base_url,
+            )
+            return hub
+
+        return self._runtime_services.ensure_ws_rgb_hub(_factory)
 
     def _bind_input_mapper(self, *, env_impl: str):
         """Bind a game-specific mapper for websocket input routing."""
 
-        normalized_env_impl = str(env_impl).lower()
-        action_schema = self._environment_cfg.get("action_schema")
-
-        if "retro" in normalized_env_impl:
-            from gage_eval.role.arena.games.retro.retro_input_mapper import (
-                RetroInputMapper,
-            )
-
-            hold_ticks_default = None
-            if isinstance(action_schema, dict):
-                hold_ticks_default = action_schema.get("hold_ticks_default")
-            if hold_ticks_default is None:
-                hold_ticks_default = self._human_input_cfg.get("hold_ticks_default")
-            if hold_ticks_default is None:
-                return RetroInputMapper()
-            try:
-                return RetroInputMapper(default_hold_ticks=int(hold_ticks_default))
-            except (TypeError, ValueError):
-                return RetroInputMapper()
-
-        if "mahjong" in normalized_env_impl:
-            from gage_eval.role.arena.games.mahjong.mahjong_input_mapper import (
-                MahjongInputMapper,
-            )
-
-            key_map = None
-            enforce_legal_moves = True
-            if isinstance(action_schema, dict):
-                key_map = action_schema.get("key_map")
-                enforce_legal_moves = self._coerce_bool(
-                    action_schema.get("enforce_legal_moves"),
-                    default=True,
-                )
-            return MahjongInputMapper(
-                key_map=key_map if isinstance(key_map, Mapping) else None,
-                enforce_legal_moves=enforce_legal_moves,
-            )
-
-        if "doudizhu" in normalized_env_impl:
-            from gage_eval.role.arena.games.doudizhu.doudizhu_input_mapper import (
-                DoudizhuInputMapper,
-            )
-
-            key_map = None
-            enforce_legal_moves = True
-            if isinstance(action_schema, dict):
-                key_map = action_schema.get("key_map")
-                enforce_legal_moves = self._coerce_bool(
-                    action_schema.get("enforce_legal_moves"),
-                    default=True,
-                )
-            return DoudizhuInputMapper(
-                key_map=key_map if isinstance(key_map, Mapping) else None,
-                enforce_legal_moves=enforce_legal_moves,
-            )
-
-        if "pettingzoo" in normalized_env_impl:
-            from gage_eval.role.arena.games.pettingzoo.pettingzoo_input_mapper import (
-                PettingZooDiscreteInputMapper,
-            )
-
-            key_map = None
-            enforce_legal_moves = True
-            if isinstance(action_schema, dict):
-                key_map = action_schema.get("key_map")
-                enforce_legal_moves = self._coerce_bool(
-                    action_schema.get("enforce_legal_moves"),
-                    default=True,
-                )
-            return PettingZooDiscreteInputMapper(
-                key_map=key_map if isinstance(key_map, Mapping) else None,
-                enforce_legal_moves=enforce_legal_moves,
-            )
-
-        if "vizdoom" in normalized_env_impl:
-            from gage_eval.role.arena.games.vizdoom.vizdoom_input_mapper import ViZDoomInputMapper
-
-            key_map = None
-            enforce_legal_moves = True
-            if isinstance(action_schema, dict):
-                key_map = action_schema.get("key_map")
-                enforce_legal_moves = self._coerce_bool(
-                    action_schema.get("enforce_legal_moves"),
-                    default=True,
-                )
-            return ViZDoomInputMapper(
-                key_map=key_map if isinstance(key_map, Mapping) else None,
-                enforce_legal_moves=enforce_legal_moves,
-            )
-
-        if "gomoku" in normalized_env_impl or "tictactoe" in normalized_env_impl:
-            from gage_eval.role.arena.games.common.grid_coord_input_mapper import (
-                GridCoordInputMapper,
-            )
-
-            key_map = None
-            enforce_legal_moves = True
-            coord_scheme = self._environment_cfg.get("coord_scheme")
-            if isinstance(action_schema, dict):
-                key_map = action_schema.get("key_map")
-                if action_schema.get("coord_scheme") is not None:
-                    coord_scheme = action_schema.get("coord_scheme")
-                enforce_legal_moves = self._coerce_bool(
-                    action_schema.get("enforce_legal_moves"),
-                    default=True,
-                )
-            return GridCoordInputMapper(
-                key_map=key_map if isinstance(key_map, Mapping) else None,
-                coord_scheme=str(coord_scheme) if coord_scheme else None,
-                enforce_legal_moves=enforce_legal_moves,
-            )
-
-        return None
+        provider = self._resolve_game_provider(env_impl)
+        return provider.build_input_mapper(
+            env_impl=str(env_impl),
+            environment_cfg=self._environment_cfg,
+            human_input_cfg=self._human_input_cfg,
+        )
 
     def _build_display_id(self, *, sample: Dict[str, Any], env_impl: str) -> str:
         metadata = sample.get("metadata")
@@ -1849,39 +1748,7 @@ class ArenaRoleAdapter(RoleAdapter):
     def shutdown(self) -> None:
         """Shutdown the shared visualizer when the runtime ends."""
 
-        if self._shared_visualizer is not None:
-            try:
-                self._shared_visualizer.stop()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(
-                    "ArenaRoleAdapter {} visualizer stop failed: {}",
-                    self.adapter_id,
-                    exc,
-                )
-            self._shared_visualizer = None
-
-        if self._action_server is not None:
-            try:
-                self._action_server.stop()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(
-                    "ArenaRoleAdapter {} action server stop failed: {}",
-                    self.adapter_id,
-                    exc,
-                )
-            self._action_server = None
-
-        if self._ws_rgb_hub is not None:
-            try:
-                for display_id in list(self._registered_displays):
-                    self._ws_rgb_hub.unregister_display(display_id)
-                self._ws_rgb_hub.stop()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(
-                    "ArenaRoleAdapter {} ws hub stop failed: {}", self.adapter_id, exc
-                )
-            self._ws_rgb_hub = None
-            self._registered_displays = set()
+        self._runtime_services.shutdown()
 
 
 class _VisualizedEnvironment:

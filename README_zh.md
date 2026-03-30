@@ -12,7 +12,7 @@
 
 </div>
 
-[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Agent 模块](docs/guide/agent_evaluation_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [Support 模块](docs/guide/support_cli_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
+[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Agent 模块](docs/guide/agent_evaluation_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
 
 </div>
 
@@ -97,12 +97,12 @@ runs/<run_id>/
 
 | 场景 | 配置文件示例 | 说明 |
 | :--- | :--- | :--- |
-| **Game Arena** | `config/custom/doudizhu_human_vs_llm.yaml` | 斗地主 Human vs LLM 对战 |
-| **Agent 评测** | `config/custom/appworld_official_jsonl.yaml` | 使用 Appworld 沙箱环境 |
-| **代码能力** | `config/custom/swebench_pro_smoke.yaml` | SWE-bench (需 Docker 环境，实验性) |
-| **文本测评** | `config/custom/aime2024_chat.yaml` | 相关: AIME 2024, AIME 2025, GPQA, Math500 |
-| **多模态** | `config/custom/mathvista_vllm_async_chat.yaml` | 相关: MME, HLE, MathVista |
-| **LLM 裁判** | `config/custom/single_task_local_judge_qwen.yaml` | 使用本地 LLM 进行打分 |
+| **Game Arena** | `config/custom/doudizhu/doudizhu_human_vs_llm.yaml` | 斗地主 Human vs LLM 对战 |
+| **Agent 评测** | `config/custom/appworld/appworld_official_jsonl.yaml` | 使用 Appworld 沙箱环境 |
+| **代码能力** | `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml` | SWE-bench (需 Docker 环境，实验性) |
+| **文本测评** | `config/custom/aime24/aime2024_chat.yaml` | 相关: AIME 2024, AIME 2025, GPQA, Math500 |
+| **多模态** | `config/custom/mathvista/chat.yaml` | 相关: MME, HLE, MathVista |
+| **LLM 裁判** | `config/custom/examples/single_task_local_judge_qwen.yaml` | 使用本地 LLM 进行打分 |
 
 ## 🗺️ 近期计划
 

@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional
 
 from loguru import logger
 
 from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.assets.datasets.validation import SampleValidator, build_validator
-from gage_eval.assets.datasets.utils.multimodal import merge_multimodal_inputs
+from gage_eval.assets.datasets.validation import (
+    SampleValidator,
+    ValidationFailure,
+    build_validator,
+)
 from gage_eval.assets.datasets.sample import (
     Sample,
-    Message,
-    MessageContent,
     sample_from_dict,
+    sample_to_dict,
 )
-from dataclasses import dataclass, fields, asdict, is_dataclass
 
 
 @dataclass
@@ -70,7 +71,14 @@ class DataManager:
         except KeyError as exc:
             raise KeyError(f"Dataset '{dataset_id}' is not registered") from exc
 
-    def iter_samples(self, dataset_id: str, trace: Optional[ObservabilityTrace] = None) -> Iterator[Dict[str, Any]]:
+    def iter_samples(
+        self,
+        dataset_id: str,
+        trace: Optional[ObservabilityTrace] = None,
+        *,
+        record_seen: Optional[Callable[[int], None]] = None,
+        validation_reporter: Optional[Callable[[ValidationFailure], None]] = None,
+    ) -> Iterator[Dict[str, Any]]:
         """Yield normalized samples for the requested dataset.
 
         Args:
@@ -82,41 +90,98 @@ class DataManager:
         source = self.get(dataset_id)
         validator = source.validator
         for index, record in enumerate(source.records):
+            if record_seen is not None:
+                record_seen(index)
             if not isinstance(record, Sample):
                 if isinstance(record, dict):
                     try:
                         record = sample_from_dict(record)
                     except Exception as exc:
-                        logger.warning(
-                            "Failed to convert dict record to Sample dataset='{}' index={}: {}",
-                            dataset_id,
-                            index,
-                            exc,
+                        message = (
+                            "Failed to convert dict record to Sample "
+                            f"dataset='{dataset_id}' index={index}: {exc}"
+                        )
+                        logger.warning(message)
+                        _report_ingress_failure(
+                            validation_reporter,
+                            step="raw_record",
+                            dataset_id=dataset_id,
+                            index=index,
+                            reason="raw_record:deserialization_failed",
+                            message=message,
                         )
                         continue
                 else:
-                    logger.warning(
-                            "Skipping non-dict record dataset='%s' index=%s type=%s",
-                            dataset_id,
-                            index,
-                            type(record).__name__,
+                    message = (
+                        "Skipping non-dict record "
+                        f"dataset='{dataset_id}' index={index} "
+                        f"type={type(record).__name__}"
+                    )
+                    logger.warning(message)
+                    _report_ingress_failure(
+                        validation_reporter,
+                        step="raw_record",
+                        dataset_id=dataset_id,
+                        index=index,
+                        reason="raw_record:invalid_record_type",
+                        message=message,
                     )
                     continue
             normalized = record
             if validator:
-                validated = validator.validate_raw(record, dataset_id=dataset_id, index=index, trace=trace)
+                validated = validator.validate_raw(
+                    record,
+                    dataset_id=dataset_id,
+                    index=index,
+                    trace=trace,
+                    on_failure=validation_reporter,
+                )
                 if validated is None:
                     continue
                 normalized = validated
+            normalized_payload = (
+                sample_to_dict(normalized)
+                if isinstance(normalized, Sample)
+                else (asdict(normalized) if is_dataclass(normalized) else dict(normalized))
+            )
+            normalized_payload.setdefault("_gage_source_index", index)
+            normalized_payload.setdefault("_gage_dataset_id", dataset_id)
             if trace:
                 trace.emit(
                     "data_sample_emitted",
                     {
                         "dataset_id": dataset_id,
                         "index": index,
-                        "keys": list(asdict(normalized).keys() if is_dataclass(normalized) else normalized.keys()),
+                        "keys": list(normalized_payload.keys()),
                     },
                 )
-            logger.debug("Emitted normalized sample idx={} keys={}", index, list(asdict(normalized).keys() if is_dataclass(normalized) else normalized.keys()))
-            # Convert Sample dataclass to dict so backends can access fields via .get()
-            yield asdict(normalized) if is_dataclass(normalized) else normalized
+            logger.debug(
+                "Emitted normalized sample idx={} keys={}",
+                index,
+                list(normalized_payload.keys()),
+            )
+            yield normalized_payload
+
+
+def _report_ingress_failure(
+    reporter: Optional[Callable[[ValidationFailure], None]],
+    *,
+    step: str,
+    dataset_id: str,
+    index: int,
+    reason: str,
+    message: str,
+) -> None:
+    """Emit a synthetic validation failure for non-validator drop paths."""
+
+    if reporter is None:
+        return
+    reporter(
+        ValidationFailure(
+            step=step,
+            dataset_id=dataset_id,
+            message=message,
+            reason=reason,
+            index=index,
+        )
+    )

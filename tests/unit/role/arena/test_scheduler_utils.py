@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from typing import Optional
 
+import pytest
+
+from gage_eval.role.arena.schedulers import _scheduler_utils as scheduler_utils_module
 from gage_eval.role.arena.schedulers._scheduler_utils import (
+    apply_action_map,
     make_trace_entry,
     set_trace_action_fields,
     think_with_timeout,
 )
-from gage_eval.role.arena.types import ArenaAction, ArenaObservation
+from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 
 def _build_observation() -> ArenaObservation:
@@ -64,6 +68,71 @@ class _SyncPlayer:
         return ArenaAction(player="p0", move="0", raw="0")
 
 
+class _SyncPlayerRaises:
+    name = "sync-fail"
+
+    def think(self, observation: ArenaObservation) -> ArenaAction:
+        _ = observation
+        raise RuntimeError("boom")
+
+
+class _AsyncPlayerStartFails:
+    name = "async-start-fail"
+
+    def think(self, observation: ArenaObservation) -> ArenaAction:
+        raise AssertionError("think() should not be called for async-capable players")
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        raise RuntimeError("start failed")
+
+    def has_action(self) -> bool:
+        return False
+
+    def pop_action(self) -> ArenaAction:
+        raise AssertionError("pop_action() should not be called after start failure")
+
+
+class _AsyncPlayerPollFails:
+    name = "async-poll-fail"
+
+    def think(self, observation: ArenaObservation) -> ArenaAction:
+        raise AssertionError("think() should not be called for async-capable players")
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        return True
+
+    def has_action(self) -> bool:
+        raise RuntimeError("poll failed")
+
+    def pop_action(self) -> ArenaAction:
+        raise AssertionError("pop_action() should not be called after polling failure")
+
+
+class _AsyncPlayerWaitable:
+    def __init__(self) -> None:
+        self.started = False
+        self.wait_calls: list[Optional[int]] = []
+        self._ready = False
+
+    def start_thinking(self, observation: ArenaObservation, *, deadline_ms: Optional[int] = None) -> bool:
+        _ = observation, deadline_ms
+        self.started = True
+        return True
+
+    def has_action(self) -> bool:
+        return self._ready
+
+    def pop_action(self) -> ArenaAction:
+        return ArenaAction(player="p0", move="1", raw="1")
+
+    def wait_for_action(self, *, timeout_ms: Optional[int] = None) -> bool:
+        self.wait_calls.append(timeout_ms)
+        self._ready = True
+        return True
+
+
 def test_think_with_timeout_prefers_async_player_api() -> None:
     player = _AsyncPlayerReady()
 
@@ -93,6 +162,28 @@ def test_think_with_timeout_async_path_respects_timeout() -> None:
     assert error_type == "timeout"
 
 
+def test_think_with_timeout_prefers_native_wait_when_available(monkeypatch) -> None:
+    player = _AsyncPlayerWaitable()
+    monkeypatch.setattr(
+        scheduler_utils_module.time,
+        "sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("native wait should avoid polling")),
+    )
+
+    action, timed_out, error_type = think_with_timeout(
+        player=player,
+        observation=_build_observation(),
+        timeout_ms=25,
+    )
+
+    assert action is not None
+    assert action.move == "1"
+    assert timed_out is False
+    assert error_type is None
+    assert player.started is True
+    assert player.wait_calls == [25]
+
+
 def test_think_with_timeout_sync_player_without_timeout() -> None:
     player = _SyncPlayer()
 
@@ -107,6 +198,92 @@ def test_think_with_timeout_sync_player_without_timeout() -> None:
     assert timed_out is False
     assert error_type is None
     assert player.called is True
+
+
+def test_think_with_timeout_sync_exception_returns_structured_error() -> None:
+    action, timed_out, error_type = think_with_timeout(
+        player=_SyncPlayerRaises(),
+        observation=_build_observation(),
+        timeout_ms=None,
+    )
+
+    assert action is None
+    assert timed_out is False
+    assert error_type == "think_exception"
+
+
+def test_think_with_timeout_async_start_exception_returns_structured_error() -> None:
+    action, timed_out, error_type = think_with_timeout(
+        player=_AsyncPlayerStartFails(),
+        observation=_build_observation(),
+        timeout_ms=50,
+    )
+
+    assert action is None
+    assert timed_out is False
+    assert error_type == "think_exception"
+
+
+def test_think_with_timeout_async_poll_exception_returns_structured_error() -> None:
+    action, timed_out, error_type = think_with_timeout(
+        player=_AsyncPlayerPollFails(),
+        observation=_build_observation(),
+        timeout_ms=50,
+    )
+
+    assert action is None
+    assert timed_out is False
+    assert error_type == "think_exception"
+
+
+def test_apply_action_map_falls_back_to_sequential_apply_on_type_error() -> None:
+    actions = {
+        "p0": ArenaAction(player="p0", move="0", raw="0"),
+        "p1": ArenaAction(player="p1", move="1", raw="1"),
+    }
+
+    class _Environment:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+            self._sequential_apply_count = 0
+
+        def apply(self, action: object) -> Optional[GameResult]:
+            self.calls.append(action)
+            if isinstance(action, dict):
+                raise TypeError("batch apply unsupported")
+            self._sequential_apply_count += 1
+            if self._sequential_apply_count == 2:
+                return GameResult(
+                    winner="p1",
+                    result="win",
+                    reason="done",
+                    move_count=2,
+                    illegal_move_count=0,
+                    final_board="board",
+                    move_log=[],
+                )
+            return None
+
+    environment = _Environment()
+
+    outcome = apply_action_map(environment, actions)
+
+    assert outcome is not None
+    assert outcome.winner == "p1"
+    assert environment.calls == [actions, actions["p0"], actions["p1"]]
+
+
+def test_apply_action_map_propagates_unexpected_batch_failure() -> None:
+    class _Environment:
+        def apply(self, action: object) -> None:
+            _ = action
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        apply_action_map(
+            _Environment(),
+            {"p0": ArenaAction(player="p0", move="0", raw="0")},
+        )
 
 
 def test_set_trace_action_fields_prefers_semantic_applied_value() -> None:

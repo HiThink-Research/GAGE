@@ -24,3 +24,44 @@ def test_jsonl_loader_missing_appworld_hint(tmp_path: Path) -> None:
 
     message = str(exc.value)
     assert "export_datasets.sh" in message
+
+
+@pytest.mark.io
+def test_jsonl_loader_default_preprocess_yields_transformed_samples(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "demo_echo.jsonl"
+    dataset_path.write_text('{"id":"echo-1","prompt":"Hello, gage-eval!"}\n', encoding="utf-8")
+    spec = DatasetSpec(
+        dataset_id="demo_echo_dataset",
+        loader="jsonl",
+        params={"path": str(dataset_path)},
+    )
+    loader = JSONLDatasetLoader(spec)
+
+    source = loader.load(None)
+    records = list(source.records)
+
+    assert len(records) == 1
+    sample = records[0]
+
+    assert sample.prompt == "Hello, gage-eval!"
+    assert sample.inputs["prompt"] == "Hello, gage-eval!"
+    assert sample.messages[0].role == "user"
+    assert sample.messages[0].content[0].text == "Hello, gage-eval!"
+
+
+@pytest.mark.io
+def test_jsonl_loader_raises_when_configured_preprocess_is_missing(tmp_path: Path) -> None:
+    dataset_path = tmp_path / "demo_echo.jsonl"
+    dataset_path.write_text('{"id":"echo-1","prompt":"Hello, gage-eval!"}\n', encoding="utf-8")
+    spec = DatasetSpec(
+        dataset_id="demo_echo_dataset",
+        loader="jsonl",
+        params={
+            "path": str(dataset_path),
+            "preprocess": "missing_preprocessor_for_test",
+        },
+    )
+    loader = JSONLDatasetLoader(spec)
+
+    with pytest.raises(LookupError, match="Configured dataset preprocessor"):
+        loader.load(None)

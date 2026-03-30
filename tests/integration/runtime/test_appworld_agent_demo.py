@@ -10,7 +10,7 @@ from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
-from tests.integration.runtime.mcp_stub import AppWorldMcpStub
+from tests._support.stubs.mcp_stub import AppWorldMcpStub
 
 
 class DemoAgent:
@@ -41,7 +41,13 @@ def test_appworld_agent_demo_end_to_end(
     temp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config" / "custom" / "appworld_agent_demo.yaml"
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "appworld"
+        / "appworld_agent_demo.yaml"
+    )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 

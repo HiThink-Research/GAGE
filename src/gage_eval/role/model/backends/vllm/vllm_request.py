@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+import multiprocessing as mp
 import uuid
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version as package_version
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -172,18 +176,11 @@ def normalize_legacy_payload(payload: Dict[str, Any], *, request_prefix: str = "
 def detect_vllm_version() -> Optional[str]:
     """Detect installed vLLM version without hard dependency on the package."""
 
-    try:  # pragma: no cover - optional dependency
-        import vllm  # type: ignore
-    except Exception:
+    try:
+        return package_version("vllm")
+    except PackageNotFoundError:
         logger.warning("vLLM not installed; version detection skipped")
         return None
-    ver = getattr(vllm, "__version__", None)
-    if isinstance(ver, str):
-        return ver
-    try:
-        from importlib.metadata import version as meta_version
-
-        return meta_version("vllm")
     except Exception:
         return None
 
@@ -221,6 +218,7 @@ def build_engine_args(config: Dict[str, Any], *, output_type: str, trust_remote_
 
     args = SimpleNamespace()
     args.model = config.get("model_path") or config.get("model")
+    args.tokenizer = config.get("tokenizer_path") or config.get("tokenizer_name")
     args.output_type = output_type
     args.trust_remote_code = trust_remote_code
     args.max_length = config.get("max_model_len") or config.get("max_length")
@@ -242,16 +240,21 @@ def build_engine_args(config: Dict[str, Any], *, output_type: str, trust_remote_
     args.num_cpu_blocks = config.get("num_cpu_blocks")
     args.forced_num_gpu_blocks = config.get("forced_num_gpu_blocks")
     args.num_gpu_blocks_override = config.get("num_gpu_blocks_override")
+    args.limit_mm_per_prompt = config.get("limit_mm_per_prompt")
     return args
 
 
 def ensure_spawn_start_method() -> None:
     """Force multiprocessing start method to spawn to avoid CUDA re-init issues."""
 
-    try:
-        import torch.multiprocessing as mp  # type: ignore
-    except Exception:  # pragma: no cover - torch missing
-        import multiprocessing as mp  # type: ignore
+    src_root = Path(__file__).resolve().parents[5]
+    current_pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath_entries = [entry for entry in current_pythonpath.split(os.pathsep) if entry]
+    resolved_src_root = str(src_root)
+    if resolved_src_root not in pythonpath_entries:
+        os.environ["PYTHONPATH"] = (
+            os.pathsep.join([resolved_src_root, *pythonpath_entries]) if pythonpath_entries else resolved_src_root
+        )
 
     current = mp.get_start_method(allow_none=True)
     if current != "spawn":
@@ -265,20 +268,21 @@ def ensure_spawn_start_method() -> None:
 def resolve_sampling_class():
     """Resolve vLLM SamplingParams if available; otherwise a lightweight placeholder."""
 
-    try:  # pragma: no cover - optional dependency
-        from vllm import SamplingParams  # type: ignore
+    vllm_module = sys.modules.get("vllm")
+    if vllm_module is not None:
+        sampling_params = getattr(vllm_module, "SamplingParams", None)
+        if sampling_params is not None:
+            return sampling_params
 
-        return SamplingParams
-    except Exception:
-        class SamplingParams:
-            def __init__(self, **kwargs):
-                for k, v in kwargs.items():
-                    setattr(self, k, v)
+    class SamplingParams:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
 
-            def __repr__(self) -> str:
-                return f"SamplingParams({self.__dict__})"
+        def __repr__(self) -> str:
+            return f"SamplingParams({self.__dict__})"
 
-        return SamplingParams
+    return SamplingParams
 
 
 def build_sampling_params(

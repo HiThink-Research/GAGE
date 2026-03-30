@@ -13,9 +13,10 @@ MAX_SAMPLES="${MAX_SAMPLES:-1}"
 CONCURRENCY="${CONCURRENCY:-1}"
 
 gage_activate_venv "${VENV_PATH}"
+PYTHON_BIN="${PYTHON_BIN:-$(gage_default_python)}"
 
 echo "[scripts/run] running dummy echo pipeline"
-python "${ROOT}/run.py" \
+"${PYTHON_BIN}" "${ROOT}/run.py" \
   --config "${CFG}" \
   --output-dir "${OUTPUT_DIR}" \
   --max-samples "${MAX_SAMPLES}" \
