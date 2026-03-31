@@ -92,6 +92,45 @@ def test_remote_sandbox_start_teardown_and_health_via_control_plane() -> None:
 
 
 @pytest.mark.fast
+def test_remote_sandbox_renew_via_control_plane() -> None:
+    calls = []
+
+    def requester(url, payload, timeout_s, headers, method="POST"):
+        calls.append((method, url, payload, timeout_s, headers))
+        if method == "POST" and url.endswith("/sandboxes"):
+            return {
+                "sandbox_id": "sbx-1",
+                "status": "starting",
+                "data_endpoint": "http://remote/data",
+                "exec_url": "http://remote/exec",
+            }
+        if method == "GET" and url.endswith("/sandboxes/sbx-1"):
+            return {"sandbox_id": "sbx-1", "status": "ready"}
+        if method == "POST" and url.endswith("/sandboxes/sbx-1/renew"):
+            return {
+                "sandbox_id": "sbx-1",
+                "status": "ready",
+                "ttl_s": payload.get("ttl_s"),
+                "exec_url": "http://remote/exec",
+            }
+        raise AssertionError(f"Unexpected request: {method} {url}")
+
+    sandbox = RemoteSandbox(
+        runtime_configs={
+            "requester": requester,
+            "control_endpoint": "https://platform.example/v1",
+        }
+    )
+
+    sandbox.start({})
+    sandbox.renew(ttl_s=120)
+
+    renew_calls = [entry for entry in calls if entry[0] == "POST" and entry[1].endswith("/renew")]
+    assert len(renew_calls) == 1
+    assert renew_calls[0][2]["ttl_s"] == 120
+
+
+@pytest.mark.fast
 def test_remote_sandbox_is_alive_without_control_endpoint() -> None:
     sandbox = RemoteSandbox(runtime_configs={})
     sandbox.start({})

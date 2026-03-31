@@ -141,6 +141,8 @@ def test_remote_environment_managed_control_plane() -> None:
             return {"sandbox_id": "sbx-1", "status": "ready"}
         if method == "DELETE" and url.endswith("/sandboxes/sbx-1"):
             return {"status": "deleted"}
+        if method == "POST" and url.endswith("/sandboxes/sbx-1/renew"):
+            return {"sandbox_id": "sbx-1", "status": "ready", "ttl_s": payload.get("ttl_s")}
         if method == "POST" and url.endswith("/exec"):
             return {"exit_code": 0, "stdout": "ok", "stderr": ""}
         if method == "POST" and url.endswith("/read_file"):
@@ -163,11 +165,49 @@ def test_remote_environment_managed_control_plane() -> None:
     assert env.probe() is True
     result = env.exec("echo ok")
     assert result.stdout == "ok"
+    env.write_file("/tmp/input.txt", b"payload")
+    env.upload_file(__file__, "/tmp/uploaded.py")
+    env.renew(ttl_s=120)
     env.stop()
 
     assert calls[0][4] == "POST"
     assert calls[0][0].endswith("/sandboxes")
     assert any(method == "DELETE" for *_url, _payload, _timeout, _headers, method in calls)
+    assert any(url.endswith("/write_file") for url, *_ in calls)
+    assert any(url.endswith("/renew") for url, *_ in calls)
+
+
+@pytest.mark.fast
+def test_remote_environment_attached_upload_and_download(tmp_path) -> None:
+    calls: list[tuple[str, dict, int, dict, str | None]] = []
+
+    def requester(url, payload, timeout_s, headers, method="POST"):
+        calls.append((url, payload, timeout_s, headers, method))
+        if method == "POST" and url.endswith("/run_command"):
+            return {"exit_code": 0, "stdout": "ok", "stderr": ""}
+        if method == "POST" and url.endswith("/read_file"):
+            return {"content_b64": base64.b64encode(b"downloaded").decode("ascii")}
+        if method == "POST" and url.endswith("/write_file"):
+            return {"ok": True}
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    contract = RemoteSandboxContract(
+        mode="attached",
+        exec_endpoint="http://remote/api/run_command",
+        file_endpoint="http://remote/api",
+    )
+    env = RemoteEnvironment(contract=contract, runtime_configs={"requester": requester})
+    local_source = tmp_path / "source.txt"
+    local_target = tmp_path / "downloaded.txt"
+    local_source.write_text("upload", encoding="utf-8")
+
+    env.start()
+    env.upload_file(str(local_source), "/tmp/upload.txt")
+    env.download_file("/tmp/remote.txt", str(local_target))
+
+    assert local_target.read_text(encoding="utf-8") == "downloaded"
+    assert any(url.endswith("/write_file") for url, *_ in calls)
+    assert any(url.endswith("/read_file") for url, *_ in calls)
 
 
 @pytest.mark.fast

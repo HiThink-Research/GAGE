@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gage_eval.agent_runtime.clients import ClientRunRequest
@@ -57,7 +59,9 @@ def test_codex_client_runs_codex_exec_and_collects_artifacts() -> None:
     assert result.trajectory_path == "/tmp/trajectory.log"
     assert result.artifacts["stdout_path"] == "/tmp/stdout.log"
     assert environment.files["/tmp/submission.patch"].decode("utf-8").startswith("diff --git")
+    assert Path("/tmp/submission.patch").read_text(encoding="utf-8").startswith("diff --git")
     assert "$ codex exec" in environment.files["/tmp/trajectory.log"].decode("utf-8")
+    assert Path("/tmp/stdout.log").read_text(encoding="utf-8") == "final message"
 
 
 @pytest.mark.fast
@@ -82,3 +86,31 @@ def test_codex_client_uses_fallback_command_when_primary_fails() -> None:
     assert environment.commands[0].startswith("codex exec --skip-git-repo-check --full-auto")
     assert environment.commands[1] == "python3 -c \"print('fallback ok')\""
     assert result.patch_content == "diff --git a/a b/a\n"
+
+
+@pytest.mark.fast
+def test_codex_client_persists_local_artifacts_when_environment_is_remote(tmp_path) -> None:
+    environment = _FakeEnvironment()
+    stdout_path = tmp_path / "stdout.log"
+    patch_path = tmp_path / "submission.patch"
+    trajectory_path = tmp_path / "trajectory.log"
+    environment.files[str(stdout_path)] = b"final message"
+    client = CodexClient()
+
+    result = client.run(
+        ClientRunRequest(
+            instruction="Fix the test and stop.",
+            cwd="/workspace/repo",
+            metadata={
+                "stdout_path": str(stdout_path),
+                "patch_path": str(patch_path),
+                "trajectory_path": str(trajectory_path),
+            },
+        ),
+        environment,
+    )
+
+    assert result.exit_code == 0
+    assert stdout_path.read_text(encoding="utf-8") == "final message"
+    assert patch_path.read_text(encoding="utf-8").startswith("diff --git")
+    assert trajectory_path.read_text(encoding="utf-8").startswith("$ codex exec")

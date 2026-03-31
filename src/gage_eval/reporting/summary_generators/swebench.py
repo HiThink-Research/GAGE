@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.sample_envelope import resolve_judge_output
 from gage_eval.registry import registry
 from gage_eval.reporting.summary_generators import SummaryGenerator
 
@@ -40,9 +41,12 @@ def _build_swebench_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
         if not _is_swebench_sample(sample, metadata):
             continue
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
-        resolved = bool((judge_output or {}).get("resolved"))
-        failure_reason = (judge_output or {}).get("failure_reason")
+        judge_output = resolve_judge_output(
+            sample,
+            record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {},
+        )
+        resolved = _is_resolved(judge_output)
+        failure_reason = _failure_reason(judge_output)
         repo = metadata.get("repo") or sample.get("repo")
         language = metadata.get("repo_language") or sample.get("repo_language")
 
@@ -99,6 +103,27 @@ def _finalize_stats(bucket: Dict[str, Dict[str, int]]) -> Dict[str, Dict[str, fl
             "resolve_rate": (resolved / total) if total else 0.0,
         }
     return finalized
+
+
+def _is_resolved(judge_output: Dict[str, Any]) -> bool:
+    if bool(judge_output.get("resolved")):
+        return True
+    status = str(judge_output.get("status") or "").strip().lower()
+    if status in {"pass", "passed", "resolved", "success"}:
+        return True
+    raw_output = judge_output.get("raw_output") if isinstance(judge_output.get("raw_output"), dict) else {}
+    return bool(raw_output.get("resolved"))
+
+
+def _failure_reason(judge_output: Dict[str, Any]) -> Optional[str]:
+    value = judge_output.get("failure_reason")
+    if value:
+        return str(value)
+    raw_output = judge_output.get("raw_output") if isinstance(judge_output.get("raw_output"), dict) else {}
+    value = raw_output.get("failure_reason")
+    if value:
+        return str(value)
+    return None
 
 
 __all__ = ["SwebenchSummaryGenerator"]

@@ -1,0 +1,59 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: real_attached_installed_client_swebench
+  description: Multi-sample real attached remote acceptance for installed client swebench path.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_codex_swebench_real
+    - step: auto_eval
+
+datasets:
+  - dataset_id: swebench_real_acceptance
+    loader: jsonl
+    params:
+      path: config/custom/acceptance/swebench/real_attached_installed_client_swebench.jsonl
+      streaming: false
+
+role_adapters:
+  - adapter_id: dut_codex_swebench_real
+    role_type: dut_agent
+    agent_runtime_id: codex_swebench_real
+
+tasks:
+  - task_id: swebench_real_agent_eval
+    dataset_id: swebench_real_acceptance
+    max_samples: 3
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/real_attached_swebench_events.jsonl
+
+agent_runtimes:
+  - agent_runtime_id: codex_swebench_real
+    scheduler: installed_client
+    benchmark_kit_id: swebench
+    client_id: codex
+    resource_policy:
+      environment_kind: remote
+      timeout_sec: 300
+    client_surface_policy:
+      required:
+        - terminal
+        - fs
+    sandbox_policy:
+      prefer_remote: true
+      remote_mode: attached
+    params:
+      verifier:
+        mode: patch_presence
+
+benchmark_kits:
+  - kit_id: swebench
+    module: gage_eval.agent_eval_kits.swebench.kit

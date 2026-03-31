@@ -76,8 +76,7 @@ class CodexClient:
             artifacts.setdefault("trajectory_path", trajectory_path)
         if stdout_path:
             artifacts.setdefault("stdout_path", stdout_path)
-            if not stdout_capture:
-                _write_optional_file(environment, stdout_path, stdout)
+            _write_optional_file(environment, stdout_path, stdout)
         return ClientRunResult(
             exit_code=exit_code,
             stdout=stdout,
@@ -167,7 +166,6 @@ def _write_optional_file(environment: Any, path: str, content: str) -> None:
     if callable(writer):
         try:
             writer(path, content.encode("utf-8"))
-            return
         except Exception:
             pass
     target = Path(path)

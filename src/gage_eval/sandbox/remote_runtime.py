@@ -262,6 +262,23 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         except Exception:
             return False
 
+    def renew(self, ttl_s: int | None = None) -> None:
+        """Renew the managed sandbox lease when the control plane supports it."""
+
+        if not self._control_endpoint or not self._sandbox_id:
+            return
+        payload: Dict[str, Any] = {}
+        if ttl_s is not None:
+            payload["ttl_s"] = int(ttl_s)
+        response = self._platform_request(
+            f"{str(self._control_endpoint).rstrip('/')}/sandboxes/{self._sandbox_id}/renew",
+            payload,
+            method="POST",
+            timeout_s=min(self._startup_timeout_s, 30),
+        )
+        if isinstance(response, dict):
+            self._apply_platform_response(response)
+
     def _build_runtime_handle(self) -> Dict[str, Any]:
         handle: Dict[str, Any] = {
             "control_endpoint": self._control_endpoint,
