@@ -93,6 +93,55 @@ def test_terminal_bench_prepare_inputs() -> None:
 
 
 @pytest.mark.fast
+def test_terminal_bench_prepare_inputs_uses_message_text_when_instruction_missing() -> None:
+    sample = {
+        "instance_id": "tb2__smoke_2",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Create hello.txt from messages"}],
+            }
+        ],
+    }
+    session = SimpleNamespace(
+        plan=_build_plan(),
+        artifacts=_build_artifacts(),
+        metadata={},
+    )
+
+    prepared = prepare_inputs(sample, session)
+
+    assert prepared["instruction"] == "Create hello.txt from messages"
+    assert prepared["task_context"]["instruction"] == "Create hello.txt from messages"
+
+
+@pytest.mark.fast
+def test_terminal_bench_prepare_inputs_uses_metadata_workspace_root_when_top_level_missing() -> None:
+    sample = {
+        "instance_id": "tb2__smoke_3",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Create hello.txt from metadata"}],
+            }
+        ],
+        "metadata": {
+            "workspace_root": "/tmp/tb2-metadata",
+        },
+    }
+    session = SimpleNamespace(
+        plan=_build_plan(),
+        artifacts=_build_artifacts(),
+        metadata={},
+    )
+
+    prepared = prepare_inputs(sample, session)
+
+    assert prepared["cwd"] == "/tmp/tb2-metadata"
+    assert prepared["task_context"]["workspace_root"] == "/tmp/tb2-metadata"
+
+
+@pytest.mark.fast
 def test_terminal_bench_build_verifier_input() -> None:
     sample = {"instance_id": "tb2__smoke_1", "instruction": "Create hello.txt"}
     artifacts = _build_artifacts()
