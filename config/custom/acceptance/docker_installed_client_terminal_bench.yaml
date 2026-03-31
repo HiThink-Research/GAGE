@@ -53,7 +53,7 @@ role_adapters:
 tasks:
   - task_id: tb2_docker_agent_eval
     dataset_id: tb2_docker_acceptance
-    max_samples: 1
+    max_samples: 2
     concurrency: 1
     reporting:
       sinks:
