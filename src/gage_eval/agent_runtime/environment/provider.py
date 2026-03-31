@@ -60,7 +60,10 @@ def _merge_dicts(base: Optional[Mapping[str, Any]], overrides: Optional[Mapping[
 
 
 def _build_runtime_configs(runtime_spec, resource_policy, sample: Mapping[str, Any]) -> dict[str, Any]:
-    runtime_configs = _merge_dicts(getattr(runtime_spec, "params", None), sample.get("runtime_configs"))
+    runtime_params = dict(getattr(runtime_spec, "params", {}) or {})
+    nested_runtime_configs = runtime_params.pop("runtime_configs", None)
+    runtime_configs = _merge_dicts(runtime_params, nested_runtime_configs)
+    runtime_configs = _merge_dicts(runtime_configs, sample.get("runtime_configs"))
     explicit_env = runtime_configs.pop("env", None)
     env = _merge_dicts(getattr(resource_policy, "env", None), sample.get("env"))
     env = _merge_dicts(env, sample.get("runtime_env"))

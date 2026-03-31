@@ -66,10 +66,14 @@ class InstalledClientScheduler:
 
     def _build_client(self):
         client_id = self._plan.client_id or "codex"
+        runtime_params = dict(getattr(self._plan.runtime_spec, "params", {}) or {})
+        client_default_args = runtime_params.get("client_default_args")
+        if not isinstance(client_default_args, (list, tuple)):
+            client_default_args = None
         if client_id == "codex":
             from gage_eval.agent_runtime.clients.codex import CodexClient
 
-            return CodexClient()
+            return CodexClient(default_args=client_default_args)
         if client_id == "claude":
             from gage_eval.agent_runtime.clients.claude import ClaudeClient
 

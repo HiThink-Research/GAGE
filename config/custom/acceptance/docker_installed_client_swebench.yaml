@@ -1,0 +1,69 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: docker_installed_client_swebench
+  description: Docker sandbox acceptance for installed client swebench path.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_codex_swebench_docker
+    - step: auto_eval
+
+datasets:
+  - dataset_id: swebench_docker_acceptance
+    loader: jsonl
+    params:
+      path: config/custom/acceptance/swebench/docker_installed_client_swebench.jsonl
+      streaming: false
+
+role_adapters:
+  - adapter_id: dut_codex_swebench_docker
+    role_type: dut_agent
+    agent_runtime_id: codex_swebench_docker
+
+tasks:
+  - task_id: swebench_docker_agent_eval
+    dataset_id: swebench_docker_acceptance
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/swebench_docker_agent_events.jsonl
+
+agent_runtimes:
+  - agent_runtime_id: codex_swebench_docker
+    scheduler: installed_client
+    benchmark_kit_id: swebench
+    client_id: codex
+    resource_policy:
+      environment_kind: docker
+      timeout_sec: 300
+    client_surface_policy:
+      required:
+        - terminal
+        - fs
+    params:
+      client_default_args:
+        - --dangerously-bypass-approvals-and-sandbox
+      image: gage-codex-sandbox:latest
+      runtime_configs:
+        start_container: true
+        workdir: /workspace
+        exec_workdir: /workspace
+        volumes:
+          - [".", "/workspace"]
+        env:
+          OPENAI_API_KEY:
+          OPENAI_BASE_URL:
+          CODEX_HOME: /agent
+      verifier:
+        mode: patch_presence
+
+benchmark_kits:
+  - kit_id: swebench
+    module: gage_eval.agent_eval_kits.swebench.kit

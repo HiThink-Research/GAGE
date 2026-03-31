@@ -62,7 +62,7 @@ def test_fake_environment_exec_and_file_io() -> None:
 def test_docker_environment_delegates_to_sandbox(tmp_path) -> None:
     env = DockerEnvironment(
         config={"runtime_configs": {"labels": {"suite": "test"}}},
-        runtime_configs={"docker_bin": "docker"},
+        runtime_configs={"docker_bin": "docker", "exec_workdir": "/workspace"},
         resources={"cpu": 2},
         sandbox_cls=DummyDockerSandbox,
     )
@@ -78,6 +78,41 @@ def test_docker_environment_delegates_to_sandbox(tmp_path) -> None:
     assert result.stdout.startswith("cd /workspace && A=")
     assert data == b"payload"
     assert local.read_bytes() == b"payload"
+    assert env._sandbox.commands[0][0].startswith("cd /workspace && A=")
+    assert env._sandbox.files["/workspace/file.txt"] == b"payload"
+
+
+@pytest.mark.fast
+def test_docker_environment_resolves_relative_artifact_paths_to_exec_workdir(tmp_path) -> None:
+    env = DockerEnvironment(
+        runtime_configs={"exec_workdir": "/workspace/project"},
+        sandbox_cls=DummyDockerSandbox,
+    )
+
+    env.start()
+    env.write_file("runs/out.txt", b"payload")
+    data = env.read_file("runs/out.txt")
+
+    assert data == b"payload"
+    assert env._sandbox.files["/workspace/project/runs/out.txt"] == b"payload"
+
+
+@pytest.mark.fast
+def test_docker_environment_resolves_relative_cwd_to_exec_workdir() -> None:
+    env = DockerEnvironment(
+        runtime_configs={"exec_workdir": "/workspace/project"},
+        sandbox_cls=DummyDockerSandbox,
+    )
+
+    env.start()
+    result = env.exec("pwd", cwd="tests/data/agent_eval/workspaces/swebench/case1")
+
+    assert result.stdout.startswith(
+        "cd /workspace/project/tests/data/agent_eval/workspaces/swebench/case1 && pwd"
+    )
+    assert env._sandbox.commands[0][0].startswith(
+        "cd /workspace/project/tests/data/agent_eval/workspaces/swebench/case1 && pwd"
+    )
 
 
 @pytest.mark.fast
@@ -215,7 +250,10 @@ def test_environment_provider_selects_backend_types() -> None:
     provider = EnvironmentProvider()
 
     fake_plan = _make_plan("fake")
-    docker_plan = _make_plan("docker")
+    docker_plan = _make_plan(
+        "docker",
+        params={"image": "gage-codex-sandbox:latest", "runtime_configs": {"exec_workdir": "/workspace"}},
+    )
     remote_plan = _make_plan("remote", remote_mode="attached")
 
     fake_env = provider.build(fake_plan, {})
@@ -235,11 +273,17 @@ def test_environment_provider_selects_backend_types() -> None:
     assert isinstance(fake_env, FakeEnvironment)
     assert isinstance(docker_env, DockerEnvironment)
     assert isinstance(remote_env, RemoteEnvironment)
+    assert docker_env._runtime_configs["exec_workdir"] == "/workspace"
+    assert docker_env._runtime_configs["image"] == "gage-codex-sandbox:latest"
     assert remote_env.contract is not None
     assert remote_env.contract.mode == "attached"
 
 
-def _make_plan(environment_kind: str, remote_mode: str | None = None):
+def _make_plan(
+    environment_kind: str,
+    remote_mode: str | None = None,
+    params: dict | None = None,
+):
     spec = AgentRuntimeSpec(
         agent_runtime_id=f"{environment_kind}-rt",
         scheduler="installed_client",
@@ -247,6 +291,7 @@ def _make_plan(environment_kind: str, remote_mode: str | None = None):
         resource_policy=ResourcePolicy(environment_kind=environment_kind),
         client_surface_policy=ClientSurfacePolicy(),
         sandbox_policy=SandboxPolicy(remote_mode=remote_mode),
+        params=params or {},
     )
     return CompiledRuntimePlan(
         runtime_spec=spec,

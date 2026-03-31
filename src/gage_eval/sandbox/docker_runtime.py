@@ -503,6 +503,7 @@ def _normalize_volumes(raw: Any) -> List[str]:
     volumes: List[str] = []
     if isinstance(raw, dict):
         for host, container in raw.items():
+            host = _resolve_host_volume_path(host)
             if container is None:
                 volumes.append(str(host))
             else:
@@ -511,11 +512,38 @@ def _normalize_volumes(raw: Any) -> List[str]:
     if isinstance(raw, (list, tuple)):
         for entry in raw:
             if isinstance(entry, (list, tuple)) and len(entry) == 2:
-                volumes.append(f"{entry[0]}:{entry[1]}")
+                volumes.append(f"{_resolve_host_volume_path(entry[0])}:{entry[1]}")
             else:
-                volumes.append(str(entry))
+                volumes.append(_normalize_volume_entry(entry))
         return volumes
-    return [str(raw)]
+    return [_normalize_volume_entry(raw)]
+
+
+def _normalize_volume_entry(entry: Any) -> str:
+    text = str(entry)
+    if ":" not in text:
+        return str(_resolve_host_volume_path(text))
+    host, remainder = text.split(":", 1)
+    if _looks_like_relative_host_path(host):
+        return f"{_resolve_host_volume_path(host)}:{remainder}"
+    return text
+
+
+def _resolve_host_volume_path(host: Any) -> str:
+    text = str(host)
+    if _looks_like_relative_host_path(text):
+        return str(Path(text).expanduser().resolve())
+    return text
+
+
+def _looks_like_relative_host_path(value: str) -> bool:
+    return (
+        value in {".", ".."}
+        or value.startswith("./")
+        or value.startswith("../")
+        or value.startswith("~")
+        or ("/" in value and not os.path.isabs(value))
+    )
 
 
 def _normalize_extra_hosts(raw: Any) -> List[str]:

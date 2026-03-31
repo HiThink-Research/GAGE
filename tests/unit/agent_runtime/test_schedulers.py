@@ -20,6 +20,9 @@ def _build_plan(*, scheduler: str = "installed_client") -> CompiledRuntimePlan:
         scheduler=scheduler,
         benchmark_kit_id="swebench",
         client_id="codex" if scheduler == "installed_client" else None,
+        params={"client_default_args": ["--dangerously-bypass-approvals-and-sandbox"]}
+        if scheduler == "installed_client"
+        else {},
     )
     return CompiledRuntimePlan(
         runtime_spec=spec,
@@ -80,6 +83,14 @@ def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
     assert result.answer.startswith("diff --git")
     assert result.patch_path == "/tmp/submission.patch"
     assert result.stdout_path == "/tmp/stdout.log"
+
+
+@pytest.mark.fast
+def test_installed_client_scheduler_builds_codex_client_with_default_args() -> None:
+    scheduler = InstalledClientScheduler(_build_plan())
+    client = scheduler._build_client()
+
+    assert client._default_args == ("--dangerously-bypass-approvals-and-sandbox",)
 
 
 @pytest.mark.fast

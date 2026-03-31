@@ -32,16 +32,18 @@ class CodexClient:
             request.metadata,
             ("stdout_path", "stdout_file", "output_path", "output_last_message_path"),
         )
+        run_in_environment = environment is not None and hasattr(environment, "exec")
         command = _resolve_command(
             request,
             executable=self._executable,
             default_args=self._default_args,
             output_path=stdout_path,
+            include_cwd=not run_in_environment,
         )
         timeout_sec = _coerce_timeout(request.metadata.get("timeout_sec"), default=1800)
         env = dict(request.env)
         result = None
-        if environment is not None and hasattr(environment, "exec"):
+        if run_in_environment:
             result = environment.exec(command, cwd=request.cwd, env=env, timeout_sec=timeout_sec)
         else:
             result = _run_local(command, request.cwd, env, timeout_sec)
@@ -98,6 +100,7 @@ def _resolve_command(
     executable: str,
     default_args: Sequence[str],
     output_path: Optional[str],
+    include_cwd: bool,
 ) -> str:
     metadata = request.metadata or {}
     command = metadata.get("command") or metadata.get("cli_command")
@@ -111,10 +114,11 @@ def _resolve_command(
         executable,
         "exec",
         "--skip-git-repo-check",
-        "--full-auto",
-        *default_args,
     ]
-    if request.cwd:
+    if _should_use_full_auto(default_args):
+        args.append("--full-auto")
+    args.extend(default_args)
+    if include_cwd and request.cwd:
         args.extend(["--cd", request.cwd])
     if output_path:
         args.extend(["--output-last-message", output_path])
@@ -128,6 +132,11 @@ def _coerce_timeout(value: Any, *, default: int) -> int:
         return max(1, int(value))
     except (TypeError, ValueError):
         return int(default)
+
+
+def _should_use_full_auto(default_args: Sequence[str]) -> bool:
+    disallow = {"--dangerously-bypass-approvals-and-sandbox"}
+    return not any(str(arg) in disallow for arg in default_args)
 
 
 def _result_text(result: Any, key: str) -> str:
@@ -202,11 +211,20 @@ def _collect_patch(environment: Any, *, cwd: str, timeout_sec: int) -> Optional[
             result = environment.exec(git_diff, cwd=cwd, env=None, timeout_sec=timeout_sec)
             if _result_exit_code(result) == 0:
                 stdout = _result_text(result, "stdout")
-                return stdout or None
+                if stdout:
+                    return stdout
+                return _collect_untracked_patch_from_environment(
+                    environment,
+                    cwd=cwd,
+                    timeout_sec=timeout_sec,
+                )
         except Exception:
             return None
         return None
-    return _run_local_capture(git_diff, cwd, timeout_sec)
+    tracked_patch = _run_local_capture(git_diff, cwd, timeout_sec)
+    if tracked_patch:
+        return tracked_patch
+    return _collect_untracked_patch_from_local(cwd, timeout_sec)
 
 
 def _run_local_capture(command: str, cwd: str, timeout_sec: int) -> Optional[str]:
@@ -227,6 +245,87 @@ def _run_local_capture(command: str, cwd: str, timeout_sec: int) -> Optional[str
     if completed.returncode != 0:
         return None
     return completed.stdout or None
+
+
+def _collect_untracked_patch_from_environment(
+    environment: Any,
+    *,
+    cwd: str,
+    timeout_sec: int,
+) -> Optional[str]:
+    files = _list_untracked_files_via_environment(environment, cwd=cwd, timeout_sec=timeout_sec)
+    if not files:
+        return None
+    chunks: list[str] = []
+    for file_path in files:
+        command = f"git diff --no-index --binary /dev/null {shlex.quote(file_path)}"
+        result = environment.exec(command, cwd=cwd, env=None, timeout_sec=timeout_sec)
+        exit_code = _result_exit_code(result)
+        if exit_code not in {0, 1}:
+            continue
+        stdout = _result_text(result, "stdout")
+        if stdout:
+            chunks.append(stdout)
+    return "".join(chunks) or None
+
+
+def _collect_untracked_patch_from_local(cwd: str, timeout_sec: int) -> Optional[str]:
+    files = _list_untracked_files_local(cwd, timeout_sec)
+    if not files:
+        return None
+    chunks: list[str] = []
+    for file_path in files:
+        import subprocess
+
+        try:
+            completed = subprocess.run(  # noqa: S603,S607 - shell command is intentional
+                f"git diff --no-index --binary /dev/null {shlex.quote(file_path)}",
+                cwd=cwd or None,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                check=False,
+            )
+        except Exception:
+            continue
+        if completed.returncode not in {0, 1}:
+            continue
+        if completed.stdout:
+            chunks.append(completed.stdout)
+    return "".join(chunks) or None
+
+
+def _list_untracked_files_via_environment(environment: Any, *, cwd: str, timeout_sec: int) -> list[str]:
+    result = environment.exec(
+        "git ls-files --others --exclude-standard -- .",
+        cwd=cwd,
+        env=None,
+        timeout_sec=timeout_sec,
+    )
+    if _result_exit_code(result) != 0:
+        return []
+    return [line.strip() for line in _result_text(result, "stdout").splitlines() if line.strip()]
+
+
+def _list_untracked_files_local(cwd: str, timeout_sec: int) -> list[str]:
+    import subprocess
+
+    try:
+        completed = subprocess.run(  # noqa: S603,S607 - shell command is intentional
+            "git ls-files --others --exclude-standard -- .",
+            cwd=cwd or None,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+    except Exception:
+        return []
+    if completed.returncode != 0:
+        return []
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
 
 def _build_transcript(command: str, stdout: str, stderr: str) -> str:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
 from typing import Any, Mapping, Optional, Type
 
@@ -62,7 +62,11 @@ class DockerEnvironment:
         timeout_sec: int = 30,
     ) -> ExecResult:
         sandbox = self._ensure_started()
-        return sandbox.exec(_compose_shell_command(command, cwd=cwd, env=env), timeout=timeout_sec)
+        resolved_cwd = self._resolve_remote_path(cwd) if cwd else cwd
+        return sandbox.exec(
+            _compose_shell_command(command, cwd=resolved_cwd, env=env),
+            timeout=timeout_sec,
+        )
 
     def upload_file(self, local_path: str, remote_path: str) -> None:
         self.write_file(remote_path, Path(local_path).read_bytes())
@@ -73,11 +77,11 @@ class DockerEnvironment:
 
     def read_file(self, remote_path: str) -> bytes:
         sandbox = self._ensure_started()
-        return sandbox.read_file(remote_path)
+        return sandbox.read_file(self._resolve_remote_path(remote_path))
 
     def write_file(self, remote_path: str, content: bytes) -> None:
         sandbox = self._ensure_started()
-        sandbox.write_file(remote_path, content)
+        sandbox.write_file(self._resolve_remote_path(remote_path), content)
 
     def probe(self, timeout_s: float | None = None) -> bool:
         sandbox = self._ensure_sandbox()
@@ -109,6 +113,23 @@ class DockerEnvironment:
         if not self._started:
             self.start()
         return self._ensure_sandbox()
+
+    def _resolve_remote_path(self, remote_path: str) -> str:
+        if not remote_path:
+            return remote_path
+        normalized = str(remote_path)
+        path = PurePosixPath(normalized)
+        if path.is_absolute():
+            return normalized
+        workdir = (
+            self._runtime_configs.get("exec_workdir")
+            or self._runtime_configs.get("workdir")
+            or self._runtime_configs.get("working_dir")
+        )
+        if not workdir:
+            return normalized
+        root = PurePosixPath(str(workdir))
+        return str(root / path)
 
     def _teardown_sandbox(self) -> None:
         sandbox = self._sandbox

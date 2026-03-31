@@ -1,0 +1,63 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: docker_installed_client_terminal_bench
+  description: Docker sandbox acceptance for terminal bench without remote endpoints.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_codex_tb_docker
+    - step: auto_eval
+
+datasets:
+  - dataset_id: tb2_docker_acceptance
+    loader: jsonl
+    params:
+      path: config/custom/acceptance/terminal_bench/docker_installed_client_terminal_bench.jsonl
+      streaming: false
+
+agent_runtimes:
+  - agent_runtime_id: codex_terminal_bench_docker
+    scheduler: installed_client
+    benchmark_kit_id: terminal_bench
+    client_id: codex
+    resource_policy:
+      environment_kind: docker
+      timeout_sec: 300
+    client_surface_policy:
+      required:
+        - terminal
+        - fs
+    params:
+      client_default_args:
+        - --dangerously-bypass-approvals-and-sandbox
+      image: gage-codex-sandbox:latest
+      runtime_configs:
+        start_container: true
+        workdir: /workspace
+        exec_workdir: /workspace
+        volumes:
+          - [".", "/workspace"]
+        env:
+          OPENAI_API_KEY:
+          OPENAI_BASE_URL:
+          CODEX_HOME: /agent
+
+role_adapters:
+  - adapter_id: dut_codex_tb_docker
+    role_type: dut_agent
+    agent_runtime_id: codex_terminal_bench_docker
+
+tasks:
+  - task_id: tb2_docker_agent_eval
+    dataset_id: tb2_docker_acceptance
+    max_samples: 1
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tb2_docker_agent_events.jsonl

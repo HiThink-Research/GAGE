@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from gage_eval.agent_runtime.clients import ClientRunRequest
-from gage_eval.agent_runtime.clients.codex import CodexClient
+from gage_eval.agent_runtime.clients.codex import CodexClient, _resolve_command
 from gage_eval.sandbox.base import ExecResult
 
 
@@ -14,13 +14,20 @@ class _FakeEnvironment:
         self.commands: list[str] = []
         self.files: dict[str, bytes] = {}
         self.fail_first = False
+        self.tracked_diff: str = "diff --git a/a b/a\n"
+        self.untracked_files: list[str] = []
+        self.untracked_diff: str = ""
 
     def exec(self, command: str, *, cwd: str | None = None, env=None, timeout_sec: int = 30):
         self.commands.append(command)
         if self.fail_first and len(self.commands) == 1:
             return ExecResult(exit_code=1, stdout="", stderr="usage limit")
         if command == "git diff --binary -- .":
-            return ExecResult(exit_code=0, stdout="diff --git a/a b/a\n", stderr="")
+            return ExecResult(exit_code=0, stdout=self.tracked_diff, stderr="")
+        if command == "git ls-files --others --exclude-standard -- .":
+            return ExecResult(exit_code=0, stdout="\n".join(self.untracked_files), stderr="")
+        if command.startswith("git diff --no-index --binary /dev/null "):
+            return ExecResult(exit_code=1, stdout=self.untracked_diff, stderr="")
         return ExecResult(exit_code=0, stdout="raw-cli-output", stderr="")
 
     def read_file(self, path: str) -> bytes:
@@ -53,6 +60,7 @@ def test_codex_client_runs_codex_exec_and_collects_artifacts() -> None:
     assert environment.commands
     assert environment.commands[0].startswith("codex exec --skip-git-repo-check --full-auto")
     assert "--output-last-message /tmp/stdout.log" in environment.commands[0]
+    assert " --cd " not in environment.commands[0]
     assert result.stdout == "final message"
     assert result.patch_path == "/tmp/submission.patch"
     assert result.patch_content == "diff --git a/a b/a\n"
@@ -84,6 +92,7 @@ def test_codex_client_uses_fallback_command_when_primary_fails() -> None:
 
     assert result.exit_code == 0
     assert environment.commands[0].startswith("codex exec --skip-git-repo-check --full-auto")
+    assert " --cd " not in environment.commands[0]
     assert environment.commands[1] == "python3 -c \"print('fallback ok')\""
     assert result.patch_content == "diff --git a/a b/a\n"
 
@@ -114,3 +123,69 @@ def test_codex_client_persists_local_artifacts_when_environment_is_remote(tmp_pa
     assert stdout_path.read_text(encoding="utf-8") == "final message"
     assert patch_path.read_text(encoding="utf-8").startswith("diff --git")
     assert trajectory_path.read_text(encoding="utf-8").startswith("$ codex exec")
+
+
+@pytest.mark.fast
+def test_codex_client_collects_patch_from_untracked_files() -> None:
+    environment = _FakeEnvironment()
+    environment.tracked_diff = ""
+    environment.untracked_files = ["answer.py"]
+    environment.untracked_diff = (
+        "diff --git a/answer.py b/answer.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/answer.py\n"
+        "@@\n"
+        "+def compute_answer() -> int:\n"
+        "+    return 42\n"
+    )
+    client = CodexClient()
+
+    result = client.run(
+        ClientRunRequest(
+            instruction="Fix the test and stop.",
+            cwd="/workspace/repo",
+            metadata={
+                "patch_path": "/tmp/submission.patch",
+            },
+        ),
+        environment,
+    )
+
+    assert result.patch_content is not None
+    assert "return 42" in result.patch_content
+    assert environment.commands.count("git diff --binary -- .") == 1
+    assert "git ls-files --others --exclude-standard -- ." in environment.commands
+
+
+@pytest.mark.fast
+def test_resolve_command_keeps_cd_for_local_execution() -> None:
+    command = _resolve_command(
+        ClientRunRequest(
+            instruction="Fix the test and stop.",
+            cwd="/workspace/repo",
+        ),
+        executable="codex",
+        default_args=(),
+        output_path=None,
+        include_cwd=True,
+    )
+
+    assert " --cd /workspace/repo " in f" {command} "
+
+
+@pytest.mark.fast
+def test_resolve_command_skips_full_auto_for_dangerous_bypass() -> None:
+    command = _resolve_command(
+        ClientRunRequest(
+            instruction="Fix the test and stop.",
+            cwd="/workspace/repo",
+        ),
+        executable="codex",
+        default_args=("--dangerously-bypass-approvals-and-sandbox",),
+        output_path=None,
+        include_cwd=False,
+    )
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "--full-auto" not in command

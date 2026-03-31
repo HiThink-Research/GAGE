@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -56,6 +57,24 @@ def test_build_docker_run_command_host_network_skips_ports() -> None:
         resources={},
     )
     assert "-p" not in args
+
+
+@pytest.mark.fast
+def test_build_docker_run_command_resolves_relative_volume_host_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(Path(__file__).resolve().parents[3])
+
+    args = build_docker_run_command(
+        image="gage-codex-sandbox:latest",
+        container_name="gage-test",
+        runtime_configs={"volumes": [[".", "/workspace"]]},
+        resources={},
+    )
+
+    volume_index = args.index("-v")
+    volume_value = args[volume_index + 1]
+
+    assert volume_value.endswith(":/workspace")
+    assert volume_value.startswith(str(Path.cwd()))
 
 
 @pytest.mark.fast
