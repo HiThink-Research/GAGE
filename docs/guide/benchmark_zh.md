@@ -169,6 +169,25 @@ python run.py \
 | **`shot_num`** | 提示词上下文中包含的 few-shot 示例数量。 | *整数 (例如, 0, 3, 5)* |
 | **`shot_type`** | 定义 few-shot 示例的推理格式。 | `'solution'` (自然语言), `'code'` (Program-of-Thought) |
 
+### AMO-Bench
+
+AMO-Bench（Advanced Mathematical Olympiad Benchmark）是一个高级数学推理基准测试，难度达到或超过奥林匹克竞赛水平，包含 50 道人工精心设计的问题。现有的基准测试广泛利用高中数学竞赛来评估大语言模型（LLM）的数学推理能力。然而，由于性能饱和（例如 AIME24/25），许多现有的数学竞赛在评估顶级 LLM 方面效果越来越差。为解决这一问题，AMO-Bench 通过以下方式引入了更具挑战性的难题：确保所有 50 道问题（1）经过专家交叉验证，达到至少国际数学奥林匹克（IMO）难度标准；（2）完全原创，防止数据记忆导致的性能泄漏。此外，AMO-Bench 中的每道问题只需要最终答案而非证明，从而支持自动且稳健的评估。
+
+实验结果表明，在 AMO-Bench 上评估的 26 个 LLM 中，即使是表现最好的模型准确率也只有 52.4%，大多数 LLM 的得分低于 40%。除了表现不佳之外，进一步分析显示了随着测试时计算增加的有希望的扩展趋势。这些结果突显了当前 LLM 在数学推理方面仍有很大的提升空间。
+
+AMO-Bench 根据 answer_type 使用不同的评估方法：
+- **description**：使用 LLM 评判模型进行语义比较
+- **number/set**：使用 math_verify 解析器进行数学等价性验证
+- **variable**：使用 try_list 和 sympy 求解器进行函数验证
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/amo-bench/amo.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id amo_bench
+```
 
 ### HMMT（哈佛-麻省理工数学锦标赛）
 

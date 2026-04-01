@@ -155,6 +155,21 @@ python run.py \
 | **`shot_type`** | Defines the reasoning format for few-shot examples. | `'solution'` (Natural Language), `'code'` (Program-of-Thought) |
 
 
+### AMO-Bench
+AMO-Bench, an Advanced Mathematical reasoning benchmark with Olympiad level or even higher difficulty, comprising 50 human-crafted problems. Existing benchmarks have widely leveraged high school math competitions for evaluating mathematical reasoning capabilities of large language models (LLMs). However, many existing math competitions are becoming less effective for assessing top-tier LLMs due to performance saturation (e.g., AIME24/25). To address this, AMO-Bench introduces more rigorous challenges by ensuring all 50 problems are (1) cross-validated by experts to meet at least the International Mathematical Olympiad (IMO) difficulty standards, and (2) entirely original problems to prevent potential performance leakages from data memorization. Moreover, each problem in AMO-Bench requires only a final answer rather than a proof, enabling automatic and robust grading for evaluation.
+
+AMO-Bench uses different evaluation methods based on answer_type:
+- **description**: Uses LLM judge for semantic comparison
+- **number/set**: Uses math_verify parser for mathematical equivalence
+- **variable**: Uses try_list with sympy solver for function verification
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/amo-bench/amo.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id amo_bench
+```
 
 ### HMMT (Harvard-MIT Mathematics Tournament)
 This dataset contains the questions from HMMT February 2025 used for the MathArena Leaderboard. HMMT is a prestigious mathematics competition organized by Harvard and MIT students, featuring challenging problems that test advanced mathematical reasoning and problem-solving skills.

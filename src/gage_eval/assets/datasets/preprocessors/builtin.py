@@ -139,6 +139,9 @@ from gage_eval.assets.datasets.preprocessors.hmmt.hmmt_converter import HMMTFeb2
 # benchmark BeyondAIME
 from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import BeyondAIMEPreprocessor
 
+# benchmark AMO-Bench
+from gage_eval.assets.datasets.preprocessors.amo_bench.converter import AMOBenchPreprocessor
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -569,5 +572,16 @@ class HMMTFeb2025PreprocessorProvider(HMMTFeb2025Preprocessor):
     tags=("prompt", "beyond_aime", "math"),
 )
 class BeyondAIMEPreprocessorProvider(BeyondAIMEPreprocessor):
+    pass
+
+
+# benchmark AMO-Bench
+@registry.asset(
+    "dataset_preprocessors",
+    "amo_bench_preprocessor",
+    desc="AMO-Bench prompt wrapper",
+    tags=("prompt", "amo_bench", "math"),
+)
+class AMOBenchPreprocessorProvider(AMOBenchPreprocessor):
     pass
 
