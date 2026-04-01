@@ -241,7 +241,7 @@ def test_pettingzoo_human_visual_config_routes_human_input_to_pilot_0() -> None:
     assert visualizer["enabled"] is True
     assert visualizer["launch_browser"] is True
     assert visualizer["mode"] == "arena_visual"
-    assert visualizer["live_scene_scheme"] == "http_pull"
+    assert visualizer["live_scene_scheme"] == "low_latency_channel"
     assert visualizer["linger_after_finish_s"] == 15.0
     assert [player["seat"] for player in players] == ["pilot_0", "pilot_1"]
     assert [player["player_id"] for player in players] == ["pilot_0", "pilot_1"]
@@ -266,9 +266,79 @@ def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> Non
         "backend_mode": "real",
         "default_state": "Start",
         "display_mode": "headless",
-        "obs_image": True,
+        "obs_image": False,
         "frame_stride": 1,
-        "max_turns": 256,
+        "legal_moves": [
+            "noop",
+            "left",
+            "right",
+            "up",
+            "down",
+            "jump",
+            "run",
+            "left_jump",
+            "right_jump",
+            "left_run",
+            "right_run",
+            "left_run_jump",
+            "right_run_jump",
+            "start",
+            "select",
+        ],
+        "action_schema": {
+            "hold_ticks_min": 1,
+            "hold_ticks_max": 1,
+            "hold_ticks_default": 1,
+        },
+        "max_turns": 7200,
+        "runtime_binding_policy_config": {
+            "mode": "scheduler_owned_human_realtime",
+            "activation_scope": "pure_human_only",
+            "input_model": "continuous_state",
+            "input_transport": "realtime_ws",
+            "tick_interval_ms": 16,
+            "frame_output_hz": 60,
+            "artifact_sampling_mode": "async_decimated_live",
+            "fallback_move": "noop",
+        },
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["live_scene_scheme"] == "low_latency_channel"
+    assert visualizer["linger_after_finish_s"] == 15.0
+    assert players == [
+        {
+            "seat": "player_0",
+            "player_id": "player_0",
+            "player_kind": "human",
+            "driver_params": {
+                "input_semantics": "continuous_state",
+                "stateful_actions": True,
+                "tick_interval_ms": 16,
+                "timeout_ms": 16,
+                "timeout_fallback_move": "noop",
+            },
+        }
+    ]
+
+
+def test_openra_human_visual_config_routes_human_input_to_player_0() -> None:
+    payload = _load_config("config/custom/openra/openra_human_visual_gamekit.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "openra"
+    assert params["env"] == "ra_map01"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == {
+        "backend_mode": "dummy",
+        "stub_max_ticks": 6,
     }
     assert visualizer["enabled"] is True
     assert visualizer["launch_browser"] is True
@@ -280,7 +350,159 @@ def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> Non
             "seat": "player_0",
             "player_id": "player_0",
             "player_kind": "human",
-        }
+        },
+        {
+            "seat": "player_1",
+            "player_id": "player_1",
+            "player_kind": "dummy",
+            "actions": [
+                "camera_pan",
+                "select_units",
+                "issue_command",
+                "queue_production",
+            ],
+        },
+    ]
+
+
+def test_openra_ra_skirmish_native_dummy_visual_config_enables_low_latency_native_streaming() -> None:
+    payload = _load_config("config/custom/openra/openra_ra_skirmish_native_dummy_visual_gamekit.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "openra"
+    assert params["env"] == "ra_skirmish_1v1"
+    assert params["runtime_overrides"] == {
+        "backend_mode": "native",
+        "max_decisions": 64,
+        "native_step_interval_s": 0.3,
+        "native_frame_rate_hz": 10.0,
+        "native_startup_orders": [
+            "option fog False",
+            "option explored True",
+        ],
+        "native_demo_script": "unit_patrol",
+        "native_demo_script_mode": "noop",
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["live_scene_scheme"] == "low_latency_channel"
+    assert visualizer["linger_after_finish_s"] == 90.0
+    assert players == [
+        {
+            "seat": "player_0",
+            "player_id": "player_0",
+            "player_kind": "dummy",
+            "actions": ["noop"],
+        },
+        {
+            "seat": "player_1",
+            "player_id": "player_1",
+            "player_kind": "dummy",
+            "actions": ["noop"],
+        },
+    ]
+
+
+def test_openra_ra_skirmish_native_human_visual_config_keeps_stream_alive_when_idle() -> None:
+    payload = _load_config("config/custom/openra/openra_ra_skirmish_native_human_visual_gamekit.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "openra"
+    assert params["env"] == "ra_skirmish_1v1"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == {
+        "backend_mode": "native",
+        "max_decisions": 96,
+        "native_step_interval_s": 0.25,
+        "native_frame_rate_hz": 4.0,
+        "native_startup_orders": [
+            "option fog False",
+            "option explored True",
+        ],
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["live_scene_scheme"] == "low_latency_channel"
+    assert visualizer["linger_after_finish_s"] == 30.0
+    assert players == [
+        {
+            "seat": "player_0",
+            "player_id": "player_0",
+            "player_kind": "human",
+            "driver_params": {
+                "timeout_ms": 250,
+                "timeout_fallback_move": "noop",
+            },
+        },
+        {
+            "seat": "player_1",
+            "player_id": "player_1",
+            "player_kind": "dummy",
+            "actions": ["noop"],
+        },
+    ]
+
+
+def test_openra_ra_skirmish_native_pure_human_visual_config_optimizes_manual_realtime_play() -> None:
+    payload = _load_config("config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml")
+    params = payload["role_adapters"][0]["params"]
+    visualizer = params["visualizer"]
+    players = params["players"]
+
+    assert params["game_kit"] == "openra"
+    assert params["env"] == "ra_skirmish_1v1"
+    assert params["human_input"] == {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 0,
+    }
+    assert params["runtime_overrides"] == {
+        "backend_mode": "native",
+        "max_decisions": 7200,
+        "native_step_interval_s": 0.05,
+        "native_frame_rate_hz": 20.0,
+        "native_startup_orders": [
+            "option fog False",
+            "option explored True",
+        ],
+        "runtime_binding_policy_config": {
+            "mode": "scheduler_owned_human_realtime",
+            "activation_scope": "pure_human_only",
+            "input_model": "queued_command",
+            "input_transport": "realtime_ws",
+            "tick_interval_ms": 50,
+            "frame_output_hz": 20,
+            "artifact_sampling_mode": "async_decimated_live",
+            "fallback_move": "noop",
+        },
+    }
+    assert visualizer["enabled"] is True
+    assert visualizer["launch_browser"] is True
+    assert visualizer["mode"] == "arena_visual"
+    assert visualizer["live_scene_scheme"] == "low_latency_channel"
+    assert visualizer["linger_after_finish_s"] == 120.0
+    assert players == [
+        {
+            "seat": "player_0",
+            "player_id": "player_0",
+            "player_kind": "human",
+            "driver_params": {
+                "input_semantics": "queued_command",
+                "tick_interval_ms": 50,
+                "timeout_ms": 50,
+                "timeout_fallback_move": "noop",
+            },
+        },
     ]
 
 
@@ -301,11 +523,12 @@ def test_vizdoom_human_visual_config_routes_human_input_to_p0() -> None:
         "backend_mode": "real",
         "show_pov": False,
         "capture_pov": True,
-        "obs_image": True,
+        "obs_image": False,
         "frame_stride": 1,
         "max_steps": 600,
         "action_repeat": 1,
         "sleep_s": 0.0,
+        "allow_partial_actions": True,
         "allow_respawn": True,
         "respawn_grace_steps": 600,
         "reset_retry_count": 3,
@@ -314,13 +537,20 @@ def test_vizdoom_human_visual_config_routes_human_input_to_p0() -> None:
     assert visualizer["enabled"] is True
     assert visualizer["launch_browser"] is True
     assert visualizer["mode"] == "arena_visual"
-    assert visualizer["live_scene_scheme"] == "http_pull"
+    assert visualizer["live_scene_scheme"] == "low_latency_channel"
     assert visualizer["linger_after_finish_s"] == 15.0
     assert players == [
         {
             "seat": "p0",
             "player_id": "p0",
             "player_kind": "human",
+            "driver_params": {
+                "input_semantics": "continuous_state",
+                "stateful_actions": True,
+                "tick_interval_ms": 16,
+                "timeout_ms": 16,
+                "timeout_fallback_move": "0",
+            },
         },
         {
             "seat": "p1",

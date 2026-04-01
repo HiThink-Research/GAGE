@@ -150,6 +150,40 @@ describe("createArenaGatewayClient", () => {
     );
   });
 
+  it("builds realtime input websocket URLs with optional runId", () => {
+    const client = createArenaGatewayClient({ baseUrl: "https://arena.local/base/" });
+
+    expect(
+      client.buildRealtimeActionSocketUrl({
+        sessionId: "sample-1",
+        runId: "run-7",
+      }),
+    ).toBe("wss://arena.local/base/arena_visual/sessions/sample-1/actions/ws?run_id=run-7");
+    expect(
+      client.buildRealtimeActionSocketUrl({
+        sessionId: "sample-2",
+      }),
+    ).toBe("wss://arena.local/base/arena_visual/sessions/sample-2/actions/ws");
+  });
+
+  it("builds live update stream URLs with observer and cursor context", () => {
+    const client = createArenaGatewayClient({ baseUrl: "http://arena.local/base/" });
+
+    expect(
+      client.buildLiveUpdatesStreamUrl({
+        sessionId: "sample-1",
+        runId: "run-7",
+        afterSeq: 12,
+        observer: {
+          observerId: "player_0",
+          observerKind: "player",
+        },
+      }),
+    ).toBe(
+      "http://arena.local/base/arena_visual/sessions/sample-1/events?after_seq=12&observer_kind=player&observer_id=player_0&run_id=run-7",
+    );
+  });
+
   it("submits chat and control payloads to dedicated routes", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(

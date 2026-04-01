@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,90 @@ def test_visual_session_recorder_can_mark_non_human_decision_windows_as_non_inte
     assert session.scheduling.phase == "waiting_for_intent"
     assert session.scheduling.accepts_human_intent is False
     assert session.scheduling.active_actor_id == "farmer_right"
+
+
+def test_visual_session_recorder_can_update_scheduling_state_without_timeline_events() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-1",
+    )
+
+    recorder.set_scheduling_state(
+        phase="waiting_for_intent",
+        accepts_human_intent=True,
+        active_actor_id="player_0",
+    )
+    recorder.update_runtime_metrics(tick_overshoot_ms=3.5, artifact_queue_depth=0)
+
+    session = recorder.build_visual_session()
+    header = recorder.export_live_header()
+
+    assert session.scheduling.phase == "waiting_for_intent"
+    assert session.scheduling.accepts_human_intent is True
+    assert session.summary["realtimeMetrics"]["tick_overshoot_ms"] == 3.5
+    assert header["lifecycle"] == "initializing"
+    assert header["tailSeq"] == 0
+
+
+def test_visual_session_recorder_drains_enqueued_snapshots_outside_tick_path() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-async-artifacts",
+    )
+
+    recorder.enqueue_snapshot(
+        ts_ms=1010,
+        step=4,
+        tick=4,
+        snapshot={"board_text": "queued-frame"},
+        snapshot_is_scene_safe=True,
+    )
+
+    assert recorder.pending_snapshot_count() == 1
+    assert recorder.export_live_state().timeline_events == ()
+
+    header = recorder.export_live_header()
+
+    assert header["tailSeq"] == 1
+    assert recorder.pending_snapshot_count() == 0
+    live_state = recorder.export_live_state()
+    assert [event.type for event in live_state.timeline_events] == ["snapshot"]
+    assert live_state.snapshot_payloads[0]["snapshot"]["board_text"] == "queued-frame"
+
+
+def test_visual_session_recorder_can_drain_snapshots_in_background() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-bg-artifacts",
+    )
+
+    recorder.start_background_snapshot_drain(poll_interval_s=0.001)
+    try:
+        recorder.enqueue_snapshot(
+            ts_ms=1010,
+            step=4,
+            tick=4,
+            snapshot={"board_text": "queued-frame"},
+            snapshot_is_scene_safe=True,
+        )
+
+        deadline = time.monotonic() + 1.0
+        while recorder.pending_snapshot_count() > 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        live_state = recorder.export_live_state()
+
+        assert recorder.pending_snapshot_count() == 0
+        assert [event.type for event in live_state.timeline_events] == ["snapshot"]
+        assert live_state.snapshot_payloads[0]["snapshot"]["board_text"] == "queued-frame"
+    finally:
+        recorder.stop_background_snapshot_drain()
 
 
 def test_visual_session_recorder_persists_seek_snapshot_index(tmp_path: Path) -> None:

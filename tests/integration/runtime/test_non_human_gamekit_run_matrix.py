@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
+from gage_eval.game_kits.real_time_game.openra.native_bridge import OPENRA_BRIDGE_DIR_ENV
 from gage_eval.tools.gamekit_acceptance import run_gamekit_config
 from tests._support.gamekit_matrix import (
     HEADLESS_NO_HUMAN,
@@ -45,3 +47,41 @@ def test_non_human_gamekit_configs_run_end_to_end(case, tmp_path) -> None:
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])
     if replay_path:
         assert Path(str(replay_path)).exists()
+
+
+@pytest.mark.io
+def test_openra_native_dummy_visual_config_replays_non_camera_mouse_actions(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge_dir = tmp_path / "openra-bridge"
+    monkeypatch.setenv(OPENRA_BRIDGE_DIR_ENV, str(bridge_dir))
+
+    result = run_gamekit_config(
+        Path("config/custom/openra/openra_ra_skirmish_native_dummy_visual_gamekit.yaml"),
+        output_dir=tmp_path / "runs",
+        run_id="openra-ra-skirmish-native-dummy-visual-regression",
+        gpus=0,
+        cpus=1,
+        launch_browser=False,
+        linger_after_finish_s=0.0,
+    )
+
+    input_path = bridge_dir / "input.ndjson"
+    assert input_path.exists()
+    events = [
+        json.loads(line)
+        for line in input_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert result.output["sample"]["runtime_overrides"]["native_demo_script"] == "unit_patrol"
+    assert any(
+        str(event.get("event_type")) == "mouse_down" and str(event.get("button")) == "left"
+        for event in events
+    )
+    assert any(
+        str(event.get("event_type")) == "mouse_down" and str(event.get("button")) == "right"
+        for event in events
+    )
+    assert not any(str(event.get("event_type", "")).startswith("key_") for event in events)

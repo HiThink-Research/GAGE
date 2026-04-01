@@ -189,6 +189,7 @@ class StableRetroArenaEnvironment:
             "move_count": int(self._decision_count),
             "last_move": self._last_move,
             "reward": float(self._last_reward),
+            "stream_id": "main",
             "metadata": metadata,
             "_rgb": self._last_obs,
         }

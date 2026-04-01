@@ -66,4 +66,18 @@ describe("usePlaybackControls", () => {
       commandType: "finish",
     });
   });
+
+  it("submits the explicit restart command through the store", async () => {
+    const store = {
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn(),
+    } as unknown as ArenaSessionStore;
+
+    const controls = usePlaybackControls(store);
+    await controls.restart();
+
+    expect(store.submitControl).toHaveBeenCalledWith({
+      commandType: "restart",
+    });
+  });
 });

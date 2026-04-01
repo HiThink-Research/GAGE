@@ -21,6 +21,10 @@ interface ObserverReadContext extends RequestContext {
   observer?: ObserverRef;
 }
 
+interface LiveUpdatesRequest extends ObserverReadContext {
+  afterSeq?: number | null;
+}
+
 interface TimelineRequest extends RequestContext {
   afterSeq?: number | null;
   limit?: number;
@@ -42,6 +46,10 @@ interface SubmitActionRequest extends RequestContext {
   payload: Record<string, unknown>;
 }
 
+interface SubmitActionLowLatencyRequest extends RequestContext {
+  payload: Record<string, unknown>;
+}
+
 interface SubmitChatRequest extends RequestContext {
   payload: Record<string, unknown>;
 }
@@ -57,8 +65,11 @@ export interface ArenaGatewayClient {
   loadMarkers(input: MarkerRequest): Promise<{ sessionId: string; marker: string; seqs: number[] }>;
   loadMedia(input: MediaRequest): Promise<MediaSourceRef>;
   submitAction(input: SubmitActionRequest): Promise<ActionIntentReceipt>;
+  submitActionLowLatency(input: SubmitActionLowLatencyRequest): Promise<void>;
   submitChat(input: SubmitChatRequest): Promise<ActionIntentReceipt>;
   submitControl(input: SubmitControlRequest): Promise<ActionIntentReceipt>;
+  buildRealtimeActionSocketUrl(input: RequestContext): string;
+  buildLiveUpdatesStreamUrl(input: LiveUpdatesRequest): string;
   buildMediaUrl(input: MediaRequest): string;
 }
 
@@ -115,6 +126,33 @@ export function createArenaGatewayClient({
     return payload as T;
   };
 
+  const requestOk = async (
+    path: string,
+    init: RequestInit & { runId?: string } = {},
+  ): Promise<void> => {
+    const { runId, ...requestInit } = init;
+    const url = new URL(`${normalizedBaseUrl}${path}`);
+    if (runId) {
+      url.searchParams.set("run_id", runId);
+    }
+
+    let response: Response;
+    try {
+      response = await fetchFn(url.toString(), requestInit);
+    } catch (error) {
+      throw new ArenaGatewayError({
+        message: "Network request failed",
+        code: "network_error",
+        cause: error,
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await parseResponseBody(response);
+      throw toGatewayError(response.status, payload);
+    }
+  };
+
   return {
     loadSession: ({ sessionId, runId, observer }) =>
       requestJson<VisualSession>(buildSessionPath(sessionId, observer), { method: "GET", runId }),
@@ -151,6 +189,15 @@ export function createArenaGatewayClient({
         runId,
       }),
 
+    submitActionLowLatency: ({ sessionId, payload, runId }) =>
+      requestOk(`${buildSessionPath(sessionId)}/actions?fast=1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        runId,
+        keepalive: true,
+      }),
+
     submitChat: ({ sessionId, payload, runId }) =>
       requestJson<ActionIntentReceipt>(`${buildSessionPath(sessionId)}/chat`, {
         method: "POST",
@@ -165,6 +212,16 @@ export function createArenaGatewayClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         runId,
+      }),
+
+    buildRealtimeActionSocketUrl: ({ sessionId, runId }) =>
+      buildRealtimeSocketUrl(normalizedBaseUrl, `${buildSessionPath(sessionId)}/actions/ws`, runId),
+
+    buildLiveUpdatesStreamUrl: ({ sessionId, runId, afterSeq, observer }) =>
+      buildLiveUpdatesStreamUrl(normalizedBaseUrl, sessionId, {
+        runId,
+        afterSeq,
+        observer,
       }),
 
     buildMediaUrl: ({ sessionId, mediaId, runId }) => {
@@ -232,6 +289,43 @@ function appendObserverParams(query: URLSearchParams, observer?: ObserverRef): v
   if (observer.observerId.trim() !== "") {
     query.set("observer_id", observer.observerId);
   }
+}
+
+function buildRealtimeSocketUrl(baseUrl: string, path: string, runId?: string): string {
+  const url = new URL(`${baseUrl}${path}`);
+  if (runId) {
+    url.searchParams.set("run_id", runId);
+  }
+  if (url.protocol === "https:") {
+    url.protocol = "wss:";
+  } else if (url.protocol === "http:") {
+    url.protocol = "ws:";
+  }
+  return url.toString();
+}
+
+function buildLiveUpdatesStreamUrl(
+  baseUrl: string,
+  sessionId: string,
+  {
+    runId,
+    afterSeq,
+    observer,
+  }: {
+    runId?: string;
+    afterSeq?: number | null;
+    observer?: ObserverRef;
+  },
+): string {
+  const url = new URL(`${baseUrl}${buildSessionPath(sessionId)}/events`);
+  if (afterSeq !== undefined && afterSeq !== null) {
+    url.searchParams.set("after_seq", String(afterSeq));
+  }
+  appendObserverParams(url.searchParams, observer);
+  if (runId) {
+    url.searchParams.set("run_id", runId);
+  }
+  return url.toString();
 }
 
 async function parseResponseBody(response: Response): Promise<unknown> {

@@ -78,6 +78,7 @@ def to_bounded_json_safe(
     max_depth: int = _MAX_BOUNDED_DEPTH,
     max_items: int = _MAX_BOUNDED_ITEMS,
     max_string: int = _MAX_BOUNDED_STRING,
+    preserve_data_urls: bool = True,
 ) -> Any:
     return _bounded_json_safe(
         value,
@@ -86,6 +87,7 @@ def to_bounded_json_safe(
         max_items=max_items,
         max_string=max_string,
         heavy_key_names=_HEAVY_KEY_NAMES,
+        preserve_data_urls=preserve_data_urls,
     )
 
 
@@ -95,6 +97,7 @@ def to_visual_json_safe(
     max_depth: int = _MAX_VISUAL_DEPTH,
     max_items: int = _MAX_VISUAL_ITEMS,
     max_string: int = _MAX_VISUAL_STRING,
+    preserve_data_urls: bool = True,
 ) -> Any:
     return _bounded_json_safe(
         value,
@@ -103,6 +106,7 @@ def to_visual_json_safe(
         max_items=max_items,
         max_string=max_string,
         heavy_key_names=_VISUAL_HEAVY_KEY_NAMES,
+        preserve_data_urls=preserve_data_urls,
     )
 
 
@@ -112,6 +116,7 @@ def to_scene_json_safe(
     max_depth: int = _MAX_SCENE_DEPTH,
     max_items: int = _MAX_SCENE_ITEMS,
     max_string: int = _MAX_SCENE_STRING,
+    preserve_data_urls: bool = True,
 ) -> Any:
     return _bounded_json_safe(
         value,
@@ -120,6 +125,7 @@ def to_scene_json_safe(
         max_items=max_items,
         max_string=max_string,
         heavy_key_names=_VISUAL_HEAVY_KEY_NAMES,
+        preserve_data_urls=preserve_data_urls,
     )
 
 
@@ -131,6 +137,7 @@ def _bounded_json_safe(
     max_items: int,
     max_string: int,
     heavy_key_names: set[str],
+    preserve_data_urls: bool,
 ) -> Any:
     if value is None or isinstance(value, (bool, int, float)):
         return value
@@ -153,6 +160,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     if is_dataclass(value):
         value = {
@@ -167,6 +175,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     if isinstance(value, tuple):
         return _bounded_sequence_snapshot(
@@ -176,6 +185,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     if isinstance(value, list):
         return _bounded_sequence_snapshot(
@@ -185,6 +195,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     if isinstance(value, set):
         return _bounded_sequence_snapshot(
@@ -194,6 +205,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     if isinstance(value, frozenset):
         return _bounded_sequence_snapshot(
@@ -203,6 +215,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return _bounded_sequence_snapshot(
@@ -212,6 +225,7 @@ def _bounded_json_safe(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     return str(value)
 
@@ -224,6 +238,7 @@ def _bounded_mapping_snapshot(
     max_items: int,
     max_string: int,
     heavy_key_names: set[str],
+    preserve_data_urls: bool,
 ) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
     contains_data_url = isinstance(payload.get("data_url"), str) or isinstance(payload.get("dataUrl"), str)
@@ -232,7 +247,7 @@ def _bounded_mapping_snapshot(
             snapshot["__truncated__"] = len(payload) - max_items
             break
         key_text = str(key)
-        if _should_preserve_data_url(key_text, item):
+        if preserve_data_urls and _should_preserve_data_url(key_text, item):
             snapshot[key_text] = item
             continue
         if contains_data_url and key_text == "data":
@@ -251,6 +266,7 @@ def _bounded_mapping_snapshot(
             max_items=max_items,
             max_string=max_string,
             heavy_key_names=heavy_key_names,
+            preserve_data_urls=preserve_data_urls,
         )
     return snapshot
 
@@ -263,6 +279,7 @@ def _bounded_sequence_snapshot(
     max_items: int,
     max_string: int,
     heavy_key_names: set[str],
+    preserve_data_urls: bool,
 ) -> list[Any]:
     snapshot: list[Any] = []
     for index, item in enumerate(payload):
@@ -280,6 +297,7 @@ def _bounded_sequence_snapshot(
                 max_items=max_items,
                 max_string=max_string,
                 heavy_key_names=heavy_key_names,
+                preserve_data_urls=preserve_data_urls,
             )
         )
     return snapshot

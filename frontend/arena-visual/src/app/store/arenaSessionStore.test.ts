@@ -401,6 +401,114 @@ describe("arenaSessionStore", () => {
     expect(state.session?.scheduling.activeActorId).toBe("player_1");
   });
 
+  it("does not block accepted realtime actions on a low-latency live refresh", async () => {
+    const deferredRefresh = deferred<VisualSession>();
+    const client = createStubClient({
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(
+          buildSession("sample-1", {
+            gameId: "retro_platformer",
+            pluginId: "arena.visualization.retro_platformer.frame_v1",
+            scheduling: {
+              family: "real_time_tick",
+              phase: "waiting_for_intent",
+              acceptsHumanIntent: true,
+              activeActorId: "player_0",
+            },
+          }),
+        )
+        .mockImplementationOnce(() => deferredRefresh.promise),
+      loadTimeline: vi.fn().mockResolvedValue(buildTimelinePage("sample-1", [1, 2])),
+      loadScene: vi.fn().mockResolvedValue({
+        sceneId: "scene-2",
+        gameId: "retro_platformer",
+        pluginId: "arena.visualization.retro_platformer.frame_v1",
+        kind: "frame",
+        tsMs: 1002,
+        seq: 2,
+        phase: "live",
+        activePlayerId: "player_0",
+        legalActions: [],
+        summary: {},
+        body: {
+          status: {
+            tick: 2,
+          },
+        },
+        media: {
+          primary: {
+            mediaId: "live-channel-main",
+            transport: "low_latency_channel",
+            url: "/arena_visual/sessions/sample-1/media/live-channel-main/stream",
+          },
+        },
+      }),
+      submitAction: vi.fn().mockResolvedValue({
+        intentId: "intent-live",
+        state: "accepted",
+        relatedEventSeq: 3,
+        reason: "queued",
+      }),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.loadScene({ seq: 2 });
+
+    await expect(
+      Promise.race([
+        store.submitAction({
+          playerId: "player_0",
+          action: { move: "right" },
+        }).then(() => "submitted"),
+        deferredRefresh.promise.then(() => "refreshed"),
+      ]),
+    ).resolves.toBe("submitted");
+
+    expect(store.getSnapshot().latestActionReceipt).toEqual({
+      intentId: "intent-live",
+      state: "accepted",
+      relatedEventSeq: 3,
+      reason: "queued",
+    });
+    expect(client.loadSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("submits low-latency realtime actions without mutating latestActionReceipt", async () => {
+    const client = createStubClient({
+      submitActionLowLatency: vi.fn().mockResolvedValue(undefined),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1", runId: "run-1" });
+
+    await store.submitActionLowLatency({
+      playerId: "player_0",
+      action: {
+        move: "right",
+        metadata: {
+          input_seq: 7,
+        },
+      },
+    });
+
+    expect(client.submitActionLowLatency).toHaveBeenCalledWith({
+      sessionId: "sample-1",
+      runId: "run-1",
+      payload: {
+        playerId: "player_0",
+        action: {
+          move: "right",
+          metadata: {
+            input_seq: 7,
+          },
+        },
+      },
+    });
+    expect(store.getSnapshot().latestActionReceipt).toBeUndefined();
+  });
+
   it("clears stale session data immediately when a new session starts loading", async () => {
     const secondSession = deferred<VisualSession>();
     const secondTimeline = deferred<TimelinePage>();
@@ -1225,6 +1333,7 @@ function createStubClient(
       intentId: "intent-1",
       state: "accepted",
     }),
+    submitActionLowLatency: vi.fn().mockResolvedValue(undefined),
     submitChat: vi.fn().mockResolvedValue({
       intentId: "chat-1",
       state: "accepted",
@@ -1233,6 +1342,12 @@ function createStubClient(
       intentId: "control-1",
       state: "accepted",
     }),
+    buildRealtimeActionSocketUrl: vi.fn().mockReturnValue(
+      "ws://arena.local/arena_visual/sessions/sample-1/actions/ws",
+    ),
+    buildLiveUpdatesStreamUrl: vi.fn().mockReturnValue(
+      "http://arena.local/arena_visual/sessions/sample-1/events",
+    ),
     buildMediaUrl: vi.fn().mockReturnValue("/media/frame-1"),
     ...overrides,
   };

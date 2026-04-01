@@ -47,6 +47,9 @@ export function usePlaybackControls(store: ArenaSessionStore) {
     finish() {
       return store.submitControl({ commandType: "finish" });
     },
+    restart() {
+      return store.submitControl({ commandType: "restart" });
+    },
     async loadMoreTimeline(limit?: number) {
       await store.loadMoreTimeline({ limit });
     },

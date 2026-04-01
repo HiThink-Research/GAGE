@@ -464,6 +464,19 @@ def _assert_scene_core_content(scene: dict[str, Any]) -> None:
             raise AssertionError("Frame scene is missing primary media")
         return
 
+    if kind == "rts":
+        frame = _mapping_or_empty(body.get("frame"))
+        rts = _mapping_or_empty(body.get("rts"))
+        primary = _mapping_or_empty(_mapping_or_empty(scene.get("media")).get("primary"))
+        units = rts.get("units")
+        if not frame.get("title"):
+            raise AssertionError("RTS scene is missing frame metadata")
+        if not primary:
+            raise AssertionError("RTS scene is missing primary media")
+        if not isinstance(units, list) or not units:
+            raise AssertionError("RTS scene is missing unit payloads")
+        return
+
     raise AssertionError(f"Unsupported visual kind in browser probe: {kind}")
 
 
@@ -483,7 +496,7 @@ def _assert_scene_progression(
     if first_body != last_body:
         return
 
-    if kind == "frame":
+    if kind in {"frame", "rts"}:
         first_media_id = _mapping_or_empty(
             _mapping_or_empty(first_scene.get("media")).get("primary")
         ).get("mediaId")
@@ -605,7 +618,18 @@ def _read_bytes(url: str) -> bytes:
 def _read_stream_prefix(url: str) -> tuple[str, bytes]:
     with urlopen(url, timeout=2.0) as response:  # noqa: S310
         content_type = str(response.headers.get("Content-Type") or "")
-        return content_type, response.read(512)
+        prefix_parts: list[bytes] = []
+        for _ in range(4):
+            try:
+                line = response.readline()
+            except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+                break
+            if not line:
+                break
+            prefix_parts.append(line)
+            if line in {b"\r\n", b"\n"}:
+                break
+        return content_type, b"".join(prefix_parts)
 
 
 @contextmanager

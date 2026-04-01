@@ -7,7 +7,8 @@ metadata:
     GameArena Retro Mario human-play config for the arena_visual web app. The
     runtime uses the real stable-retro backend and exposes the live frame scene
     so the browser can drive Mario through human input events instead of a stub
-    player or LLM backend.
+    player or LLM backend. This pure-human preset is tuned for continuous
+    realtime play instead of turn-by-turn intent submission.
 
 datasets:
   - dataset_id: retro_mario_gamekit_fixture_only
@@ -31,9 +32,38 @@ role_adapters:
         backend_mode: real
         default_state: Start
         display_mode: headless
-        obs_image: true
+        obs_image: false
         frame_stride: 1
-        max_turns: 256
+        legal_moves:
+          - noop
+          - left
+          - right
+          - up
+          - down
+          - jump
+          - run
+          - left_jump
+          - right_jump
+          - left_run
+          - right_run
+          - left_run_jump
+          - right_run_jump
+          - start
+          - select
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 1
+          hold_ticks_default: 1
+        max_turns: 7200
+        runtime_binding_policy_config:
+          mode: scheduler_owned_human_realtime
+          activation_scope: pure_human_only
+          input_model: continuous_state
+          input_transport: realtime_ws
+          tick_interval_ms: 16
+          frame_output_hz: 60
+          artifact_sampling_mode: async_decimated_live
+          fallback_move: noop
       human_input:
         enabled: true
         host: 127.0.0.1
@@ -44,9 +74,15 @@ role_adapters:
         launch_browser: true
         mode: arena_visual
         port: 5808
-        live_scene_scheme: http_pull
+        live_scene_scheme: low_latency_channel
         linger_after_finish_s: 15.0
       players:
         - seat: player_0
           player_id: player_0
           player_kind: human
+          driver_params:
+            input_semantics: continuous_state
+            stateful_actions: true
+            tick_interval_ms: 16
+            timeout_ms: 16
+            timeout_fallback_move: noop

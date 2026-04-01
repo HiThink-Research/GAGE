@@ -30,11 +30,12 @@ role_adapters:
         backend_mode: real
         show_pov: false
         capture_pov: true
-        obs_image: true
+        obs_image: false
         frame_stride: 1
         max_steps: 600
         action_repeat: 1
         sleep_s: 0.0
+        allow_partial_actions: true
         allow_respawn: true
         respawn_grace_steps: 600
         reset_retry_count: 3
@@ -49,12 +50,18 @@ role_adapters:
         launch_browser: true
         mode: arena_visual
         port: 5809
-        live_scene_scheme: http_pull
+        live_scene_scheme: low_latency_channel
         linger_after_finish_s: 15.0
       players:
         - seat: p0
           player_id: p0
           player_kind: human
+          driver_params:
+            input_semantics: continuous_state
+            stateful_actions: true
+            tick_interval_ms: 16
+            timeout_ms: 16
+            timeout_fallback_move: "0"
         - seat: p1
           player_id: p1
           player_kind: dummy

@@ -10,7 +10,14 @@ from gage_eval.role.arena.player_drivers.registry import PlayerDriverRegistry
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.schedulers.registry import SchedulerRegistry
 from gage_eval.role.arena.support.registry import SupportWorkflowRegistry
-from gage_eval.game_kits.contracts import EnvSpec, GameKit, ResolvedRuntimeBinding
+from gage_eval.game_kits.contracts import (
+    EnvSpec,
+    GameKit,
+    HumanRealtimeInputProfile,
+    RealtimeHumanControlProfile,
+    ResolvedRuntimeBinding,
+    ResolvedRuntimeProfile,
+)
 from gage_eval.game_kits.observation import ObservationWorkflowRegistry
 from gage_eval.game_kits.registry import GameKitRegistry
 from gage_eval.game_kits.visualization_specs import VisualizationSpecRegistry
@@ -93,11 +100,18 @@ class RuntimeBindingResolver:
         game_content_refs = self._resolve_game_content_refs(sample, game_kit, env_spec)
         support_workflow_id = self._resolve_support_workflow_id(sample, game_kit, env_spec)
         player_bindings = self._resolve_player_bindings(sample=sample, game_kit=game_kit)
+        scheduler = self.schedulers.build(scheduler_binding)
+        runtime_profile = self._resolve_runtime_profile(
+            sample=sample,
+            scheduler_binding=scheduler_binding,
+            scheduler=scheduler,
+            player_bindings=player_bindings,
+        )
 
         return ResolvedRuntimeBinding(
             game_kit=game_kit,
             env_spec=env_spec,
-            scheduler=self.schedulers.build(scheduler_binding),
+            scheduler=scheduler,
             resource_spec=env_spec.resource_spec,
             runtime_binding_policy=runtime_binding_policy,
             game_display=game_display,
@@ -113,6 +127,7 @@ class RuntimeBindingResolver:
             player_driver_registry=self.player_drivers,
             observation_workflow=self.observation_workflows.build(observation_workflow_id),
             support_workflow=self.support_workflows.build(support_workflow_id),
+            runtime_profile=runtime_profile,
         )
 
     def _resolve_player_bindings(
@@ -430,12 +445,225 @@ class RuntimeBindingResolver:
                 f"legacy player fields are not supported: {joined}"
             )
 
+    @classmethod
+    def _resolve_runtime_profile(
+        cls,
+        *,
+        sample: ArenaSample,
+        scheduler_binding: str,
+        scheduler: object,
+        player_bindings: tuple[PlayerBindingSpec, ...],
+    ) -> ResolvedRuntimeProfile:
+        scheduler_family = cls._coerce_optional_text(getattr(scheduler, "family", None)) or "turn"
+        human_realtime_inputs = cls._resolve_human_realtime_inputs(
+            scheduler_family=scheduler_family,
+            player_bindings=player_bindings,
+        )
+        session_tick_interval_ms = cls._resolve_session_tick_interval_ms(human_realtime_inputs)
+        has_realtime_human_inputs = (
+            scheduler_family == "real_time_tick"
+            and bool(human_realtime_inputs)
+            and session_tick_interval_ms is not None
+        )
+        pure_human_realtime = (
+            scheduler_family == "real_time_tick"
+            and bool(player_bindings)
+            and all(binding.player_kind == "human" for binding in player_bindings)
+        )
+        realtime_human_control = cls._resolve_realtime_human_control(
+            sample=sample,
+            scheduler_family=scheduler_family,
+            pure_human_realtime=pure_human_realtime,
+            human_realtime_inputs=human_realtime_inputs,
+            session_tick_interval_ms=session_tick_interval_ms,
+        )
+        if realtime_human_control is not None:
+            session_tick_interval_ms = int(realtime_human_control.tick_interval_ms)
+        scheduler_owns_realtime_clock = (
+            realtime_human_control is not None
+            and realtime_human_control.mode == "scheduler_owned_human_realtime"
+            and realtime_human_control.activation_scope == "pure_human_only"
+            and pure_human_realtime
+            and session_tick_interval_ms is not None
+        )
+        supports_realtime_input = (
+            has_realtime_human_inputs
+            and cls._supports_scheduler_owned_realtime_input(realtime_human_control)
+        )
+        return ResolvedRuntimeProfile(
+            scheduler_binding=str(scheduler_binding),
+            scheduler_family=scheduler_family,
+            tick_interval_ms=session_tick_interval_ms,
+            pure_human_realtime=pure_human_realtime,
+            scheduler_owns_realtime_clock=scheduler_owns_realtime_clock,
+            supports_low_latency_realtime_input=supports_realtime_input,
+            supports_realtime_input_websocket=supports_realtime_input,
+            human_realtime_inputs=human_realtime_inputs,
+            realtime_human_control=realtime_human_control,
+        )
+
+    @classmethod
+    def _resolve_realtime_human_control(
+        cls,
+        *,
+        sample: ArenaSample,
+        scheduler_family: str,
+        pure_human_realtime: bool,
+        human_realtime_inputs: tuple[HumanRealtimeInputProfile, ...],
+        session_tick_interval_ms: int | None,
+    ) -> RealtimeHumanControlProfile | None:
+        if scheduler_family != "real_time_tick" or not pure_human_realtime or not human_realtime_inputs:
+            return None
+        config = cls._resolve_realtime_human_policy_config(sample)
+        if config is None:
+            return None
+        mode = cls._coerce_optional_text(config.get("mode"))
+        activation_scope = cls._coerce_optional_text(config.get("activation_scope"))
+        input_model = cls._coerce_optional_text(config.get("input_model"))
+        if mode != "scheduler_owned_human_realtime":
+            return None
+        if activation_scope != "pure_human_only":
+            return None
+        if input_model not in {"continuous_state", "queued_command"}:
+            return None
+        tick_interval_ms = cls._coerce_positive_int(config.get("tick_interval_ms"))
+        if tick_interval_ms is None:
+            tick_interval_ms = session_tick_interval_ms
+        if tick_interval_ms is None:
+            return None
+        frame_output_hz = cls._coerce_positive_int(config.get("frame_output_hz"))
+        input_transport = cls._coerce_optional_text(config.get("input_transport"))
+        artifact_sampling_mode = cls._coerce_optional_text(config.get("artifact_sampling_mode"))
+        fallback_move = cls._coerce_optional_text(config.get("fallback_move"))
+        if fallback_move is None:
+            fallback_move = cls._coerce_optional_text(human_realtime_inputs[0].timeout_fallback_move)
+        return RealtimeHumanControlProfile(
+            mode=mode,
+            activation_scope=activation_scope,
+            input_model=input_model,
+            tick_interval_ms=tick_interval_ms,
+            input_transport=input_transport,
+            frame_output_hz=frame_output_hz,
+            artifact_sampling_mode=artifact_sampling_mode,
+            fallback_move=fallback_move,
+        )
+
+    @staticmethod
+    def _supports_scheduler_owned_realtime_input(
+        realtime_human_control: RealtimeHumanControlProfile | None,
+    ) -> bool:
+        if realtime_human_control is None:
+            return False
+        return (
+            realtime_human_control.mode == "scheduler_owned_human_realtime"
+            and realtime_human_control.activation_scope == "pure_human_only"
+            and realtime_human_control.input_transport == "realtime_ws"
+        )
+
+    @staticmethod
+    def _resolve_realtime_human_policy_config(sample: ArenaSample) -> Mapping[str, object] | None:
+        overrides = dict(sample.runtime_overrides or {})
+        candidates = (
+            overrides.get("runtime_binding_policy_config"),
+            overrides.get("realtime_human_policy"),
+        )
+        for candidate in candidates:
+            if isinstance(candidate, Mapping):
+                return dict(candidate)
+        runtime_binding_policy = overrides.get("runtime_binding_policy")
+        if isinstance(runtime_binding_policy, Mapping):
+            return dict(runtime_binding_policy)
+        return None
+
+    @classmethod
+    def _resolve_human_realtime_inputs(
+        cls,
+        *,
+        scheduler_family: str,
+        player_bindings: tuple[PlayerBindingSpec, ...],
+    ) -> tuple[HumanRealtimeInputProfile, ...]:
+        if scheduler_family != "real_time_tick":
+            return ()
+        profiles: list[HumanRealtimeInputProfile] = []
+        for binding in player_bindings:
+            if binding.player_kind != "human":
+                continue
+            params = dict(binding.driver_params or {})
+            tick_interval_ms = cls._resolve_player_tick_interval_ms(params)
+            timeout_ms = cls._coerce_positive_int(params.get("timeout_ms"))
+            timeout_fallback_move = cls._coerce_optional_text(params.get("timeout_fallback_move"))
+            profiles.append(
+                HumanRealtimeInputProfile(
+                    player_id=str(binding.player_id),
+                    semantics=cls._resolve_realtime_input_semantics(params),
+                    tick_interval_ms=tick_interval_ms,
+                    timeout_ms=timeout_ms,
+                    timeout_fallback_move=timeout_fallback_move,
+                )
+            )
+        return tuple(profiles)
+
+    @classmethod
+    def _resolve_realtime_input_semantics(cls, params: Mapping[str, object]) -> str:
+        explicit = cls._coerce_optional_text(
+            params.get("input_semantics") or params.get("realtime_input_semantics")
+        )
+        if explicit in {"continuous_state", "queued_command"}:
+            return explicit
+        if cls._coerce_optional_bool(params.get("stateful_actions"), default=False):
+            return "continuous_state"
+        return "queued_command"
+
+    @classmethod
+    def _resolve_session_tick_interval_ms(
+        cls,
+        profiles: tuple[HumanRealtimeInputProfile, ...],
+    ) -> int | None:
+        intervals = [
+            int(profile.tick_interval_ms)
+            for profile in profiles
+            if profile.tick_interval_ms is not None and int(profile.tick_interval_ms) > 0
+        ]
+        if not intervals:
+            return None
+        return min(intervals)
+
+    @classmethod
+    def _resolve_player_tick_interval_ms(cls, params: Mapping[str, object]) -> int | None:
+        tick_interval_ms = cls._coerce_positive_int(params.get("tick_interval_ms"))
+        if tick_interval_ms is not None:
+            return tick_interval_ms
+        return cls._coerce_positive_int(params.get("timeout_ms"))
+
     @staticmethod
     def _coerce_optional_text(value: object) -> str | None:
         if value is None:
             return None
         text = str(value).strip()
         return text or None
+
+    @staticmethod
+    def _coerce_positive_int(value: object) -> int | None:
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return None
+        if normalized <= 0:
+            return None
+        return normalized
+
+    @staticmethod
+    def _coerce_optional_bool(value: object, *, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
 
 
 __all__ = ["PlayerDriverRegistry", "RuntimeBindingResolver"]

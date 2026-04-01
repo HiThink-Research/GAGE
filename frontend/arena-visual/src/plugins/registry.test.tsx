@@ -39,6 +39,11 @@ describe("resolveArenaPlugin", () => {
       supportedObservers: ["player", "camera"],
       acceptsHumanIntent: true,
     },
+    "arena.visualization.openra.rts_v1": {
+      sceneKinds: ["rts"],
+      supportedObservers: ["player", "spectator", "camera"],
+      acceptsHumanIntent: true,
+    },
   } as const;
 
   it("resolves known plugins by exact plugin_id", () => {

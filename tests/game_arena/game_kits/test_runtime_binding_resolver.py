@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
+import yaml
 
 from gage_eval.role.arena.core.types import ArenaSample
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_runtime_binding_resolver_prefers_sample_env_over_default(fake_game_kit_registry) -> None:
@@ -64,6 +69,174 @@ def test_runtime_binding_resolver_defaults_single_env_kit_without_explicit_env(f
 
     assert resolved.env_spec.env_id == "gomoku_standard"
     assert resolved.resource_spec == {"env_id": "gomoku_standard"}
+
+
+@pytest.mark.parametrize(
+    ("config_relpath", "expected_driver_params"),
+    [
+            (
+                "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
+                {
+                    "input_semantics": "continuous_state",
+                    "stateful_actions": True,
+                    "tick_interval_ms": 16,
+                    "timeout_ms": 16,
+                    "timeout_fallback_move": "noop",
+                },
+            ),
+            (
+                "config/custom/vizdoom/vizdoom_human_visual_gamekit.yaml",
+                {
+                    "input_semantics": "continuous_state",
+                    "stateful_actions": True,
+                    "tick_interval_ms": 16,
+                    "timeout_ms": 16,
+                    "timeout_fallback_move": "0",
+                },
+            ),
+            (
+                "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
+                {
+                    "input_semantics": "queued_command",
+                    "tick_interval_ms": 50,
+                    "timeout_ms": 50,
+                    "timeout_fallback_move": "noop",
+                },
+            ),
+    ],
+)
+def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
+    config_relpath: str,
+    expected_driver_params: dict[str, object],
+) -> None:
+    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
+    registry_module = importlib.import_module("gage_eval.game_kits.registry")
+
+    payload = yaml.safe_load(
+        (REPO_ROOT / config_relpath).read_text(encoding="utf-8")
+    )
+    params = payload["role_adapters"][0]["params"]
+    sample = ArenaSample(
+        game_kit=str(params["game_kit"]),
+        env=str(params["env"]),
+        players=tuple(dict(player) for player in params["players"]),
+        runtime_overrides=dict(params["runtime_overrides"]),
+    )
+    resolver = runtime_binding.RuntimeBindingResolver(game_kits=registry_module.GameKitRegistry())
+
+    resolved = resolver.resolve(sample)
+
+    assert resolved.scheduler.binding_id == "real_time_tick/default"
+    assert resolved.player_bindings[0].driver_id == "player_driver/human_local_input"
+    assert resolved.player_bindings[0].driver_params == expected_driver_params
+
+
+@pytest.mark.parametrize(
+    (
+        "config_relpath",
+        "expected_semantics",
+        "expected_tick_ms",
+        "expected_pure_human",
+        "expected_low_latency",
+    ),
+    [
+        (
+            "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
+            "continuous_state",
+            16,
+            True,
+            True,
+        ),
+        (
+            "config/custom/vizdoom/vizdoom_human_visual_gamekit.yaml",
+            "continuous_state",
+            16,
+            False,
+            False,
+        ),
+        (
+            "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
+            "queued_command",
+            50,
+            True,
+            True,
+        ),
+    ],
+)
+def test_runtime_binding_resolver_builds_realtime_runtime_profile_from_config(
+    config_relpath: str,
+    expected_semantics: str,
+    expected_tick_ms: int,
+    expected_pure_human: bool,
+    expected_low_latency: bool,
+) -> None:
+    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
+    registry_module = importlib.import_module("gage_eval.game_kits.registry")
+
+    payload = yaml.safe_load(
+        (REPO_ROOT / config_relpath).read_text(encoding="utf-8")
+    )
+    params = payload["role_adapters"][0]["params"]
+    sample = ArenaSample(
+        game_kit=str(params["game_kit"]),
+        env=str(params["env"]),
+        players=tuple(dict(player) for player in params["players"]),
+        runtime_overrides=dict(params["runtime_overrides"]),
+    )
+    resolver = runtime_binding.RuntimeBindingResolver(game_kits=registry_module.GameKitRegistry())
+
+    resolved = resolver.resolve(sample)
+
+    assert resolved.runtime_profile is not None
+    assert resolved.runtime_profile.scheduler_binding == "real_time_tick/default"
+    assert resolved.runtime_profile.scheduler_family == "real_time_tick"
+    assert resolved.runtime_profile.tick_interval_ms == expected_tick_ms
+    assert resolved.runtime_profile.pure_human_realtime is expected_pure_human
+    assert resolved.runtime_profile.supports_low_latency_realtime_input is expected_low_latency
+    assert resolved.runtime_profile.supports_realtime_input_websocket is expected_low_latency
+
+    human_profile = resolved.runtime_profile.human_realtime_inputs[0]
+    assert human_profile.player_id == resolved.player_bindings[0].player_id
+    assert human_profile.semantics == expected_semantics
+    assert human_profile.tick_interval_ms == expected_tick_ms
+
+    if expected_pure_human:
+        assert resolved.runtime_profile.scheduler_owns_realtime_clock is True
+        assert resolved.runtime_profile.realtime_human_control is not None
+        assert resolved.runtime_profile.realtime_human_control.mode == "scheduler_owned_human_realtime"
+        assert resolved.runtime_profile.realtime_human_control.tick_interval_ms == expected_tick_ms
+    else:
+        assert resolved.runtime_profile.scheduler_owns_realtime_clock is False
+        assert resolved.runtime_profile.realtime_human_control is None
+
+
+def test_runtime_binding_resolver_requires_explicit_scheduler_owned_policy_for_realtime_input_capabilities() -> None:
+    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
+    registry_module = importlib.import_module("gage_eval.game_kits.registry")
+
+    payload = yaml.safe_load(
+        (REPO_ROOT / "config/custom/vizdoom/vizdoom_human_visual_gamekit.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    params = payload["role_adapters"][0]["params"]
+    runtime_overrides = dict(params["runtime_overrides"])
+    runtime_overrides.pop("runtime_binding_policy_config", None)
+    sample = ArenaSample(
+        game_kit=str(params["game_kit"]),
+        env=str(params["env"]),
+        players=tuple(dict(player) for player in params["players"]),
+        runtime_overrides=runtime_overrides,
+    )
+    resolver = runtime_binding.RuntimeBindingResolver(game_kits=registry_module.GameKitRegistry())
+
+    resolved = resolver.resolve(sample)
+
+    assert resolved.runtime_profile is not None
+    assert resolved.runtime_profile.realtime_human_control is None
+    assert resolved.runtime_profile.scheduler_owns_realtime_clock is False
+    assert resolved.runtime_profile.supports_low_latency_realtime_input is False
+    assert resolved.runtime_profile.supports_realtime_input_websocket is False
 
 
 def test_runtime_binding_resolver_uses_clone_local_scheduler_binding(fake_game_kit_registry) -> None:
@@ -194,6 +367,75 @@ def test_runtime_binding_resolver_supports_spec_backed_game_kit(fake_game_kit_re
     assert resolved.game_kit.kit_id == "arena/default"
     assert resolved.env_spec.env_id == "arena/default"
     assert resolved.scheduler.binding_id == "turn/default"
+
+
+@pytest.mark.parametrize(
+    ("env_id", "expected_resource_spec", "expected_content_refs"),
+    [
+        (
+            "ra_map01",
+            {"env_id": "ra_map01", "family": "openra"},
+            {
+                "mod": "mod/openra/ra",
+                "map": "map/openra/ra_map01",
+            },
+        ),
+        (
+            "ra_skirmish_1v1",
+            {"env_id": "ra_skirmish_1v1", "family": "openra", "mod": "ra"},
+            {
+                "mod": "mod/openra/ra",
+                "map": "map/openra/ra/marigold-town.oramap",
+            },
+        ),
+        (
+            "cnc_mission_gdi01",
+            {"env_id": "cnc_mission_gdi01", "family": "openra", "mod": "cnc"},
+            {
+                "mod": "mod/openra/cnc",
+                "map": "map/openra/cnc/gdi01",
+                "script": "script/openra/gdi01.lua",
+            },
+        ),
+        (
+            "d2k_skirmish_1v1",
+            {"env_id": "d2k_skirmish_1v1", "family": "openra", "mod": "d2k"},
+            {
+                "mod": "mod/openra/d2k",
+                "map": "map/openra/d2k/chin-rock.oramap",
+            },
+        ),
+    ],
+)
+def test_runtime_binding_resolver_resolves_openra_realtime_kit(
+    env_id: str,
+    expected_resource_spec: dict[str, str],
+    expected_content_refs: dict[str, str],
+) -> None:
+    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
+    registry_module = importlib.import_module("gage_eval.game_kits.registry")
+
+    resolver = runtime_binding.RuntimeBindingResolver(game_kits=registry_module.GameKitRegistry())
+    sample = ArenaSample(
+        game_kit="openra",
+        env=env_id,
+        runtime_overrides={"backend_mode": "dummy"},
+    )
+
+    resolved = resolver.resolve(sample)
+
+    assert resolved.game_kit.kit_id == "openra"
+    assert resolved.env_spec.env_id == env_id
+    assert resolved.scheduler.binding_id == "real_time_tick/default"
+    assert resolved.resource_spec == expected_resource_spec
+    assert resolved.visualization_spec is not None
+    assert resolved.visualization_spec.spec_id == "arena/visualization/openra_rts_v1"
+    assert resolved.visualization_spec.plugin_id == "arena.visualization.openra.rts_v1"
+    assert resolved.input_mapper == (
+        "gage_eval.game_kits.real_time_game.openra.input_mapper.OpenRAInputMapper"
+    )
+    for key, value in expected_content_refs.items():
+        assert resolved.game_content_refs[key] == value
 
 
 def test_runtime_binding_resolver_resolves_support_workflow(fake_game_kit_registry) -> None:

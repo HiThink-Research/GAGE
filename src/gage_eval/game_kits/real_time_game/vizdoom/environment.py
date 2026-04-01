@@ -21,13 +21,15 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Image = None
 
-DEFAULT_ACTION_LABELS = ("turn_left", "turn_right", "move_forward", "move_backward", "attack")
+DEFAULT_ACTION_LABELS = ("noop", "attack", "turn_left", "turn_right", "move_forward")
 ACTION_ID_MAPPING = {
+    0: "NOOP",
     1: "ATTACK",
     2: "TURN_LEFT",
     3: "TURN_RIGHT",
+    4: "MOVE_FORWARD",
 }
-ALLOWED_ACTION_IDS = (1, 2, 3)
+ALLOWED_ACTION_IDS = (0, 1, 2, 3, 4)
 
 
 @dataclass

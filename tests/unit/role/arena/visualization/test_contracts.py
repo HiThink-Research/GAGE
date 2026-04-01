@@ -225,6 +225,24 @@ def test_control_command_round_trip_for_seek() -> None:
     assert ControlCommand.from_dict(payload) == command
 
 
+def test_control_command_round_trip_for_restart() -> None:
+    command = ControlCommand(
+        command_type="restart",
+        issued_by=ObserverRef(observer_id="player_0", observer_kind="player"),
+    )
+
+    payload = command.to_dict()
+
+    assert payload == {
+        "commandType": "restart",
+        "issuedBy": {
+            "observerId": "player_0",
+            "observerKind": "player",
+        },
+    }
+    assert ControlCommand.from_dict(payload) == command
+
+
 @pytest.mark.parametrize(
     ("payload", "expected_payload"),
     [

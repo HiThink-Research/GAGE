@@ -36,6 +36,7 @@ PLUGIN_IDS_BY_GAME_KIT = {
     "pettingzoo": "arena.visualization.pettingzoo.frame_v1",
     "retro_platformer": "arena.visualization.retro_platformer.frame_v1",
     "vizdoom": "arena.visualization.vizdoom.frame_v1",
+    "openra": "arena.visualization.openra.rts_v1",
 }
 
 
@@ -125,6 +126,36 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "duel_map01",
     ),
     GameKitConfigCase(
+        "config/custom/openra/openra_dummy_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "openra",
+        "ra_map01",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_ra_skirmish_dummy_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "openra",
+        "ra_skirmish_1v1",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_cnc_dummy_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "openra",
+        "cnc_mission_gdi01",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_d2k_dummy_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "openra",
+        "d2k_skirmish_1v1",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_llm_headless_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "openra",
+        "ra_map01",
+    ),
+    GameKitConfigCase(
         "config/custom/doudizhu/doudizhu_dummy_visual_gamekit.yaml",
         VISUAL_NO_HUMAN,
         "doudizhu",
@@ -172,7 +203,7 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "pettingzoo",
         "space_invaders",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
-        live_scene_scheme="http_pull",
+        live_scene_scheme="low_latency_channel",
     ),
     GameKitConfigCase(
         "config/custom/pettingzoo/space_invaders_double_llm_visual_low_latency_channel_gamekit.yaml",
@@ -180,7 +211,7 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "pettingzoo",
         "space_invaders",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
-        live_scene_scheme="low_latency_channel",
+        live_scene_scheme="http_pull",
     ),
     GameKitConfigCase(
         "config/custom/pettingzoo/space_invaders_dummy_visual_binary_stream_gamekit.yaml",
@@ -245,6 +276,54 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         live_scene_scheme="http_pull",
     ),
     GameKitConfigCase(
+        "config/custom/openra/openra_dummy_visual_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "openra",
+        "ra_map01",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_ra_skirmish_dummy_visual_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "openra",
+        "ra_skirmish_1v1",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_ra_skirmish_native_dummy_visual_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "openra",
+        "ra_skirmish_1v1",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="low_latency_channel",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_cnc_dummy_visual_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "openra",
+        "cnc_mission_gdi01",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_d2k_dummy_visual_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "openra",
+        "d2k_skirmish_1v1",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_llm_visual_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "openra",
+        "ra_map01",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
         "config/custom/doudizhu/doudizhu_human_visual_acceptance_gamekit.yaml",
         HUMAN_VISUAL,
         "doudizhu",
@@ -300,7 +379,7 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "retro_platformer",
         "retro_mario",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["retro_platformer"],
-        live_scene_scheme="http_pull",
+        live_scene_scheme="low_latency_channel",
     ),
     GameKitConfigCase(
         "config/custom/tictactoe/tictactoe_human_visual_gamekit.yaml",
@@ -315,7 +394,15 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "vizdoom",
         "duel_map01",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["vizdoom"],
-        live_scene_scheme="http_pull",
+        live_scene_scheme="low_latency_channel",
+    ),
+    GameKitConfigCase(
+        "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
+        HUMAN_VISUAL,
+        "openra",
+        "ra_skirmish_1v1",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
+        live_scene_scheme="low_latency_channel",
     ),
 )
 

@@ -99,6 +99,33 @@ describe("GlobalControlBar", () => {
     expect(onFinish).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a restart control when the session supports live restart", () => {
+    const onRestart = vi.fn();
+
+    render(
+      <GlobalControlBar
+        playbackMode="live_tail"
+        playbackSpeed={1}
+        scheduling={{
+          family: "real_time_tick",
+          phase: "advancing",
+          acceptsHumanIntent: true,
+        }}
+        onPause={vi.fn()}
+        onPlayLive={vi.fn()}
+        onReplay={vi.fn()}
+        onSetSpeed={vi.fn()}
+        onStep={vi.fn()}
+        onSeekEnd={vi.fn()}
+        onBackToTail={vi.fn()}
+        onRestart={onRestart}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^restart$/i }));
+    expect(onRestart).toHaveBeenCalledTimes(1);
+  });
+
   it("disables playback controls according to the current playback scene", () => {
     render(
       <GlobalControlBar

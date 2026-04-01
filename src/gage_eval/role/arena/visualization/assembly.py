@@ -57,6 +57,13 @@ def assemble_visual_scene(
             event_payload=event.payload,
             visualization_spec=visualization_spec,
         )
+    elif kind == "rts":
+        body, legal_actions, active_player_id, overlays = _project_rts_scene(
+            visual_session=visual_session,
+            snapshot_body=snapshot_body,
+            event_payload=event.payload,
+            visualization_spec=visualization_spec,
+        )
     else:
         active_player_id = _extract_active_player(snapshot_body, event.payload)
         legal_actions = _extract_legal_actions(snapshot_body, event.payload)
@@ -93,6 +100,23 @@ def assemble_visual_scene(
             if isinstance(layout, str):
                 summary["tableLayout"] = layout
     elif kind == "frame":
+        frame_payload = body.get("frame") if isinstance(body, Mapping) else None
+        if isinstance(frame_payload, Mapping):
+            title = frame_payload.get("title")
+            stream_id = frame_payload.get("streamId")
+            viewport = frame_payload.get("viewport")
+            if isinstance(title, str):
+                summary["frameTitle"] = title
+            if isinstance(stream_id, str):
+                summary["streamId"] = stream_id
+            if isinstance(viewport, Mapping):
+                width = viewport.get("width")
+                height = viewport.get("height")
+                if isinstance(width, int):
+                    summary["frameWidth"] = width
+                if isinstance(height, int):
+                    summary["frameHeight"] = height
+    elif kind == "rts":
         frame_payload = body.get("frame") if isinstance(body, Mapping) else None
         if isinstance(frame_payload, Mapping):
             title = frame_payload.get("title")
@@ -1251,6 +1275,107 @@ def _project_frame_scene(
     return body, legal_actions, active_player_id, overlays
 
 
+def _project_rts_scene(
+    *,
+    visual_session: VisualSession,
+    snapshot_body: Any,
+    event_payload: Any,
+    visualization_spec: GameVisualizationSpec | None,
+) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], str | None, tuple[dict[str, Any], ...]]:
+    source = _build_projection_source(snapshot_body, event_payload)
+    observation = _mapping_or_empty(source.get("observation"))
+    view = _mapping_or_empty(source.get("view"))
+    if not view:
+        view = _mapping_or_empty(observation.get("view"))
+    context = _mapping_or_empty(source.get("context"))
+    if not context:
+        context = _mapping_or_empty(observation.get("context"))
+    metadata = _mapping_or_empty(source.get("metadata"))
+    if not metadata:
+        metadata = _mapping_or_empty(observation.get("metadata"))
+
+    active_player_id = _extract_active_player(source, observation, context, metadata)
+    observer_player_id = _resolve_frame_observer_player(
+        visual_session=visual_session,
+        source=source,
+    )
+    tick = _coerce_int(source.get("tick") or context.get("tick"), default=0)
+    step = _coerce_int(source.get("step") or context.get("step"), default=tick)
+    move_count = _coerce_int(source.get("move_count"), default=step)
+    last_move = _string_or_none(
+        source.get("last_move") or observation.get("last_move") or metadata.get("last_move")
+    )
+    reward = _coerce_float_or_none(source.get("reward"))
+    if reward is None:
+        reward = _coerce_float_or_none(metadata.get("reward"))
+    stream_id = _string_or_none(source.get("stream_id") or metadata.get("stream_id"))
+    if stream_id is None:
+        stream_id = _string_or_none(
+            _scene_projection_rule_value(visualization_spec, "default_stream_id")
+        )
+    frame_title = (
+        _string_or_none(_scene_projection_rule_value(visualization_spec, "frame_title"))
+        or f"{visual_session.game_id} RTS"
+    )
+    frame_fit = (
+        _string_or_none(_scene_projection_rule_value(visualization_spec, "default_fit"))
+        or "contain"
+    )
+    viewport = _extract_frame_viewport(source, observation, view=view)
+    view_text = _string_or_none(
+        view.get("text") or observation.get("board_text") or source.get("board_text")
+    )
+    legal_actions = _extract_frame_legal_actions(source, observation, metadata)
+    map_id = _string_or_none(
+        metadata.get("map_id") or metadata.get("env_id") or source.get("env_id")
+    )
+    map_payload = _project_rts_map(metadata.get("map"))
+    selection_payload = _project_rts_selection(metadata.get("selection"))
+    economy_payload = _project_rts_economy(metadata.get("economy"))
+    objectives_payload = _project_rts_objectives(metadata.get("objectives"))
+    units_payload = _project_rts_units(metadata.get("units"))
+    production_payload = _project_rts_production(metadata.get("production"))
+    map_title = _string_or_none(map_payload.get("title")) or map_id
+
+    body: dict[str, Any] = {
+        "frame": {
+            "title": frame_title,
+            "subtitle": f"Map {map_title}" if map_title is not None else None,
+            "altText": frame_title,
+            "streamId": stream_id,
+            "fit": frame_fit,
+            "viewport": viewport,
+        },
+        "status": {
+            "activePlayerId": active_player_id,
+            "observerPlayerId": observer_player_id,
+            "tick": tick,
+            "step": step,
+            "moveCount": move_count,
+            "lastMove": last_move,
+            "reward": reward,
+        },
+        "view": {
+            "text": view_text,
+        },
+        "rts": {
+            "map": map_payload,
+            "selection": selection_payload,
+            "economy": economy_payload,
+            "objectives": objectives_payload,
+            "units": units_payload,
+            "production": production_payload,
+        },
+        "snapshot": _sanitize_frame_snapshot(snapshot_body),
+    }
+    overlays = _build_rts_overlays(
+        tick=tick,
+        last_move=last_move,
+        economy=economy_payload,
+    )
+    return body, legal_actions, active_player_id, overlays
+
+
 def _project_doudizhu_table(
     *,
     player_ids: Sequence[str],
@@ -1875,6 +2000,147 @@ def _extract_frame_viewport(
     return None
 
 
+def _project_rts_selection(value: Any) -> dict[str, Any]:
+    payload = _mapping_or_empty(value)
+    unit_ids = payload.get("unit_ids")
+    if not isinstance(unit_ids, Sequence) or isinstance(unit_ids, (str, bytes)):
+        unit_ids = payload.get("unitIds")
+    resolved_unit_ids = (
+        [str(item) for item in unit_ids if item is not None and str(item).strip()]
+        if isinstance(unit_ids, Sequence) and not isinstance(unit_ids, (str, bytes))
+        else []
+    )
+    primary_unit_id = _string_or_none(
+        payload.get("primary_unit_id") or payload.get("primaryUnitId")
+    )
+    return {
+        "unitIds": resolved_unit_ids,
+        "primaryUnitId": primary_unit_id,
+    }
+
+
+def _project_rts_map(value: Any) -> dict[str, Any]:
+    payload = _mapping_or_empty(value)
+    grid_size = _mapping_or_empty(payload.get("map_size") or payload.get("gridSize"))
+    bounds = _mapping_or_empty(payload.get("bounds"))
+    image_size = _mapping_or_empty(payload.get("image_size") or payload.get("imageSize"))
+    return {
+        "id": _string_or_none(payload.get("id")),
+        "modId": _string_or_none(payload.get("mod_id") or payload.get("modId")),
+        "title": _string_or_none(payload.get("title")),
+        "gridSize": {
+            "width": _coerce_optional_int(grid_size.get("width")),
+            "height": _coerce_optional_int(grid_size.get("height")),
+        },
+        "bounds": {
+            "x": _coerce_optional_int(bounds.get("x")),
+            "y": _coerce_optional_int(bounds.get("y")),
+            "width": _coerce_optional_int(bounds.get("width")),
+            "height": _coerce_optional_int(bounds.get("height")),
+        },
+        "imageSize": {
+            "width": _coerce_optional_int(image_size.get("width")),
+            "height": _coerce_optional_int(image_size.get("height")),
+        },
+        "previewSource": _string_or_none(
+            payload.get("preview_source") or payload.get("previewSource")
+        ),
+    }
+
+
+def _project_rts_economy(value: Any) -> dict[str, Any]:
+    payload = _mapping_or_empty(value)
+    power = _mapping_or_empty(payload.get("power"))
+    return {
+        "credits": _coerce_optional_int(payload.get("credits")),
+        "incomePerMinute": _coerce_optional_int(
+            payload.get("income_per_minute") or payload.get("incomePerMinute")
+        ),
+        "power": {
+            "produced": _coerce_optional_int(power.get("produced")),
+            "used": _coerce_optional_int(power.get("used")),
+        },
+    }
+
+
+def _project_rts_objectives(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    projected: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        payload = _mapping_or_empty(item)
+        projected.append(
+            {
+                "id": _string_or_none(payload.get("id")) or f"objective_{index + 1}",
+                "label": _string_or_none(payload.get("label")) or f"Objective {index + 1}",
+                "status": _string_or_none(payload.get("status")) or "unknown",
+            }
+        )
+    return tuple(projected)
+
+
+def _project_rts_units(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    projected: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        payload = _mapping_or_empty(item)
+        position = _mapping_or_empty(payload.get("position"))
+        projected.append(
+            {
+                "id": _string_or_none(payload.get("id")) or f"unit_{index + 1}",
+                "owner": _string_or_none(payload.get("owner")),
+                "label": _string_or_none(payload.get("label")) or f"Unit {index + 1}",
+                "kind": _string_or_none(payload.get("kind")),
+                "hp": _coerce_optional_int(payload.get("hp")),
+                "status": _string_or_none(payload.get("status")),
+                "position": {
+                    "x": _coerce_optional_int(position.get("x")),
+                    "y": _coerce_optional_int(position.get("y")),
+                },
+                "selected": bool(payload.get("selected")),
+            }
+        )
+    return tuple(projected)
+
+
+def _project_rts_production(value: Any) -> tuple[dict[str, Any], ...]:
+    payload = _mapping_or_empty(value)
+    queues = payload.get("queues")
+    if not isinstance(queues, Sequence) or isinstance(queues, (str, bytes)):
+        queues = value
+    if not isinstance(queues, Sequence) or isinstance(queues, (str, bytes)):
+        return ()
+    projected: list[dict[str, Any]] = []
+    for index, item in enumerate(queues):
+        queue_payload = _mapping_or_empty(item)
+        items_payload = queue_payload.get("items")
+        if not isinstance(items_payload, Sequence) or isinstance(items_payload, (str, bytes)):
+            items_payload = ()
+        projected_items: list[dict[str, Any]] = []
+        for item_index, raw_item in enumerate(items_payload):
+            entry_payload = _mapping_or_empty(raw_item)
+            projected_items.append(
+                {
+                    "id": _string_or_none(entry_payload.get("id")) or f"item_{item_index + 1}",
+                    "label": _string_or_none(entry_payload.get("label"))
+                    or f"Item {item_index + 1}",
+                    "progress": _coerce_float_or_none(entry_payload.get("progress")),
+                }
+            )
+        projected.append(
+            {
+                "buildingId": _string_or_none(
+                    queue_payload.get("building_id") or queue_payload.get("buildingId")
+                )
+                or f"queue_{index + 1}",
+                "label": _string_or_none(queue_payload.get("label")) or f"Queue {index + 1}",
+                "items": tuple(projected_items),
+            }
+        )
+    return tuple(projected)
+
+
 def _normalize_viewport(value: Any) -> dict[str, int] | None:
     if isinstance(value, Mapping):
         width = _coerce_int(value.get("width"), default=0)
@@ -1930,6 +2196,34 @@ def _build_frame_overlays(
         overlays.append({"kind": "badge", "label": "Last move", "value": last_move})
     if game_id == "vizdoom" and stream_id is not None:
         overlays.append({"kind": "badge", "label": "Stream", "value": stream_id})
+    return tuple(overlays)
+
+
+def _build_rts_overlays(
+    *,
+    tick: int,
+    last_move: str | None,
+    economy: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    overlays: list[dict[str, Any]] = []
+    credits = _coerce_optional_int(economy.get("credits"))
+    if credits is not None:
+        overlays.append({"kind": "badge", "label": "Credits", "value": str(credits)})
+    power = _mapping_or_empty(economy.get("power"))
+    produced = _coerce_optional_int(power.get("produced"))
+    used = _coerce_optional_int(power.get("used"))
+    if produced is not None and used is not None:
+        overlays.append(
+            {
+                "kind": "badge",
+                "label": "Power",
+                "value": f"{produced - used:+d}",
+            }
+        )
+    if tick > 0:
+        overlays.append({"kind": "badge", "label": "Tick", "value": str(tick)})
+    if last_move is not None:
+        overlays.append({"kind": "badge", "label": "Last move", "value": last_move})
     return tuple(overlays)
 
 
@@ -2311,7 +2605,7 @@ def _extract_scene_media(*payloads: Any, kind: str) -> VisualSceneMedia | None:
     if not refs:
         return None
     ordered = tuple(refs.values())
-    if kind == "frame":
+    if kind in {"frame", "rts"}:
         return VisualSceneMedia(primary=ordered[0], auxiliary=ordered[1:])
     return VisualSceneMedia(auxiliary=ordered)
 

@@ -10,6 +10,7 @@ interface GlobalControlBarProps {
     playLiveDisabled?: boolean;
     pauseDisabled?: boolean;
     replayDisabled?: boolean;
+    restartDisabled?: boolean;
     speedDisabled?: boolean;
     stepBackwardDisabled?: boolean;
     stepForwardDisabled?: boolean;
@@ -17,10 +18,12 @@ interface GlobalControlBarProps {
     backToTailDisabled?: boolean;
     finishDisabled?: boolean;
   };
+  restartLabel?: string;
   finishLabel?: string;
   onPause: () => void;
   onPlayLive: () => void;
   onReplay: () => void;
+  onRestart?: () => void;
   onSetSpeed: (speed: number) => void;
   onStep: (delta: -1 | 1) => void;
   onSeekEnd: () => void;
@@ -35,10 +38,12 @@ export function GlobalControlBar({
   scheduling,
   postLiveStatusLabel,
   controlAvailability,
+  restartLabel = "Restart",
   finishLabel = "Finish",
   onPause,
   onPlayLive,
   onReplay,
+  onRestart,
   onSetSpeed,
   onStep,
   onSeekEnd,
@@ -72,6 +77,16 @@ export function GlobalControlBar({
         >
           Replay
         </button>
+        {onRestart ? (
+          <button
+            type="button"
+            className="control-chip"
+            disabled={disabled || controlAvailability?.restartDisabled}
+            onClick={onRestart}
+          >
+            {restartLabel}
+          </button>
+        ) : null}
         {([0.5, 1, 2] as const).map((speed) => (
           <button
             key={speed}

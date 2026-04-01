@@ -21,6 +21,7 @@ export function RetroMarioPlugin({
       submitInput={submitInput}
       mediaSubscribe={mediaSubscribe}
       keyboardControls={RETRO_MARIO_KEYBOARD_CONTROLS}
+      presentation="immersive"
     />
   );
 }

@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import base64
+import os
+import io
 import json
+import socket
 from pathlib import Path
+import time
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+import pytest
 
 from gage_eval.game_kits.board_game.gomoku.visualization import (
     VISUALIZATION_SPEC as GOMOKU_VISUALIZATION_SPEC,
@@ -11,14 +19,32 @@ from gage_eval.game_kits.board_game.gomoku.visualization import (
 from gage_eval.game_kits.board_game.tictactoe.visualization import (
     VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
 )
+from gage_eval.game_kits.real_time_game.openra.visualization import (
+    VISUALIZATION_SPEC as OPENRA_VISUALIZATION_SPEC,
+)
 from gage_eval.role.arena.core.game_session import _visual_payload_snapshot
 from gage_eval.game_kits.board_game.gomoku.environment import GomokuArenaEnvironment
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
-from gage_eval.role.arena.visualization.http_server import ArenaVisualHTTPServer
+from gage_eval.role.arena.visualization.http_server import (
+    ArenaVisualHTTPServer,
+    _LOW_LATENCY_STREAM_POLL_INTERVAL_S,
+)
+from gage_eval.role.arena.visualization import live_session as live_session_module
 from gage_eval.role.arena.visualization.live_session import RecorderLiveSessionSource
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
+
+_SMALL_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAGUlEQVR4nGNkaGBgYGBg+M8ABYwMjAyMDAwAAB0vAQx0J7s8AAAAAElFTkSuQmCC"
+)
+
+
+def _build_valid_png_bytes() -> bytes:
+    pil_image = __import__("PIL.Image", fromlist=["Image"])
+    buffer = io.BytesIO()
+    pil_image.new("RGB", (6, 6), (22, 108, 74)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _get_json(url: str) -> dict[str, object]:
@@ -43,6 +69,17 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
     return parsed
 
 
+def _post_json_status(url: str, payload: dict[str, object]) -> tuple[int, bytes]:
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request) as response:  # noqa: S310 - local test endpoint
+        return response.status, response.read()
+
+
 def _get_bytes(url: str) -> bytes:
     with urlopen(url) as response:  # noqa: S310 - local test endpoint
         return response.read()
@@ -63,6 +100,55 @@ def _read_http_error(target: str | Request) -> tuple[int, dict[str, object]]:
         payload = json.loads(exc.read().decode("utf-8"))
         assert isinstance(payload, dict)
         return exc.code, payload
+
+
+def _open_websocket(url: str) -> socket.socket:
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = int(parsed.port or (443 if parsed.scheme == "wss" else 80))
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
+    ).encode("utf-8")
+    client = socket.create_connection((host, port), timeout=3)
+    client.sendall(request)
+    response = b""
+    while b"\r\n\r\n" not in response:
+        chunk = client.recv(4096)
+        if not chunk:
+            break
+        response += chunk
+    assert b"101 Switching Protocols" in response
+    return client
+
+
+def _send_websocket_text(client: socket.socket, payload: dict[str, object]) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    mask = os.urandom(4)
+    masked = bytes(
+        value ^ mask[index % 4]
+        for index, value in enumerate(body)
+    )
+    header = bytearray([0x81])
+    body_length = len(masked)
+    if body_length < 126:
+        header.append(0x80 | body_length)
+    elif body_length < (1 << 16):
+        header.append(0x80 | 126)
+        header.extend(body_length.to_bytes(2, "big"))
+    else:
+        header.append(0x80 | 127)
+        header.extend(body_length.to_bytes(8, "big"))
+    client.sendall(bytes(header) + mask + masked)
 
 
 def _persist_visual_session(
@@ -213,6 +299,126 @@ def _build_live_visual_recorder(
             },
         },
         label="live_frame_snapshot",
+        anchor=True,
+    )
+    return recorder
+
+
+def test_low_latency_http_stream_poll_interval_stays_realtime_friendly() -> None:
+    assert _LOW_LATENCY_STREAM_POLL_INTERVAL_S <= (1.0 / 144.0)
+
+
+def _build_openra_live_visual_recorder(
+    *,
+    session_id: str = "sample-openra-live",
+) -> ArenaVisualSessionRecorder:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=OPENRA_VISUALIZATION_SPEC.plugin_id,
+        game_id="openra",
+        scheduling_family="real_time_tick",
+        session_id=session_id,
+    )
+    recorder.record_decision_window_open(
+        ts_ms=3001,
+        step=1,
+        tick=1,
+        player_id="player_0",
+        observation={
+            "active_player": "player_0",
+            "board_text": "Native OpenRA runtime",
+            "view": {
+                "text": "Native OpenRA runtime",
+            },
+            "legal_actions": {
+                "items": [
+                    {"id": "noop", "label": "No-op"},
+                    {"id": "bridge_input", "label": "Native input"},
+                ]
+            },
+            "metadata": {
+                "stream_id": "main",
+                "map_id": "ra_skirmish_1v1",
+                "map": {
+                    "id": "ra_skirmish_1v1",
+                    "mod_id": "ra",
+                    "title": "Marigold Town",
+                    "preview_source": "native_runtime",
+                    "image_size": {"width": 1280, "height": 720},
+                },
+                "selection": {
+                    "unit_ids": [],
+                    "primary_unit_id": None,
+                },
+                "economy": {
+                    "credits": 0,
+                    "income_per_minute": 0,
+                    "power": {"produced": 0, "used": 0},
+                },
+                "objectives": [],
+                "units": [],
+                "production": {"queues": []},
+            },
+        },
+    )
+    recorder.record_snapshot(
+        ts_ms=3002,
+        step=1,
+        tick=1,
+        snapshot={
+            "step": 1,
+            "tick": 1,
+            "move_count": 1,
+            "stream_id": "main",
+            "observation": {
+                "active_player": "player_0",
+                "board_text": "Native OpenRA runtime",
+                "view": {
+                    "text": "Native OpenRA runtime",
+                },
+                "legal_actions": {
+                    "items": [
+                        {"id": "noop", "label": "No-op"},
+                        {"id": "bridge_input", "label": "Native input"},
+                    ]
+                },
+                "metadata": {
+                    "stream_id": "main",
+                    "map_id": "ra_skirmish_1v1",
+                    "map": {
+                        "id": "ra_skirmish_1v1",
+                        "mod_id": "ra",
+                        "title": "Marigold Town",
+                        "preview_source": "native_runtime",
+                        "image_size": {"width": 1280, "height": 720},
+                    },
+                    "selection": {
+                        "unit_ids": [],
+                        "primary_unit_id": None,
+                    },
+                    "economy": {
+                        "credits": 0,
+                        "income_per_minute": 0,
+                        "power": {"produced": 0, "used": 0},
+                    },
+                    "objectives": [],
+                    "units": [],
+                    "production": {"queues": []},
+                },
+            },
+            "media": {
+                "primary": {
+                    "mediaId": "openra-frame-live",
+                    "transport": "http_pull",
+                    "mimeType": "image/png",
+                    "url": "data:image/png;base64,Zm9v",
+                }
+            },
+            "viewport": {
+                "width": 1280,
+                "height": 720,
+            },
+        },
+        label="openra_live_snapshot",
         anchor=True,
     )
     return recorder
@@ -473,6 +679,125 @@ def test_arena_visual_http_server_serves_session_timeline_scene_media_and_marker
         server.stop()
 
 
+def test_arena_visual_http_server_supports_fast_realtime_action_ack(tmp_path: Path) -> None:
+    _persist_visual_session(tmp_path)
+    submitted_actions: list[tuple[str, str | None, dict[str, object]]] = []
+
+    def _action_submitter(session_id: str, run_id: str | None, payload: dict[str, object]) -> ActionIntentReceipt:
+        submitted_actions.append((session_id, run_id, payload))
+        return ActionIntentReceipt(
+            intent_id="intent-fast",
+            state="accepted",
+            related_event_seq=6,
+            reason="queued",
+        )
+
+    server = ArenaVisualHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        base_dir=tmp_path,
+        action_submitter=_action_submitter,
+    )
+    server.start()
+    try:
+        host, port = server.server_address
+        status, body = _post_json_status(
+            f"http://{host}:{port}/arena_visual/sessions/sample-1/actions?fast=1",
+            {
+                "playerId": "player_0",
+                "action": {"move": "fire"},
+            },
+        )
+    finally:
+        server.stop()
+
+    assert status == 204
+    assert body == b""
+    assert submitted_actions == [
+        (
+            "sample-1",
+            None,
+            {
+                "playerId": "player_0",
+                "action": {"move": "fire"},
+            },
+        )
+    ]
+
+
+def test_arena_visual_http_server_accepts_realtime_input_websocket_messages(
+    tmp_path: Path,
+) -> None:
+    recorder = _build_live_visual_recorder(session_id="sample-live-ws")
+    recorder.extra_capabilities["supportsRealtimeInputWebSocket"] = True
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="low_latency_channel",
+    )
+    submitted_actions: list[tuple[str, str | None, dict[str, object]]] = []
+
+    def submit_action(
+        session_id: str,
+        run_id: str | None,
+        payload: dict[str, object],
+    ) -> ActionIntentReceipt:
+        submitted_actions.append((session_id, run_id, dict(payload)))
+        return ActionIntentReceipt(
+            intent_id="intent-ws-1",
+            state="accepted",
+            related_event_seq=2,
+            reason="queued",
+        )
+
+    server = ArenaVisualHTTPServer(
+        host="127.0.0.1",
+        port=0,
+        base_dir=tmp_path,
+        action_submitter=submit_action,
+    )
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        ws_url = (
+            f"ws://{host}:{port}/arena_visual/sessions/sample-live-ws/actions/ws?run_id=run-live"
+        )
+        client = _open_websocket(ws_url)
+        try:
+            _send_websocket_text(
+                client,
+                {
+                    "playerId": "player_0",
+                    "action": {
+                        "move": "right",
+                        "metadata": {"input_seq": 3},
+                    },
+                },
+            )
+            deadline = time.time() + 2.0
+            while not submitted_actions and time.time() < deadline:
+                time.sleep(0.01)
+        finally:
+            client.close()
+
+        assert submitted_actions == [
+            (
+                "sample-live-ws",
+                "run-live",
+                {
+                    "playerId": "player_0",
+                    "action": {
+                        "move": "right",
+                        "metadata": {"input_seq": 3},
+                    },
+                },
+            )
+        ]
+    finally:
+        server.stop()
+
+
 def test_arena_visual_http_server_serves_registered_live_session_without_manifest(tmp_path: Path) -> None:
     recorder = _build_live_visual_recorder()
     live_source = RecorderLiveSessionSource(
@@ -511,6 +836,113 @@ def test_arena_visual_http_server_serves_registered_live_session_without_manifes
         assert str(primary_media["url"]).startswith("data:image/png;base64,")
         assert media_payload["transport"] == "http_pull"
         assert media_content == b"foo"
+    finally:
+        server.stop()
+
+
+def test_live_session_refresh_payload_omits_snapshot_anchor_list_for_low_latency_sessions() -> None:
+    recorder = _build_live_visual_recorder(session_id="sample-live-lightweight")
+    for seq in range(3, 18):
+        recorder.record_snapshot(
+            ts_ms=2000 + seq,
+            step=seq,
+            tick=seq,
+            snapshot={
+                "step": seq,
+                "tick": seq,
+                "observation": {"metadata": {"stream_id": "main"}},
+            },
+            label="live_frame_snapshot",
+            anchor=True,
+        )
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="low_latency_channel",
+    )
+
+    session = live_source.load_session()
+    timeline_page = live_source.page_timeline(limit=3)
+
+    assert session.timeline["eventCount"] == 17
+    assert session.timeline["tailSeq"] == 17
+    assert session.timeline["snapshotAnchors"] == []
+    assert [event.seq for event in timeline_page.events] == [1, 2, 3]
+
+
+def test_live_session_source_caches_live_scene_and_stream_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _build_live_visual_recorder(session_id="sample-live-cache")
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=lambda: {
+            "stream_id": "main",
+            "_rgb": object(),
+        },
+    )
+
+    assemble_calls = 0
+    original_assemble = live_session_module.assemble_visual_scene
+
+    def _counted_assemble(*args, **kwargs):
+        nonlocal assemble_calls
+        assemble_calls += 1
+        return original_assemble(*args, **kwargs)
+
+    stream_payload_calls = 0
+
+    def _counted_stream_payload(self, media_id: str):
+        nonlocal stream_payload_calls
+        stream_payload_calls += 1
+        return (b"frame-bytes", "image/png")
+
+    monkeypatch.setattr(live_session_module, "assemble_visual_scene", _counted_assemble)
+    monkeypatch.setattr(
+        RecorderLiveSessionSource,
+        "_load_live_frame_stream_payload",
+        _counted_stream_payload,
+    )
+
+    first_scene = live_source.load_scene(seq=2)
+    second_scene = live_source.load_scene(seq=2)
+
+    assert first_scene is not None
+    assert second_scene is not None
+    assert assemble_calls == 1
+    assert first_scene.to_dict() == second_scene.to_dict()
+
+    media_id = str(first_scene.media.primary.media_id)
+    assert live_source.load_stream_frame(media_id) == (b"frame-bytes", "image/png")
+    assert live_source.load_stream_frame(media_id) == (b"frame-bytes", "image/png")
+    assert stream_payload_calls == 1
+
+
+def test_arena_visual_http_server_streams_live_session_updates(tmp_path: Path) -> None:
+    recorder = _build_live_visual_recorder(session_id="sample-live-events")
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live",
+        live_scene_scheme="low_latency_channel",
+    )
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        request = Request(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live-events/events?run_id=run-live&after_seq=0",
+            headers={"Accept": "text/event-stream"},
+            method="GET",
+        )
+        with urlopen(request, timeout=3) as response:  # noqa: S310 - local test endpoint
+            content_type = response.headers.get("Content-Type", "")
+            prefix = b"".join(response.readline() for _ in range(6)).decode("utf-8")
+
+        assert content_type.startswith("text/event-stream")
+        assert "event: delta" in prefix
+        assert '"sessionId": "sample-live-events"' in prefix
+        assert '"timeline"' in prefix
     finally:
         server.stop()
 
@@ -708,10 +1140,17 @@ def test_arena_visual_http_server_serves_registered_low_latency_live_stream_with
         media_payload = _get_json(
             f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}?run_id=run-live"
         )
+        content_request = Request(
+            f"http://{host}:{port}/arena_visual/sessions/sample-live/media/{media_id}"
+            "?run_id=run-live&content=1"
+        )
         stream_url = str(primary_media["url"])
         if stream_url.startswith("/"):
             stream_url = f"http://{host}:{port}{stream_url}"
         content_type, prefix = _read_stream_prefix(stream_url)
+        with urlopen(content_request) as response:  # noqa: S310 - local test endpoint
+            single_frame_content_type = response.headers.get("Content-Type", "")
+            single_frame_payload = response.read()
 
         assert primary_media["transport"] == "low_latency_channel"
         assert media_payload["transport"] == "low_latency_channel"
@@ -721,8 +1160,291 @@ def test_arena_visual_http_server_serves_registered_low_latency_live_stream_with
         assert content_type.startswith("multipart/x-mixed-replace")
         assert b"--frame" in prefix
         assert b"Content-Type:" in prefix
+        assert single_frame_content_type.startswith("image/png")
+        assert single_frame_payload == b"foo"
     finally:
         server.stop()
+
+
+def test_arena_visual_http_server_serves_registered_low_latency_openra_rts_stream_without_manifest(
+    tmp_path: Path,
+) -> None:
+    recorder = _build_openra_live_visual_recorder()
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-openra-live",
+        live_scene_scheme="low_latency_channel",
+    )
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        scene_url = (
+            f"http://{host}:{port}/arena_visual/sessions/sample-openra-live/scene"
+            f"?seq=2&run_id=run-openra-live"
+        )
+
+        scene_payload = _get_json(scene_url)
+        assert scene_payload["kind"] == "rts"
+        primary_media = scene_payload["media"]["primary"]
+        assert isinstance(primary_media, dict)
+        media_id = str(primary_media["mediaId"])
+        media_payload = _get_json(
+            "http://"
+            f"{host}:{port}/arena_visual/sessions/sample-openra-live/media/{media_id}"
+            "?run_id=run-openra-live"
+        )
+        stream_url = str(primary_media["url"])
+        if stream_url.startswith("/"):
+            stream_url = f"http://{host}:{port}{stream_url}"
+        content_type, prefix = _read_stream_prefix(stream_url)
+
+        assert primary_media["transport"] == "low_latency_channel"
+        assert media_payload["transport"] == "low_latency_channel"
+        assert str(primary_media["url"]).endswith(
+            "/arena_visual/sessions/sample-openra-live/media/"
+            f"{media_id}/stream?run_id=run-openra-live"
+        )
+        assert content_type.startswith("multipart/x-mixed-replace")
+        assert b"--frame" in prefix
+        assert b"Content-Type:" in prefix
+    finally:
+        server.stop()
+
+
+def test_openra_low_latency_live_source_prefers_latest_environment_frame_supplier() -> None:
+    recorder = _build_openra_live_visual_recorder()
+
+    def load_latest_frame() -> dict[str, object]:
+        return {
+            "stream_id": "main",
+            "media": {
+                "primary": {
+                    "mediaId": "openra-frame-live",
+                    "transport": "http_pull",
+                    "mimeType": "image/png",
+                    "url": "data:image/png;base64,YmFy",
+                }
+            },
+        }
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-openra-live",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=load_latest_frame,
+    )
+
+    scene = live_source.load_scene(seq=2)
+
+    assert scene is not None
+    assert scene.media is not None
+    assert scene.media.primary is not None
+    assert scene.media.primary.media_id == "live-channel-main"
+    assert live_source.load_stream_frame(scene.media.primary.media_id) == (b"bar", "image/png")
+
+
+def test_low_latency_live_source_synthesizes_stream_media_without_inline_snapshot_image() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-synthetic-live",
+    )
+    recorder.record_snapshot(
+        ts_ms=4101,
+        step=1,
+        tick=1,
+        snapshot={
+            "step": 1,
+            "tick": 1,
+            "observation": {
+                "board_text": "live frame text",
+                "view": {"text": "live frame text"},
+                "metadata": {"stream_id": "main"},
+            },
+        },
+        label="live_frame_snapshot",
+        anchor=True,
+    )
+
+    def load_latest_frame() -> dict[str, object]:
+        return {
+            "stream_id": "main",
+            "media": {
+                "primary": {
+                    "mediaId": "retro-frame-live",
+                    "transport": "http_pull",
+                    "mimeType": "image/png",
+                    "url": "data:image/png;base64,YmFy",
+                }
+            },
+        }
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-retro-live",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=load_latest_frame,
+    )
+
+    scene = live_source.load_scene(seq=1)
+
+    assert scene is not None
+    assert scene.media is not None
+    assert scene.media.primary is not None
+    assert scene.media.primary.media_id == "live-channel-main"
+    assert live_source.lookup_media(scene.media.primary.media_id) is not None
+    assert live_source.load_stream_frame(scene.media.primary.media_id) == (b"bar", "image/png")
+
+
+def test_low_latency_live_source_streams_latest_rgb_frame_without_inline_snapshot_image() -> None:
+    numpy = pytest.importorskip("numpy")
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-rgb-live",
+    )
+    recorder.record_snapshot(
+        ts_ms=5101,
+        step=1,
+        tick=1,
+        snapshot={
+            "step": 1,
+            "tick": 1,
+            "observation": {
+                "board_text": "live rgb frame",
+                "view": {"text": "live rgb frame"},
+                "metadata": {"stream_id": "main"},
+            },
+        },
+        label="live_rgb_frame_snapshot",
+        anchor=True,
+    )
+
+    rgb_frame = numpy.zeros((4, 4, 3), dtype=numpy.uint8)
+    rgb_frame[:, :, 1] = 180
+
+    def load_latest_frame() -> dict[str, object]:
+        return {
+            "stream_id": "main",
+            "_rgb": rgb_frame,
+        }
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-retro-rgb-live",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=load_latest_frame,
+    )
+
+    scene = live_source.load_scene(seq=1)
+
+    assert scene is not None
+    assert scene.media is not None
+    assert scene.media.primary is not None
+    content, mime_type = live_source.load_stream_frame(scene.media.primary.media_id) or (None, None)
+
+    assert mime_type == "image/jpeg"
+    assert isinstance(content, bytes)
+    assert len(content) > 0
+
+
+def test_openra_low_latency_live_source_preserves_native_png_frames_losslessly() -> None:
+    recorder = _build_openra_live_visual_recorder()
+    png_data_url = f"data:image/png;base64,{base64.b64encode(_SMALL_PNG_BYTES).decode('ascii')}"
+
+    def load_latest_frame() -> dict[str, object]:
+        return {
+            "stream_id": "main",
+            "media": {
+                "primary": {
+                    "mediaId": "openra-frame-live",
+                    "transport": "http_pull",
+                    "mimeType": "image/png",
+                    "url": png_data_url,
+                }
+            },
+        }
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-openra-live",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=load_latest_frame,
+    )
+
+    scene = live_source.load_scene(seq=2)
+
+    assert scene is not None
+    assert scene.media is not None
+    assert scene.media.primary is not None
+    assert live_source.load_stream_frame(scene.media.primary.media_id) == (
+        _SMALL_PNG_BYTES,
+        "image/png",
+    )
+
+
+def test_openra_low_latency_http_stream_keeps_png_part_type_for_native_frames(
+    tmp_path: Path,
+) -> None:
+    recorder = _build_openra_live_visual_recorder()
+    png_bytes = _build_valid_png_bytes()
+    png_data_url = f"data:image/png;base64,{base64.b64encode(png_bytes).decode('ascii')}"
+
+    def load_latest_frame() -> dict[str, object]:
+        return {
+            "stream_id": "main",
+            "media": {
+                "primary": {
+                    "mediaId": "openra-frame-live",
+                    "transport": "http_pull",
+                    "mimeType": "image/png",
+                    "url": png_data_url,
+                }
+            },
+        }
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-openra-live",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=load_latest_frame,
+    )
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        stream_url = (
+            f"http://{host}:{port}/arena_visual/sessions/sample-openra-live/media/"
+            "live-channel-main/stream?run_id=run-openra-live"
+        )
+
+        content_type, prefix = _read_stream_prefix(stream_url)
+
+        assert content_type.startswith("multipart/x-mixed-replace")
+        assert b"Content-Type: image/png" in prefix
+    finally:
+        server.stop()
+
+
+def test_openra_low_latency_frame_encoder_keeps_png_when_pillow_is_available(
+    monkeypatch,
+) -> None:
+    pil_image = __import__("PIL.Image", fromlist=["Image"])
+    monkeypatch.setattr(live_session_module, "Image", pil_image)
+    png_bytes = _build_valid_png_bytes()
+
+    content, mime_type = live_session_module._encode_low_latency_frame(
+        content=png_bytes,
+        mime_type="image/png",
+    )
+
+    assert content == png_bytes
+    assert mime_type == "image/png"
 
 
 def test_binary_stream_live_scene_versions_media_id_per_scene_seq() -> None:

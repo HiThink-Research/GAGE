@@ -1,0 +1,53 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: openra_ra_skirmish_native_dummy_visual_gamekit
+  description: >
+    Native OpenRA Red Alert skirmish visual config that streams real engine
+    frames through arena_visual using the low_latency_channel path.
+
+datasets:
+  - dataset_id: openra_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_OpenRA.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: openra_ra_skirmish_native_dummy_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: openra_ra_skirmish_native_dummy_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: openra
+      env: ra_skirmish_1v1
+      runtime_overrides:
+        backend_mode: native
+        max_decisions: 64
+        native_step_interval_s: 0.3
+        native_frame_rate_hz: 10.0
+        native_startup_orders:
+          - option fog False
+          - option explored True
+        native_demo_script: unit_patrol
+        native_demo_script_mode: noop
+      visualizer:
+        enabled: true
+        title: GAGE OpenRA Native RA Skirmish Live
+        launch_browser: true
+        mode: arena_visual
+        live_scene_scheme: low_latency_channel
+        linger_after_finish_s: 90.0
+      players:
+        - seat: player_0
+          player_id: player_0
+          player_kind: dummy
+          actions: ["noop"]
+        - seat: player_1
+          player_id: player_1
+          player_kind: dummy
+          actions: ["noop"]

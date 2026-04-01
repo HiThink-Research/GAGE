@@ -6,6 +6,9 @@ from gage_eval.game_kits.aec_env_game.pettingzoo.visualization import (
 from gage_eval.game_kits.real_time_game.retro_platformer.visualization import (
     VISUALIZATION_SPEC as RETRO_VISUALIZATION_SPEC,
 )
+from gage_eval.game_kits.real_time_game.openra.visualization import (
+    VISUALIZATION_SPEC as OPENRA_VISUALIZATION_SPEC,
+)
 from gage_eval.game_kits.real_time_game.vizdoom.visualization import (
     VISUALIZATION_SPEC as VIZDOOM_VISUALIZATION_SPEC,
 )
@@ -118,16 +121,16 @@ def test_vizdoom_frame_projection_exposes_pov_hud_and_viewport() -> None:
             "stream_id": "pov",
             "actor": "p0",
             "observation": {
-                "board_text": "Tick 17. Legal actions: 0, 1, 2",
+                "board_text": "Tick 17. Legal actions: 0, 1, 2, 3, 4",
                 "active_player": "p0",
                 "metadata": {
                     "reward": 0.75,
                 },
                 "view": {
-                    "text": "Tick 17. Legal actions: 0, 1, 2",
+                    "text": "Tick 17. Legal actions: 0, 1, 2, 3, 4",
                 },
                 "legal_actions": {
-                    "items": ["0", "1", "2"],
+                    "items": ["0", "1", "2", "3", "4"],
                 },
                 "context": {
                     "mode": "tick",
@@ -160,6 +163,8 @@ def test_vizdoom_frame_projection_exposes_pov_hud_and_viewport() -> None:
         {"id": "0", "label": "0", "text": "0"},
         {"id": "1", "label": "1", "text": "1"},
         {"id": "2", "label": "2", "text": "2"},
+        {"id": "3", "label": "3", "text": "3"},
+        {"id": "4", "label": "4", "text": "4"},
     )
     assert {"kind": "badge", "label": "Stream", "value": "pov"} in scene.overlays
 
@@ -183,17 +188,19 @@ def test_vizdoom_frame_projection_normalizes_numeric_legal_action_items() -> Non
             "step": 18,
             "actor": "p0",
             "observation": {
-                "board_text": "Tick 18. Legal actions: 1, 2, 3",
+                "board_text": "Tick 18. Legal actions: 0, 1, 2, 3, 4",
                 "active_player": "p0",
                 "metadata": {
                     "action_mapping": {
+                        "0": "NOOP",
                         "1": "ATTACK",
                         "2": "TURN_LEFT",
                         "3": "TURN_RIGHT",
+                        "4": "MOVE_FORWARD",
                     }
                 },
                 "legal_actions": {
-                    "items": [1, 2, 3],
+                    "items": [0, 1, 2, 3, 4],
                 },
                 "context": {
                     "mode": "tick",
@@ -206,9 +213,11 @@ def test_vizdoom_frame_projection_normalizes_numeric_legal_action_items() -> Non
     )
 
     assert scene.legal_actions == (
+        {"id": "0", "label": "No-op", "text": "No-op"},
         {"id": "1", "label": "Fire", "text": "Fire"},
         {"id": "2", "label": "Turn Left", "text": "Turn Left"},
         {"id": "3", "label": "Turn Right", "text": "Turn Right"},
+        {"id": "4", "label": "Move Forward", "text": "Move Forward"},
     )
 
 
@@ -285,6 +294,186 @@ def test_retro_frame_projection_uses_single_player_status_and_controls() -> None
         {"id": "right", "label": "Move Right", "text": "Move Right", "hold_ticks": 6},
         {"id": "right_jump", "label": "Right + Jump", "text": "Right + Jump", "hold_ticks": 6},
     )
+
+
+def test_openra_rts_projection_exposes_units_economy_objectives_and_selection() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="openra-sample",
+            game_id="openra",
+            plugin_id=OPENRA_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="player_0", observer_kind="player"),
+        ),
+        event=TimelineEvent(
+            seq=31,
+            ts_ms=5031,
+            type="snapshot",
+            label="snapshot",
+        ),
+        snapshot_body={
+            "tick": 31,
+            "step": 6,
+            "move_count": 6,
+            "last_move": "queue_production:barracks:ranger",
+            "observation": {
+                "board_text": "Credits 1200 | Power +10 | Objective hold the ridge",
+                "active_player": "player_0",
+                "metadata": {
+                    "map_id": "ra_map01",
+                    "map": {
+                        "id": "ra_map01",
+                        "mod_id": "ra",
+                        "title": "Marigold Town",
+                        "map_size": {"width": 99, "height": 99},
+                        "bounds": {"x": 1, "y": 1, "width": 97, "height": 97},
+                        "image_size": {"width": 97, "height": 97},
+                        "preview_source": "reference_map_preview",
+                    },
+                    "economy": {
+                        "credits": 1200,
+                        "income_per_minute": 320,
+                        "power": {"produced": 100, "used": 90},
+                    },
+                    "objectives": [
+                        {"id": "hold_ridge", "label": "Hold the ridge", "status": "active"},
+                        {"id": "destroy_radar", "label": "Destroy radar dome", "status": "pending"},
+                    ],
+                    "selection": {
+                        "unit_ids": ["mcv_1", "rifle_2"],
+                        "primary_unit_id": "mcv_1",
+                    },
+                    "units": [
+                        {
+                            "id": "mcv_1",
+                            "owner": "player_0",
+                            "label": "MCV",
+                            "kind": "vehicle",
+                            "hp": 95,
+                            "status": "idle",
+                            "position": {"x": 12, "y": 4},
+                            "selected": True,
+                        },
+                        {
+                            "id": "rifle_2",
+                            "owner": "player_0",
+                            "label": "Rifle Infantry",
+                            "kind": "infantry",
+                            "hp": 82,
+                            "status": "moving",
+                            "position": {"x": 14, "y": 7},
+                            "selected": True,
+                        },
+                    ],
+                    "production": {
+                        "queues": [
+                            {
+                                "building_id": "barracks_1",
+                                "label": "Barracks",
+                                "items": [{"id": "ranger", "label": "Ranger", "progress": 0.4}],
+                            }
+                        ]
+                    },
+                },
+                "legal_actions": {
+                    "items": [
+                        {
+                            "id": "select_units",
+                            "label": "Select units",
+                            "text": "Select units",
+                            "payloadSchema": {"unit_ids": ["<unit-id>", "<unit-id>"]},
+                        },
+                        {
+                            "id": "issue_command",
+                            "label": "Issue command",
+                            "text": "Issue command",
+                            "payloadSchema": {"command": "attack_move", "target": {"x": 18, "y": 11}},
+                        },
+                    ]
+                },
+                "view": {
+                    "text": "Credits 1200 | Power +10 | Objective hold the ridge",
+                },
+                "context": {
+                    "mode": "tick",
+                    "tick": 31,
+                    "step": 6,
+                },
+            },
+            "media": {
+                "primary": {
+                    "mediaId": "openra-frame-31",
+                    "transport": "artifact_ref",
+                    "mimeType": "image/png",
+                    "url": "frames/openra-frame-31.png",
+                }
+            },
+            "viewport": {
+                "width": 1280,
+                "height": 720,
+            },
+        },
+        visualization_spec=OPENRA_VISUALIZATION_SPEC,
+    )
+
+    assert scene.kind == "rts"
+    assert scene.summary["streamId"] == "main"
+    assert scene.summary["frameTitle"] == "OpenRA RTS"
+    assert scene.body["rts"]["map"] == {
+        "id": "ra_map01",
+        "modId": "ra",
+        "title": "Marigold Town",
+        "gridSize": {"width": 99, "height": 99},
+        "bounds": {"x": 1, "y": 1, "width": 97, "height": 97},
+        "imageSize": {"width": 97, "height": 97},
+        "previewSource": "reference_map_preview",
+    }
+    assert scene.body["rts"]["selection"] == {
+        "unitIds": ["mcv_1", "rifle_2"],
+        "primaryUnitId": "mcv_1",
+    }
+    assert scene.body["rts"]["economy"] == {
+        "credits": 1200,
+        "incomePerMinute": 320,
+        "power": {"produced": 100, "used": 90},
+    }
+    assert scene.body["rts"]["objectives"] == (
+        {"id": "hold_ridge", "label": "Hold the ridge", "status": "active"},
+        {"id": "destroy_radar", "label": "Destroy radar dome", "status": "pending"},
+    )
+    assert scene.body["rts"]["units"][0] == {
+        "id": "mcv_1",
+        "owner": "player_0",
+        "label": "MCV",
+        "kind": "vehicle",
+        "hp": 95,
+        "status": "idle",
+        "position": {"x": 12, "y": 4},
+        "selected": True,
+    }
+    assert scene.body["status"] == {
+        "activePlayerId": "player_0",
+        "observerPlayerId": "player_0",
+        "tick": 31,
+        "step": 6,
+        "moveCount": 6,
+        "lastMove": "queue_production:barracks:ranger",
+        "reward": None,
+    }
+    assert scene.legal_actions == (
+        {
+            "id": "select_units",
+            "label": "Select units",
+            "text": "Select units",
+            "payloadSchema": {"unit_ids": ["<unit-id>", "<unit-id>"]},
+        },
+        {
+            "id": "issue_command",
+            "label": "Issue command",
+            "text": "Issue command",
+            "payloadSchema": {"command": "attack_move", "target": {"x": 18, "y": 11}},
+        },
+    )
+    assert {"kind": "badge", "label": "Credits", "value": "1200"} in scene.overlays
 
 
 def test_pettingzoo_frame_projection_unwraps_snapshot_observation_from_intent_event() -> None:

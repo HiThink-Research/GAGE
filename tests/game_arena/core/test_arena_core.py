@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gage_eval.role.arena.schedulers.real_time_tick as real_time_tick_module
 import threading
 import time
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ from gage_eval.role.arena.core.arena_core import GameArenaCore
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.game_session import GameSession, _build_action_server
 from gage_eval.role.arena.core.types import ArenaSample
-from gage_eval.role.arena.human_input_protocol import SampleActionRouter
+from gage_eval.role.arena.human_input_protocol import LatestActionMailbox, SampleActionRouter
 from gage_eval.role.arena.schedulers.turn import TurnScheduler
 from gage_eval.role.arena.schedulers.real_time_tick import RealTimeTickScheduler
 from gage_eval.role.arena.output.writer import ArenaOutputWriter
@@ -34,6 +35,11 @@ from gage_eval.role.arena.visualization.contracts import ControlCommand
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
     DuelMap01Environment,
+)
+from gage_eval.game_kits.contracts import (
+    HumanRealtimeInputProfile,
+    RealtimeHumanControlProfile,
+    ResolvedRuntimeProfile,
 )
 
 
@@ -271,6 +277,204 @@ def test_game_session_executes_support_hooks_across_main_chain() -> None:
     ]
 
 
+def test_game_session_restart_resets_live_round_state() -> None:
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._terminal = True
+            self.reset_calls = 0
+
+        def reset(self):
+            self.reset_calls += 1
+            self._terminal = False
+            return {"board_text": "fresh"}
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner="player_0",
+                result=result,
+                reason=reason,
+                move_count=0,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+        def export_frame(self):
+            return {
+                "active_player_id": "player_0",
+                "board_text": "fresh",
+                "legal_moves": ["noop"],
+                "tick": 0,
+                "step": 0,
+            }
+
+    environment = FakeEnvironment()
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro_platformer.frame_v1",
+        game_id="retro_platformer",
+        scheduling_family="real_time_tick",
+        session_id="sample-live",
+    )
+    recorder.record_result(
+        ts_ms=1011,
+        step=12,
+        tick=12,
+        result=GameResult(
+            winner="player_0",
+            result="terminated",
+            reason="dead",
+            move_count=12,
+            illegal_move_count=0,
+            final_board="dead",
+            move_log=[],
+        ),
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_mario", env="retro_mario"),
+        environment=environment,
+        player_specs=(
+            SimpleNamespace(
+                player_id="player_0",
+                display_name="player_0",
+                seat="seat_0",
+                player_kind="human",
+                metadata={},
+            ),
+        ),
+        visual_recorder=recorder,
+    )
+    session.tick = 12
+    session.step = 12
+    session.final_result = GameResult(
+        winner="player_0",
+        result="terminated",
+        reason="dead",
+        move_count=12,
+        illegal_move_count=0,
+        final_board="dead",
+        move_log=[],
+    )
+    session.arena_trace.append({"step": 12})
+
+    session.request_restart()
+
+    assert session.should_stop() is False
+    assert environment.reset_calls == 1
+    assert session.final_result is None
+    assert session.tick == 0
+    assert session.step == 0
+    assert session.arena_trace == []
+    assert session.visual_recorder is not None
+    visual_session = session.visual_recorder.build_visual_session()
+    assert visual_session.lifecycle == "live_running"
+    assert visual_session.playback.mode == "live_tail"
+    assert session.visual_recorder.export_live_state().timeline_events[-1].type == "snapshot"
+
+
+def test_game_session_marks_pure_human_realtime_visual_capabilities() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro_platformer.frame_v1",
+        game_id="retro_platformer",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-capabilities",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=SimpleNamespace(reset=lambda: None, is_terminal=lambda: False),
+        player_specs=(
+            SimpleNamespace(
+                player_id="player_0",
+                display_name="player_0",
+                seat="player_0",
+                player_kind="human",
+                metadata={},
+            ),
+        ),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
+    )
+
+    session._visualization_mode = "arena_visual"
+    session._visualization_live_scene_scheme = "low_latency_channel"
+    session._configure_visual_capabilities()
+
+    visual_session = recorder.build_visual_session()
+    assert visual_session.capabilities["supportsLowLatencyRealtimeInput"] is True
+    assert visual_session.capabilities["supportsRealtimeInputWebSocket"] is True
+    assert visual_session.capabilities["supportsLiveUpdateStream"] is True
+    assert visual_session.capabilities["supportsRestart"] is True
+
+
+def test_game_session_visual_capabilities_require_resolved_runtime_profile_flags() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro_platformer.frame_v1",
+        game_id="retro_platformer",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-capabilities-negative",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=SimpleNamespace(reset=lambda: None, is_terminal=lambda: False),
+        player_specs=(
+            SimpleNamespace(
+                player_id="player_0",
+                display_name="player_0",
+                seat="player_0",
+                player_kind="human",
+                metadata={},
+            ),
+        ),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=False,
+            scheduler_owns_realtime_clock=False,
+            supports_low_latency_realtime_input=False,
+            supports_realtime_input_websocket=False,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
+    )
+
+    session._visualization_mode = "arena_visual"
+    session._visualization_live_scene_scheme = "http_pull"
+    session._configure_visual_capabilities()
+
+    visual_session = recorder.build_visual_session()
+    assert "supportsLowLatencyRealtimeInput" not in visual_session.capabilities
+    assert "supportsRealtimeInputWebSocket" not in visual_session.capabilities
+    assert "supportsLiveUpdateStream" not in visual_session.capabilities
+    assert "supportsRestart" not in visual_session.capabilities
+
+
 def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up() -> None:
     class _StubActionServer:
         def __init__(self) -> None:
@@ -365,11 +569,28 @@ def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up(
                 player_id="Human",
                 player_kind="human",
                 driver_id="player_driver/human_local_input",
+                driver_params={},
             ),
         ),
         player_driver_registry=PlayerDriverRegistry(),
         observation_workflow=None,
         support_workflow=None,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="Human",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
         visualization_spec=SimpleNamespace(
             plugin_id="arena.visualization.gomoku.board_v1",
             observer_schema={"supported_modes": ["player", "global"]},
@@ -392,6 +613,7 @@ def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up(
     sample_id, action_server, action_router = runtime_hub.bind_calls[0]
     assert sample_id == "sample-human-1"
     assert isinstance(action_router, SampleActionRouter)
+    assert isinstance(action_router.queue_for("Human"), LatestActionMailbox)
     assert action_server is runtime_hub.action_server
 
     assert seen_invocation_contexts[0] is not None
@@ -1162,6 +1384,144 @@ def test_game_session_arena_visual_requires_explicit_finish_after_post_end_inter
     assert finalize_thread.is_alive() is False
     assert time.monotonic() - started_at >= 0.05
 
+
+def test_game_session_arena_visual_finish_stops_a_live_run_before_finalize(
+    monkeypatch,
+) -> None:
+    class _StubArenaVisualServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.live_sources: list[object] = []
+
+        def start(self) -> None:
+            self.started = True
+
+        def stop(self) -> None:
+            self.started = False
+
+        def build_viewer_url(self, session_id: str, *, run_id: str | None = None) -> str:
+            suffix = "" if run_id is None else f"?run_id={run_id}"
+            return f"http://127.0.0.1:5811/sessions/{session_id}{suffix}"
+
+        def register_live_session(self, source: object) -> None:
+            self.live_sources.append(source)
+
+    class _StubRuntimeServiceHub:
+        def __init__(self) -> None:
+            self.visualizer = _StubArenaVisualServer()
+
+        def ensure_visualizer(self, factory):
+            _ = factory
+            return self.visualizer
+
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def get_active_player(self) -> str:
+            return "alpha"
+
+        def observe(self, player):
+            return {
+                "board_text": f"board:{player}",
+                "legal_moves": ["A1"],
+                "active_player": "alpha",
+            }
+
+        def apply(self, action):
+            del action
+            return None
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            self.closed = True
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner=None,
+                result=result,
+                reason=reason,
+                move_count=0,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+    runtime_hub = _StubRuntimeServiceHub()
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.webbrowser.open",
+        lambda url: True,
+    )
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session._build_arena_visual_server",
+        lambda config, *, service_hub: runtime_hub.visualizer,
+    )
+
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={
+                "env_factory": (
+                    lambda *, sample, resolved, resources, player_specs: FakeEnvironment()
+                )
+            },
+        ),
+        scheduler=RealTimeTickScheduler(binding_id="real_time_tick/default"),
+        resource_spec={},
+        player_bindings=(),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=None,
+        visualization_spec=SimpleNamespace(
+            plugin_id="arena.visualization.gomoku.board_v1",
+            game_id="gomoku",
+            observer_schema={"supported_modes": ["global", "player"]},
+            visual_kind="board",
+        ),
+    )
+
+    session = GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku_standard"),
+        resolved,
+        resources={},
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-live-stop",
+            trace=SimpleNamespace(run_id="run-live-stop", sample_id="sample-live-stop"),
+            visualizer_config={
+                "enabled": True,
+                "launch_browser": True,
+                "mode": "arena_visual",
+                "live_scene_scheme": "low_latency_channel",
+                "linger_after_finish_s": 5.0,
+                "port": 5811,
+            },
+            runtime_service_hub=runtime_hub,
+        ),
+    )
+
+    assert len(runtime_hub.visualizer.live_sources) == 1
+    live_source = runtime_hub.visualizer.live_sources[0]
+
+    started_at = time.monotonic()
+    getattr(live_source, "apply_control_command")(ControlCommand(command_type="finish"))
+
+    assert session.should_stop() is True
+    assert isinstance(session.final_result, GameResult)
+    assert session.final_result.result == "terminated"
+    assert session.final_result.reason == "user_finish"
+    assert getattr(session.environment, "closed", False) is True
+
+    result = session.finalize()
+
+    assert isinstance(result, GameResult)
+    assert result.result == "terminated"
+    assert result.reason == "user_finish"
+    assert time.monotonic() - started_at < 0.5
+
 def test_game_session_records_action_trace_fields_for_illegal_result() -> None:
     class FakeEnvironment:
         def __init__(self) -> None:
@@ -1308,6 +1668,329 @@ def test_game_session_advance_records_fresh_visual_snapshot_from_environment_fra
     assert observation["legal_actions"] == {"items": ["RIGHT"]}
 
 
+def test_game_session_realtime_live_snapshots_throttle_inline_frame_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEnvironment:
+        def consume_session_progress_delta(self) -> int:
+            return 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "board_text": "live frame state",
+                "stream_id": "main",
+                "metadata": {"stream_id": "main"},
+                "view": {
+                    "text": "live frame state",
+                    "image": {
+                        "data_url": "data:image/png;base64,Zm9v",
+                        "mimeType": "image/png",
+                    },
+                },
+            }
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-cadence",
+        visual_kind="frame",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=FakeEnvironment(),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
+    )
+    session._visualization_mode = "arena_visual"  # noqa: SLF001
+    session._visualization_live_scene_scheme = "low_latency_channel"  # noqa: SLF001
+
+    current_ts = {"value": 1000}
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.wall_clock_ms",
+        lambda: current_ts["value"],
+    )
+
+    session.advance()
+    session.capture_output_tick()
+    current_ts["value"] = 1260
+    session.advance()
+    session.capture_output_tick()
+
+    snapshots = recorder.export_live_state().snapshot_payloads
+    first_observation = snapshots[0]["snapshot"]["observation"]
+    second_observation = snapshots[1]["snapshot"]["observation"]
+
+    assert first_observation["view"]["image"]["data_url"] == "data:image/png;base64,Zm9v"
+    assert "image" not in second_observation["view"]
+
+
+def test_game_session_realtime_snapshot_cadence_respects_frame_output_hz_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEnvironment:
+        def consume_session_progress_delta(self) -> int:
+            return 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "board_text": "live frame state",
+                "stream_id": "main",
+                "metadata": {"stream_id": "main"},
+                "view": {"text": "live frame state"},
+            }
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-policy-cadence",
+        visual_kind="frame",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=FakeEnvironment(),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="continuous_state",
+                tick_interval_ms=16,
+                input_transport="realtime_ws",
+                frame_output_hz=10,
+                artifact_sampling_mode="async_decimated_live",
+                fallback_move="noop",
+            ),
+        ),
+    )
+    session._visualization_mode = "arena_visual"  # noqa: SLF001
+    session._visualization_live_scene_scheme = "low_latency_channel"  # noqa: SLF001
+
+    current_ts = {"value": 1000}
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.wall_clock_ms",
+        lambda: current_ts["value"],
+    )
+
+    session.advance()
+    session.capture_output_tick()
+    current_ts["value"] = 1090
+    session.advance()
+    session.capture_output_tick()
+    current_ts["value"] = 1105
+    session.advance()
+    session.capture_output_tick()
+
+    recorder.export_live_header()
+    snapshots = recorder.export_live_state().snapshot_payloads
+    assert len(snapshots) == 2
+    assert snapshots[0]["tsMs"] == 1000
+    assert snapshots[1]["tsMs"] == 1105
+
+
+def test_game_session_scheduler_owned_realtime_uses_lightweight_visual_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEnvironment:
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player: str) -> ArenaObservation:
+            del player
+            return SimpleNamespace(
+                active_player="player_0",
+                legal_actions_items=("noop", "right"),
+                view_text="frame",
+                board_text="frame",
+            )
+
+        def apply(self, action: ArenaAction) -> None:
+            del action
+            return None
+
+        def consume_session_progress_delta(self) -> int:
+            return 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {"board_text": "frame", "stream_id": "main", "metadata": {"stream_id": "main"}}
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-lightweight-realtime",
+        visual_kind="frame",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=FakeEnvironment(),
+        player_specs=(
+            SimpleNamespace(player_id="player_0", player_kind="human"),
+        ),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
+    )
+    session._visualization_mode = "arena_visual"  # noqa: SLF001
+    session._visualization_live_scene_scheme = "low_latency_channel"  # noqa: SLF001
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.wall_clock_ms",
+        lambda: 1000,
+    )
+
+    observation = session.observe()
+    action = ArenaAction(player="player_0", move="noop", raw="noop")
+    session._last_observation = observation  # noqa: SLF001
+    session.apply(action)
+    session.advance()
+    session.capture_output_tick()
+
+    live_state = recorder.export_live_state()
+    visual_session = recorder.build_visual_session()
+
+    assert [event.type for event in live_state.timeline_events] == ["snapshot"]
+    assert visual_session.scheduling.accepts_human_intent is True
+
+
+def test_game_session_low_latency_live_snapshots_strip_inline_images_for_mixed_realtime_sessions() -> None:
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self._tick = 0
+
+        def reset(self) -> None:
+            return None
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player: str) -> ArenaObservation:
+            del player
+            return ArenaObservation(
+                active_player="player_0",
+                legal_actions_items=("noop", "right"),
+                view_text="live frame state",
+                metadata={"stream_id": "main"},
+            )
+
+        def apply_action(self, action: ArenaAction) -> None:
+            del action
+            return None
+
+        def advance(self) -> None:
+            self._tick += 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "board_text": "live frame state",
+                "stream_id": "main",
+                "metadata": {"stream_id": "main"},
+                "view": {
+                    "text": "live frame state",
+                    "image": {
+                        "data_url": "data:image/png;base64,Zm9v",
+                        "mimeType": "image/png",
+                    },
+                },
+            }
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-mixed-cadence",
+        visual_kind="frame",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=FakeEnvironment(),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=False,
+            scheduler_owns_realtime_clock=False,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
+    )
+    session._visualization_mode = "arena_visual"  # noqa: SLF001
+    session._visualization_live_scene_scheme = "low_latency_channel"  # noqa: SLF001
+
+    session.advance()
+    session.advance()
+
+    snapshots = recorder.export_live_state().snapshot_payloads
+    first_observation = snapshots[0]["snapshot"]["observation"]
+    second_observation = snapshots[1]["snapshot"]["observation"]
+
+    assert first_observation["view"]["image"]["data_url"] == "data:image/png;base64,Zm9v"
+    assert "image" not in second_observation["view"]
+
+
 def test_vizdoom_realtime_session_max_steps_counts_backend_flush_rounds() -> None:
     class ScriptedPlayer:
         def __init__(self, player_id: str, moves: list[str]) -> None:
@@ -1349,6 +2032,107 @@ def test_vizdoom_realtime_session_max_steps_counts_backend_flush_rounds() -> Non
     assert session.final_result is not None
     assert session.final_result.result == "max_steps"
     assert session.final_result.move_count == 3
+
+
+def test_realtime_tick_scheduler_uses_fixed_cadence_for_scheduler_owned_human_realtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RealtimeHumanPlayer:
+        player_id = "player_0"
+        display_name = "player_0"
+        seat = "player_0"
+        player_kind = "human"
+        metadata: dict[str, object] = {}
+
+        def __init__(self) -> None:
+            self.observations: list[object] = []
+
+        def next_action(self, observation) -> ArenaAction:
+            self.observations.append(observation)
+            return ArenaAction(player="player_0", move="noop", raw="noop")
+
+    class AsyncEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+            self.applied_moves: list[str] = []
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> object:
+            return SimpleNamespace(
+                active_player=player_id,
+                legal_actions_items=("noop", "right"),
+                view_text="retro frame",
+                board_text="retro frame",
+                last_action=None,
+            )
+
+        def apply(self, action: ArenaAction) -> GameResult:
+            self.applied_moves.append(action.move)
+            self._terminal = True
+            return GameResult(
+                winner=action.player,
+                result="completed",
+                reason="applied",
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": action.move}],
+            )
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+    current_time = {"value": 100.0}
+    slept: list[float] = []
+
+    def fake_monotonic() -> float:
+        return current_time["value"]
+
+    def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+        current_time["value"] += delay
+
+    monkeypatch.setattr(
+        real_time_tick_module,
+        "time",
+        SimpleNamespace(sleep=fake_sleep, monotonic=fake_monotonic),
+        raising=False,
+    )
+
+    player = RealtimeHumanPlayer()
+    environment = AsyncEnvironment()
+    session = GameSession(
+        sample=ArenaSample(game_kit="retro_platformer", env="retro_mario"),
+        environment=environment,
+        player_specs=(player,),
+        max_steps=1,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="continuous_state",
+                    tick_interval_ms=16,
+                ),
+            ),
+        ),
+    )
+
+    RealTimeTickScheduler(binding_id="real_time_tick/default").run(session)
+
+    assert len(player.observations) == 1
+    assert sum(slept) <= 0.016001
+    assert environment.applied_moves == ["noop"]
+    assert session.final_result is not None
+    assert session.final_result.result == "completed"
 
 
 def test_arena_output_writer_recursively_freezes_nested_trace_values() -> None:

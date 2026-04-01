@@ -138,19 +138,29 @@ export function buildVizDoomKeyboardControls(): FrameKeyboardControls {
       if (hasAnyPressed(pressedKeys, ["Space", "Enter", "j"])) {
         return (
           findActionByToken(actionDescriptors, "fire") ??
-          findActionByToken(actionDescriptors, "attack")
+          findActionByToken(actionDescriptors, "attack") ??
+          findActionById(actionDescriptors, "0")
         );
       }
       if (hasAnyPressed(pressedKeys, ["ArrowUp", "w"])) {
-        return findActionByToken(actionDescriptors, "forward");
+        return (
+          findActionByToken(actionDescriptors, "forward") ??
+          findActionById(actionDescriptors, "0")
+        );
       }
       if (hasAnyPressed(pressedKeys, ["ArrowLeft", "a"])) {
-        return findActionByToken(actionDescriptors, "left");
+        return (
+          findActionByToken(actionDescriptors, "left") ??
+          findActionById(actionDescriptors, "0")
+        );
       }
       if (hasAnyPressed(pressedKeys, ["ArrowRight", "d"])) {
-        return findActionByToken(actionDescriptors, "right");
+        return (
+          findActionByToken(actionDescriptors, "right") ??
+          findActionById(actionDescriptors, "0")
+        );
       }
-      return null;
+      return findActionById(actionDescriptors, "0");
     },
   };
 }

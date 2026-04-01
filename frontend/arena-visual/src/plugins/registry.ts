@@ -11,6 +11,7 @@ import { DoudizhuPlugin } from "./doudizhu/DoudizhuPlugin";
 import { GomokuPlugin } from "./gomoku/GomokuPlugin";
 import { MahjongPlugin } from "./mahjong/MahjongPlugin";
 import { PettingZooPlugin } from "./pettingzoo/PettingZooPlugin";
+import { OpenRAPlugin } from "./openra/OpenRAPlugin";
 import { RetroMarioPlugin } from "./retro-mario/RetroMarioPlugin";
 import { TicTacToePlugin } from "./tictactoe/TicTacToePlugin";
 import { VizDoomPlugin } from "./vizdoom/VizDoomPlugin";
@@ -76,6 +77,15 @@ const KNOWN_PLUGIN_META = [
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "camera"],
+      acceptsHumanIntent: true,
+    },
+  },
+  {
+    pluginId: "arena.visualization.openra.rts_v1",
+    displayName: "OpenRA",
+    manifest: {
+      sceneKinds: ["rts"],
+      supportedObservers: ["player", "spectator", "camera"],
       acceptsHumanIntent: true,
     },
   },
@@ -172,6 +182,13 @@ const frameInputInterpreter = createInputInterpreter<FrameDeviceEvent>(
   }),
 );
 
+const openraInputInterpreter = createInputInterpreter<FrameDeviceEvent>(
+  ({ playerId, actionPayload }) => ({
+    playerId,
+    action: actionPayload,
+  }),
+);
+
 const KNOWN_PLUGINS = new Map<string, AnyArenaPluginDefinition>([
   [
     "arena.visualization.gomoku.board_v1",
@@ -227,6 +244,14 @@ const KNOWN_PLUGINS = new Map<string, AnyArenaPluginDefinition>([
       ...KNOWN_PLUGIN_META[6],
       render: RetroMarioPlugin,
       inputInterpreter: frameInputInterpreter,
+    }),
+  ],
+  [
+    "arena.visualization.openra.rts_v1",
+    createPlugin({
+      ...KNOWN_PLUGIN_META[7],
+      render: OpenRAPlugin,
+      inputInterpreter: openraInputInterpreter,
     }),
   ],
 ]);

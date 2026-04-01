@@ -58,6 +58,13 @@ EXPECTED_VISUALIZATION_SPECS = {
         "visual_kind": "frame",
         "supported_observers": ("player", "camera"),
     },
+    "openra": {
+        "env": "ra_map01",
+        "spec_id": "arena/visualization/openra_rts_v1",
+        "plugin_id": "arena.visualization.openra.rts_v1",
+        "visual_kind": "rts",
+        "supported_observers": ("player", "spectator", "camera"),
+    },
 }
 
 
@@ -96,6 +103,18 @@ def test_visualization_spec_resolution_uses_explicit_spec_id(
             "legal_action_source": "scene.legalActions",
             "selection_source": "table.seats[].hand.cards",
             "typed_actions": ["discard_tile", "call_meld", "declare_win", "pass"],
+        }
+    elif kit_id == "openra":
+        assert resolved.visualization_spec.action_schema["action_metadata"] == {
+            "descriptor": "openra_rts_actions_v1",
+            "legal_action_source": "scene.legalActions",
+            "selection_source": "scene.selection.units",
+            "typed_actions": [
+                "select_units",
+                "issue_command",
+                "queue_production",
+                "camera_pan",
+            ],
         }
     else:
         assert resolved.visualization_spec.action_schema["action_metadata"] == {
@@ -267,7 +286,7 @@ def test_visualization_spec_kinds_cover_expected_stage_set() -> None:
         for kit_id in EXPECTED_VISUALIZATION_SPECS
     }
 
-    assert kinds == {"board", "table", "frame"}
+    assert kinds == {"board", "table", "frame", "rts"}
 
 
 def test_legacy_arena_default_visualization_spec_adapts_through_clone() -> None:

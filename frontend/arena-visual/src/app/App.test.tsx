@@ -107,6 +107,7 @@ function createStoreMock(
       intentId: "intent-1",
       state: "accepted",
     }),
+    submitActionLowLatency: vi.fn().mockResolvedValue(undefined),
     submitChat: vi.fn().mockResolvedValue({
       intentId: "chat-1",
       state: "accepted",

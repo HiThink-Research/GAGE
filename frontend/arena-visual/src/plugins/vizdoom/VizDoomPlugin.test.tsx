@@ -62,7 +62,7 @@ describe("VizDoomPlugin", () => {
     expect(screen.getByRole("heading", { name: /vizdoom frame/i })).toBeInTheDocument();
     expect(screen.getByText("Reward")).toBeInTheDocument();
     expect(screen.getByText("0.75")).toBeInTheDocument();
-    expect(screen.getByText("Tick 17. Legal actions: 0, 1, 2")).toBeInTheDocument();
+    expect(screen.getByText("Tick 17. Legal actions: 0, 1, 2, 3, 4")).toBeInTheDocument();
 
     const fireButton = screen.getByRole("button", { name: /fire/i });
     expect(fireButton).toBeDisabled();
@@ -124,8 +124,12 @@ describe("VizDoomPlugin", () => {
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "p0",
       actionPayload: {
-        id: "1",
-        move: "1"
+        id: "4",
+        move: "4",
+        metadata: {
+          input_seq: 1,
+          realtime_input: true,
+        },
       }
     });
 
@@ -133,8 +137,12 @@ describe("VizDoomPlugin", () => {
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "p0",
       actionPayload: {
-        id: "2",
-        move: "2"
+        id: "1",
+        move: "1",
+        metadata: {
+          input_seq: 2,
+          realtime_input: true,
+        },
       }
     });
 
@@ -142,20 +150,38 @@ describe("VizDoomPlugin", () => {
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "p0",
       actionPayload: {
-        id: "1",
-        move: "1"
+        id: "4",
+        move: "4",
+        metadata: {
+          input_seq: 3,
+          realtime_input: true,
+        },
       }
     });
 
     fireEvent.keyUp(window, { key: "w" });
-    expect(submitInput).toHaveBeenCalledTimes(3);
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "p0",
+      actionPayload: {
+        id: "0",
+        move: "0",
+        metadata: {
+          input_seq: 4,
+          realtime_input: true,
+        },
+      }
+    });
 
     fireEvent.keyDown(window, { key: "a" });
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "p0",
       actionPayload: {
-        id: "0",
-        move: "0"
+        id: "2",
+        move: "2",
+        metadata: {
+          input_seq: 5,
+          realtime_input: true,
+        },
       }
     });
   });

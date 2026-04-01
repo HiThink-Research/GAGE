@@ -3,11 +3,12 @@ from __future__ import annotations
 import base64
 import binascii
 import io
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from collections import OrderedDict
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from threading import Condition, RLock
 import time
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.parse import quote, unquote, unquote_to_bytes
 
 from gage_eval.game_kits.contracts import GameVisualizationSpec
@@ -41,6 +42,7 @@ _SUPPORTED_LIVE_SCENE_SCHEMES = {
 }
 _BINARY_MEDIA_PREFIX = "live-binary:"
 _LOW_LATENCY_MEDIA_PREFIX = "live-channel-"
+_LOW_LATENCY_SCENE_KINDS = {"frame", "rts"}
 
 
 class ArenaVisualLiveSessionSource(Protocol):
@@ -48,6 +50,9 @@ class ArenaVisualLiveSessionSource(Protocol):
     run_id: str | None
 
     def load_session(self, *, observer: ObserverRef | None = None) -> VisualSession: ...
+    def load_live_header(self) -> Mapping[str, object]: ...
+    def current_live_revision(self) -> int: ...
+    def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int: ...
 
     def page_timeline(self, *, after_seq: int | None = None, limit: int = 50) -> TimelinePage: ...
 
@@ -113,9 +118,10 @@ class ArenaVisualFinishGate:
 
     def finish(self) -> bool:
         with self._condition:
-            if not self._armed or self._finished:
+            if self._finished:
                 return False
             self._finished = True
+            self._manual_finish_required = False
             self._condition.notify_all()
             return True
 
@@ -127,6 +133,29 @@ class RecorderLiveSessionSource:
     visualization_spec: GameVisualizationSpec | None = None
     live_scene_scheme: str = "http_pull"
     finish_gate: ArenaVisualFinishGate | None = None
+    live_frame_supplier: Callable[[], object | None] | None = None
+    stop_callback: Callable[[], object | None] | None = None
+    restart_callback: Callable[[], object | None] | None = None
+    _cache_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
+    _session_cache: dict[tuple[int, str, str], VisualSession] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _live_state_cache: tuple[int, object] | None = field(default=None, init=False, repr=False, compare=False)
+    _scene_cache: OrderedDict[tuple[int, int, str, str], VisualScene] = field(
+        default_factory=OrderedDict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _stream_frame_cache: dict[str, tuple[int, tuple[bytes, str | None]]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if self.live_scene_scheme not in _SUPPORTED_LIVE_SCENE_SCHEMES:
@@ -139,25 +168,42 @@ class RecorderLiveSessionSource:
         return str(self.recorder.session_id)
 
     def load_session(self, *, observer: ObserverRef | None = None) -> VisualSession:
-        state = self.recorder.export_live_state()
-        return _override_observer(state.visual_session, observer=observer)
+        revision = self.current_live_revision()
+        observer_kind, observer_id = self._normalize_observer_key(observer)
+        with self._cache_lock:
+            cached = self._session_cache.get((revision, observer_kind, observer_id))
+        if cached is not None:
+            return cached
+        session = self.recorder.build_live_session()
+        adapted = _override_observer(session, observer=observer)
+        with self._cache_lock:
+            self._session_cache[(revision, observer_kind, observer_id)] = adapted
+        return adapted
+
+    def load_live_header(self) -> Mapping[str, object]:
+        return self.recorder.export_live_header()
+
+    def current_live_revision(self) -> int:
+        current_revision = getattr(self.recorder, "current_live_revision", None)
+        if callable(current_revision):
+            return int(current_revision())
+        return 0
+
+    def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int:
+        wait_for_revision = getattr(self.recorder, "wait_for_live_revision", None)
+        if callable(wait_for_revision):
+            return int(wait_for_revision(after_revision=after_revision, timeout_s=timeout_s))
+        if timeout_s not in (None, 0):
+            time.sleep(max(0.0, float(timeout_s)))
+        return self.current_live_revision()
 
     def page_timeline(self, *, after_seq: int | None = None, limit: int = 50) -> TimelinePage:
         if limit <= 0:
             raise ValueError("limit must be positive")
-
-        state = self.recorder.export_live_state()
-        events = state.timeline_events
-        start_index = 0
-        if after_seq is not None:
-            start_index = len(events)
-            for index, event in enumerate(events):
-                if event.seq > after_seq:
-                    start_index = index
-                    break
-        page_events = events[start_index : start_index + limit]
-        has_more = start_index + len(page_events) < len(events)
-        next_after_seq = after_seq if not page_events else page_events[-1].seq
+        page_events, next_after_seq, has_more = self.recorder.page_live_timeline(
+            after_seq=after_seq,
+            limit=limit,
+        )
         return TimelinePage(
             events=page_events,
             after_seq=after_seq,
@@ -172,18 +218,30 @@ class RecorderLiveSessionSource:
         seq: int,
         observer: ObserverRef | None = None,
     ) -> VisualScene | None:
-        state = self.recorder.export_live_state()
+        revision = self.current_live_revision()
+        observer_kind, observer_id = self._normalize_observer_key(observer)
+        cache_key = (revision, int(seq), observer_kind, observer_id)
+        with self._cache_lock:
+            cached_scene = self._scene_cache.get(cache_key)
+            if cached_scene is not None:
+                self._scene_cache.move_to_end(cache_key)
+                return cached_scene
+        state = self._load_live_state(revision=revision)
         raw_scene = self._load_raw_scene(state=state, seq=seq, observer=observer)
         if raw_scene is None:
             return None
-        return self._adapt_scene_for_live_transport(raw_scene)
+        adapted_scene = self._adapt_scene_for_live_transport(raw_scene)
+        with self._cache_lock:
+            self._scene_cache[cache_key] = adapted_scene
+            while len(self._scene_cache) > 16:
+                self._scene_cache.popitem(last=False)
+        return adapted_scene
 
     def lookup_marker(self, marker: str) -> tuple[int, ...]:
-        state = self.recorder.export_live_state()
-        return tuple(state.marker_index.get(marker, ()))
+        return self.recorder.lookup_marker(marker)
 
     def lookup_media(self, media_id: str) -> MediaSourceRef | None:
-        state = self.recorder.export_live_state()
+        state = self._load_live_state(revision=self.current_live_revision())
         if self.live_scene_scheme == "binary_stream":
             binary_ref = self._lookup_binary_media_ref(state=state, media_id=media_id)
             if binary_ref is not None:
@@ -204,7 +262,7 @@ class RecorderLiveSessionSource:
         )
 
     def load_media_content(self, media_id: str) -> tuple[bytes, str | None] | None:
-        state = self.recorder.export_live_state()
+        state = self._load_live_state(revision=self.current_live_revision())
         raw_ref = self._resolve_media_content_ref(state=state, media_id=media_id)
         if raw_ref is None:
             return None
@@ -214,20 +272,108 @@ class RecorderLiveSessionSource:
         return _decode_data_url(url)
 
     def load_stream_frame(self, media_id: str) -> tuple[bytes, str | None] | None:
+        cached_stream_frame = self._load_cached_stream_frame(media_id)
+        if cached_stream_frame is not None:
+            return cached_stream_frame
+        live_payload = self._load_live_frame_stream_payload(media_id)
+        if live_payload is not None:
+            content, mime_type = live_payload
+            encoded = _encode_low_latency_frame(content=content, mime_type=mime_type)
+            self._store_cached_stream_frame(media_id, encoded)
+            return encoded
         payload = self.load_media_content(media_id)
         if payload is None:
             return None
         content, mime_type = payload
-        return _encode_low_latency_frame(content=content, mime_type=mime_type)
+        encoded = _encode_low_latency_frame(content=content, mime_type=mime_type)
+        self._store_cached_stream_frame(media_id, encoded)
+        return encoded
 
     def apply_control_command(self, command: ControlCommand) -> int:
         if command.command_type == "finish":
+            if self.stop_callback is not None:
+                self.stop_callback()
             if self.finish_gate is not None:
                 self.finish_gate.finish()
-            return self.recorder.export_live_state().visual_session.playback.cursor_event_seq
+            return int(self.recorder.export_live_header().get("cursorEventSeq", 0))
+        if command.command_type == "restart":
+            if self.restart_callback is not None:
+                result = self.restart_callback()
+                if result is not None:
+                    return int(result)
+            return int(self.recorder.export_live_header().get("cursorEventSeq", 0))
         if self.finish_gate is not None:
             self.finish_gate.record_control_interaction()
         return self.recorder.apply_control_command(command)
+
+    def _normalize_observer_key(self, observer: ObserverRef | None) -> tuple[str, str]:
+        if observer is None:
+            return str(self.recorder.observer_kind), str(self.recorder.observer_id)
+        return str(observer.observer_kind), str(observer.observer_id)
+
+    def _load_live_state(self, *, revision: int):
+        with self._cache_lock:
+            cached = self._live_state_cache
+            if cached is not None and int(cached[0]) == int(revision):
+                return cached[1]
+        state = self.recorder.export_live_state()
+        with self._cache_lock:
+            if revision == self.current_live_revision():
+                retained_sessions = {
+                    key: value
+                    for key, value in self._session_cache.items()
+                    if key[0] == revision
+                }
+                retained_scenes = OrderedDict(
+                    (key, value)
+                    for key, value in self._scene_cache.items()
+                    if key[0] == revision
+                )
+                self._session_cache.clear()
+                self._session_cache.update(retained_sessions)
+                self._scene_cache.clear()
+                self._scene_cache.update(retained_scenes)
+                object.__setattr__(self, "_live_state_cache", (revision, state))
+        return state
+
+    def _current_stream_frame_version(self) -> int | None:
+        if self.live_frame_supplier is None:
+            return None
+        try:
+            payload = self.live_frame_supplier()
+        except Exception:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        version = payload.get("_live_frame_version")
+        try:
+            return int(version)
+        except (TypeError, ValueError):
+            return id(payload)
+
+    def _load_cached_stream_frame(self, media_id: str) -> tuple[bytes, str | None] | None:
+        frame_version = self._current_stream_frame_version()
+        if frame_version is None:
+            return None
+        with self._cache_lock:
+            cached = self._stream_frame_cache.get(str(media_id))
+        if cached is None:
+            return None
+        cached_version, cached_payload = cached
+        if cached_version != frame_version:
+            return None
+        return cached_payload
+
+    def _store_cached_stream_frame(
+        self,
+        media_id: str,
+        payload: tuple[bytes, str | None],
+    ) -> None:
+        frame_version = self._current_stream_frame_version()
+        if frame_version is None:
+            return
+        with self._cache_lock:
+            self._stream_frame_cache[str(media_id)] = (frame_version, payload)
 
     def _load_raw_scene(
         self,
@@ -261,9 +407,15 @@ class RecorderLiveSessionSource:
         return replace(assembled, phase="live")
 
     def _adapt_scene_for_live_transport(self, scene: VisualScene) -> VisualScene:
-        if scene.media is None:
-            return scene
         stream_id = _read_scene_stream_id(scene)
+        if scene.media is None:
+            synthetic_primary = self._build_synthetic_low_latency_media_ref(
+                scene_kind=scene.kind,
+                stream_id=stream_id,
+            )
+            if synthetic_primary is None:
+                return scene
+            return replace(scene, media=VisualSceneMedia(primary=synthetic_primary, auxiliary=()))
         primary = None
         if scene.media.primary is not None:
             primary = self._adapt_media_ref(
@@ -287,6 +439,11 @@ class RecorderLiveSessionSource:
             )
             if ref is not None
         )
+        if primary is None:
+            primary = self._build_synthetic_low_latency_media_ref(
+                scene_kind=scene.kind,
+                stream_id=stream_id,
+            )
         return replace(scene, media=VisualSceneMedia(primary=primary, auxiliary=auxiliary))
 
     def _adapt_media_ref(
@@ -308,7 +465,11 @@ class RecorderLiveSessionSource:
                 transport="binary_stream",
                 url=None,
             )
-        if self.live_scene_scheme == "low_latency_channel" and scene_kind == "frame" and is_primary:
+        if (
+            self.live_scene_scheme == "low_latency_channel"
+            and scene_kind in _LOW_LATENCY_SCENE_KINDS
+            and is_primary
+        ):
             channel_id = self._build_low_latency_media_id(stream_id or raw_ref.media_id)
             return MediaSourceRef(
                 media_id=channel_id,
@@ -349,15 +510,9 @@ class RecorderLiveSessionSource:
     def _lookup_low_latency_media_ref(self, *, state, media_id: str) -> MediaSourceRef | None:
         for event in reversed(state.timeline_events):
             scene = self._load_raw_scene(state=state, seq=event.seq)
-            if scene is None or scene.kind != "frame" or scene.media is None or scene.media.primary is None:
+            if scene is None or scene.kind not in _LOW_LATENCY_SCENE_KINDS:
                 continue
-            adapted = self._adapt_media_ref(
-                raw_ref=scene.media.primary,
-                scene_kind=scene.kind,
-                scene_seq=scene.seq,
-                stream_id=_read_scene_stream_id(scene),
-                is_primary=True,
-            )
+            adapted = self._resolve_low_latency_primary_media(scene)
             if adapted is not None and adapted.media_id == media_id:
                 return adapted
         return None
@@ -366,15 +521,80 @@ class RecorderLiveSessionSource:
         if self.live_scene_scheme == "binary_stream" and media_id.startswith(_BINARY_MEDIA_PREFIX):
             return self._lookup_binary_media_ref(state=state, media_id=media_id)
         if self.live_scene_scheme == "low_latency_channel" and media_id.startswith(_LOW_LATENCY_MEDIA_PREFIX):
+            live_ref = self._resolve_live_frame_media_ref(media_id)
+            if live_ref is not None:
+                return live_ref
             for event in reversed(state.timeline_events):
                 scene = self._load_raw_scene(state=state, seq=event.seq)
-                if scene is None or scene.kind != "frame" or scene.media is None or scene.media.primary is None:
+                if (
+                    scene is None
+                    or scene.kind not in _LOW_LATENCY_SCENE_KINDS
+                    or scene.media is None
+                    or scene.media.primary is None
+                ):
                     continue
                 stream_id = _read_scene_stream_id(scene) or scene.media.primary.media_id
                 if self._build_low_latency_media_id(stream_id) == media_id:
                     return scene.media.primary
             return None
         return self._lookup_raw_media_ref(state=state, media_id=media_id)
+
+    def _resolve_live_frame_media_ref(self, media_id: str) -> MediaSourceRef | None:
+        payload = self._load_live_frame_payload(media_id)
+        if payload is None:
+            return None
+        media_payload = payload.get("media")
+        if not isinstance(media_payload, Mapping):
+            return None
+        primary_payload = media_payload.get("primary")
+        if not isinstance(primary_payload, Mapping):
+            return None
+        try:
+            return MediaSourceRef.from_dict(primary_payload)
+        except Exception:
+            return None
+
+    def _load_live_frame_stream_payload(self, media_id: str) -> tuple[bytes, str | None] | None:
+        payload = self._load_live_frame_payload(media_id)
+        if payload is None:
+            return None
+        live_ref = self._resolve_live_ref_from_payload(payload)
+        if live_ref is not None:
+            resolved = _load_media_content_from_ref(live_ref)
+            if resolved is not None:
+                return resolved
+        return _load_rgb_frame_payload(payload)
+
+    def _load_live_frame_payload(self, media_id: str) -> Mapping[str, object] | None:
+        if (
+            self.live_scene_scheme != "low_latency_channel"
+            or self.live_frame_supplier is None
+            or not media_id.startswith(_LOW_LATENCY_MEDIA_PREFIX)
+        ):
+            return None
+        try:
+            payload = self.live_frame_supplier()
+        except Exception:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        stream_id = _read_live_frame_stream_id(payload)
+        if self._build_low_latency_media_id(stream_id) != media_id:
+            return None
+        return payload
+
+    def _resolve_live_ref_from_payload(self, payload: Mapping[str, object]) -> MediaSourceRef | None:
+        media_payload = payload.get("media")
+        if not isinstance(media_payload, Mapping):
+            return None
+        primary_payload = media_payload.get("primary")
+        if not isinstance(primary_payload, Mapping):
+            return None
+        try:
+            ref = MediaSourceRef.from_dict(primary_payload)
+        except Exception:
+            return None
+        return ref
 
     def _build_binary_media_id(self, *, scene_seq: int, raw_media_id: str) -> str:
         normalized_raw_media_id = str(raw_media_id).strip() or "primary"
@@ -392,6 +612,46 @@ class RecorderLiveSessionSource:
             return f"/arena_visual/sessions/{session_path}/media/{media_path}/stream"
         run_path = quote(str(self.run_id), safe="")
         return f"/arena_visual/sessions/{session_path}/media/{media_path}/stream?run_id={run_path}"
+
+    def _resolve_low_latency_primary_media(self, scene: VisualScene) -> MediaSourceRef | None:
+        stream_id = _read_scene_stream_id(scene)
+        if scene.media is not None and scene.media.primary is not None:
+            adapted = self._adapt_media_ref(
+                raw_ref=scene.media.primary,
+                scene_kind=scene.kind,
+                scene_seq=scene.seq,
+                stream_id=stream_id,
+                is_primary=True,
+            )
+            if adapted is not None:
+                return adapted
+        return self._build_synthetic_low_latency_media_ref(
+            scene_kind=scene.kind,
+            stream_id=stream_id,
+        )
+
+    def _build_synthetic_low_latency_media_ref(
+        self,
+        *,
+        scene_kind: str,
+        stream_id: str | None,
+    ) -> MediaSourceRef | None:
+        if (
+            self.live_scene_scheme != "low_latency_channel"
+            or self.live_frame_supplier is None
+            or scene_kind not in _LOW_LATENCY_SCENE_KINDS
+        ):
+            return None
+        normalized_stream_id = str(stream_id or "").strip()
+        if not normalized_stream_id:
+            return None
+        channel_id = self._build_low_latency_media_id(normalized_stream_id)
+        return MediaSourceRef(
+            media_id=channel_id,
+            transport="low_latency_channel",
+            mime_type="multipart/x-mixed-replace",
+            url=self._build_low_latency_stream_url(channel_id),
+        )
 
 
 class ArenaVisualLiveRegistry:
@@ -476,6 +736,18 @@ def _read_scene_stream_id(scene: VisualScene) -> str | None:
     return normalized or None
 
 
+def _read_live_frame_stream_id(payload: Mapping[str, object]) -> str:
+    stream_id = payload.get("stream_id")
+    if isinstance(stream_id, str) and stream_id.strip():
+        return stream_id.strip()
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        nested_stream_id = metadata.get("stream_id")
+        if isinstance(nested_stream_id, str) and nested_stream_id.strip():
+            return nested_stream_id.strip()
+    return "main"
+
+
 def _parse_binary_media_id(media_id: str) -> tuple[int, str] | None:
     if not media_id.startswith(_BINARY_MEDIA_PREFIX):
         return None
@@ -495,6 +767,8 @@ def _parse_binary_media_id(media_id: str) -> tuple[int, str] | None:
 
 def _encode_low_latency_frame(*, content: bytes, mime_type: str | None) -> tuple[bytes, str | None]:
     normalized_mime_type = str(mime_type or "").strip().lower()
+    if normalized_mime_type == "image/png":
+        return content, "image/png"
     if normalized_mime_type in {"image/jpeg", "image/jpg"}:
         return content, "image/jpeg"
     if Image is None:
@@ -523,6 +797,41 @@ def _decode_data_url(url: str) -> tuple[bytes, str | None]:
         except (ValueError, binascii.Error) as exc:
             raise ValueError("invalid_media_data_url") from exc
     return unquote_to_bytes(data), mime_type
+
+
+def _load_media_content_from_ref(ref: MediaSourceRef) -> tuple[bytes, str | None] | None:
+    url = str(ref.url or "").strip()
+    if not url.startswith("data:"):
+        return None
+    return _decode_data_url(url)
+
+
+def _load_rgb_frame_payload(payload: Mapping[str, object]) -> tuple[bytes, str | None] | None:
+    for key in ("_rgb", "rgb", "rgb_array", "frame_rgb"):
+        frame = payload.get(key)
+        if frame is None:
+            continue
+        return _encode_rgb_frame(frame)
+    return None
+
+
+def _encode_rgb_frame(frame: object) -> tuple[bytes, str | None] | None:
+    if Image is None:
+        return None
+    try:
+        image = Image.fromarray(frame)  # type: ignore[arg-type]
+    except Exception:
+        return None
+    try:
+        if image.mode not in {"RGB", "L"}:
+            image = image.convert("RGB")
+        elif image.mode == "L":
+            image = image.convert("RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=85, optimize=True)
+        return buffer.getvalue(), "image/jpeg"
+    except Exception:
+        return None
 
 
 __all__ = [

@@ -37,6 +37,17 @@ class ArenaVisualLiveState:
     marker_index: dict[str, tuple[int, ...]]
 
 
+@dataclass(frozen=True, slots=True)
+class PendingSnapshotRecord:
+    ts_ms: int | None
+    step: int
+    tick: int
+    snapshot: Any
+    label: str = "snapshot"
+    anchor: bool = True
+    snapshot_is_scene_safe: bool = False
+
+
 @dataclass(slots=True)
 class ArenaVisualSessionRecorder:
     plugin_id: str
@@ -45,6 +56,7 @@ class ArenaVisualSessionRecorder:
     session_id: str
     observer_modes: tuple[str, ...] = ()
     visual_kind: str | None = None
+    extra_capabilities: dict[str, Any] = field(default_factory=dict)
     lifecycle: str = "initializing"
     playback_mode: str = "live_tail"
     observer_id: str = ""
@@ -62,7 +74,17 @@ class ArenaVisualSessionRecorder:
     _playback_cursor_ts: int = field(default=0, init=False, repr=False)
     _playback_cursor_event_seq: int = field(default=0, init=False, repr=False)
     _playback_speed: float = field(default=1.0, init=False, repr=False)
+    _runtime_metrics: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    _pending_snapshots: list[PendingSnapshotRecord] = field(default_factory=list, init=False, repr=False)
+    _live_revision: int = field(default=0, init=False, repr=False)
+    _background_snapshot_poll_interval_s: float = field(default=0.01, init=False, repr=False)
+    _snapshot_drain_thread: threading.Thread | None = field(default=None, init=False, repr=False)
+    _snapshot_drain_stop: threading.Event | None = field(default=None, init=False, repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    _revision_condition: threading.Condition = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._revision_condition = threading.Condition(self._lock)
 
     @property
     def artifacts(self) -> ArenaVisualSessionArtifacts | None:
@@ -88,10 +110,12 @@ class ArenaVisualSessionRecorder:
         accepts_human_intent: bool = True,
     ) -> TimelineEvent:
         with self._lock:
-            self._scheduling_phase = "waiting_for_intent"
-            self._scheduling_accepts_human_intent = bool(accepts_human_intent)
-            self._scheduling_active_actor_id = str(player_id)
-            self._scheduling_window_id = window_id
+            self.set_scheduling_state(
+                phase="waiting_for_intent",
+                accepts_human_intent=accepts_human_intent,
+                active_actor_id=player_id,
+                window_id=window_id,
+            )
             return self._record_event(
                 "decision_window_open",
                 label="decision_window_open",
@@ -117,8 +141,12 @@ class ArenaVisualSessionRecorder:
         intent_id: str | None = None,
     ) -> TimelineEvent:
         with self._lock:
-            self._scheduling_phase = "waiting_for_intent"
-            self._scheduling_active_actor_id = str(player_id)
+            self.set_scheduling_state(
+                phase="waiting_for_intent",
+                accepts_human_intent=self._scheduling_accepts_human_intent,
+                active_actor_id=player_id,
+                window_id=self._scheduling_window_id,
+            )
             return self._record_event(
                 "action_intent",
                 label="action_intent",
@@ -145,9 +173,12 @@ class ArenaVisualSessionRecorder:
         result: Any = None,
     ) -> TimelineEvent:
         with self._lock:
-            self._scheduling_phase = "advancing"
-            self._scheduling_accepts_human_intent = False
-            self._scheduling_active_actor_id = str(player_id)
+            self.set_scheduling_state(
+                phase="advancing",
+                accepts_human_intent=False,
+                active_actor_id=player_id,
+                window_id=self._scheduling_window_id,
+            )
             return self._record_event(
                 "action_committed",
                 label="action_committed",
@@ -173,10 +204,12 @@ class ArenaVisualSessionRecorder:
         reason: str | None = None,
     ) -> TimelineEvent:
         with self._lock:
-            self._scheduling_phase = "advancing"
-            self._scheduling_accepts_human_intent = False
-            self._scheduling_active_actor_id = str(player_id)
-            self._scheduling_window_id = window_id or self._scheduling_window_id
+            self.set_scheduling_state(
+                phase="advancing",
+                accepts_human_intent=False,
+                active_actor_id=player_id,
+                window_id=window_id or self._scheduling_window_id,
+            )
             return self._record_event(
                 "decision_window_close",
                 label="decision_window_close",
@@ -199,30 +232,88 @@ class ArenaVisualSessionRecorder:
         snapshot: Any,
         label: str = "snapshot",
         anchor: bool = True,
+        snapshot_is_scene_safe: bool = False,
     ) -> TimelineEvent:
         with self._lock:
-            self._scheduling_phase = "recording"
-            event = self._record_event(
-                "snapshot",
-                label=label,
+            return self._record_snapshot_locked(
                 ts_ms=ts_ms,
-                payload={
-                    "step": int(step),
-                    "tick": int(tick),
-                    "anchor": bool(anchor),
-                    "snapshot": to_scene_json_safe(snapshot),
-                },
+                step=step,
+                tick=tick,
+                snapshot=snapshot,
+                label=label,
+                anchor=anchor,
+                snapshot_is_scene_safe=snapshot_is_scene_safe,
             )
-            if anchor:
-                self._snapshot_payloads.append(
-                    {
-                        "seq": event.seq,
-                        "tsMs": event.ts_ms,
-                        "label": label,
-                        "snapshot": to_scene_json_safe(snapshot),
-                    }
+
+    def enqueue_snapshot(
+        self,
+        *,
+        ts_ms: int | None = None,
+        step: int,
+        tick: int,
+        snapshot: Any,
+        label: str = "snapshot",
+        anchor: bool = True,
+        snapshot_is_scene_safe: bool = False,
+    ) -> None:
+        with self._lock:
+            self._pending_snapshots.append(
+                PendingSnapshotRecord(
+                    ts_ms=ts_ms,
+                    step=int(step),
+                    tick=int(tick),
+                    snapshot=snapshot,
+                    label=str(label),
+                    anchor=bool(anchor),
+                    snapshot_is_scene_safe=bool(snapshot_is_scene_safe),
                 )
-            return event
+            )
+            self._revision_condition.notify_all()
+
+    def pending_snapshot_count(self) -> int:
+        with self._lock:
+            return len(self._pending_snapshots)
+
+    def flush_pending_snapshots(self) -> int:
+        with self._lock:
+            return self._drain_pending_snapshots_locked()
+
+    def start_background_snapshot_drain(self, *, poll_interval_s: float = 0.01) -> None:
+        normalized_interval_s = max(0.001, float(poll_interval_s))
+        with self._lock:
+            thread = self._snapshot_drain_thread
+            if thread is not None and thread.is_alive():
+                self._background_snapshot_poll_interval_s = normalized_interval_s
+                return
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=self._background_snapshot_drain_worker,
+                name=f"arena-visual-snapshot-drain:{self.session_id}",
+                daemon=True,
+            )
+            self._background_snapshot_poll_interval_s = normalized_interval_s
+            self._snapshot_drain_stop = stop_event
+            self._snapshot_drain_thread = thread
+        thread.start()
+
+    def stop_background_snapshot_drain(
+        self,
+        *,
+        flush: bool = True,
+        join_timeout_s: float = 1.0,
+    ) -> None:
+        with self._lock:
+            thread = self._snapshot_drain_thread
+            stop_event = self._snapshot_drain_stop
+            self._snapshot_drain_thread = None
+            self._snapshot_drain_stop = None
+            self._revision_condition.notify_all()
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=max(0.0, float(join_timeout_s)))
+        if flush:
+            self.flush_pending_snapshots()
 
     def record_result(
         self,
@@ -250,41 +341,111 @@ class ArenaVisualSessionRecorder:
 
     def build_visual_session(self) -> VisualSession:
         with self._lock:
-            return VisualSession(
-                session_id=self.session_id,
-                game_id=self.game_id,
-                plugin_id=self.plugin_id,
-                lifecycle=self.lifecycle,
-                playback=self._build_playback_state_locked(),
-                observer=ObserverRef(
-                    observer_id=self.observer_id,
-                    observer_kind=self.observer_kind,
-                ),
-                scheduling=SchedulingState(
-                    family=self.scheduling_family,
-                    phase=self._scheduling_phase,
-                    accepts_human_intent=self._scheduling_accepts_human_intent,
-                    active_actor_id=self._scheduling_active_actor_id,
-                    window_id=self._scheduling_window_id,
-                ),
-                capabilities={
-                    "supportsReplay": True,
-                    "supportsTimeline": True,
-                    "supportsSeek": True,
-                    "observerModes": list(self.observer_modes),
-                },
-                summary=self._build_summary(),
-                timeline=self._build_timeline_manifest(),
+            return self._build_visual_session_locked(include_snapshot_anchors=True)
+
+    def build_live_session(self) -> VisualSession:
+        with self._lock:
+            self._drain_pending_snapshots_for_live_read_locked()
+            return self._build_visual_session_locked(include_snapshot_anchors=False)
+
+    def current_live_revision(self) -> int:
+        with self._lock:
+            return self._live_revision
+
+    def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int:
+        with self._lock:
+            if self._live_revision > int(after_revision):
+                return self._live_revision
+            self._revision_condition.wait(
+                timeout=None if timeout_s is None else max(0.0, float(timeout_s))
             )
+            return self._live_revision
+
+    def set_scheduling_state(
+        self,
+        *,
+        phase: str,
+        accepts_human_intent: bool,
+        active_actor_id: str | None,
+        window_id: str | None = None,
+    ) -> None:
+        with self._lock:
+            self._scheduling_phase = str(phase)
+            self._scheduling_accepts_human_intent = bool(accepts_human_intent)
+            self._scheduling_active_actor_id = None if active_actor_id is None else str(active_actor_id)
+            self._scheduling_window_id = window_id
+            self._mark_live_revision_locked()
+
+    def update_runtime_metrics(self, **metrics: Any) -> None:
+        with self._lock:
+            for key, value in metrics.items():
+                if value is None:
+                    self._runtime_metrics.pop(str(key), None)
+                else:
+                    self._runtime_metrics[str(key)] = value
+            self._mark_live_revision_locked()
+
+    def reopen_live_round(self) -> int:
+        with self._lock:
+            self._drain_pending_snapshots_locked()
+            self._latest_result = None
+            self.lifecycle = "live_running"
+            self.playback_mode = "live_tail"
+            self._scheduling_phase = "idle"
+            self._scheduling_accepts_human_intent = False
+            self._scheduling_active_actor_id = None
+            self._scheduling_window_id = None
+            next_seq = self._tail_seq_locked()
+            self._playback_cursor_event_seq = next_seq
+            self._playback_cursor_ts = self._event_ts_for_seq_locked(next_seq)
+            self._mark_live_revision_locked()
+            return next_seq
 
     def export_live_state(self) -> ArenaVisualLiveState:
         with self._lock:
             return ArenaVisualLiveState(
-                visual_session=self.build_visual_session(),
+                visual_session=self._build_visual_session_locked(include_snapshot_anchors=True),
                 timeline_events=tuple(self._events),
                 snapshot_payloads=tuple(copy.deepcopy(self._snapshot_payloads)),
                 marker_index={key: tuple(value) for key, value in self._marker_index.items()},
             )
+
+    def export_live_header(self) -> dict[str, Any]:
+        with self._lock:
+            self._drain_pending_snapshots_for_live_read_locked()
+            cursor_event_seq = self._resolve_playback_cursor_event_seq_locked()
+            return {
+                "lifecycle": self.lifecycle,
+                "cursorEventSeq": cursor_event_seq,
+                "tailSeq": self._tail_seq_locked(),
+            }
+
+    def page_live_timeline(
+        self,
+        *,
+        after_seq: int | None = None,
+        limit: int = 50,
+    ) -> tuple[tuple[TimelineEvent, ...], int | None, bool]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._lock:
+            self._drain_pending_snapshots_for_live_read_locked()
+            start_index = 0
+            if after_seq is not None:
+                start_index = len(self._events)
+                for index, event in enumerate(self._events):
+                    if event.seq > after_seq:
+                        start_index = index
+                        break
+            events = tuple(self._events[start_index : start_index + limit])
+            has_more = start_index + len(events) < len(self._events)
+            next_after_seq = after_seq if not events else events[-1].seq
+            return events, next_after_seq, has_more
+
+    def lookup_marker(self, marker: str) -> tuple[int, ...]:
+        with self._lock:
+            self._drain_pending_snapshots_for_live_read_locked()
+            return tuple(self._marker_index.get(str(marker), ()))
 
     def apply_control_command(self, command: ControlCommand) -> int:
         with self._lock:
@@ -317,10 +478,12 @@ class ArenaVisualSessionRecorder:
             self._playback_speed = next_speed
             self._playback_cursor_event_seq = next_seq
             self._playback_cursor_ts = self._event_ts_for_seq_locked(next_seq)
+            self._mark_live_revision_locked()
             return next_seq
 
     def persist(self, replay_path: str | Path) -> ArenaVisualSessionArtifacts:
         with self._lock:
+            self._drain_pending_snapshots_locked()
             layout = ArenaVisualArtifactLayout.from_replay_path(replay_path)
             if self._artifacts is not None and self._artifacts.layout.replay_path == layout.replay_path:
                 return self._artifacts
@@ -417,6 +580,126 @@ class ArenaVisualSessionRecorder:
             )
             return self._artifacts
 
+    def _build_visual_session_locked(self, *, include_snapshot_anchors: bool) -> VisualSession:
+        return VisualSession(
+            session_id=self.session_id,
+            game_id=self.game_id,
+            plugin_id=self.plugin_id,
+            lifecycle=self.lifecycle,
+            playback=self._build_playback_state_locked(),
+            observer=ObserverRef(
+                observer_id=self.observer_id,
+                observer_kind=self.observer_kind,
+            ),
+            scheduling=SchedulingState(
+                family=self.scheduling_family,
+                phase=self._scheduling_phase,
+                accepts_human_intent=self._scheduling_accepts_human_intent,
+                active_actor_id=self._scheduling_active_actor_id,
+                window_id=self._scheduling_window_id,
+            ),
+            capabilities={
+                "supportsReplay": True,
+                "supportsTimeline": True,
+                "supportsSeek": True,
+                "observerModes": list(self.observer_modes),
+                **copy.deepcopy(self.extra_capabilities),
+            },
+            summary=self._build_summary(),
+            timeline=self._build_timeline_manifest(
+                include_snapshot_anchors=include_snapshot_anchors,
+            ),
+        )
+
+    def _record_snapshot_locked(
+        self,
+        *,
+        ts_ms: int | None,
+        step: int,
+        tick: int,
+        snapshot: Any,
+        label: str,
+        anchor: bool,
+        snapshot_is_scene_safe: bool,
+    ) -> TimelineEvent:
+        self._scheduling_phase = "recording"
+        scene_safe_snapshot = snapshot if snapshot_is_scene_safe else to_scene_json_safe(snapshot)
+        event = self._record_event(
+            "snapshot",
+            label=label,
+            ts_ms=ts_ms,
+            payload={
+                "step": int(step),
+                "tick": int(tick),
+                "anchor": bool(anchor),
+                "snapshot": scene_safe_snapshot,
+            },
+        )
+        if anchor:
+            self._snapshot_payloads.append(
+                {
+                    "seq": event.seq,
+                    "tsMs": event.ts_ms,
+                    "label": label,
+                    "snapshot": scene_safe_snapshot,
+                }
+            )
+        return event
+
+    def _drain_pending_snapshots_locked(self) -> int:
+        if not self._pending_snapshots:
+            return 0
+        pending = tuple(self._pending_snapshots)
+        self._pending_snapshots.clear()
+        for snapshot in pending:
+            self._record_snapshot_locked(
+                ts_ms=snapshot.ts_ms,
+                step=snapshot.step,
+                tick=snapshot.tick,
+                snapshot=snapshot.snapshot,
+                label=snapshot.label,
+                anchor=snapshot.anchor,
+                snapshot_is_scene_safe=snapshot.snapshot_is_scene_safe,
+            )
+        return len(pending)
+
+    def _drain_pending_snapshots_for_live_read_locked(self) -> int:
+        if self._background_snapshot_drain_active_locked():
+            return 0
+        return self._drain_pending_snapshots_locked()
+
+    def _mark_live_revision_locked(self) -> None:
+        self._live_revision += 1
+        self._revision_condition.notify_all()
+
+    def _background_snapshot_drain_active_locked(self) -> bool:
+        thread = self._snapshot_drain_thread
+        stop_event = self._snapshot_drain_stop
+        return bool(
+            thread is not None
+            and thread.is_alive()
+            and stop_event is not None
+            and not stop_event.is_set()
+        )
+
+    def _background_snapshot_drain_worker(self) -> None:
+        while True:
+            with self._lock:
+                stop_event = self._snapshot_drain_stop
+                while (
+                    stop_event is not None
+                    and not stop_event.is_set()
+                    and not self._pending_snapshots
+                ):
+                    self._revision_condition.wait(
+                        timeout=max(0.001, self._background_snapshot_poll_interval_s)
+                    )
+                    stop_event = self._snapshot_drain_stop
+                if stop_event is None or stop_event.is_set():
+                    self._drain_pending_snapshots_locked()
+                    return
+                self._drain_pending_snapshots_locked()
+
     def _record_event(
         self,
         event_type: str,
@@ -435,6 +718,7 @@ class ArenaVisualSessionRecorder:
             payload=payload,
         )
         self._events.append(event)
+        self._mark_live_revision_locked()
         self._marker_index[event.type].append(event.seq)
         if lifecycle is not None:
             self.lifecycle = lifecycle
@@ -539,6 +823,8 @@ class ArenaVisualSessionRecorder:
             "eventCount": len(self._events),
             "snapshotCount": len(self._snapshot_payloads),
         }
+        if self._runtime_metrics:
+            summary["realtimeMetrics"] = copy.deepcopy(self._runtime_metrics)
         if self._latest_result is not None:
             summary["result"] = to_bounded_json_safe(self._latest_result)
         return summary
@@ -560,21 +846,25 @@ class ArenaVisualSessionRecorder:
             return "frame"
         return None
 
-    def _build_timeline_manifest(self) -> dict[str, Any]:
-        return {
+    def _build_timeline_manifest(self, *, include_snapshot_anchors: bool) -> dict[str, Any]:
+        manifest = {
             "eventCount": len(self._events),
             "headSeq": self._events[0].seq if self._events else 0,
             "tailSeq": self._events[-1].seq if self._events else 0,
             "markers": {key: len(value) for key, value in self._marker_index.items()},
-            "snapshotAnchors": [
+        }
+        if include_snapshot_anchors:
+            manifest["snapshotAnchors"] = [
                 {
                     "seq": int(snapshot["seq"]),
                     "tsMs": int(snapshot["tsMs"]),
                     "label": snapshot.get("label"),
                 }
                 for snapshot in self._snapshot_payloads
-            ],
-        }
+            ]
+        else:
+            manifest["snapshotAnchors"] = []
+        return manifest
 
 
 def _now_ms() -> int:

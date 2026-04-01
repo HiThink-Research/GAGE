@@ -5,6 +5,7 @@ import type { ArenaMediaSubscriber } from "../sdk/contracts";
 import type { ActionIntent } from "../sdk/input";
 import type { FrameActionDescriptor, FrameKeyboardControls } from "./contracts";
 import { normalizeKeyboardKey } from "./keyboardControls";
+import { LowLatencyFrameCanvas, resolveLowLatencyStreamUrl } from "./LowLatencyFrameCanvas";
 
 interface FrameViewport {
   width: number;
@@ -49,6 +50,7 @@ interface FrameSurfaceProps {
   }) => Promise<void>;
   mediaSubscribe: ArenaMediaSubscriber;
   keyboardControls?: FrameKeyboardControls;
+  presentation?: "default" | "immersive";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -210,7 +212,29 @@ function resolveImageClassName(fit: string): string {
     : "frame-surface__image frame-surface__image--contain";
 }
 
-function resolveViewportStyle(viewport: FrameViewport | null): CSSProperties {
+function resolveCanvasClassName(fit: string): string {
+  return fit === "cover"
+    ? "frame-surface__canvas frame-surface__canvas--cover"
+    : "frame-surface__canvas frame-surface__canvas--contain";
+}
+
+function resolveViewportStyle(
+  viewport: FrameViewport | null,
+  presentation: "default" | "immersive",
+): CSSProperties {
+  if (presentation === "immersive") {
+    if (!viewport) {
+      return {
+        width: "100%",
+        maxWidth: "100%",
+      };
+    }
+    return {
+      width: "100%",
+      maxWidth: "100%",
+      aspectRatio: `${viewport.width} / ${viewport.height}`,
+    };
+  }
   if (!viewport) {
     return {
       width: "min(100%, 26rem)",
@@ -233,43 +257,61 @@ export function FrameSurface({
   submitInput,
   mediaSubscribe,
   keyboardControls,
+  presentation = "default",
 }: FrameSurfaceProps) {
+  const isImmersive = presentation === "immersive";
   const frameScene = readFrameScene(scene);
+  const actionDescriptors = readFrameActions(scene);
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
-
-  if (!frameScene) {
-    return (
-      <section className="plugin-stage-card">
-        <p className="eyebrow">{gameLabel}</p>
-        <h2>Frame unavailable</h2>
-        <p className="plugin-stage-card__copy">Waiting for frame scene data and media sources.</p>
-      </section>
-    );
-  }
-
-  const actionDescriptors = readFrameActions(scene);
-  const resolvedActorId = resolveFrameActorId(session, scene, frameScene);
-  const canSubmitActions = session.scheduling.acceptsHumanIntent && resolvedActorId !== null;
-  const actorLabel = formatFrameActorLabel(session, resolvedActorId);
+  const keyboardInputSequenceRef = useRef(0);
   const primaryMediaId = scene?.media?.primary?.mediaId;
   const mediaState = useMediaSource({
     sessionId: session.sessionId,
     mediaId: primaryMediaId ?? "",
     subscribe: mediaSubscribe,
   });
+  const resolvedActorId = frameScene ? resolveFrameActorId(session, scene, frameScene) : null;
+  const canSubmitActions =
+    frameScene !== null && session.scheduling.acceptsHumanIntent && resolvedActorId !== null;
   const keyboardSceneToken =
     scene?.sceneId ??
-    `${session.sessionId}:${frameScene.status.tick}:${frameScene.status.moveCount}:${frameScene.status.lastMove ?? ""}`;
-  const imageClassName = resolveImageClassName(frameScene.frame.fit);
-  const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
-  const viewportStyle = resolveViewportStyle(frameScene.frame.viewport);
+    (frameScene
+      ? `${session.sessionId}:${frameScene.status.tick}:${frameScene.status.moveCount}:${frameScene.status.lastMove ?? ""}`
+      : session.sessionId);
+  const keyboardDispatchContextRef = useRef({
+    actionDescriptors,
+    canSubmitActions,
+    frameScene,
+    keyboardControls,
+    keyboardSceneToken,
+    resolvedActorId,
+    submitInput,
+  });
+  keyboardDispatchContextRef.current = {
+    actionDescriptors,
+    canSubmitActions,
+    frameScene,
+    keyboardControls,
+    keyboardSceneToken,
+    resolvedActorId,
+    submitInput,
+  };
 
-  function submitKeyboardAction(pressedKeys: ReadonlySet<string>) {
-    if (!keyboardControls || !canSubmitActions || !resolvedActorId) {
+  function dispatchKeyboardAction(pressedKeys: ReadonlySet<string>): void {
+    const context = keyboardDispatchContextRef.current;
+    if (
+      !context.keyboardControls ||
+      !context.frameScene ||
+      !context.canSubmitActions ||
+      !context.resolvedActorId
+    ) {
       return;
     }
-    const actionDescriptor = keyboardControls.resolveAction(actionDescriptors, pressedKeys);
+    const actionDescriptor = context.keyboardControls.resolveAction(
+      context.actionDescriptors,
+      pressedKeys,
+    );
     if (!actionDescriptor) {
       if (pressedKeys.size === 0) {
         lastKeyboardDispatchRef.current = null;
@@ -277,15 +319,27 @@ export function FrameSurface({
       return;
     }
     const pressedKeysToken = [...pressedKeys].sort().join(",");
-    const dispatchToken = `${keyboardSceneToken}:${resolvedActorId}:${actionDescriptor.id}:${pressedKeysToken}`;
+    const dispatchToken = `${context.keyboardSceneToken}:${context.resolvedActorId}:${actionDescriptor.id}:${pressedKeysToken}`;
     if (lastKeyboardDispatchRef.current === dispatchToken) {
       return;
     }
     lastKeyboardDispatchRef.current = dispatchToken;
-    void submitInput({
-      playerId: resolvedActorId,
-      actionPayload: actionDescriptor.payload,
-    });
+    keyboardInputSequenceRef.current += 1;
+    const actionPayload = isRecord(actionDescriptor.payload)
+      ? {
+          ...actionDescriptor.payload,
+          metadata: {
+            ...(isRecord(actionDescriptor.payload.metadata) ? actionDescriptor.payload.metadata : {}),
+            input_seq: keyboardInputSequenceRef.current,
+            realtime_input: true,
+          },
+        }
+      : actionDescriptor.payload;
+    void context.submitInput({
+      playerId: context.resolvedActorId,
+      actionPayload,
+    })
+      .catch(() => {});
   }
 
   useEffect(() => {
@@ -309,7 +363,7 @@ export function FrameSurface({
       pressedKeysRef.current = nextPressedKeys;
       event.preventDefault();
       if (nextPressedKeys.size !== sizeBefore) {
-        submitKeyboardAction(nextPressedKeys);
+        dispatchKeyboardAction(nextPressedKeys);
       }
     }
 
@@ -323,7 +377,7 @@ export function FrameSurface({
       pressedKeysRef.current = nextPressedKeys;
       event.preventDefault();
       if (hadKey) {
-        submitKeyboardAction(nextPressedKeys);
+        dispatchKeyboardAction(nextPressedKeys);
       }
     }
 
@@ -333,24 +387,46 @@ export function FrameSurface({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput, actionDescriptors]);
-
-  useEffect(() => {
-    if (!keyboardControls || pressedKeysRef.current.size === 0) {
-      return;
-    }
-    submitKeyboardAction(new Set(pressedKeysRef.current));
   }, [actionDescriptors, canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput]);
 
+  if (!frameScene) {
+    return (
+      <section className="plugin-stage-card">
+        <p className="eyebrow">{gameLabel}</p>
+        <h2>Frame unavailable</h2>
+        <p className="plugin-stage-card__copy">Waiting for frame scene data and media sources.</p>
+      </section>
+    );
+  }
+
+  const actorLabel = formatFrameActorLabel(session, resolvedActorId);
+  const imageClassName = resolveImageClassName(frameScene.frame.fit);
+  const canvasClassName = resolveCanvasClassName(frameScene.frame.fit);
+  const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
+  const lowLatencyStreamUrl = resolveLowLatencyStreamUrl(mediaState?.ref?.url, mediaState?.ref?.transport);
+  const viewportStyle = resolveViewportStyle(frameScene.frame.viewport, presentation);
+
   return (
-    <section className="frame-surface">
-      <div className="frame-surface__header">
-        <p className="eyebrow">Frame</p>
-        <p className="frame-surface__actor-label">{actorLabel}</p>
-      </div>
-      <h2 className="frame-surface__title">{frameScene.frame.title}</h2>
-      {frameScene.frame.subtitle ? (
-        <p className="frame-surface__subtitle">{frameScene.frame.subtitle}</p>
+    <section
+      className={[
+        "frame-surface",
+        isImmersive ? "frame-surface--immersive" : "",
+      ]
+        .filter((value) => value !== "")
+        .join(" ")}
+      data-testid="frame-surface-root"
+    >
+      {!isImmersive ? (
+        <>
+          <div className="frame-surface__header">
+            <p className="eyebrow">Frame</p>
+            <p className="frame-surface__actor-label">{actorLabel}</p>
+          </div>
+          <h2 className="frame-surface__title">{frameScene.frame.title}</h2>
+          {frameScene.frame.subtitle ? (
+            <p className="frame-surface__subtitle">{frameScene.frame.subtitle}</p>
+          ) : null}
+        </>
       ) : null}
 
       <div
@@ -358,7 +434,13 @@ export function FrameSurface({
         data-testid="frame-surface-viewport"
         style={viewportStyle}
       >
-        {imageSrc ? (
+        {lowLatencyStreamUrl ? (
+          <LowLatencyFrameCanvas
+            altText={frameScene.frame.altText}
+            className={canvasClassName}
+            streamUrl={lowLatencyStreamUrl}
+          />
+        ) : imageSrc ? (
           <img
             alt={frameScene.frame.altText}
             className={imageClassName}
@@ -384,38 +466,42 @@ export function FrameSurface({
         ) : null}
       </div>
 
-      <p className="frame-surface__status-line" data-testid="frame-status-line">
-        {formatStatusLine(frameScene)}
-      </p>
-      {frameScene.viewText ? <p className="frame-surface__view-text">{frameScene.viewText}</p> : null}
-      {keyboardControls ? (
-        <p className="frame-surface__keyboard-hint" data-testid="frame-keyboard-hint">
-          {keyboardControls.hint}
-        </p>
-      ) : null}
+      {!isImmersive ? (
+        <>
+          <p className="frame-surface__status-line" data-testid="frame-status-line">
+            {formatStatusLine(frameScene)}
+          </p>
+          {frameScene.viewText ? <p className="frame-surface__view-text">{frameScene.viewText}</p> : null}
+          {keyboardControls ? (
+            <p className="frame-surface__keyboard-hint" data-testid="frame-keyboard-hint">
+              {keyboardControls.hint}
+            </p>
+          ) : null}
 
-      {actionDescriptors.length > 0 ? (
-        <div className="frame-surface__actions">
-          {actionDescriptors.map((actionDescriptor) => (
-            <button
-              className="frame-surface__action-chip"
-              disabled={!canSubmitActions}
-              key={actionDescriptor.id}
-              onClick={() => {
-                if (!canSubmitActions || !resolvedActorId) {
-                  return;
-                }
-                void submitInput({
-                  playerId: resolvedActorId,
-                  actionPayload: actionDescriptor.payload,
-                });
-              }}
-              type="button"
-            >
-              {actionDescriptor.label}
-            </button>
-          ))}
-        </div>
+          {actionDescriptors.length > 0 ? (
+            <div className="frame-surface__actions">
+              {actionDescriptors.map((actionDescriptor) => (
+                <button
+                  className="frame-surface__action-chip"
+                  disabled={!canSubmitActions}
+                  key={actionDescriptor.id}
+                  onClick={() => {
+                    if (!canSubmitActions || !resolvedActorId) {
+                      return;
+                    }
+                    void submitInput({
+                      playerId: resolvedActorId,
+                      actionPayload: actionDescriptor.payload,
+                    });
+                  }}
+                  type="button"
+                >
+                  {actionDescriptor.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
       ) : null}
     </section>
   );

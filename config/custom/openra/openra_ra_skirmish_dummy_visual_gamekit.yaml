@@ -1,0 +1,46 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: openra_ra_skirmish_dummy_visual_gamekit
+  description: >
+    Deterministic OpenRA Red Alert skirmish visual smoke config for the
+    curated `ra_skirmish_1v1` env.
+
+datasets:
+  - dataset_id: openra_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_OpenRA.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: openra_ra_skirmish_dummy_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: openra_ra_skirmish_dummy_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: openra
+      env: ra_skirmish_1v1
+      runtime_overrides:
+        backend_mode: dummy
+        stub_max_ticks: 6
+      visualizer:
+        enabled: true
+        title: GAGE OpenRA RA Skirmish Live
+        launch_browser: true
+        mode: arena_visual
+        live_scene_scheme: http_pull
+        linger_after_finish_s: 15.0
+      players:
+        - seat: player_0
+          player_id: player_0
+          player_kind: dummy
+          actions: ["select_units", "queue_production", "issue_command", "camera_pan"]
+        - seat: player_1
+          player_id: player_1
+          player_kind: dummy
+          actions: ["camera_pan", "select_units", "issue_command", "queue_production"]

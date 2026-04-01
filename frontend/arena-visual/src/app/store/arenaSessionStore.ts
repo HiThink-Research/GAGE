@@ -43,6 +43,7 @@ export interface ArenaControlPayload {
     | "follow_tail"
     | "pause"
     | "replay"
+    | "restart"
     | "seek_seq"
     | "seek_end"
     | "step"
@@ -91,6 +92,9 @@ export interface ArenaSessionStore {
   submitChat: (payload: Record<string, unknown>) => Promise<ActionIntentReceipt>;
   submitControl: (payload: ArenaControlPayload) => Promise<ActionIntentReceipt>;
   submitAction: (payload: Record<string, unknown>) => Promise<ActionIntentReceipt>;
+  submitActionLowLatency: (payload: Record<string, unknown>) => Promise<void>;
+  applyLiveSession?: (session: VisualSession) => void;
+  applyTimelinePage?: (page: TimelinePage) => void;
   clearLatestActionReceipt: () => void;
 }
 
@@ -143,8 +147,29 @@ export function createArenaSessionStore(
   }
 
   function mergeTimelineEvents(events: TimelineEvent[]): TimelineEvent[] {
+    const previousEvents = state.timeline.events;
+    if (events.length === 0) {
+      return previousEvents;
+    }
+    if (previousEvents.length === 0) {
+      return [...events];
+    }
+
+    let canAppendInOrder = true;
+    let lastSeq = previousEvents.at(-1)?.seq ?? -1;
+    for (const event of events) {
+      if (event.seq <= lastSeq) {
+        canAppendInOrder = false;
+        break;
+      }
+      lastSeq = event.seq;
+    }
+    if (canAppendInOrder) {
+      return [...previousEvents, ...events];
+    }
+
     const merged = new Map<number, TimelineEvent>();
-    for (const event of state.timeline.events) {
+    for (const event of previousEvents) {
       merged.set(event.seq, event);
     }
     for (const event of events) {
@@ -542,6 +567,10 @@ export function createArenaSessionStore(
         nextMode = "replay_playing";
         nextCursorSeq = receipt.relatedEventSeq ?? previous.timeline.events[0]?.seq ?? nextCursorSeq;
         break;
+      case "restart":
+        nextMode = "live_tail";
+        nextCursorSeq = receipt.relatedEventSeq ?? nextCursorSeq;
+        break;
       case "follow_tail":
       case "back_to_tail":
         nextMode = "live_tail";
@@ -667,10 +696,58 @@ export function createArenaSessionStore(
     if (!LOCAL_PLAYBACK_UNAVAILABLE_REASONS.has(receipt.reason ?? "")) {
       return false;
     }
-    if (payload.commandType === "finish") {
+    if (payload.commandType === "finish" || payload.commandType === "restart") {
       return false;
     }
     return payload.commandType !== "set_speed" || payload.speed !== undefined;
+  }
+
+  function shouldRefreshAcceptedActionInBackground(
+    snapshot: ArenaSessionStoreSnapshot,
+  ): boolean {
+    if (snapshot.session?.capabilities.supportsLiveUpdateStream === true) {
+      return false;
+    }
+    return (
+      snapshot.session?.lifecycle === "live_running" &&
+      snapshot.session.playback.mode === "live_tail" &&
+      snapshot.session.scheduling.family === "real_time_tick" &&
+      snapshot.scene?.phase === "live" &&
+      snapshot.scene.media?.primary?.transport === "low_latency_channel"
+    );
+  }
+
+  function applyLiveSession(session: VisualSession): void {
+    setState((previous) => ({
+      ...previous,
+      status: "ready",
+      sessionRequest:
+        previous.sessionRequest === undefined
+          ? previous.sessionRequest
+          : {
+              ...previous.sessionRequest,
+              observer: session.observer,
+            },
+      session,
+      currentSceneSeq: resolveSceneCursorForSession(previous, session),
+      error: undefined,
+    }));
+  }
+
+  function applyTimelinePage(page: TimelinePage): void {
+    const mergedEvents = mergeTimelineEvents(page.events);
+    const lastEvent = mergedEvents.at(-1);
+    setState((previous) => ({
+      ...previous,
+      currentSceneSeq:
+        previous.session?.playback.mode === "live_tail" && lastEvent
+          ? lastEvent.seq
+          : previous.currentSceneSeq,
+      timeline: {
+        ...timelineFromPage(page, previous.timeline.filters),
+        events: mergedEvents,
+      },
+    }));
   }
 
   async function setObserver(observer: ObserverRef): Promise<void> {
@@ -777,7 +854,11 @@ export function createArenaSessionStore(
       latestActionReceipt: receipt,
     }));
     if (["accepted", "committed"].includes(receipt.state)) {
-      await refreshSession().catch(() => {});
+      if (shouldRefreshAcceptedActionInBackground(state)) {
+        void refreshSession().catch(() => {});
+      } else {
+        await refreshSession().catch(() => {});
+      }
     }
     return receipt;
   }
@@ -910,6 +991,17 @@ export function createArenaSessionStore(
     }
   }
 
+  async function submitActionLowLatency(payload: Record<string, unknown>): Promise<void> {
+    if (!state.sessionRequest) {
+      throw new Error("No session is loaded.");
+    }
+    await client.submitActionLowLatency({
+      sessionId: state.sessionRequest.sessionId,
+      runId: state.sessionRequest.runId,
+      payload,
+    });
+  }
+
   return {
     getSnapshot: () => state,
     subscribe(listener) {
@@ -930,6 +1022,9 @@ export function createArenaSessionStore(
     submitChat,
     submitControl,
     submitAction: submitActionWithFailureHandling,
+    submitActionLowLatency,
+    applyLiveSession,
+    applyTimelinePage,
     clearLatestActionReceipt() {
       setState((previous) => ({
         ...previous,

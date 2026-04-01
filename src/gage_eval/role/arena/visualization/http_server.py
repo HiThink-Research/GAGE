@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 from collections.abc import Callable, Mapping
 from http import HTTPStatus
@@ -30,6 +31,13 @@ ActionSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceip
 ChatSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
 ControlSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
 _SESSION_MANIFEST_SUFFIX = Path("arena_visual_session") / "v1" / "manifest.json"
+_LOW_LATENCY_STREAM_POLL_INTERVAL_S = 1.0 / 180.0
+_LIVE_UPDATE_STREAM_WAIT_TIMEOUT_S = 1.0
+_WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+_WS_OPCODE_TEXT = 0x1
+_WS_OPCODE_CLOSE = 0x8
+_WS_OPCODE_PING = 0x9
+_WS_OPCODE_PONG = 0xA
 
 
 class SessionResolutionError(Exception):
@@ -215,8 +223,14 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         if suffix == ("timeline",):
             self._handle_timeline(session_id, parsed, run_id=run_id)
             return
+        if suffix == ("events",):
+            self._handle_session_updates(session_id, parsed, run_id=run_id)
+            return
         if suffix == ("scene",):
             self._handle_scene(session_id, parsed, run_id=run_id)
+            return
+        if suffix == ("actions", "ws"):
+            self._handle_action_websocket(session_id, run_id=run_id)
             return
         if suffix == ("markers",):
             self._handle_markers(session_id, parsed, run_id=run_id)
@@ -241,7 +255,11 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         if self._validate_route_tokens(session_id, run_id=run_id) is None:
             return
         if suffix == ("actions",):
-            self._handle_submit_action(session_id, run_id=run_id)
+            self._handle_submit_action(
+                session_id,
+                run_id=run_id,
+                fast_ack=self._query_fast_ack(parsed),
+            )
             return
         if suffix == ("chat",):
             self._handle_submit_chat(session_id, run_id=run_id)
@@ -341,6 +359,82 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             "events": [event.to_dict() for event in page.events],
         }
         self._send_json(payload, status=HTTPStatus.OK)
+
+    def _handle_session_updates(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
+        params = parse_qs(parsed_url.query)
+        try:
+            observer = _parse_observer_override(params)
+            after_seq = _parse_optional_int(_first_param(params, "after_seq"), field_name="after_seq")
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if after_seq is not None and after_seq < 0:
+            self._send_json({"error": "invalid_after_seq"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is None:
+            self._send_json({"error": "live_updates_not_available"}, status=HTTPStatus.NOT_FOUND)
+            return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Connection", "close")
+        self._send_cors_headers()
+        self.end_headers()
+
+        last_revision = live_source.current_live_revision()
+        current_after_seq = after_seq
+        last_session_payload: str | None = None
+        while True:
+            try:
+                session = live_source.load_session(observer=observer)
+                page = live_source.page_timeline(after_seq=current_after_seq, limit=50)
+            except Exception:
+                logger.exception("Failed to stream live session updates for {}", session_id)
+                break
+            session_payload = session.to_dict()
+            serialized_session_payload = json.dumps(session_payload, ensure_ascii=False, sort_keys=True)
+            timeline_payload = {
+                "sessionId": session_id,
+                "afterSeq": page.after_seq,
+                "nextAfterSeq": page.next_after_seq,
+                "limit": page.limit,
+                "hasMore": page.has_more,
+                "events": [event.to_dict() for event in page.events],
+            }
+            has_session_delta = serialized_session_payload != last_session_payload
+            has_timeline_delta = bool(page.events)
+            if has_session_delta or has_timeline_delta:
+                if page.next_after_seq is not None:
+                    current_after_seq = page.next_after_seq
+                payload = {
+                    "session": session_payload,
+                    "timeline": timeline_payload,
+                }
+                try:
+                    self._send_sse_event("delta", payload)
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    break
+                last_session_payload = serialized_session_payload
+            else:
+                try:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                    break
+
+            try:
+                next_revision = live_source.wait_for_live_revision(
+                    after_revision=last_revision,
+                    timeout_s=_LIVE_UPDATE_STREAM_WAIT_TIMEOUT_S,
+                )
+            except Exception:
+                break
+            if next_revision <= last_revision and session.lifecycle != "live_running":
+                break
+            last_revision = max(last_revision, next_revision)
 
     def _handle_scene(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
         params = parse_qs(parsed_url.query)
@@ -456,7 +550,7 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
                 self._send_bytes(
                     content,
                     status=HTTPStatus.OK,
-                    mime_type=media.mime_type or mime_type or "application/octet-stream",
+                    mime_type=mime_type or media.mime_type or "application/octet-stream",
                 )
                 return
             self._send_json(media.to_dict(), status=HTTPStatus.OK)
@@ -506,7 +600,13 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             return
         self._stream_low_latency_media(live_source=live_source, media_id=media_id, session_id=session_id)
 
-    def _handle_submit_action(self, session_id: str, *, run_id: str | None) -> None:
+    def _handle_submit_action(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None,
+        fast_ack: bool = False,
+    ) -> None:
         self._handle_write_submission(
             session_id=session_id,
             run_id=run_id,
@@ -514,7 +614,56 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
             not_configured_error="action_submitter_not_configured",
             invalid_payload_error="invalid_action_payload",
             submit_failed_error="action_submit_failed",
+            fast_ack=fast_ack,
         )
+
+    def _handle_action_websocket(self, session_id: str, *, run_id: str | None) -> None:
+        if self._app.action_submitter is None:
+            self._send_json({"error": "action_submitter_not_configured"}, status=HTTPStatus.NOT_IMPLEMENTED)
+            return
+        if not self._supports_realtime_input_websocket(session_id, run_id=run_id):
+            self._send_json({"error": "realtime_input_websocket_unavailable"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if not _is_websocket_upgrade_request(self.headers):
+            self._send_json({"error": "websocket_upgrade_required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        websocket_key = str(self.headers.get("Sec-WebSocket-Key") or "").strip()
+        if websocket_key == "":
+            self._send_json({"error": "missing_websocket_key"}, status=HTTPStatus.BAD_REQUEST)
+            return
+
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", _build_websocket_accept(websocket_key))
+        self.end_headers()
+        self.close_connection = True
+
+        try:
+            while True:
+                frame = _read_websocket_frame(self.rfile)
+                if frame is None:
+                    break
+                opcode, payload = frame
+                if opcode == _WS_OPCODE_CLOSE:
+                    _write_websocket_frame(self.wfile, opcode=_WS_OPCODE_CLOSE, payload=b"")
+                    break
+                if opcode == _WS_OPCODE_PING:
+                    _write_websocket_frame(self.wfile, opcode=_WS_OPCODE_PONG, payload=payload)
+                    continue
+                if opcode != _WS_OPCODE_TEXT:
+                    continue
+                try:
+                    message = json.loads(payload.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                self._app.action_submitter(session_id, run_id, dict(message))
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            return
+        except Exception:
+            logger.exception("Realtime input websocket failed for {}", session_id)
 
     def _handle_submit_chat(self, session_id: str, *, run_id: str | None) -> None:
         self._handle_write_submission(
@@ -545,6 +694,7 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         not_configured_error: str,
         invalid_payload_error: str,
         submit_failed_error: str,
+        fast_ack: bool = False,
     ) -> None:
         try:
             payload = self._read_json_object()
@@ -564,6 +714,9 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             logger.exception("Failed write submission {} for {}", submit_failed_error, session_id)
             self._send_json({"error": submit_failed_error}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if fast_ack and str(getattr(receipt, "state", "")).lower() in {"accepted", "committed"}:
+            self._send_empty(status=HTTPStatus.NO_CONTENT)
             return
         self._send_json(receipt.to_dict(), status=HTTPStatus.OK)
 
@@ -618,6 +771,28 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         run_id = _first_param(params, "run_id")
         return None if run_id is None else str(run_id)
 
+    def _query_fast_ack(self, parsed_url) -> bool:
+        params = parse_qs(parsed_url.query)
+        raw_value = _first_param(params, "fast")
+        if raw_value is None:
+            return False
+        return str(raw_value).strip().lower() not in {"0", "false", "no", "off"}
+
+    def _supports_realtime_input_websocket(self, session_id: str, *, run_id: str | None) -> bool:
+        live_source = self._app.resolve_live_session(session_id, run_id=run_id)
+        if live_source is None:
+            return False
+        try:
+            session = live_source.load_session()
+        except Exception:
+            logger.exception("Failed to inspect live session {} for realtime websocket", session_id)
+            return False
+        capabilities = dict(getattr(session, "capabilities", {}) or {})
+        return (
+            str(getattr(session, "lifecycle", "")).strip() == "live_running"
+            and capabilities.get("supportsRealtimeInputWebSocket") is True
+        )
+
     def _validate_route_tokens(self, session_id: str, *, run_id: str | None) -> tuple[str, str | None] | None:
         try:
             validated_session_id = _validate_lookup_token(session_id, error_code="invalid_session_id")
@@ -659,6 +834,18 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_empty(self, *, status: HTTPStatus) -> None:
+        self.send_response(status)
+        self.send_header("Content-Length", "0")
+        self._send_cors_headers()
+        self.end_headers()
+
+    def _send_sse_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        data = json.dumps(dict(payload), ensure_ascii=False)
+        self.wfile.write(f"event: {event_type}\n".encode("utf-8"))
+        self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+        self.wfile.flush()
 
     def _stream_low_latency_media(
         self,
@@ -704,7 +891,8 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
                     break
 
             try:
-                lifecycle = live_source.load_session().lifecycle
+                header = live_source.load_live_header()
+                lifecycle = str(header.get("lifecycle", "")).strip() or None
             except Exception:
                 lifecycle = None
             if lifecycle != "live_running":
@@ -715,7 +903,7 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
                 if idle_rounds_after_end >= 2:
                     break
             try:
-                time.sleep(0.05)
+                time.sleep(_LOW_LATENCY_STREAM_POLL_INTERVAL_S)
             except Exception:
                 break
 
@@ -892,6 +1080,77 @@ def _resolve_app_path(app_dir: Path, request_path: str) -> Path | None:
     if "." not in Path(stripped).name:
         return app_dir / "index.html"
     return None
+
+
+def _is_websocket_upgrade_request(headers) -> bool:
+    upgrade = str(headers.get("Upgrade") or "").strip().lower()
+    connection = str(headers.get("Connection") or "").strip().lower()
+    return upgrade == "websocket" and "upgrade" in connection
+
+
+def _build_websocket_accept(key: str) -> str:
+    digest = hashlib.sha1(f"{key}{_WEBSOCKET_ACCEPT_GUID}".encode("utf-8")).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
+def _read_exact(reader, size: int) -> bytes | None:
+    if size <= 0:
+        return b""
+    try:
+        payload = reader.read(size)
+    except Exception:
+        return None
+    if payload is None or len(payload) != size:
+        return None
+    return payload
+
+
+def _read_websocket_frame(reader) -> tuple[int, bytes] | None:
+    header = _read_exact(reader, 2)
+    if header is None:
+        return None
+    first_byte, second_byte = header
+    opcode = first_byte & 0x0F
+    masked = (second_byte & 0x80) != 0
+    payload_length = second_byte & 0x7F
+    if payload_length == 126:
+        extended = _read_exact(reader, 2)
+        if extended is None:
+            return None
+        payload_length = int.from_bytes(extended, "big")
+    elif payload_length == 127:
+        extended = _read_exact(reader, 8)
+        if extended is None:
+            return None
+        payload_length = int.from_bytes(extended, "big")
+    mask_key = _read_exact(reader, 4) if masked else b""
+    if masked and mask_key is None:
+        return None
+    payload = _read_exact(reader, payload_length)
+    if payload is None:
+        return None
+    if masked:
+        payload = bytes(
+            value ^ mask_key[index % 4]
+            for index, value in enumerate(payload)
+        )
+    return opcode, payload
+
+
+def _write_websocket_frame(writer, *, opcode: int, payload: bytes) -> None:
+    header = bytearray([0x80 | (opcode & 0x0F)])
+    payload_length = len(payload)
+    if payload_length < 126:
+        header.append(payload_length)
+    elif payload_length < (1 << 16):
+        header.append(126)
+        header.extend(payload_length.to_bytes(2, "big"))
+    else:
+        header.append(127)
+        header.extend(payload_length.to_bytes(8, "big"))
+    writer.write(bytes(header))
+    writer.write(payload)
+    writer.flush()
 
 
 def _default_app_dir() -> Path:
