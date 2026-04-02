@@ -319,8 +319,10 @@ class GameSession:
         self.arena_trace.append(finalized_trace_entry)
         self._current_trace_entry = None
 
-    def advance(self, *, decision_taken: bool = True) -> None:
+    def advance(self, *, decision_taken: bool | None = None) -> None:
         delta = self._resolve_progress_delta()
+        if decision_taken is None:
+            decision_taken = self._current_trace_entry is None
         if self._uses_scheduler_owned_human_realtime() and not decision_taken:
             self.tick += delta
         else:
