@@ -38,6 +38,9 @@ class Tau2Evaluate(JudgeImplementation):
 
 
 def _resolve_runtime_state(payload: Dict[str, Any]) -> Dict[str, Any]:
+    direct_state = payload.get("runtime_state")
+    if isinstance(direct_state, dict):
+        return dict(direct_state)
     sandbox_provider = payload.get("sandbox_provider")
     if isinstance(sandbox_provider, SandboxProvider):
         handle = sandbox_provider.get_handle()

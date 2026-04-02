@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from gage_eval.agent_runtime.verifier.base import VerifierInput, VerifierResult
+from gage_eval.sandbox.surfaces import ClientSurface
 
 TERMINAL_BENCH_REQUIRED_SURFACES = ("terminal", "fs")
 
@@ -24,13 +25,18 @@ class TerminalBenchVerifier:
             )
 
         payload = verifier_input.payload if isinstance(verifier_input.payload, dict) else {}
-        missing_surfaces = self._missing_required_surfaces(payload)
+        missing_surfaces = self._missing_required_surfaces(verifier_input, payload)
         if missing_surfaces:
             return VerifierResult(
                 status="failed",
                 score=0.0,
                 summary=f"Missing required surfaces: {', '.join(missing_surfaces)}",
-                raw_output={"missing_surfaces": missing_surfaces, "payload": payload},
+                raw_output={
+                    "missing_surfaces": missing_surfaces,
+                    "payload": payload,
+                    "runtime_handle": dict(verifier_input.runtime_handle or {}),
+                    "surface_names": tuple(verifier_input.surfaces.keys()),
+                },
             )
 
         scheduler_result = payload.get("scheduler_result") or {}
@@ -49,14 +55,29 @@ class TerminalBenchVerifier:
             status="passed",
             score=1.0,
             summary="Terminal benchmark requirements satisfied.",
-            raw_output={"scheduler_result": scheduler_result, "payload": payload},
+            raw_output={
+                "scheduler_result": scheduler_result,
+                "payload": payload,
+                "runtime_handle": dict(verifier_input.runtime_handle or {}),
+                "surface_names": tuple(verifier_input.surfaces.keys()),
+                "workspace_root": verifier_input.workspace_root,
+            },
         )
 
     @staticmethod
-    def _missing_required_surfaces(payload: Mapping[str, Any]) -> tuple[str, ...]:
-        declared = payload.get("required_surfaces") or payload.get("surface_names") or ()
-        declared_surfaces = tuple(str(surface) for surface in declared)
-        missing = tuple(surface for surface in TERMINAL_BENCH_REQUIRED_SURFACES if surface not in declared_surfaces)
+    def _missing_required_surfaces(
+        verifier_input: VerifierInput,
+        payload: Mapping[str, Any],
+    ) -> tuple[str, ...]:
+        actual_surfaces = {
+            str(name)
+            for name, surface in verifier_input.surfaces.items()
+            if _surface_is_available(surface)
+        }
+        if not actual_surfaces:
+            declared = payload.get("surface_names") or payload.get("required_surfaces") or ()
+            actual_surfaces = {str(surface) for surface in declared}
+        missing = tuple(surface for surface in TERMINAL_BENCH_REQUIRED_SURFACES if surface not in actual_surfaces)
         return missing
 
     @staticmethod
@@ -70,3 +91,7 @@ class TerminalBenchVerifier:
         if exit_code is None:
             exit_code = scheduler_result.get("returncode")
         return exit_code == 0
+
+
+def _surface_is_available(surface: ClientSurface) -> bool:
+    return str(surface.status or "available").strip().lower() != "unavailable"

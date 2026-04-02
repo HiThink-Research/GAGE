@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from gage_eval.agent_runtime.resources.remote_sandbox import RemoteSandboxContract
+from gage_eval.sandbox.contracts import RemoteSandboxContract, validate_remote_sandbox_contract
 from gage_eval.agent_runtime.spec import SandboxPolicy
 
 
@@ -29,7 +29,4 @@ def resolve_sandbox_policy(base: SandboxPolicy, sample: dict) -> SandboxPolicy:
 def validate_remote_contract(contract: RemoteSandboxContract) -> None:
     """Validate attached and managed endpoint invariants."""
 
-    if contract.mode == "managed" and not contract.control_endpoint:
-        raise ValueError("managed mode requires control_endpoint")
-    if contract.mode == "attached" and not contract.exec_endpoint:
-        raise ValueError("attached mode requires exec_endpoint")
+    validate_remote_sandbox_contract(contract)

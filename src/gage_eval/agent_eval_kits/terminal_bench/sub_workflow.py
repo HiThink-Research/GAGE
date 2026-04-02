@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from gage_eval.agent_eval_kits.terminal_bench.contracts import (
@@ -16,12 +16,21 @@ from gage_eval.agent_eval_kits.terminal_bench.units import build_task_context, g
 
 
 def _artifact_paths(artifacts: Any) -> dict[str, str]:
-    paths: dict[str, str] = {}
-    for field_name in ("patch_file", "trajectory_file", "stdout_file", "metadata_file", "verifier_dir"):
-        value = getattr(artifacts, field_name, None)
-        if value:
-            paths[field_name] = str(value)
-    return paths
+    if artifacts is None:
+        return {}
+    if is_dataclass(artifacts):
+        payload = asdict(artifacts)
+    elif isinstance(artifacts, dict):
+        payload = dict(artifacts)
+    else:
+        payload = {
+            key: value
+            for key in dir(artifacts)
+            if not key.startswith("_")
+            and (value := getattr(artifacts, key, None)) is not None
+            and not callable(value)
+        }
+    return {str(key): str(value) for key, value in payload.items() if value is not None}
 
 
 def _trace_source(sample: dict, session: Any) -> Any:

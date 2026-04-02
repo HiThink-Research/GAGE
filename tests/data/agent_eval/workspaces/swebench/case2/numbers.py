@@ -1,2 +1,2 @@
 def lucky_number() -> int:
-    return 9
+    return 10

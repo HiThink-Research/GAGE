@@ -1,2 +1,2 @@
 def magic_value() -> int:
-    return 99
+    return 100

@@ -26,7 +26,7 @@ role_adapters:
 tasks:
   - task_id: swebench_real_agent_eval
     dataset_id: swebench_real_acceptance
-    max_samples: 3
+    max_samples: 10
     concurrency: 1
     reporting:
       sinks:

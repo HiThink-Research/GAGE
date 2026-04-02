@@ -6,9 +6,14 @@ from pathlib import Path
 import shlex
 from typing import Any, Mapping, Optional, Type
 
-from gage_eval.agent_runtime.resources.remote_sandbox import RemoteSandboxContract
-from gage_eval.agent_runtime.resources.sandbox_policy import validate_remote_contract
+from gage_eval.sandbox.contracts import (
+    RemoteSandboxContract,
+    coerce_remote_sandbox_handle,
+    serialize_handle,
+    validate_remote_sandbox_contract,
+)
 from gage_eval.sandbox.base import ExecResult
+from gage_eval.sandbox.surfaces import ClientSurface, build_remote_surfaces
 
 
 class RemoteEnvironment:
@@ -32,6 +37,7 @@ class RemoteEnvironment:
         self._sandbox_cls = sandbox_cls
         self._started = False
         self._runtime_handle: dict[str, Any] = {}
+        self._surfaces: dict[str, ClientSurface] = {}
 
     def start(self) -> dict:
         if self._started:
@@ -41,9 +47,21 @@ class RemoteEnvironment:
         handle = sandbox.start(start_config)
         self._runtime_handle = dict(handle or {})
         if self._contract:
+            self._runtime_handle.setdefault("mode", self._contract.mode)
             self._runtime_handle.setdefault("remote_mode", self._contract.mode)
+            self._runtime_handle.setdefault(
+                "workspace_root",
+                self._contract.workspace_root or self._contract.attach_target,
+            )
+            self._runtime_handle.setdefault("provider", self._contract.provider)
             if self._contract.attach_target:
                 self._runtime_handle.setdefault("attach_target", self._contract.attach_target)
+            normalized_handle = coerce_remote_sandbox_handle(self._runtime_handle)
+            self._surfaces = build_remote_surfaces(self._contract, normalized_handle)
+            self._runtime_handle["surface_names"] = tuple(self._surfaces.keys())
+            self._runtime_handle = serialize_handle(normalized_handle)
+            self._runtime_handle.setdefault("remote_mode", self._contract.mode)
+            self._runtime_handle.setdefault("surface_names", tuple(self._surfaces.keys()))
         self._started = True
         return dict(self._runtime_handle)
 
@@ -51,6 +69,7 @@ class RemoteEnvironment:
         self._teardown_sandbox()
         self._started = False
         self._runtime_handle = {}
+        self._surfaces = {}
 
     def create(self) -> dict:
         """Alias for start() for managed lifecycle callers."""
@@ -110,6 +129,9 @@ class RemoteEnvironment:
     def runtime_handle(self) -> dict[str, Any]:
         return dict(self._runtime_handle)
 
+    def surfaces(self) -> dict[str, ClientSurface]:
+        return dict(self._surfaces)
+
     @property
     def contract(self) -> Optional[RemoteSandboxContract]:
         return self._contract
@@ -143,24 +165,63 @@ class RemoteEnvironment:
         config["runtime_configs"] = runtime_configs
         if self._contract is None:
             return config
-        validate_remote_contract(self._contract)
-        if self._contract.mode == "managed":
-            if self._contract.control_endpoint:
-                config.setdefault("control_endpoint", self._contract.control_endpoint)
-            if self._contract.exec_endpoint:
-                config.setdefault("exec_url", self._contract.exec_endpoint)
-            if self._contract.file_endpoint:
-                config.setdefault("data_endpoint", self._contract.file_endpoint)
-        else:
-            if self._contract.exec_endpoint:
-                config.setdefault("exec_url", self._contract.exec_endpoint)
-                config.setdefault("data_endpoint", _derive_base_endpoint(self._contract.exec_endpoint))
-            if self._contract.file_endpoint:
-                config.setdefault("data_endpoint", self._contract.file_endpoint)
+        validate_remote_sandbox_contract(self._contract)
+        if self._contract.control_endpoint:
+            config.setdefault("control_endpoint", self._contract.control_endpoint)
+        if self._contract.exec_endpoint:
+            config.setdefault("exec_url", self._contract.exec_endpoint)
+            config.setdefault("data_endpoint", _derive_base_endpoint(self._contract.exec_endpoint))
+        if self._contract.file_endpoint:
+            config.setdefault("data_endpoint", self._contract.file_endpoint)
+        if self._contract.file_read_url:
+            config.setdefault("file_read_url", self._contract.file_read_url)
+        if self._contract.file_write_url:
+            config.setdefault("file_write_url", self._contract.file_write_url)
+        if self._contract.env_endpoint:
+            config.setdefault("env_endpoint", self._contract.env_endpoint)
+        if self._contract.apis_endpoint:
+            config.setdefault("apis_endpoint", self._contract.apis_endpoint)
+        if self._contract.mcp_endpoint:
+            config.setdefault("mcp_endpoint", self._contract.mcp_endpoint)
         if self._contract.attach_target:
             runtime_configs.setdefault("attach_target", self._contract.attach_target)
             config.setdefault("attach_target", self._contract.attach_target)
+        if self._contract.workspace_root:
+            runtime_configs.setdefault("workspace_root", self._contract.workspace_root)
+            config.setdefault("workspace_root", self._contract.workspace_root)
+        if self._contract.provider:
+            config.setdefault("provider", self._contract.provider)
+        if self._contract.sandbox_id:
+            config.setdefault("sandbox_id", self._contract.sandbox_id)
+        if self._contract.image:
+            config.setdefault("image", self._contract.image)
         runtime_configs.setdefault("remote_mode", self._contract.mode)
+        if self._contract.auth:
+            if isinstance(self._contract.auth.get("headers"), Mapping):
+                runtime_configs["headers"] = dict(self._contract.auth["headers"])
+            if self._contract.auth.get("type") is not None:
+                runtime_configs.setdefault("auth_type", self._contract.auth["type"])
+            if self._contract.auth.get("token") is not None:
+                runtime_configs.setdefault("auth_token", self._contract.auth["token"])
+            if self._contract.auth.get("api_key_header") is not None:
+                runtime_configs.setdefault("api_key_header", self._contract.auth["api_key_header"])
+        if self._contract.timeouts:
+            if self._contract.timeouts.get("exec_timeout_s") is not None:
+                runtime_configs.setdefault("timeout_s", self._contract.timeouts["exec_timeout_s"])
+            if self._contract.timeouts.get("file_timeout_s") is not None:
+                runtime_configs.setdefault("file_timeout_s", self._contract.timeouts["file_timeout_s"])
+            if self._contract.timeouts.get("startup_timeout_s") is not None:
+                runtime_configs.setdefault("startup_timeout_s", self._contract.timeouts["startup_timeout_s"])
+        if self._contract.retries:
+            if self._contract.retries.get("max_retries") is not None:
+                runtime_configs.setdefault("max_retries", self._contract.retries["max_retries"])
+            if self._contract.retries.get("retry_backoff_factor") is not None:
+                runtime_configs.setdefault(
+                    "retry_backoff_factor",
+                    self._contract.retries["retry_backoff_factor"],
+                )
+        if self._contract.resources:
+            config.setdefault("resources", dict(self._contract.resources))
         if self._contract.params:
             config.setdefault("params", dict(self._contract.params))
         return config

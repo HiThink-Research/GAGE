@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from gage_eval.agent_runtime.resources.client_surface import ClientSurface
-from gage_eval.agent_runtime.resources.remote_sandbox import RemoteSandboxContract
+from gage_eval.sandbox.contracts import RemoteSandboxContract
+from gage_eval.sandbox.surfaces import ClientSurface
 
 
 @dataclass

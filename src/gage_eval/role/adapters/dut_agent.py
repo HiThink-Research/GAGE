@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from gage_eval.registry import registry
@@ -61,6 +63,7 @@ class DUTAgentAdapter(RoleAdapter):
         resolved_gateway = human_gateway or build_default_human_gateway()
         self._tool_router = tool_router or ToolRouter(mcp_clients=mcp_clients, human_gateway=resolved_gateway)
         self._sandbox_manager = sandbox_manager or SandboxManager(profiles=sandbox_profiles)
+        self._sandbox_profiles = dict(sandbox_profiles or {})
         self._max_turns = max(1, int(max_turns))
         self._pre_hooks = build_hook_chain(params.pop("pre_hooks", None) or params.pop("pre_hook", None))
         self._post_hooks = build_hook_chain(params.pop("post_hooks", None) or params.pop("post_hook", None))
@@ -125,18 +128,28 @@ class DUTAgentAdapter(RoleAdapter):
             trace = ObservabilityTrace()
         plan = self._agent_runtime_resolver.resolve(runtime_id)
         scheduler = self._agent_runtime_resolver.build_scheduler(plan)
-        environment = EnvironmentProvider().build(plan, sample)
-        resources = ResourceBundle(environment=environment)
+        environment = EnvironmentProvider(profiles=self._sandbox_profiles).build(plan, sample)
+        resources = ResourceBundle(
+            environment=environment,
+            remote_sandbox=getattr(environment, "contract", None),
+        )
         sample_id = str(
             sample.get("sample_id")
             or sample.get("id")
             or sample.get("instance_id")
             or "unknown"
         )
+        task_id = (
+            payload.get("task_id")
+            or sample.get("task_id")
+            or sample.get("_gage_task_id")
+            or state.metadata.get("task_id")
+        )
         artifacts = ArtifactLayout.for_sample(
             base_dir=str(sample.get("output_dir", "runs")),
             run_id=str(sample.get("run_id") or trace.run_id),
             sample_id=sample_id,
+            task_id=None if task_id is None else str(task_id),
         )
         session = AgentRuntimeSession(
             sample=sample,
@@ -148,7 +161,7 @@ class DUTAgentAdapter(RoleAdapter):
         )
         result = scheduler.run(session)
         output = dict(result.raw_output or {})
-        verifier_output = self._run_runtime_verifier(plan, sample, result, artifacts)
+        verifier_output = self._run_runtime_verifier(plan, sample, result, artifacts, resources)
         if verifier_output:
             output.setdefault("verifier_result", verifier_output)
             output.setdefault("eval_result", verifier_output)
@@ -167,6 +180,7 @@ class DUTAgentAdapter(RoleAdapter):
             output.setdefault("metrics", dict(result.metrics))
         if verifier_output:
             sample["eval_result"] = dict(verifier_output)
+            _persist_runtime_verifier_result(artifacts, verifier_output)
         return output
 
     def _run_runtime_verifier(
@@ -175,13 +189,15 @@ class DUTAgentAdapter(RoleAdapter):
         sample: Dict[str, Any],
         scheduler_result,
         artifacts,
+        resources,
     ) -> Optional[Dict[str, Any]]:
         benchmark_kit_id = getattr(plan, "benchmark_kit_id", None)
+        verifier_params = _resolve_runtime_verifier_params(plan)
         if benchmark_kit_id == "terminal_bench":
             from gage_eval.agent_eval_kits.terminal_bench.judge_bridge import build_verifier_input
             from gage_eval.agent_runtime.verifier.terminal_bench import TerminalBenchVerifier
 
-            verifier_input = build_verifier_input(sample, scheduler_result, artifacts)
+            verifier_input = build_verifier_input(sample, scheduler_result, artifacts, resources)
             verifier_result = TerminalBenchVerifier().verify(verifier_input)
             return _normalize_verifier_result(verifier_result)
         if benchmark_kit_id == "swebench":
@@ -189,13 +205,24 @@ class DUTAgentAdapter(RoleAdapter):
             from gage_eval.agent_runtime.verifier.judge_adapter import JudgeVerifierAdapter
 
             verifier_input = build_verifier_input(sample, scheduler_result, artifacts)
-            verifier_params = {}
-            if isinstance(getattr(plan, "params", None), dict):
-                raw_verifier = plan.params.get("verifier")
-                if isinstance(raw_verifier, dict):
-                    verifier_params = dict(raw_verifier)
             verifier_result = JudgeVerifierAdapter(**verifier_params).verify(verifier_input)
             return _normalize_verifier_result(verifier_result)
+        if benchmark_kit_id == "appworld":
+            from gage_eval.agent_eval_kits.appworld.judge_bridge import build_verifier_input
+            from gage_eval.role.judge.appworld_evaluate import AppWorldEvaluate
+
+            verifier_input = build_verifier_input(sample, scheduler_result, artifacts, resources)
+            judge_output = AppWorldEvaluate(**verifier_params).invoke(
+                _build_runtime_judge_payload(verifier_input)
+            )
+            return _normalize_appworld_judge_output(judge_output)
+        if benchmark_kit_id == "tau2":
+            from gage_eval.agent_eval_kits.tau2.judge_bridge import build_verifier_input
+            from gage_eval.role.judge.tau2_eval import Tau2Evaluate
+
+            verifier_input = build_verifier_input(sample, scheduler_result, artifacts, resources)
+            judge_output = Tau2Evaluate().invoke(_build_runtime_judge_payload(verifier_input))
+            return _normalize_tau2_judge_output(judge_output)
         return None
 
     def _resolve_sandbox_config(
@@ -322,3 +349,116 @@ def _normalize_verifier_result(verifier_result: Any) -> Dict[str, Any]:
         "summary": verifier_result.summary,
         "raw_output": dict(verifier_result.raw_output or {}),
     }
+
+
+def _resolve_runtime_verifier_params(plan: Any) -> Dict[str, Any]:
+    params = getattr(plan, "params", None)
+    if not isinstance(params, dict):
+        return {}
+    raw_verifier = params.get("verifier")
+    if isinstance(raw_verifier, dict):
+        return dict(raw_verifier)
+    return {}
+
+
+def _build_runtime_judge_payload(verifier_input: Any) -> Dict[str, Any]:
+    payload = dict(getattr(verifier_input, "payload", {}) or {})
+    payload.setdefault(
+        "sample",
+        {"id": verifier_input.sample_id, "metadata": dict(getattr(verifier_input, "metadata", {}) or {})},
+    )
+    payload.setdefault("params", {})
+    if getattr(verifier_input, "artifact_paths", None):
+        payload.setdefault("artifact_paths", dict(verifier_input.artifact_paths))
+    if getattr(verifier_input, "metadata", None):
+        payload.setdefault("metadata", dict(verifier_input.metadata))
+    if getattr(verifier_input, "runtime_handle", None):
+        payload.setdefault("runtime_handle", dict(verifier_input.runtime_handle))
+    return payload
+
+
+def _normalize_appworld_judge_output(result: Any) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return {
+            "status": "error",
+            "score": None,
+            "summary": "judge_returned_non_mapping",
+            "raw_output": {"value": result},
+        }
+    appworld = result.get("appworld") if isinstance(result.get("appworld"), dict) else {}
+    failure_reason = appworld.get("failure_reason")
+    status_hint = str(appworld.get("status") or "").strip().lower()
+    tgc = _coerce_float(appworld.get("tgc"))
+    if status_hint == "error":
+        status = "error"
+    elif tgc is None:
+        status = "unknown"
+    else:
+        status = "pass" if tgc >= 1.0 else "fail"
+    summary = str(failure_reason or (f"tgc={tgc}" if tgc is not None else "missing_tgc"))
+    return {
+        "status": status,
+        "score": tgc,
+        "summary": summary,
+        "appworld": dict(appworld),
+        "raw_output": dict(result),
+    }
+
+
+def _normalize_tau2_judge_output(result: Any) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return {
+            "status": "error",
+            "score": None,
+            "summary": "judge_returned_non_mapping",
+            "raw_output": {"value": result},
+        }
+    tau2 = result.get("tau2") if isinstance(result.get("tau2"), dict) else {}
+    reward = _coerce_float(tau2.get("reward"))
+    failure_reason = tau2.get("failure_reason") or tau2.get("termination_reason")
+    if reward is None:
+        status = "unknown"
+    elif (1.0 - 1e-6) <= reward <= (1.0 + 1e-6):
+        status = "pass"
+    else:
+        status = "fail"
+    summary = str(failure_reason or (f"reward={reward}" if reward is not None else "missing_reward"))
+    return {
+        "status": status,
+        "score": reward,
+        "summary": summary,
+        "tau2": dict(tau2),
+        "raw_output": dict(result),
+    }
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _persist_runtime_verifier_result(artifacts: Any, verifier_output: Dict[str, Any]) -> None:
+    target = getattr(artifacts, "verifier_result_file", None)
+    if not target:
+        return
+    path = Path(str(target))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_json_safe(verifier_output), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _json_safe(value: Any) -> Any:
+    if is_dataclass(value):
+        return _json_safe(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)

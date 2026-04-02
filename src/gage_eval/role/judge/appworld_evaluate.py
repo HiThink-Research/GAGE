@@ -44,6 +44,8 @@ class AppWorldEvaluate(JudgeImplementation):
         output_dir_template: Optional[str] = None,
         export_outputs: bool = False,
         export_dir: Optional[str] = None,
+        container_name: Optional[str] = None,
+        container_id: Optional[str] = None,
         redact_test_details: bool = True,
         redact_trace: bool = True,
     ) -> None:
@@ -62,6 +64,8 @@ class AppWorldEvaluate(JudgeImplementation):
         )
         self._export_outputs = bool(export_outputs)
         self._export_dir = export_dir
+        self._container_name = container_name
+        self._container_id = container_id
         self._redact_test_details = bool(redact_test_details)
         self._redact_trace = bool(redact_trace)
 
@@ -75,7 +79,12 @@ class AppWorldEvaluate(JudgeImplementation):
         subset = _resolve_subset(appworld_meta, params)
         experiment_name = _resolve_experiment_name(appworld_meta, params, self._experiment_name)
         appworld_root = str(params.get("appworld_root") or self._appworld_root)
-        container = _resolve_container(runtime_handle, params)
+        container = _resolve_container(
+            runtime_handle,
+            params,
+            default_container_name=self._container_name,
+            default_container_id=self._container_id,
+        )
         if not container:
             return {"appworld": _build_error_payload(task_id, subset, experiment_name, "missing_container")}
 
@@ -174,11 +183,21 @@ def _resolve_experiment_name(meta: Dict[str, Any], params: Dict[str, Any], defau
     return str(name or "default")
 
 
-def _resolve_container(runtime_handle: Dict[str, Any], params: Dict[str, Any]) -> Optional[str]:
+def _resolve_container(
+    runtime_handle: Dict[str, Any],
+    params: Dict[str, Any],
+    *,
+    default_container_name: Optional[str] = None,
+    default_container_id: Optional[str] = None,
+) -> Optional[str]:
     for key in ("container_name", "container_id"):
         value = params.get(key) or runtime_handle.get(key)
         if value:
             return str(value)
+    if default_container_name:
+        return str(default_container_name)
+    if default_container_id:
+        return str(default_container_id)
     return None
 
 

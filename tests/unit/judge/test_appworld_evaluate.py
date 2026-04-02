@@ -79,3 +79,18 @@ def test_appworld_evaluate_parses_aggregate_payload(monkeypatch) -> None:
     assert result["tests"]["passes"] == eval_payload["individual"]["task-3"]["passes"]
     assert result["tests"]["fails"] == eval_payload["individual"]["task-3"]["failures"]
     assert result["difficulty"] == 2
+
+
+def test_appworld_evaluate_uses_constructor_container_name(monkeypatch) -> None:
+    sample = {"metadata": {"appworld": {"task_id": "task-4"}}}
+
+    def fake_run(**kwargs):
+        assert kwargs["container"] == "appworld-mcp-remote"
+        return CommandResult(stdout=json.dumps({"tgc": 1.0}), stderr="", returncode=0)
+
+    monkeypatch.setattr(appworld_module, "_run_container_command", fake_run)
+    evaluator = AppWorldEvaluate(container_name="appworld-mcp-remote")
+
+    result = evaluator.invoke({"sample": sample, "params": {}})["appworld"]
+
+    assert result["tgc"] == 1.0

@@ -5,7 +5,7 @@ CODEX_HOME="${CODEX_HOME:-/agent}"
 mkdir -p "$CODEX_HOME"
 chmod 700 "$CODEX_HOME" || true
 
-if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+if [[ ! -f "$CODEX_HOME/auth.json" && -n "${OPENAI_API_KEY:-}" ]]; then
   umask 077
   cat >"$CODEX_HOME/auth.json" <<EOF
 {

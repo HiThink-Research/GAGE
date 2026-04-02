@@ -1,1 +1,1 @@
-Terminal benchmark docker workspace seed.
+TB2 docker acceptance workspace case 1

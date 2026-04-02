@@ -42,7 +42,7 @@ role_adapters:
 tasks:
   - task_id: tb2_real_agent_eval
     dataset_id: tb2_real_acceptance
-    max_samples: 1
+    max_samples: 10
     concurrency: 1
     reporting:
       sinks:

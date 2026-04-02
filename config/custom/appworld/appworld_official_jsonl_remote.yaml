@@ -44,6 +44,9 @@ sandbox_profiles:
       control_endpoint: ${SANDBOX_PLATFORM_URL}
       auth_type: bearer
       auth_token: ${SANDBOX_API_TOKEN}
+      env_endpoint: ${APPWORLD_ENV_ENDPOINT:-http://127.0.0.1:8000}
+      apis_endpoint: ${APPWORLD_APIS_ENDPOINT:-http://127.0.0.1:9000}
+      mcp_endpoint: ${APPWORLD_MCP_ENDPOINT:-http://127.0.0.1:5001}
       startup_timeout_s: 180
       max_retries: 3
       retry_backoff_factor: 1.5
@@ -129,6 +132,7 @@ role_adapters:
       implementation: appworld_evaluate
       implementation_params:
         appworld_root: /run
+        container_name: ${APPWORLD_CONTAINER_NAME:-appworld-mcp-remote}
         export_outputs: true
 
 tasks:
@@ -146,8 +150,8 @@ tasks:
       - step: judge
         adapter_id: appworld_judge
       - step: auto_eval
-    concurrency: 4
-    max_samples: 20
+    concurrency: 1
+    max_samples: 10
     reporting:
       sinks:
         - type: console

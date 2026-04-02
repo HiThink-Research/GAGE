@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pytest
 
 from gage_eval.agent_runtime.artifacts.layout import ArtifactLayout
@@ -11,7 +12,9 @@ from gage_eval.agent_runtime.schedulers.framework_loop import FrameworkLoopSched
 from gage_eval.agent_runtime.schedulers.installed_client import InstalledClientScheduler
 from gage_eval.agent_runtime.session import AgentRuntimeSession
 from gage_eval.agent_runtime.spec import AgentRuntimeSpec
+from gage_eval.agent_runtime.verifier.base import VerifierInput
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.sandbox.surfaces import ClientSurface
 
 
 def _build_plan(*, scheduler: str = "installed_client") -> CompiledRuntimePlan:
@@ -45,9 +48,15 @@ def _build_session(plan: CompiledRuntimePlan) -> AgentRuntimeSession:
 
 
 @pytest.mark.fast
-def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
+def test_installed_client_scheduler_run_with_fake_env(monkeypatch, tmp_path) -> None:
     scheduler = InstalledClientScheduler(_build_plan())
-    session = _build_session(_build_plan())
+    session = AgentRuntimeSession(
+        sample={"instruction": "fix the failing test", "messages": []},
+        trace=ObservabilityTrace(),
+        plan=_build_plan(),
+        resources=ResourceBundle(environment=FakeEnvironment()),
+        artifacts=ArtifactLayout.for_sample(str(tmp_path), "run-1", "sample-1"),
+    )
 
     class _FakeClient:
         def setup(self, environment, runtime_session) -> None:
@@ -64,7 +73,7 @@ def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
             return ClientRunResult(
                 exit_code=0,
                 stdout="ok",
-                stderr="",
+                stderr="warn",
                 patch_path="/tmp/submission.patch",
                 patch_content="diff --git a/foo b/foo\n",
                 trajectory_path="/tmp/trajectory.json",
@@ -74,8 +83,23 @@ def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
         def cleanup(self, environment, runtime_session) -> None:
             return None
 
+    def _resolve_kit_hook(_module_name, attr_name):
+        if attr_name != "finalize_result":
+            return None
+
+        def _finalize(_sample, result, _artifacts):
+            return {
+                "verifier_input": VerifierInput(
+                    benchmark_kit_id="swebench",
+                    sample_id="sample-1",
+                    payload={"scheduler_result": {"status": result.status}},
+                )
+            }
+
+        return _finalize
+
     monkeypatch.setattr(scheduler, "_build_client", lambda: _FakeClient())
-    monkeypatch.setattr(scheduler, "_resolve_kit_hook", lambda *args, **kwargs: None)
+    monkeypatch.setattr(scheduler, "_resolve_kit_hook", _resolve_kit_hook)
 
     result = scheduler.run(session)
 
@@ -83,6 +107,56 @@ def test_installed_client_scheduler_run_with_fake_env(monkeypatch) -> None:
     assert result.answer.startswith("diff --git")
     assert result.patch_path == "/tmp/submission.patch"
     assert result.stdout_path == "/tmp/stdout.log"
+    metadata = json.loads(tmp_path.joinpath("run-1/samples/global/sample-1/runtime_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["scheduler_result"]["status"] == "success"
+    assert metadata["scheduler_result"]["raw_output"]["verifier_input"]["sample_id"] == "sample-1"
+    assert metadata["artifact_layout"]["sample_file"].endswith("/samples/global/sample-1/sample.json")
+    assert tmp_path.joinpath("run-1/samples/global/sample-1/agent/stderr.log").read_text(encoding="utf-8") == "warn"
+    assert tmp_path.joinpath("run-1/samples/global/sample-1/agent/final_message.md").read_text(encoding="utf-8").startswith("diff --git")
+
+
+@pytest.mark.fast
+def test_installed_client_scheduler_captures_runtime_handle_and_surfaces(monkeypatch) -> None:
+    scheduler = InstalledClientScheduler(_build_plan())
+
+    class _RemoteLikeEnvironment(FakeEnvironment):
+        def runtime_handle(self):
+            return {"workspace_root": "/workspace/repo", "exec_url": "http://remote/exec"}
+
+        def surfaces(self):
+            return {
+                "terminal": ClientSurface(surface_type="terminal"),
+                "fs": ClientSurface(surface_type="fs"),
+            }
+
+    session = AgentRuntimeSession(
+        sample={"instruction": "fix the failing test", "messages": []},
+        trace=ObservabilityTrace(),
+        plan=_build_plan(),
+        resources=ResourceBundle(environment=_RemoteLikeEnvironment()),
+        artifacts=ArtifactLayout.for_sample("runs", "run-1", "sample-1"),
+    )
+
+    class _FakeClient:
+        def setup(self, environment, runtime_session) -> None:
+            return None
+
+        def run(self, request, environment):
+            from gage_eval.agent_runtime.clients import ClientRunResult
+
+            return ClientRunResult(exit_code=0, stdout="ok", stderr="")
+
+        def cleanup(self, environment, runtime_session) -> None:
+            return None
+
+    monkeypatch.setattr(scheduler, "_build_client", lambda: _FakeClient())
+    monkeypatch.setattr(scheduler, "_resolve_kit_hook", lambda *args, **kwargs: None)
+
+    result = scheduler.run(session)
+
+    assert result.raw_output["runtime_handle"]["workspace_root"] == "/workspace/repo"
+    assert result.raw_output["surface_names"] == ("terminal", "fs")
+    assert session.resources.metadata["workspace_root"] == "/workspace/repo"
 
 
 @pytest.mark.fast

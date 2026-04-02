@@ -25,9 +25,18 @@ _NETWORK_ALIASES = {"bridge_host", "host_gateway"}
 _DEFAULT_STARTUP_TIMEOUT_S = 30
 _DEFAULT_STARTUP_INTERVAL_S = 0.2
 _DEFAULT_STOP_TIMEOUT_S = 10
+_DEFAULT_INSPECT_TIMEOUT_S = 5.0
 _CONTAINER_NAME_SUFFIX_LEN = 8
 _CONTAINER_NAME_MAX_LEN = 63
 _CONTAINER_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_AMD64_LOADER_ENTRYPOINTS = (
+    "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    "/lib64/ld-linux-x86-64.so.2",
+)
+_AMD64_RETRY_ERROR_TOKENS = (
+    "cannot execute binary file",
+    "exec format error",
+)
 
 
 class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
@@ -77,12 +86,22 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
             runtime_configs=self._runtime_configs,
             resources=self._resources,
         )
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        completed = _run_docker_command(command)
+        if completed.returncode != 0:
+            error = (completed.stderr or completed.stdout).strip()
+            if _should_retry_with_amd64_loader(self._runtime_configs, error):
+                for loader_entrypoint in _AMD64_LOADER_ENTRYPOINTS:
+                    retry_command = build_amd64_loader_run_command(
+                        image=image,
+                        container_name=self._container_name,
+                        runtime_configs=self._runtime_configs,
+                        resources=self._resources,
+                        loader_entrypoint=loader_entrypoint,
+                    )
+                    completed = _run_docker_command(retry_command)
+                    if completed.returncode == 0:
+                        break
+                    error = (completed.stderr or completed.stdout).strip()
         if completed.returncode != 0:
             error = (completed.stderr or completed.stdout).strip()
             raise RuntimeError(f"docker_run_failed: {error}")
@@ -242,14 +261,21 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
         docker_bin = str(self._runtime_configs.get("docker_bin") or "docker")
         if not _docker_available(docker_bin):
             return self._running
-        timeout = 2 if timeout_s is None else max(0.1, float(timeout_s))
-        completed = subprocess.run(
-            [docker_bin, "inspect", "-f", "{{.State.Running}}", self._container_id],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+        timeout = (
+            float(self._runtime_configs.get("inspect_timeout_s", _DEFAULT_INSPECT_TIMEOUT_S))
+            if timeout_s is None
+            else max(0.1, float(timeout_s))
         )
+        try:
+            completed = subprocess.run(
+                [docker_bin, "inspect", "-f", "{{.State.Running}}", self._container_id],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return self._running
         if completed.returncode != 0:
             return False
         return completed.stdout.strip().lower() == "true"
@@ -428,6 +454,35 @@ def build_docker_run_command(
     return args
 
 
+def build_amd64_loader_run_command(
+    *,
+    image: str,
+    container_name: Optional[str],
+    runtime_configs: Dict[str, Any],
+    resources: Dict[str, Any],
+    loader_entrypoint: str,
+) -> List[str]:
+    normalized = dict(runtime_configs or {})
+    original_entrypoint = _normalize_command(normalized.get("entrypoint"))
+    original_command = _normalize_command(normalized.get("command") or normalized.get("cmd"))
+    if not original_entrypoint:
+        return build_docker_run_command(
+            image=image,
+            container_name=container_name,
+            runtime_configs=normalized,
+            resources=resources,
+        )
+    normalized["entrypoint"] = loader_entrypoint
+    normalized["command"] = [original_entrypoint[0], *original_command]
+    normalized.pop("cmd", None)
+    return build_docker_run_command(
+        image=image,
+        container_name=container_name,
+        runtime_configs=normalized,
+        resources=resources,
+    )
+
+
 def _apply_resource_limits(
     args: List[str],
     runtime_configs: Dict[str, Any],
@@ -588,6 +643,24 @@ def _normalize_command(raw: Any) -> List[str]:
     if isinstance(raw, (list, tuple)):
         return [str(item) for item in raw if item is not None]
     return [str(raw)]
+
+
+def _should_retry_with_amd64_loader(runtime_configs: Dict[str, Any], error: str) -> bool:
+    if str(runtime_configs.get("platform") or "").lower() != "linux/amd64":
+        return False
+    if not _normalize_command(runtime_configs.get("entrypoint")):
+        return False
+    message = str(error or "").lower()
+    return any(token in message for token in _AMD64_RETRY_ERROR_TOKENS)
+
+
+def _run_docker_command(args: List[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _merge_labels(raw: Any, extra: Dict[str, str]) -> Dict[str, Optional[str]]:

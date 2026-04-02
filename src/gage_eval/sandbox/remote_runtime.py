@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional
 import requests
 
 from gage_eval.sandbox.base import BaseSandbox, ExecResult, SandboxOptionalMixin
+from gage_eval.sandbox.contracts import RemoteSandboxContract, RemoteSandboxHandle, serialize_handle
+from gage_eval.sandbox.surfaces import build_remote_surfaces
 
 
 class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
@@ -24,9 +26,15 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         self._resources = dict(resources or {})
         self._running = False
         self._sandbox_id: Optional[str] = None
+        self._mode = str(self._runtime_configs.get("remote_mode", "attached"))
+        self._status = "created"
+        self._provider = self._runtime_configs.get("provider")
+        self._workspace_root = self._runtime_configs.get("workspace_root")
+        self._attach_target = self._runtime_configs.get("attach_target")
+        self._expires_at = self._runtime_configs.get("expires_at")
         self._control_endpoint = self._runtime_configs.get("control_endpoint")
-        self._data_endpoint = self._runtime_configs.get("data_endpoint")
-        self._exec_url = self._runtime_configs.get("exec_url")
+        self._data_endpoint = self._runtime_configs.get("data_endpoint") or self._runtime_configs.get("file_endpoint")
+        self._exec_url = self._runtime_configs.get("exec_url") or self._runtime_configs.get("exec_endpoint")
         self._exec_path = self._runtime_configs.get("exec_path", "run_command")
         self._file_read_url = self._runtime_configs.get("file_read_url")
         self._file_write_url = self._runtime_configs.get("file_write_url")
@@ -97,6 +105,7 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
 
         # Mark running and expose the runtime handle.
         self._running = True
+        self._status = self._status or "ready"
         return self._build_runtime_handle()
 
     def _merge_start_config(self, config: Dict[str, Any]) -> None:
@@ -104,17 +113,41 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
 
         self._runtime_configs.update(config.get("runtime_configs", {}) or {})
         rc = self._runtime_configs
+        self._mode = str(
+            _first_non_empty(
+                config.get("mode"),
+                config.get("remote_mode"),
+                rc.get("remote_mode"),
+                self._mode,
+            )
+        )
+        self._provider = _first_non_empty(config.get("provider"), rc.get("provider"), self._provider)
+        self._workspace_root = _first_non_empty(
+            config.get("workspace_root"),
+            rc.get("workspace_root"),
+            self._workspace_root,
+        )
+        self._attach_target = _first_non_empty(
+            config.get("attach_target"),
+            rc.get("attach_target"),
+            self._attach_target,
+        )
+        self._expires_at = _first_non_empty(
+            config.get("expires_at"),
+            rc.get("expires_at"),
+            self._expires_at,
+        )
 
         self._control_endpoint = _first_non_empty(
             config.get("control_endpoint"), rc.get("control_endpoint"),
             self._control_endpoint,
         )
         self._data_endpoint = _first_non_empty(
-            config.get("data_endpoint"), rc.get("data_endpoint"),
+            config.get("data_endpoint"), config.get("file_endpoint"), rc.get("data_endpoint"),
             self._data_endpoint,
         )
         self._exec_url = _first_non_empty(
-            config.get("exec_url"), rc.get("exec_url"), self._exec_url,
+            config.get("exec_url"), config.get("exec_endpoint"), rc.get("exec_url"), self._exec_url,
         )
         self._exec_path = str(rc.get("exec_path", self._exec_path))
         self._file_read_url = _first_non_empty(
@@ -233,6 +266,7 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
             except Exception:
                 pass
         self._running = False
+        self._status = "deleted"
         self._sandbox_id = None
 
     def is_alive(self, timeout_s: float | None = None) -> bool:
@@ -280,31 +314,93 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
             self._apply_platform_response(response)
 
     def _build_runtime_handle(self) -> Dict[str, Any]:
-        handle: Dict[str, Any] = {
-            "control_endpoint": self._control_endpoint,
-            "data_endpoint": self._data_endpoint,
-            "exec_url": self._resolve_exec_url(),
-            "sandbox_id": self._sandbox_id,
-        }
-        optional_values = {
-            "env_endpoint": self._env_endpoint,
-            "apis_endpoint": self._apis_endpoint,
-            "mcp_endpoint": self._mcp_endpoint,
-            "file_read_url": self._file_read_url,
-            "file_write_url": self._file_write_url,
-        }
-        for key, value in optional_values.items():
-            if value:
-                handle[key] = value
-        return {key: value for key, value in handle.items() if value is not None}
+        exec_endpoint = self._resolve_exec_url()
+        preliminary = RemoteSandboxHandle(
+            mode=self._mode,
+            status=self._status or "ready",
+            sandbox_id=self._sandbox_id,
+            provider=str(self._provider) if self._provider is not None else None,
+            workspace_root=self._workspace_root,
+            attach_target=self._attach_target,
+            exec_url=exec_endpoint,
+            data_endpoint=self._data_endpoint,
+            file_read_url=self._file_read_url,
+            file_write_url=self._file_write_url,
+            env_endpoint=self._env_endpoint,
+            apis_endpoint=self._apis_endpoint,
+            mcp_endpoint=self._mcp_endpoint,
+            expires_at=self._expires_at,
+            metadata={},
+        )
+        surfaces = {}
+        if exec_endpoint or (self._mode == "managed" and self._control_endpoint):
+            contract = RemoteSandboxContract(
+                mode=self._mode,
+                provider=str(self._provider) if self._provider is not None else None,
+                sandbox_id=self._sandbox_id,
+                workspace_root=self._workspace_root,
+                attach_target=self._attach_target,
+                control_endpoint=self._control_endpoint,
+                exec_endpoint=exec_endpoint,
+                file_endpoint=self._data_endpoint,
+                file_read_url=self._file_read_url,
+                file_write_url=self._file_write_url,
+                env_endpoint=self._env_endpoint,
+                apis_endpoint=self._apis_endpoint,
+                mcp_endpoint=self._mcp_endpoint,
+                renew_supported=bool(self._control_endpoint),
+                auth={
+                    "type": self._auth_type,
+                    "token": self._auth_token,
+                    "api_key_header": self._api_key_header,
+                    "headers": dict(self._headers or {}),
+                },
+                timeouts={
+                    "exec_timeout_s": self._timeout_s,
+                    "file_timeout_s": self._file_timeout_s,
+                    "startup_timeout_s": self._startup_timeout_s,
+                },
+                retries={
+                    "max_retries": self._max_retries,
+                    "retry_backoff_factor": self._retry_backoff,
+                },
+                resources=dict(self._resources or {}),
+                params={},
+            )
+            surfaces = build_remote_surfaces(contract, preliminary)
+        final_handle = RemoteSandboxHandle(
+            mode=preliminary.mode,
+            status=preliminary.status,
+            sandbox_id=preliminary.sandbox_id,
+            provider=preliminary.provider,
+            workspace_root=preliminary.workspace_root,
+            attach_target=preliminary.attach_target,
+            exec_url=preliminary.exec_url,
+            data_endpoint=preliminary.data_endpoint,
+            file_read_url=preliminary.file_read_url,
+            file_write_url=preliminary.file_write_url,
+            env_endpoint=preliminary.env_endpoint,
+            apis_endpoint=preliminary.apis_endpoint,
+            mcp_endpoint=preliminary.mcp_endpoint,
+            surface_names=tuple(surfaces.keys()),
+            expires_at=preliminary.expires_at,
+            metadata={},
+        )
+        handle = serialize_handle(final_handle)
+        if self._control_endpoint:
+            handle["control_endpoint"] = self._control_endpoint
+        return handle
 
     def _apply_platform_response(self, response: Dict[str, Any]) -> None:
         if not isinstance(response, dict):
             return
+        self._status = str(response.get("status") or self._status or "ready")
         self._data_endpoint = response.get("data_endpoint") or self._data_endpoint
         self._exec_url = response.get("exec_url") or self._exec_url
         self._file_read_url = response.get("file_read_url") or self._file_read_url
         self._file_write_url = response.get("file_write_url") or self._file_write_url
+        self._workspace_root = response.get("workspace_root") or self._workspace_root
+        self._attach_target = response.get("attach_target") or self._attach_target
         self._env_endpoint = (
             response.get("env_endpoint")
             or response.get("environment_endpoint")
@@ -312,6 +408,34 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         )
         self._apis_endpoint = response.get("apis_endpoint") or self._apis_endpoint
         self._mcp_endpoint = response.get("mcp_endpoint") or self._mcp_endpoint
+        self._expires_at = response.get("expires_at") or self._expires_at
+
+    @classmethod
+    def cleanup_stale_runtime(
+        cls,
+        config: Dict[str, Any],
+        runtime_handle: Dict[str, Any],
+    ) -> bool:
+        control_endpoint = runtime_handle.get("control_endpoint") or config.get("control_endpoint")
+        sandbox_id = runtime_handle.get("sandbox_id") or config.get("sandbox_id")
+        if not control_endpoint or not sandbox_id:
+            return True
+        url = f"{str(control_endpoint).rstrip('/')}/sandboxes/{sandbox_id}"
+        headers = {}
+        auth_type = config.get("auth_type") or (config.get("runtime_configs") or {}).get("auth_type")
+        auth_token = config.get("auth_token") or (config.get("runtime_configs") or {}).get("auth_token")
+        api_key_header = (
+            config.get("api_key_header")
+            or (config.get("runtime_configs") or {}).get("api_key_header")
+            or "X-API-Key"
+        )
+        if auth_type == "bearer" and auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        elif auth_type == "api_key" and auth_token:
+            headers[str(api_key_header)] = str(auth_token)
+        response = requests.delete(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        return True
 
     def _resolve_exec_url(self) -> Optional[str]:
         if self._exec_url:

@@ -39,6 +39,7 @@ agent_runtimes:
         workdir: /workspace
         exec_workdir: /workspace
         volumes:
+          - ["${HOST_CODEX_HOME:-/Users/shuo/.codex}", "/agent"]
           - [".", "/workspace"]
         env:
           OPENAI_API_KEY:
@@ -53,7 +54,7 @@ role_adapters:
 tasks:
   - task_id: tb2_docker_agent_eval
     dataset_id: tb2_docker_acceptance
-    max_samples: 2
+    max_samples: 10
     concurrency: 1
     reporting:
       sinks:

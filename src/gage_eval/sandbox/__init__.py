@@ -10,6 +10,16 @@ from gage_eval.sandbox.base import (
     SandboxOptionalMixin,
     serialize_exec_result,
 )
+from gage_eval.sandbox.contracts import (
+    RemoteSandboxContract,
+    RemoteSandboxHandle,
+    coerce_remote_sandbox_handle,
+    dataclass_to_dict,
+    deep_merge_dicts,
+    merge_sandbox_profile_layers,
+    serialize_handle,
+    validate_remote_sandbox_contract,
+)
 from gage_eval.sandbox.docker_runtime import DockerSandbox
 from gage_eval.sandbox.local_runtime import LocalSubprocessSandbox
 from gage_eval.sandbox.manager import SandboxHandle, SandboxManager
@@ -21,10 +31,18 @@ from gage_eval.sandbox.protocols import (
 )
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 from gage_eval.sandbox.remote_runtime import RemoteSandbox
+from gage_eval.sandbox.surfaces import (
+    ClientSurface,
+    SurfaceStatus,
+    SurfaceType,
+    build_remote_surfaces,
+    serialize_surfaces,
+)
 from gage_eval.sandbox.tau2_runtime import Tau2Runtime
 
 __all__ = [
     "BaseSandbox",
+    "ClientSurface",
     "ExecResult",
     "SandboxOptionalMixin",
     "serialize_exec_result",
@@ -32,6 +50,18 @@ __all__ = [
     "LocalSubprocessSandbox",
     "RemoteSandbox",
     "Tau2Runtime",
+    "RemoteSandboxContract",
+    "RemoteSandboxHandle",
+    "validate_remote_sandbox_contract",
+    "build_remote_surfaces",
+    "serialize_surfaces",
+    "serialize_handle",
+    "coerce_remote_sandbox_handle",
+    "dataclass_to_dict",
+    "deep_merge_dicts",
+    "merge_sandbox_profile_layers",
+    "SurfaceType",
+    "SurfaceStatus",
     "SandboxHandle",
     "SandboxManager",
     "SandboxPool",

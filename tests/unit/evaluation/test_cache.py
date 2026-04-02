@@ -58,6 +58,33 @@ def test_eval_cache_root_journal_handles_concurrent_writes(tmp_path: Path) -> No
     assert sorted(record["sample_id"] for record in records) == sorted(
         f"sample-{index}" for index in range(total_writes)
     )
+    canonical_files = sorted(cache.samples_dir.glob("ns/sample-*/sample.json"))
+    assert len(canonical_files) == total_writes
 
-    artifact_files = sorted((cache.samples_dir / "ns").glob("*.json"))
-    assert len(artifact_files) == total_writes
+
+@pytest.mark.io
+def test_eval_cache_dual_writes_canonical_sample_json(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="canonical")
+
+    payload = {
+        "task_id": "task/demo",
+        "sample": {"id": "sample:1/unsafe"},
+        "value": 1,
+    }
+    legacy_target = cache.write_sample("task/demo:sample:1/unsafe", payload, namespace="task/task/demo")
+
+    canonical_target = (
+        cache.samples_dir
+        / "task_demo"
+        / "sample_1_unsafe"
+        / "sample.json"
+    )
+
+    assert legacy_target == canonical_target
+    assert canonical_target.exists()
+    assert not (cache.samples_dir / "task_task_demo").exists()
+
+    persisted = json.loads(canonical_target.read_text(encoding="utf-8"))
+    assert persisted["task_id"] == "task/demo"
+    assert persisted["sample"]["id"] == "sample:1/unsafe"
+    assert persisted["sample_id"] == "task/demo:sample:1/unsafe"

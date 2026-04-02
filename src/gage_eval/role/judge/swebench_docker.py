@@ -8,12 +8,12 @@ import json
 import os
 import re
 import shlex
-import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from loguru import logger
 
+from gage_eval.agent_runtime.artifacts.layout import ArtifactLayout
 from gage_eval.registry import registry
 from gage_eval.evaluation.sample_envelope import resolve_model_output
 from gage_eval.role.judge.base import JudgeImplementation
@@ -66,22 +66,36 @@ class SwebenchDocker(JudgeImplementation):
         sample = payload.get("sample") or {}
         model_output = resolve_model_output(sample, payload.get("model_output"))
         sandbox_provider = payload.get("sandbox_provider")
+        instance_id = _resolve_instance_id(sample)
+        run_id = _resolve_run_id(payload)
+        verifier_paths = _resolve_verifier_artifact_paths(
+            payload,
+            sample,
+            run_id=run_id,
+            instance_id=instance_id,
+        )
+        log_dir = verifier_paths["log_dir"]
+        workspace_dir = verifier_paths["workspace_dir"]
+        result_file = verifier_paths["result_file"]
 
         patch = _clean_patch_content(_resolve_patch(model_output))
         if not patch and sandbox_provider is not None:
             patch = _load_submission_patch(sandbox_provider, payload, sample)
         if not patch:
-            return {"resolved": False, "failure_reason": "missing_patch"}
+            return _finalize_verifier_result(
+                result_file,
+                {"resolved": False, "failure_reason": "missing_patch"},
+            )
 
-        instance_id = _resolve_instance_id(sample)
         repo = _get_meta(sample, "repo")
         base_commit = _get_meta(sample, "base_commit")
         if not instance_id or not repo or not base_commit:
-            return {"resolved": False, "failure_reason": "missing_metadata"}
+            return _finalize_verifier_result(
+                result_file,
+                {"resolved": False, "failure_reason": "missing_metadata"},
+            )
 
-        run_id = _resolve_run_id(payload)
-        log_dir = _host_log_dir(run_id, instance_id)
-        workspace_dir = log_dir / "workspace"
+        log_dir.mkdir(parents=True, exist_ok=True)
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
         scripts_dir = Path(params.get("scripts_dir", self._scripts_dir))
@@ -103,7 +117,7 @@ class SwebenchDocker(JudgeImplementation):
 
         if sandbox_provider is not None:
             try:
-                return self._run_with_sandbox(
+                result = self._run_with_sandbox(
                     sandbox_provider=sandbox_provider,
                     params=params,
                     sample=sample,
@@ -117,6 +131,10 @@ class SwebenchDocker(JudgeImplementation):
                     log_dir=log_dir,
                     workspace_dir=workspace_dir,
                 )
+                _mirror_workspace_logs(workspace_dir, log_dir)
+                result.setdefault("log_dir", str(log_dir))
+                result.setdefault("workspace_dir", str(workspace_dir))
+                return _finalize_verifier_result(result_file, result)
             except _SandboxFallback as exc:
                 logger.warning("SWE-bench sandbox path fallback: {}", exc)
 
@@ -145,41 +163,61 @@ class SwebenchDocker(JudgeImplementation):
             instance_id=instance_id,
         )
         if run_result.get("status") != "ok":
-            return {
-                "resolved": False,
-                "failure_reason": run_result.get("failure_reason", "container_error"),
-                "log_dir": str(log_dir),
-            }
+            _mirror_workspace_logs(workspace_dir, log_dir)
+            return _finalize_verifier_result(
+                result_file,
+                {
+                    "resolved": False,
+                    "failure_reason": run_result.get("failure_reason", "container_error"),
+                    "log_dir": str(log_dir),
+                    "workspace_dir": str(workspace_dir),
+                },
+            )
 
         patch_status = _load_patch_status_file(workspace_dir / "patch_apply_status.json")
         if patch_status:
             failure_reason = _resolve_patch_failure_reason(patch_status)
             if failure_reason:
-                return {
-                    "resolved": False,
-                    "failure_reason": failure_reason,
-                    "log_dir": str(log_dir),
-                }
+                _mirror_workspace_logs(workspace_dir, log_dir)
+                return _finalize_verifier_result(
+                    result_file,
+                    {
+                        "resolved": False,
+                        "failure_reason": failure_reason,
+                        "log_dir": str(log_dir),
+                        "workspace_dir": str(workspace_dir),
+                    },
+                )
 
         output = _load_output_json(workspace_dir / "output.json")
         if output is None:
-            return {
-                "resolved": False,
-                "failure_reason": "missing_output",
-                "log_dir": str(log_dir),
-            }
+            _mirror_workspace_logs(workspace_dir, log_dir)
+            return _finalize_verifier_result(
+                result_file,
+                {
+                    "resolved": False,
+                    "failure_reason": "missing_output",
+                    "log_dir": str(log_dir),
+                    "workspace_dir": str(workspace_dir),
+                },
+            )
 
         resolved, failure_reason = _evaluate_resolution(
             output,
             _parse_list(_get_meta(sample, "fail_to_pass")),
             _parse_list(_get_meta(sample, "pass_to_pass")),
         )
-        return {
+        _mirror_workspace_logs(workspace_dir, log_dir)
+        return _finalize_verifier_result(
+            result_file,
+            {
             "resolved": resolved,
             "failure_reason": failure_reason,
             "tests": output.get("tests", []),
             "log_dir": str(log_dir),
-        }
+            "workspace_dir": str(workspace_dir),
+            },
+        )
 
     def _run_with_sandbox(
         self,
@@ -368,38 +406,40 @@ class SwebenchDocker(JudgeImplementation):
             "gage_eval.run_id": run_id,
             "swebench.instance_id": instance_id,
         }
-        container = None
+        run_kwargs = {
+            "command": ["-c", "bash /workspace/entryscript.sh"],
+            "entrypoint": "/bin/bash",
+            "volumes": {str(workspace_dir): {"bind": "/workspace", "mode": "rw"}},
+            "detach": True,
+            "remove": True,
+            "network_mode": "none" if params.get("block_network", self._block_network) else None,
+            "mem_limit": params.get("mem_limit", self._mem_limit),
+            "pids_limit": params.get("pids_limit", self._pids_limit),
+            "labels": labels,
+        }
+        if docker_platform:
+            run_kwargs["platform"] = docker_platform
+        timeout_s = int(params.get("test_timeout_s", self._test_timeout_s))
         try:
-            run_kwargs = {
-                "command": ["-c", "bash /workspace/entryscript.sh"],
-                "entrypoint": "/bin/bash",
-                "volumes": {str(workspace_dir): {"bind": "/workspace", "mode": "rw"}},
-                "detach": True,
-                "remove": True,
-                "network_mode": "none" if params.get("block_network", self._block_network) else None,
-                "mem_limit": params.get("mem_limit", self._mem_limit),
-                "pids_limit": params.get("pids_limit", self._pids_limit),
-                "labels": labels,
-            }
-            if docker_platform:
-                run_kwargs["platform"] = docker_platform
-            container = client.containers.run(image_uri, **run_kwargs)
-            container.wait(timeout=int(params.get("test_timeout_s", self._test_timeout_s)))
+            _run_container_once(client, image_uri, run_kwargs, timeout_s=timeout_s)
             return {"status": "ok"}
         except Exception as exc:
+            if _should_retry_with_amd64_loader(exc, docker_platform):
+                for loader_entrypoint in _AMD64_LOADER_ENTRYPOINTS:
+                    retry_kwargs = dict(run_kwargs)
+                    retry_kwargs["entrypoint"] = loader_entrypoint
+                    retry_kwargs["command"] = ["/bin/bash", "-c", "bash /workspace/entryscript.sh"]
+                    try:
+                        _run_container_once(client, image_uri, retry_kwargs, timeout_s=timeout_s)
+                        logger.warning(
+                            "SWE-bench docker run retried with amd64 loader entrypoint={}",
+                            loader_entrypoint,
+                        )
+                        return {"status": "ok"}
+                    except Exception as retry_exc:
+                        exc = retry_exc
             logger.warning("SWE-bench docker run failed: {}", exc)
-            if container is not None:
-                try:
-                    container.kill()
-                except Exception:
-                    pass
             return {"status": "error", "failure_reason": "test_execution_error"}
-        finally:
-            if container is not None:
-                try:
-                    container.remove(force=True)
-                except Exception:
-                    pass
 
     def _ensure_image(self, client, image_uri: str, *, docker_platform: Optional[str]) -> bool:
         if _has_image(client, image_uri):
@@ -665,6 +705,14 @@ _DIFF_PREFIXES = (
     "GIT binary patch",
     "Binary files ",
 )
+_AMD64_LOADER_ENTRYPOINTS = (
+    "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    "/lib64/ld-linux-x86-64.so.2",
+)
+_AMD64_RETRY_ERROR_TOKENS = (
+    "cannot execute binary file",
+    "exec format error",
+)
 
 
 def _has_diff_markers(text: str) -> bool:
@@ -687,6 +735,30 @@ def _trim_diff_tail(text: str) -> str:
     if last_idx is None:
         return text
     return "\n".join(lines[: last_idx + 1])
+
+
+def _should_retry_with_amd64_loader(exc: Exception, docker_platform: Optional[str]) -> bool:
+    if str(docker_platform or "").lower() != "linux/amd64":
+        return False
+    message = str(exc).lower()
+    return any(token in message for token in _AMD64_RETRY_ERROR_TOKENS)
+
+
+def _run_container_once(client, image_uri: str, run_kwargs: Dict[str, Any], *, timeout_s: int) -> None:
+    container = None
+    try:
+        container = client.containers.run(image_uri, **run_kwargs)
+        container.wait(timeout=timeout_s)
+    finally:
+        if container is not None:
+            try:
+                container.kill()
+            except Exception:
+                pass
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
 
 
 
@@ -732,9 +804,78 @@ def _resolve_run_id(payload: Dict[str, Any]) -> str:
     return os.environ.get("GAGE_EVAL_RUN_ID", "") or "unknown"
 
 
-def _host_log_dir(run_id: str, instance_id: str) -> Path:
+def _resolve_verifier_artifact_paths(
+    payload: Dict[str, Any],
+    sample: Dict[str, Any],
+    *,
+    run_id: str,
+    instance_id: str,
+) -> Dict[str, Path]:
     save_root = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")).expanduser().resolve()
-    return save_root / run_id / "logs" / instance_id
+    artifact_paths = payload.get("artifact_paths")
+    if isinstance(artifact_paths, dict):
+        verifier_dir_raw = artifact_paths.get("verifier_dir")
+        if isinstance(verifier_dir_raw, str) and verifier_dir_raw.strip():
+            verifier_dir = Path(verifier_dir_raw).expanduser()
+            return {
+                "verifier_dir": verifier_dir,
+                "log_dir": Path(
+                    artifact_paths.get("verifier_logs_dir") or verifier_dir / "logs"
+                ).expanduser(),
+                "workspace_dir": Path(
+                    artifact_paths.get("verifier_workspace_dir") or verifier_dir / "workspace"
+                ).expanduser(),
+                "result_file": Path(
+                    artifact_paths.get("verifier_result_file") or verifier_dir / "result.json"
+                ).expanduser(),
+            }
+    execution_context = payload.get("execution_context")
+    task_id = None
+    sample_id = None
+    if isinstance(execution_context, dict):
+        task_id = execution_context.get("task_id")
+        sample_id = execution_context.get("sample_id")
+    if task_id is None:
+        task_id = payload.get("task_id") or sample.get("task_id") or _get_meta(sample, "task_id")
+    if sample_id is None:
+        sample_id = sample.get("sample_id") or sample.get("id") or instance_id or "sample"
+    layout = ArtifactLayout.for_sample(
+        base_dir=str(save_root),
+        run_id=run_id,
+        sample_id=str(sample_id),
+        task_id=None if task_id is None else str(task_id),
+    )
+    return {
+        "verifier_dir": Path(layout.verifier_dir),
+        "log_dir": Path(layout.verifier_logs_dir),
+        "workspace_dir": Path(layout.verifier_workspace_dir),
+        "result_file": Path(layout.verifier_result_file),
+    }
+
+
+def _finalize_verifier_result(result_file: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
+    result_file.parent.mkdir(parents=True, exist_ok=True)
+    result_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
+
+
+def _mirror_workspace_logs(workspace_dir: Path, log_dir: Path) -> None:
+    if not workspace_dir.exists():
+        return
+    log_dir.mkdir(parents=True, exist_ok=True)
+    for filename in (
+        "stdout.log",
+        "stderr.log",
+        "patch_apply.log",
+        "test_patch_apply.log",
+        "patch_apply_status.json",
+        "output.json",
+    ):
+        source = workspace_dir / filename
+        if not source.exists():
+            continue
+        target = log_dir / filename
+        target.write_bytes(source.read_bytes())
 
 
 def _create_entryscript(

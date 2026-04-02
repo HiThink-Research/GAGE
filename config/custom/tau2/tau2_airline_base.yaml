@@ -2,7 +2,7 @@ api_version: gage/v1
 kind: PipelineConfig
 metadata:
   name: tau2_airline_base
-  description: Tau2 airline base split (local runtime)
+  description: Tau2 airline base split (local runtime, 10 tasks)
 
 custom:
   steps:
@@ -37,7 +37,7 @@ datasets:
     params:
       domain: airline
       task_split: base
-      num_tasks: 1
+      num_tasks: 10
       num_trials: 4
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data

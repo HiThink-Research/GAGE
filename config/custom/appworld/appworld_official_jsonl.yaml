@@ -55,8 +55,8 @@ sandbox_profiles:
       startup_timeout_s: 180
       startup_interval_s: 0.5
       ports: ["8000:8000", "9000:9000", "5001:5001"]
-      # Force amd64 for Apple Silicon hosts.
-      platform: linux/amd64
+      # Default to amd64, but allow local arm64 overrides when the host image differs.
+      platform: ${APPWORLD_DOCKER_PLATFORM:-linux/amd64}
       network_mode: bridge_host
       # Explicit endpoints passed into AppWorld hooks and MCP clients.
       env_endpoint: http://127.0.0.1:8000
@@ -193,8 +193,8 @@ tasks:
       - step: auto_eval
     # Keep concurrency low for deterministic AppWorld env usage.
     concurrency: 1
-    # Smoke-test size; remove or raise for full runs.
-    max_samples: 20
+    # Acceptance-test size; increase for full runs as needed.
+    max_samples: 10
     reporting:
       sinks:
         - type: console

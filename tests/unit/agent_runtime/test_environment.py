@@ -15,6 +15,8 @@ from gage_eval.sandbox.base import ExecResult
 
 
 class DummyDockerSandbox:
+    cleanup_calls: list[tuple[dict, dict]] = []
+
     def __init__(self, runtime_configs=None, resources=None):
         self.runtime_configs = dict(runtime_configs or {})
         self.resources = dict(resources or {})
@@ -30,6 +32,10 @@ class DummyDockerSandbox:
 
     def teardown(self):
         self.started = False
+
+    @classmethod
+    def cleanup_stale_runtime(cls, config, runtime_handle):
+        cls.cleanup_calls.append((dict(config), dict(runtime_handle)))
 
     def exec(self, command: str, timeout: int = 30):
         self.commands.append((command, timeout))
@@ -116,6 +122,24 @@ def test_docker_environment_resolves_relative_cwd_to_exec_workdir() -> None:
 
 
 @pytest.mark.fast
+def test_docker_environment_stop_runs_cleanup_fallback() -> None:
+    DummyDockerSandbox.cleanup_calls = []
+    env = DockerEnvironment(
+        config={"runtime_configs": {"labels": {"suite": "test"}}},
+        runtime_configs={"docker_bin": "docker"},
+        sandbox_cls=DummyDockerSandbox,
+    )
+
+    env.start()
+    env.stop()
+
+    assert len(DummyDockerSandbox.cleanup_calls) == 1
+    config, runtime_handle = DummyDockerSandbox.cleanup_calls[0]
+    assert config["runtime_configs"]["docker_bin"] == "docker"
+    assert runtime_handle["container_id"] == "docker-1"
+
+
+@pytest.mark.fast
 def test_remote_environment_attached_exec_and_file_roundtrip() -> None:
     calls: list[tuple[str, dict, int, dict, str | None]] = []
 
@@ -150,8 +174,10 @@ def test_remote_environment_attached_exec_and_file_roundtrip() -> None:
 
     assert handle["remote_mode"] == "attached"
     assert handle["attach_target"] == "/workspace"
+    assert handle["surface_names"] == ("terminal", "fs")
     assert result.stdout == "ok"
     assert data == b"hello"
+    assert tuple(env.surfaces()) == ("terminal", "fs")
     assert calls[0][0].endswith("/run_command")
     assert any(url.endswith("/read_file") for url, *_ in calls)
     assert any(url.endswith("/write_file") for url, *_ in calls)
@@ -197,6 +223,7 @@ def test_remote_environment_managed_control_plane() -> None:
 
     handle = env.start()
     assert handle["sandbox_id"] == "sbx-1"
+    assert handle["surface_names"] == ("terminal", "fs")
     assert env.probe() is True
     result = env.exec("echo ok")
     assert result.stdout == "ok"
@@ -279,10 +306,43 @@ def test_environment_provider_selects_backend_types() -> None:
     assert remote_env.contract.mode == "attached"
 
 
+@pytest.mark.fast
+def test_environment_provider_materializes_remote_profile_defaults() -> None:
+    provider = EnvironmentProvider(
+        profiles={
+            "remote-codex": {
+                "provider": "mock",
+                "exec_endpoint": "http://profile/api/run_command",
+                "file_endpoint": "http://profile/api",
+                "attach_target": "/workspace/profile",
+                "auth": {"headers": {"x-profile": "1"}},
+            }
+        }
+    )
+    remote_plan = _make_plan("remote", remote_mode="attached", sandbox_profile_id="remote-codex")
+
+    remote_env = provider.build(
+        remote_plan,
+        {
+            "remote_sandbox": {
+                "exec_endpoint": "http://sample/api/run_command",
+            }
+        },
+    )
+
+    assert remote_env.contract is not None
+    assert remote_env.contract.sandbox_profile_id == "remote-codex"
+    assert remote_env.contract.exec_endpoint == "http://sample/api/run_command"
+    assert remote_env.contract.file_endpoint == "http://profile/api"
+    assert remote_env.contract.attach_target == "/workspace/profile"
+    assert remote_env.contract.auth["headers"]["x-profile"] == "1"
+
+
 def _make_plan(
     environment_kind: str,
     remote_mode: str | None = None,
     params: dict | None = None,
+    sandbox_profile_id: str | None = None,
 ):
     spec = AgentRuntimeSpec(
         agent_runtime_id=f"{environment_kind}-rt",
@@ -290,7 +350,7 @@ def _make_plan(
         benchmark_kit_id="swebench",
         resource_policy=ResourcePolicy(environment_kind=environment_kind),
         client_surface_policy=ClientSurfacePolicy(),
-        sandbox_policy=SandboxPolicy(remote_mode=remote_mode),
+        sandbox_policy=SandboxPolicy(remote_mode=remote_mode, sandbox_profile_id=sandbox_profile_id),
         params=params or {},
     )
     return CompiledRuntimePlan(
@@ -302,7 +362,7 @@ def _make_plan(
         environment_kind=spec.resource_policy.environment_kind,
         required_surfaces=(),
         optional_surfaces=(),
-        sandbox_profile_id=None,
+        sandbox_profile_id=sandbox_profile_id,
         remote_mode=spec.sandbox_policy.remote_mode,
         params={},
     )

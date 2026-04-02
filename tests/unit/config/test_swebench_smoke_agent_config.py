@@ -19,6 +19,7 @@ def test_swebench_smoke_agent_config() -> None:
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)
+    repo_root = config_path.parents[3]
 
     assert config.metadata.get("name") == "swebench_pro_smoke_agent"
     assert config.agent_backends
@@ -34,3 +35,12 @@ def test_swebench_smoke_agent_config() -> None:
 
     toolchain = next(spec for spec in config.role_adapters if spec.adapter_id == "swebench_toolchain")
     assert toolchain.role_type == "toolchain"
+
+    preprocess_kwargs = config.datasets[0].params.get("preprocess_kwargs") or {}
+    smoke_ids_path = repo_root / preprocess_kwargs["smoke_ids_path"]
+    assert smoke_ids_path.exists()
+
+    judge_adapter = next(spec for spec in config.role_adapters if spec.adapter_id == "swebench_docker_judge")
+    judge_params = judge_adapter.params.get("implementation_params") or {}
+    assert (repo_root / judge_params["scripts_dir"]).exists()
+    assert (repo_root / judge_params["dockerfiles_dir"]).exists()

@@ -1,4 +1,4 @@
-"""AppWorld benchmark kit definition — shell only, not yet implemented."""
+"""AppWorld benchmark kit definition."""
 
 from __future__ import annotations
 
@@ -17,4 +17,11 @@ class BenchmarkKitDefinition:
 
 
 def build_kit() -> BenchmarkKitDefinition:
-    raise NotImplementedError("appworld.build_kit is not implemented yet")
+    """Build the AppWorld kit definition."""
+
+    return BenchmarkKitDefinition(
+        kit_id="appworld",
+        verifier_kind="judge_adapter",
+        required_surfaces=("terminal", "fs", "env", "api"),
+        optional_surfaces=("mcp",),
+    )

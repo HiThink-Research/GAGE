@@ -1,4 +1,4 @@
-"""Tau2 benchmark kit definition — shell only, not yet implemented."""
+"""Tau2 benchmark kit definition."""
 
 from __future__ import annotations
 
@@ -17,4 +17,11 @@ class BenchmarkKitDefinition:
 
 
 def build_kit() -> BenchmarkKitDefinition:
-    raise NotImplementedError("tau2.build_kit is not implemented yet")
+    """Build the Tau2 kit definition."""
+
+    return BenchmarkKitDefinition(
+        kit_id="tau2",
+        verifier_kind="judge_adapter",
+        required_surfaces=(),
+        optional_surfaces=("terminal", "fs"),
+    )

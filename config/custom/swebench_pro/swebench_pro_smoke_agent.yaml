@@ -79,7 +79,7 @@ datasets:
       preprocess: swebench_pro_standardizer
       preprocess_kwargs:
         # Smoke allowlist: only ids listed here are kept.
-        smoke_ids_path: gage-eval-main/third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
+        smoke_ids_path: third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
       # Streaming keeps memory low; the smoke filter still applies.
       streaming: true
 
@@ -121,7 +121,7 @@ sandbox_profiles:
       # Disabled by default to avoid relative-path Docker errors; enable with an
       # absolute host path if needed.
       # volumes:
-      #   - /abs/path/to/gage-eval-main/third_party/swebench_pro/run_scripts:/run_scripts:ro
+      #   - /abs/path/to/third_party/swebench_pro/run_scripts:/run_scripts:ro
 
 role_adapters:
   - adapter_id: swebench_context_provider
@@ -216,9 +216,9 @@ role_adapters:
     params:
       implementation: swebench_docker
       implementation_params:
-        scripts_dir: gage-eval-main/third_party/swebench_pro/run_scripts
+        scripts_dir: third_party/swebench_pro/run_scripts
         # Required to export ENV vars from official Dockerfiles (PATH/tooling).
-        dockerfiles_dir: gage-eval-main/third_party/swebench_pro/dockerfiles
+        dockerfiles_dir: third_party/swebench_pro/dockerfiles
         dockerhub_username: jefzda
         block_network: true
         test_timeout_s: 900
@@ -234,8 +234,8 @@ metrics:
 tasks:
   - task_id: swebench_pro_smoke_agent_eval
     dataset_id: swebench_pro_smoke
-    # Fixed smoke subset size (same as allowlist count).
-    max_samples: 11
+    # Acceptance subset size; keep within the smoke allowlist.
+    max_samples: 10
     concurrency: 1
     reporting:
       sinks:

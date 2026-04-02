@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Mapping, Optional, Protocol
 
 from gage_eval.sandbox.base import ExecResult
+from gage_eval.sandbox.surfaces import ClientSurface
 
 
 class AgentEnvironment(Protocol):
@@ -37,3 +38,9 @@ class AgentEnvironment(Protocol):
 
     def write_file(self, remote_path: str, content: bytes) -> None:
         """Write a file inside the environment."""
+
+    def runtime_handle(self) -> dict[str, object]:
+        """Return the materialized runtime handle when available."""
+
+    def surfaces(self) -> dict[str, ClientSurface]:
+        """Return materialized client surfaces for the environment."""

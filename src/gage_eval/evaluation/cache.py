@@ -99,9 +99,8 @@ class EvalCache:
 
     def write_sample(self, sample_id: str, payload: Dict, *, namespace: Optional[str] = None) -> Path:
         """Persist the per-sample payload to disk."""
-
+        raw_namespace = namespace
         namespace = self._sanitize_namespace(namespace)
-        safe_sample_id = self._sanitize_sample_id(sample_id)
         with self._lock:
             self._sample_count += 1
             self._namespace_counts[namespace] = self._namespace_counts.get(namespace, 0) + 1
@@ -119,14 +118,16 @@ class EvalCache:
                 )
                 self._use_buffered_writes = True
         self._root_journal.append(payload_with_meta)
+        canonical_target = self._write_canonical_sample(
+            task_key=self._resolve_task_key(payload_with_meta, namespace=raw_namespace),
+            sample_key=self._resolve_sample_key(sample_id, payload_with_meta),
+            payload=payload_with_meta,
+        )
         if self._use_buffered_writes:
             writer = self._get_writer(namespace)
             writer.record(payload_with_meta)
-            target = writer.target_path
-        else:
-            target = self._write_sample_legacy(namespace, safe_sample_id, payload_with_meta)
-        logger.debug("Cached sample_id={} to {}", sample_id, target)
-        return target
+        logger.debug("Cached sample_id={} to {}", sample_id, canonical_target)
+        return canonical_target
 
     def write_summary(self, payload: Dict) -> Path:
         """Persist the aggregated summary to disk."""
@@ -274,12 +275,35 @@ class EvalCache:
         if close_error is not None:
             raise close_error
 
-    def _write_sample_legacy(self, namespace: str, sample_id: str, payload: Dict) -> Path:
-        target = self._samples_dir / namespace / f"{sample_id}.json"
+    def _write_canonical_sample(self, *, task_key: str, sample_key: str, payload: Dict[str, Any]) -> Path:
+        target = self._samples_dir / task_key / sample_key / "sample.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         formatted = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
-        target.write_text(formatted)
+        target.write_text(formatted, encoding="utf-8")
         return target
+
+    @classmethod
+    def _resolve_task_key(cls, payload: Mapping[str, Any], *, namespace: Optional[str]) -> str:
+        task_id = payload.get("task_id")
+        if task_id is not None:
+            return cls._sanitize_sample_id(str(task_id))
+        if namespace:
+            suffix = str(namespace).split("/", 1)[-1]
+            if suffix:
+                return cls._sanitize_sample_id(suffix)
+        return "global"
+
+    @classmethod
+    def _resolve_sample_key(cls, sample_id: str, payload: Mapping[str, Any]) -> str:
+        sample_payload = payload.get("sample")
+        if isinstance(sample_payload, Mapping):
+            for key in ("sample_id", "id", "instance_id"):
+                value = sample_payload.get(key)
+                if value is not None:
+                    return cls._sanitize_sample_id(str(value))
+        if ":" in sample_id:
+            return cls._sanitize_sample_id(sample_id.split(":", 1)[1])
+        return cls._sanitize_sample_id(sample_id)
 
     @staticmethod
     def _sanitize_namespace(namespace: Optional[str]) -> str:

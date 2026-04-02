@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Optional, Type
 
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.sandbox.base import BaseSandbox
+from gage_eval.sandbox.contracts import merge_sandbox_profile_layers
 from gage_eval.sandbox.docker_runtime import DockerSandbox
 from gage_eval.sandbox.lease_registry import SandboxLease, SandboxLeaseRegistry
 from gage_eval.sandbox.local_runtime import LocalSubprocessSandbox
@@ -76,11 +77,7 @@ class SandboxManager:
 
         base = dict(role_config or {})
         sandbox_id = base.get("sandbox_id") or base.get("template_name")
-        if sandbox_id and sandbox_id in self._profiles:
-            base = _deep_merge(self._profiles[sandbox_id], base)
-        if sample_config:
-            base = _deep_merge(base, sample_config)
-        return base
+        return merge_sandbox_profile_layers(self._profiles, sandbox_id, base, sample_config)
 
     def acquire(
         self,
@@ -423,16 +420,6 @@ class SandboxManager:
             return active
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    merged = dict(base or {})
-    for key, value in (override or {}).items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
 def _build_acquire_payload(
     config: Dict[str, Any],
     runtime: str,
@@ -513,10 +500,17 @@ def _inject_runtime_handle(
         if value:
             payload[key] = value
     for key in (
+        "exec_url",
+        "data_endpoint",
+        "file_read_url",
+        "file_write_url",
         "env_endpoint",
         "environment_endpoint",
         "apis_endpoint",
         "mcp_endpoint",
+        "workspace_root",
+        "attach_target",
+        "lease_id",
     ):
         value = runtime_handle.get(key)
         if value:

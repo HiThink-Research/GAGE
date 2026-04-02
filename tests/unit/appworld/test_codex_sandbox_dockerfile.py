@@ -16,3 +16,6 @@ def test_codex_sandbox_dockerfile_installs_codex() -> None:
     assert "npm install -g @openai/codex@latest" in content
     assert "CODEX_HOME=/agent" in content
     assert "WORKDIR /workspace" in content
+    assert "COPY docker/agent_eval/codex_sandbox/scripts/bootstrap_codex.sh" in content
+    assert "python3-pip" in content
+    assert "pip3 install --no-cache-dir" in content

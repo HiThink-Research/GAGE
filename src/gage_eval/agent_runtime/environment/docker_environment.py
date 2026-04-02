@@ -39,7 +39,9 @@ class DockerEnvironment:
         return dict(self._runtime_handle)
 
     def stop(self) -> None:
+        runtime_handle = dict(self._runtime_handle)
         self._teardown_sandbox()
+        self._cleanup_stale_runtime(runtime_handle)
         self._started = False
         self._runtime_handle = {}
 
@@ -138,6 +140,22 @@ class DockerEnvironment:
         teardown = getattr(sandbox, "teardown", None) or getattr(sandbox, "stop", None)
         if callable(teardown):
             teardown()
+
+    def _cleanup_stale_runtime(self, runtime_handle: dict[str, Any]) -> None:
+        if not runtime_handle:
+            return
+        sandbox_cls = self._sandbox_cls or _load_docker_sandbox_class()
+        cleaner = getattr(sandbox_cls, "cleanup_stale_runtime", None)
+        if not callable(cleaner):
+            return
+        config = dict(self._config)
+        runtime_configs = dict(config.get("runtime_configs") or {})
+        runtime_configs.update(self._runtime_configs)
+        config["runtime_configs"] = runtime_configs
+        try:
+            cleaner(config, runtime_handle)
+        except Exception:
+            return
 
 
 def _load_docker_sandbox_class():

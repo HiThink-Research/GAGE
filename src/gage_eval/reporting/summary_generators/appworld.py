@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.sample_envelope import resolve_judge_output
 from gage_eval.registry import registry
 from gage_eval.reporting.summary_generators import SummaryGenerator
 
@@ -43,7 +44,10 @@ def _build_appworld_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         if not appworld_meta:
             continue
         subset = str(appworld_meta.get("subset") or "unknown")
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
+        judge_output = resolve_judge_output(
+            sample,
+            record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {},
+        )
         appworld_output = judge_output.get("appworld") if isinstance(judge_output.get("appworld"), dict) else {}
 
         tgc = _coerce_float(appworld_output.get("tgc"))

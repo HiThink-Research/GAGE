@@ -11,15 +11,21 @@ RUN apt-get update \
         curl \
         git \
         python3 \
+        python3-pip \
         ripgrep \
     && rm -rf /var/lib/apt/lists/*
+
+# Minimal Python deps required for mounted GAGE smoke scripts.
+RUN pip3 install --break-system-packages --no-cache-dir \
+        loguru \
+        requests
 
 RUN npm install -g @openai/codex@latest \
     && codex --version
 
 RUN mkdir -p /workspace /agent
 
-COPY scripts/bootstrap_codex.sh /usr/local/bin/bootstrap_codex.sh
+COPY docker/agent_eval/codex_sandbox/scripts/bootstrap_codex.sh /usr/local/bin/bootstrap_codex.sh
 RUN chmod +x /usr/local/bin/bootstrap_codex.sh
 
 WORKDIR /workspace

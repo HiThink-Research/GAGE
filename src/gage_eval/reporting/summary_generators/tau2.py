@@ -6,6 +6,7 @@ import math
 from typing import Any, Dict, Optional
 
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.sample_envelope import resolve_judge_output
 from gage_eval.registry import registry
 from gage_eval.reporting.summary_generators import SummaryGenerator
 
@@ -44,7 +45,10 @@ def _build_tau2_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         tau2_meta = meta.get("tau2") if isinstance(meta.get("tau2"), dict) else None
         if not tau2_meta:
             continue
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
+        judge_output = resolve_judge_output(
+            sample,
+            record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {},
+        )
         tau2_output = judge_output.get("tau2") if isinstance(judge_output.get("tau2"), dict) else {}
         reward = _coerce_float(tau2_output.get("reward"))
         if reward is None:

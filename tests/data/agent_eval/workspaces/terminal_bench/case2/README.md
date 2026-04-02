@@ -1,1 +1,1 @@
-Terminal benchmark docker workspace seed for nested path creation.
+TB2 docker acceptance workspace case 2

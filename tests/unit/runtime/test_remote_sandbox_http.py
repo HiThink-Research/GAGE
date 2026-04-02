@@ -22,8 +22,10 @@ def test_remote_sandbox_exec_requester():
             "headers": {"x-test": "1"},
         }
     )
-    sandbox.start({"data_endpoint": "http://remote/api"})
+    handle = sandbox.start({"data_endpoint": "http://remote/api", "remote_mode": "attached"})
     result = sandbox.exec("echo ok")
+    assert handle["mode"] == "attached"
+    assert handle["surface_names"] == ("terminal", "fs")
     assert calls["url"] == "http://remote/api/run_command"
     assert calls["payload"]["command"] == "echo ok"
     assert calls["timeout_s"] == 12
@@ -78,6 +80,7 @@ def test_remote_sandbox_start_teardown_and_health_via_control_plane() -> None:
     handle = sandbox.start({"image": "appworld:latest", "resources": {"cpu": 2}})
 
     assert handle["sandbox_id"] == "sbx-1"
+    assert handle["mode"] == "attached"
     assert handle["env_endpoint"] == "http://remote/env"
     assert handle["apis_endpoint"] == "http://remote/apis"
     assert handle["mcp_endpoint"] == "http://remote/mcp"
@@ -136,3 +139,33 @@ def test_remote_sandbox_is_alive_without_control_endpoint() -> None:
     sandbox.start({})
 
     assert sandbox.is_alive() is True
+
+
+@pytest.mark.fast
+def test_remote_sandbox_cleanup_stale_runtime_deletes_managed_sandbox(monkeypatch) -> None:
+    calls = []
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+    def _delete(url, headers=None, timeout=30):
+        calls.append((url, headers, timeout))
+        return _Response()
+
+    monkeypatch.setattr("gage_eval.sandbox.remote_runtime.requests.delete", _delete)
+
+    cleaned = RemoteSandbox.cleanup_stale_runtime(
+        {
+            "control_endpoint": "https://platform.example/v1",
+            "auth_type": "bearer",
+            "auth_token": "secret-token",
+        },
+        {
+            "sandbox_id": "sbx-1",
+        },
+    )
+
+    assert cleaned is True
+    assert calls[0][0].endswith("/sandboxes/sbx-1")
+    assert calls[0][1]["Authorization"] == "Bearer secret-token"
