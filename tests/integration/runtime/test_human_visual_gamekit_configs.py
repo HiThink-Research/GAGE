@@ -483,7 +483,10 @@ def test_openra_ra_skirmish_native_pure_human_visual_config_optimizes_manual_rea
             "tick_interval_ms": 50,
             "frame_output_hz": 20,
             "artifact_sampling_mode": "async_decimated_live",
-            "fallback_move": "noop",
+            "max_commands_per_tick": 4,
+            "max_command_queue_size": 128,
+            "bridge_stall_timeout_ms": 2000,
+            "bridge_abort_timeout_ms": 10000,
         },
     }
     assert visualizer["enabled"] is True

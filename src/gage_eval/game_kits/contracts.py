@@ -93,6 +93,12 @@ class RealtimeHumanControlProfile:
     frame_output_hz: int | None = None
     artifact_sampling_mode: str | None = None
     fallback_move: str | None = None
+    max_commands_per_tick: int | None = None
+    max_command_queue_size: int | None = None
+    command_stale_after_ms: int | None = None
+    queue_overflow_policy: str | None = None
+    bridge_stall_timeout_ms: int | None = None
+    bridge_abort_timeout_ms: int | None = None
 
 
 @dataclass(frozen=True)
