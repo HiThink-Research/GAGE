@@ -67,7 +67,6 @@ class GameSession:
     final_result: object | None = None
     tick: int = 0
     step: int = 0
-    _decision_count: int = field(default=0, init=False, repr=False)
     arena_trace: list[dict[str, object]] = field(default_factory=list)
     support_errors: list[dict[str, object]] = field(default_factory=list)
     invocation_context: GameArenaInvocationContext | None = None
@@ -219,7 +218,7 @@ class GameSession:
             self._record_visual_decision_window_open(player_id=player_id, observation=observation)
         return observation
 
-    def decide_current_player(self, observation) -> ArenaAction:
+    def decide_current_player(self, observation) -> ArenaAction | None:
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
         player_id = str(self.environment.get_active_player())
@@ -229,7 +228,18 @@ class GameSession:
         )
         observation = before_context.payload.get("observation", observation)
         player = self._require_player(player_id)
-        action = player.next_action(observation)
+        if self._uses_scheduler_owned_human_realtime():
+            poll_scheduler_owned_action = getattr(player, "poll_scheduler_owned_action", None)
+            if callable(poll_scheduler_owned_action):
+                action = poll_scheduler_owned_action(observation)
+                if action is None:
+                    self._current_trace_entry = None
+                    self._last_input_age_ms = None
+                    return None
+            else:
+                action = player.next_action(observation)
+        else:
+            action = player.next_action(observation)
         after_context = self._run_support_hook(
             SupportHook.AFTER_DECIDE,
             {
@@ -309,14 +319,13 @@ class GameSession:
         self.arena_trace.append(finalized_trace_entry)
         self._current_trace_entry = None
 
-    def advance(self) -> None:
+    def advance(self, *, decision_taken: bool = True) -> None:
         delta = self._resolve_progress_delta()
-        if self._uses_scheduler_owned_human_realtime() and self._current_trace_entry is not None:
-            self.tick += 1
+        if self._uses_scheduler_owned_human_realtime() and not decision_taken:
+            self.tick += delta
         else:
             self.tick += delta
             self.step += delta
-            self._decision_count += delta
         if not self._uses_scheduler_owned_human_realtime():
             self._record_visual_snapshot()
         if self.final_result is None and self.environment is not None and self.environment.is_terminal():

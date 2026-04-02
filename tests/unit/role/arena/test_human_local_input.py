@@ -240,6 +240,35 @@ def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_
     assert third_action.move == "noop"
 
 
+def test_local_human_input_driver_scheduler_owned_queued_command_returns_no_action_for_empty_queue() -> None:
+    action_queue: Queue[str] = Queue()
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "queued_command",
+                "tick_interval_ms": 50,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="openra frame",
+        legal_moves=("noop", "bridge_input"),
+        active_player="player_0",
+    )
+
+    assert player.poll_scheduler_owned_action(observation) is None
+
+
 def test_local_human_input_driver_continuous_state_async_waits_for_scheduler_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

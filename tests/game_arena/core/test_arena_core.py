@@ -3,6 +3,7 @@ from __future__ import annotations
 import gage_eval.role.arena.schedulers.real_time_tick as real_time_tick_module
 import threading
 import time
+from queue import Queue
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,7 @@ from gage_eval.role.arena.schedulers.turn import TurnScheduler
 from gage_eval.role.arena.schedulers.real_time_tick import RealTimeTickScheduler
 from gage_eval.role.arena.output.writer import ArenaOutputWriter
 from gage_eval.role.arena.player_drivers.registry import PlayerDriverRegistry
+from gage_eval.role.arena.player_drivers.human_local_input import LocalHumanInputDriver
 from gage_eval.role.arena.resources.control import ArenaResourceControl
 from gage_eval.role.arena.resources.specs import ArenaResources
 from gage_eval.role.arena.resources.visualization import (
@@ -1634,29 +1636,86 @@ def test_game_session_advance_uses_environment_reported_progress() -> None:
     assert session.step == 1
 
 
-def build_scheduler_owned_openra_session_with_empty_queue() -> GameSession:
-    class FakeEnvironment:
+def test_scheduler_owned_queued_command_idle_tick_does_not_increment_step_or_move_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class AsyncEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+            self.applied_moves: list[str] = []
+
         def get_active_player(self) -> str:
             return "player_0"
 
         def observe(self, player_id: str) -> object:
             return SimpleNamespace(
                 active_player=player_id,
-                legal_actions_items=("noop",),
+                legal_actions_items=("noop", "bridge_input"),
                 view_text="openra frame",
                 board_text="openra frame",
+                last_action=None,
+            )
+
+        def apply(self, action: ArenaAction) -> GameResult:
+            self.applied_moves.append(action.move)
+            self._terminal = True
+            return GameResult(
+                winner=action.player,
+                result="completed",
+                reason="applied",
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": action.move}],
             )
 
         def consume_session_progress_delta(self) -> int:
+            self._terminal = True
             return 1
 
         def is_terminal(self) -> bool:
-            return False
+            return self._terminal
 
-    return GameSession(
+    current_time = {"value": 100.0}
+    slept: list[float] = []
+
+    def fake_monotonic() -> float:
+        return current_time["value"]
+
+    def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+        current_time["value"] += delay
+
+    monkeypatch.setattr(
+        real_time_tick_module,
+        "time",
+        SimpleNamespace(sleep=fake_sleep, monotonic=fake_monotonic),
+        raising=False,
+    )
+
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": Queue(),
+                "input_semantics": "queued_command",
+                "scheduler_owned_realtime": True,
+                "timeout_fallback_move": "noop",
+            },
+        )
+    )
+    environment = AsyncEnvironment()
+    session = GameSession(
         sample=ArenaSample(game_kit="openra", env="ra_skirmish_1v1"),
-        environment=FakeEnvironment(),
-        player_specs=(SimpleNamespace(player_id="player_0", player_kind="human"),),
+        environment=environment,
+        player_specs=(player,),
+        max_steps=1,
         runtime_profile=ResolvedRuntimeProfile(
             scheduler_binding="real_time_tick/default",
             scheduler_family="real_time_tick",
@@ -1685,16 +1744,14 @@ def build_scheduler_owned_openra_session_with_empty_queue() -> GameSession:
         ),
     )
 
+    RealTimeTickScheduler(binding_id="real_time_tick/default").run(session)
 
-def test_scheduler_owned_queued_command_idle_tick_does_not_increment_step_or_move_count() -> None:
-    session = build_scheduler_owned_openra_session_with_empty_queue()
-
-    session.observe()
-    session.advance()
-
+    assert slept == [0.05]
+    assert environment.applied_moves == []
     assert session.tick == 1
     assert session.step == 0
-    assert session.final_result is None
+    assert session.final_result is not None
+    assert session.final_result["result"] == "completed"
 
 
 def test_game_session_advance_records_fresh_visual_snapshot_from_environment_frame() -> None:

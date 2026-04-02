@@ -28,8 +28,11 @@ class RealTimeTickScheduler(Scheduler):
         while not session.should_stop():
             observation = session.observe()
             decision = session.decide_current_player(observation)
-            session.apply(decision)
-            session.advance()
+            if decision is not None:
+                session.apply(decision)
+                session.advance()
+            else:
+                session.advance(decision_taken=False)
 
 
 def _run_scheduler_owned_realtime_loop(session, *, tick_ms: int) -> None:
@@ -38,8 +41,11 @@ def _run_scheduler_owned_realtime_loop(session, *, tick_ms: int) -> None:
         tick_started = _monotonic_seconds()
         observation = session.observe()
         decision = session.decide_current_player(observation)
-        session.apply(decision)
-        session.advance()
+        if decision is not None:
+            session.apply(decision)
+            session.advance()
+        else:
+            session.advance(decision_taken=False)
         capture_output_tick = getattr(session, "capture_output_tick", None)
         if callable(capture_output_tick):
             capture_output_tick()

@@ -46,9 +46,19 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
 
     def next_action(self, observation: ArenaObservation) -> ArenaAction:
         if self._scheduler_owned_realtime:
-            payload = self._read_scheduler_owned_payload()
-            return self._build_action_from_payload(observation, payload)
+            action = self.poll_scheduler_owned_action(observation)
+            if action is not None:
+                return action
+            raise ValueError(f"Human player '{self.player_id}' did not provide an action")
         payload = self._read_action_payload(observation)
+        return self._build_action_from_payload(observation, payload)
+
+    def poll_scheduler_owned_action(self, observation: ArenaObservation) -> ArenaAction | None:
+        if not self._scheduler_owned_realtime:
+            return self.next_action(observation)
+        payload = self._read_scheduler_owned_payload()
+        if not payload and not self._uses_continuous_state:
+            return None
         return self._build_action_from_payload(observation, payload)
 
     def start_thinking(
