@@ -1213,12 +1213,18 @@ class GameSession:
             return True
         if self.final_result is not None:
             return True
-        if self.step <= 1:
+        cadence_index = self._resolve_inline_snapshot_cadence_index()
+        if cadence_index <= 1:
             return True
         stride = self._resolve_inline_snapshot_stride()
         if stride <= 1:
             return True
-        return self.step % stride == 0
+        return cadence_index % stride == 0
+
+    def _resolve_inline_snapshot_cadence_index(self) -> int:
+        if self._uses_scheduler_owned_human_realtime():
+            return int(self.tick)
+        return int(self.step)
 
     def _resolve_inline_snapshot_stride(self) -> int:
         if not self._should_strip_inline_media_from_live_trace():
