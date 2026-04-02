@@ -67,6 +67,7 @@ class GameSession:
     final_result: object | None = None
     tick: int = 0
     step: int = 0
+    _decision_count: int = field(default=0, init=False, repr=False)
     arena_trace: list[dict[str, object]] = field(default_factory=list)
     support_errors: list[dict[str, object]] = field(default_factory=list)
     invocation_context: GameArenaInvocationContext | None = None
@@ -310,8 +311,12 @@ class GameSession:
 
     def advance(self) -> None:
         delta = self._resolve_progress_delta()
-        self.tick += delta
-        self.step += delta
+        if self._uses_scheduler_owned_human_realtime() and self._current_trace_entry is not None:
+            self.tick += 1
+        else:
+            self.tick += delta
+            self.step += delta
+            self._decision_count += delta
         if not self._uses_scheduler_owned_human_realtime():
             self._record_visual_snapshot()
         if self.final_result is None and self.environment is not None and self.environment.is_terminal():
@@ -1321,12 +1326,12 @@ def _unregister_ws_rgb_display(ws_hub: object, *, display_id: str) -> None:
 
 def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
     runtime_overrides = sample.runtime_overrides or {}
-    for key in ("max_steps", "max_turns", "max_ticks"):
+    for key in ("max_decisions", "max_steps", "max_turns", "max_ticks"):
         value = runtime_overrides.get(key)
         if value is not None:
             return max(1, int(value))
     defaults = getattr(resolved.scheduler, "defaults", {}) or {}
-    for key in ("max_steps", "max_turns", "max_ticks"):
+    for key in ("max_decisions", "max_steps", "max_turns", "max_ticks"):
         value = defaults.get(key)
         if value is not None:
             return max(1, int(value))

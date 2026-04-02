@@ -9,7 +9,11 @@ import pytest
 
 from gage_eval.role.arena.core.arena_core import GameArenaCore
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
-from gage_eval.role.arena.core.game_session import GameSession, _build_action_server
+from gage_eval.role.arena.core.game_session import (
+    GameSession,
+    _build_action_server,
+    _resolve_max_steps,
+)
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.human_input_protocol import LatestActionMailbox, SampleActionRouter
 from gage_eval.role.arena.schedulers.turn import TurnScheduler
@@ -180,6 +184,17 @@ def test_game_session_capture_output_tick_is_available_for_record_cadence() -> N
     assert session.tick == 0
     assert session.step == 0
     assert session.arena_trace == []
+
+
+def test_game_session_resolves_max_decisions_before_default_max_steps() -> None:
+    sample = ArenaSample(
+        game_kit="openra",
+        env="ra_skirmish_1v1",
+        runtime_overrides={"max_decisions": 7200},
+    )
+    resolved = SimpleNamespace(scheduler=SimpleNamespace(defaults={"max_steps": 256}))
+
+    assert _resolve_max_steps(sample=sample, resolved=resolved) == 7200
 
 
 def test_game_session_executes_support_hooks_across_main_chain() -> None:
@@ -1617,6 +1632,69 @@ def test_game_session_advance_uses_environment_reported_progress() -> None:
     session.advance()
     assert session.tick == 1
     assert session.step == 1
+
+
+def build_scheduler_owned_openra_session_with_empty_queue() -> GameSession:
+    class FakeEnvironment:
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> object:
+            return SimpleNamespace(
+                active_player=player_id,
+                legal_actions_items=("noop",),
+                view_text="openra frame",
+                board_text="openra frame",
+            )
+
+        def consume_session_progress_delta(self) -> int:
+            return 1
+
+        def is_terminal(self) -> bool:
+            return False
+
+    return GameSession(
+        sample=ArenaSample(game_kit="openra", env="ra_skirmish_1v1"),
+        environment=FakeEnvironment(),
+        player_specs=(SimpleNamespace(player_id="player_0", player_kind="human"),),
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=50,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="queued_command",
+                    tick_interval_ms=50,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="queued_command",
+                tick_interval_ms=50,
+                input_transport="realtime_ws",
+                frame_output_hz=20,
+                artifact_sampling_mode="async_decimated_live",
+                fallback_move="noop",
+            ),
+        ),
+    )
+
+
+def test_scheduler_owned_queued_command_idle_tick_does_not_increment_step_or_move_count() -> None:
+    session = build_scheduler_owned_openra_session_with_empty_queue()
+
+    session.observe()
+    session.advance()
+
+    assert session.tick == 1
+    assert session.step == 0
+    assert session.final_result is None
 
 
 def test_game_session_advance_records_fresh_visual_snapshot_from_environment_frame() -> None:
