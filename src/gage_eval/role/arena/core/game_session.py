@@ -64,6 +64,7 @@ class GameSession:
     visualization_spec: object | None = None
     resources: object | None = None
     max_steps: int = 256
+    max_ticks: int | None = None
     final_result: object | None = None
     tick: int = 0
     step: int = 0
@@ -133,6 +134,7 @@ class GameSession:
             visualization_spec=getattr(resolved, "visualization_spec", None),
             resources=resources,
             max_steps=_resolve_max_steps(sample=sample, resolved=resolved),
+            max_ticks=_resolve_max_tick_budget(sample=sample, resolved=resolved),
             invocation_context=invocation_context,
             visual_recorder=_build_visual_recorder(
                 sample=sample,
@@ -161,6 +163,9 @@ class GameSession:
             return True
         if self.step >= self.max_steps:
             self.final_result = self._build_result(result="max_steps", reason="max_steps")
+            return True
+        if self.max_ticks is not None and self.tick >= self.max_ticks:
+            self.final_result = self._build_result(result="max_ticks", reason="max_ticks")
             return True
         return bool(self.environment.is_terminal())
 
@@ -1343,16 +1348,30 @@ def _unregister_ws_rgb_display(ws_hub: object, *, display_id: str) -> None:
 
 def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
     runtime_overrides = sample.runtime_overrides or {}
-    for key in ("max_decisions", "max_steps", "max_turns", "max_ticks"):
+    for key in ("max_decisions", "max_steps", "max_turns"):
         value = runtime_overrides.get(key)
         if value is not None:
             return max(1, int(value))
     defaults = getattr(resolved.scheduler, "defaults", {}) or {}
-    for key in ("max_decisions", "max_steps", "max_turns", "max_ticks"):
+    for key in ("max_decisions", "max_steps", "max_turns"):
         value = defaults.get(key)
         if value is not None:
             return max(1, int(value))
     return 256
+
+
+def _resolve_max_tick_budget(*, sample: ArenaSample, resolved) -> int | None:
+    runtime_overrides = sample.runtime_overrides or {}
+    explicit_tick_budget = runtime_overrides.get("max_ticks")
+    if explicit_tick_budget is not None:
+        return max(1, int(explicit_tick_budget))
+    if any(runtime_overrides.get(key) is not None for key in ("max_decisions", "max_steps", "max_turns")):
+        return None
+    defaults = getattr(resolved.scheduler, "defaults", {}) or {}
+    default_tick_budget = defaults.get("max_ticks")
+    if default_tick_budget is not None:
+        return max(1, int(default_tick_budget))
+    return None
 
 
 def _build_visual_recorder(
