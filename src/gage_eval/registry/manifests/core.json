@@ -75,6 +75,15 @@
     },
     {
       "kind": "judge_impls",
+      "name": "skillsbench_evaluate",
+      "module": "gage_eval.role.judge.skillsbench_evaluate",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/judge/skillsbench_evaluate.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "judge_impls",
       "name": "swebench_docker",
       "module": "gage_eval.role.judge.swebench_docker",
       "load_phase": "prepare_only",
@@ -340,6 +349,15 @@
       "module": "gage_eval.reporting.summary_generators.gomoku",
       "load_phase": "baseline",
       "declared_in": "src/gage_eval/reporting/summary_generators/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "skillsbench_summary",
+      "module": "gage_eval.reporting.summary_generators.skillsbench",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/skillsbench.py",
       "aliases": [],
       "optional": false
     },

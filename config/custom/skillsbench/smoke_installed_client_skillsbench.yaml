@@ -1,0 +1,74 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: smoke_installed_client_skillsbench
+  description: Small docker smoke for SkillsBench installed-client runtime.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_codex_skillsbench_smoke
+    - step: auto_eval
+
+datasets:
+  - dataset_id: skillsbench_smoke
+    loader: skillsbench_harbor
+    params:
+      auto_download: true
+      skip_missing_env_tasks: true
+      min_build_timeout_sec: 3600
+      include_tasks:
+        - organize-messy-files
+        - paper-anonymizer
+        - dialogue-parser
+
+role_adapters:
+  - adapter_id: dut_codex_skillsbench_smoke
+    role_type: dut_agent
+    agent_runtime_id: codex_skillsbench_smoke
+
+summary_generators:
+  - skillsbench_summary
+
+tasks:
+  - task_id: skillsbench_smoke_agent_eval
+    dataset_id: skillsbench_smoke
+    max_samples: 3
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/skillsbench_smoke_events.jsonl
+
+agent_runtimes:
+  - agent_runtime_id: codex_skillsbench_smoke
+    scheduler: installed_client
+    benchmark_kit_id: skillsbench
+    client_id: codex
+    resource_policy:
+      environment_kind: docker
+      timeout_sec: 1800
+    client_surface_policy:
+      required:
+        - terminal
+        - fs
+    params:
+      client_default_args:
+        - --dangerously-bypass-approvals-and-sandbox
+        - -c
+        - model_reasoning_effort="medium"
+      runtime_configs:
+        start_container: true
+        env:
+          OPENAI_API_KEY:
+          OPENAI_BASE_URL:
+      verifier:
+        docker_bin: docker
+        default_timeout_s: 1800
+
+benchmark_kits:
+  - kit_id: skillsbench
+    module: gage_eval.agent_eval_kits.skillsbench.kit

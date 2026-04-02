@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
@@ -16,6 +16,7 @@ from gage_eval.role.agent.human_gateway import HumanGateway, build_default_human
 from gage_eval.role.agent.loop import AgentLoop
 from gage_eval.role.agent.tool_router import ToolRouter
 from gage_eval.role.agent.backends.base import AgentBackend
+from gage_eval.role.judge.skillsbench_evaluate import SkillsBenchEvaluate
 from gage_eval.mcp import McpClient
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider
@@ -206,6 +207,15 @@ class DUTAgentAdapter(RoleAdapter):
 
             verifier_input = build_verifier_input(sample, scheduler_result, artifacts)
             verifier_result = JudgeVerifierAdapter(**verifier_params).verify(verifier_input)
+            return _normalize_verifier_result(verifier_result)
+        if benchmark_kit_id == "skillsbench":
+            from gage_eval.agent_eval_kits.skillsbench.judge_bridge import build_verifier_input
+            from gage_eval.agent_runtime.verifier.judge_adapter import JudgeVerifierAdapter
+
+            verifier_input = build_verifier_input(sample, scheduler_result, artifacts)
+            verifier_result = JudgeVerifierAdapter(
+                judge=SkillsBenchEvaluate(**verifier_params)
+            ).verify(verifier_input)
             return _normalize_verifier_result(verifier_result)
         if benchmark_kit_id == "appworld":
             from gage_eval.agent_eval_kits.appworld.judge_bridge import build_verifier_input
@@ -450,15 +460,35 @@ def _persist_runtime_verifier_result(artifacts: Any, verifier_output: Dict[str, 
     path.write_text(json.dumps(_json_safe(verifier_output), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _json_safe(value: Any) -> Any:
-    if is_dataclass(value):
-        return _json_safe(asdict(value))
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, Path):
-        return str(value)
+def _json_safe(value: Any, seen: set[int] | None = None) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if isinstance(value, Path):
+        return str(value)
+    if seen is None:
+        seen = set()
+    marker = id(value)
+    if marker in seen:
+        return "<recursive_ref>"
+    if is_dataclass(value):
+        seen.add(marker)
+        try:
+            return {
+                field.name: _json_safe(getattr(value, field.name), seen)
+                for field in fields(value)
+            }
+        finally:
+            seen.discard(marker)
+    if isinstance(value, dict):
+        seen.add(marker)
+        try:
+            return {str(key): _json_safe(item, seen) for key, item in value.items()}
+        finally:
+            seen.discard(marker)
+    if isinstance(value, (list, tuple, set)):
+        seen.add(marker)
+        try:
+            return [_json_safe(item, seen) for item in value]
+        finally:
+            seen.discard(marker)
     return str(value)

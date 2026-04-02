@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, fields, is_dataclass
 import importlib
 import json
 from pathlib import Path
@@ -33,7 +33,19 @@ class InstalledClientScheduler:
         try:
             client.setup(environment, session)
             request = self._build_request(session)
+            prepare_hook = self._resolve_kit_hook("sub_workflow", "prepare_environment")
+            capture_hook = self._resolve_kit_hook("sub_workflow", "capture_environment_artifacts")
+            prepare_result: Dict[str, Any] = {}
+            if prepare_hook is not None:
+                prepare_result = dict(
+                    prepare_hook(session.sample, session, environment, request) or {}
+                )
             client_result = client.run(request, environment)
+            capture_result: Dict[str, Any] = {}
+            if capture_hook is not None:
+                capture_result = dict(
+                    capture_hook(session.sample, session, environment, client_result, request) or {}
+                )
             raw_output = {
                 "exit_code": client_result.exit_code,
                 "stdout": client_result.stdout,
@@ -43,6 +55,10 @@ class InstalledClientScheduler:
                 "surfaces": serialize_surfaces(surfaces),
                 "workspace_root": session.resources.metadata.get("workspace_root"),
             }
+            if prepare_result:
+                raw_output["prepare_environment"] = dict(prepare_result)
+            if capture_result:
+                raw_output["capture_environment_artifacts"] = dict(capture_result)
             if client_result.patch_content:
                 raw_output["patch_content"] = client_result.patch_content
             artifacts = dict(client_result.artifacts)
@@ -50,6 +66,7 @@ class InstalledClientScheduler:
                 artifacts.setdefault("patch_path", client_result.patch_path)
             if client_result.trajectory_path:
                 artifacts.setdefault("trajectory_path", client_result.trajectory_path)
+            artifacts.update(_collect_artifact_like_outputs(capture_result))
             result = SchedulerResult(
                 status="success" if client_result.exit_code == 0 else "error",
                 answer=client_result.patch_content,
@@ -203,6 +220,18 @@ def _artifact_metadata(artifacts: Any) -> Dict[str, str]:
     return metadata
 
 
+def _collect_artifact_like_outputs(payload: Dict[str, Any]) -> Dict[str, str]:
+    artifacts: Dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return artifacts
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if str(key).endswith(("_path", "_file", "_dir")):
+            artifacts[str(key)] = str(value)
+    return artifacts
+
+
 def _persist_scheduler_artifacts(
     *,
     session,
@@ -273,15 +302,35 @@ def _write_json_artifact(path: str, payload: Dict[str, Any]) -> None:
     target.write_text(json.dumps(_json_safe(payload), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _json_safe(value: Any) -> Any:
-    if is_dataclass(value):
-        return _json_safe(asdict(value))
-    if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, Path):
-        return str(value)
+def _json_safe(value: Any, seen: set[int] | None = None) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if isinstance(value, Path):
+        return str(value)
+    if seen is None:
+        seen = set()
+    marker = id(value)
+    if marker in seen:
+        return "<recursive_ref>"
+    if is_dataclass(value):
+        seen.add(marker)
+        try:
+            return {
+                field.name: _json_safe(getattr(value, field.name), seen)
+                for field in fields(value)
+            }
+        finally:
+            seen.discard(marker)
+    if isinstance(value, dict):
+        seen.add(marker)
+        try:
+            return {str(key): _json_safe(item, seen) for key, item in value.items()}
+        finally:
+            seen.discard(marker)
+    if isinstance(value, (list, tuple, set)):
+        seen.add(marker)
+        try:
+            return [_json_safe(item, seen) for item in value]
+        finally:
+            seen.discard(marker)
     return str(value)

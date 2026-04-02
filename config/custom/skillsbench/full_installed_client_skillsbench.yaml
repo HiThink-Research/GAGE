@@ -1,0 +1,70 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: full_installed_client_skillsbench
+  description: Full SkillsBench docker run with auto-download and official verifier scripts.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_codex_skillsbench_full
+    - step: auto_eval
+
+datasets:
+  - dataset_id: skillsbench_full
+    loader: skillsbench_harbor
+    params:
+      auto_download: true
+      update_existing: false
+      min_build_timeout_sec: 3600
+
+role_adapters:
+  - adapter_id: dut_codex_skillsbench_full
+    role_type: dut_agent
+    agent_runtime_id: codex_skillsbench_full
+
+summary_generators:
+  - skillsbench_summary
+
+tasks:
+  - task_id: skillsbench_full_agent_eval
+    dataset_id: skillsbench_full
+    max_samples: 77
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/skillsbench_full_events.jsonl
+
+agent_runtimes:
+  - agent_runtime_id: codex_skillsbench_full
+    scheduler: installed_client
+    benchmark_kit_id: skillsbench
+    client_id: codex
+    resource_policy:
+      environment_kind: docker
+      timeout_sec: 1800
+    client_surface_policy:
+      required:
+        - terminal
+        - fs
+    params:
+      client_default_args:
+        - --dangerously-bypass-approvals-and-sandbox
+        - -c
+        - model_reasoning_effort="medium"
+      runtime_configs:
+        start_container: true
+        env:
+          OPENAI_API_KEY:
+          OPENAI_BASE_URL:
+      verifier:
+        docker_bin: docker
+        default_timeout_s: 1800
+
+benchmark_kits:
+  - kit_id: skillsbench
+    module: gage_eval.agent_eval_kits.skillsbench.kit

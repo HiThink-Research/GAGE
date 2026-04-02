@@ -88,3 +88,23 @@ def test_eval_cache_dual_writes_canonical_sample_json(tmp_path: Path) -> None:
     assert persisted["task_id"] == "task/demo"
     assert persisted["sample"]["id"] == "sample:1/unsafe"
     assert persisted["sample_id"] == "task/demo:sample:1/unsafe"
+
+
+@pytest.mark.io
+def test_eval_cache_serializes_recursive_payloads(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="recursive")
+    sample = {"id": "sample-1"}
+    eval_result = {"status": "fail"}
+    eval_result["self"] = eval_result
+    sample["eval_result"] = eval_result
+    payload = {
+        "task_id": "task/demo",
+        "sample": sample,
+        "model_output": {"verifier_result": eval_result},
+    }
+
+    target = cache.write_sample("task/demo:sample-1", payload, namespace="task/task/demo")
+
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert persisted["sample"]["eval_result"]["self"] == "<recursive_ref>"
+    assert persisted["model_output"]["verifier_result"]["self"] == "<recursive_ref>"

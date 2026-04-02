@@ -278,7 +278,7 @@ class EvalCache:
     def _write_canonical_sample(self, *, task_key: str, sample_key: str, payload: Dict[str, Any]) -> Path:
         target = self._samples_dir / task_key / sample_key / "sample.json"
         target.parent.mkdir(parents=True, exist_ok=True)
-        formatted = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
+        formatted = json.dumps(_json_safe_copy(payload), ensure_ascii=False, indent=2)
         target.write_text(formatted, encoding="utf-8")
         return target
 
@@ -338,7 +338,45 @@ def _json_default(obj: Any) -> Any:
 def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:
     """Serializes one root journal payload into a single JSONL entry."""
 
-    return json.dumps(payload, ensure_ascii=False, default=_json_default)
+    return json.dumps(_json_safe_copy(payload), ensure_ascii=False)
+
+
+def _json_safe_copy(value: Any, seen: set[int] | None = None) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if seen is None:
+        seen = set()
+    marker = id(value)
+    if marker in seen:
+        return "<recursive_ref>"
+    if isinstance(value, dict):
+        seen.add(marker)
+        try:
+            return {str(key): _json_safe_copy(item, seen) for key, item in value.items()}
+        finally:
+            seen.discard(marker)
+    if isinstance(value, (list, tuple, set)):
+        seen.add(marker)
+        try:
+            return [_json_safe_copy(item, seen) for item in value]
+        finally:
+            seen.discard(marker)
+    if hasattr(value, "dict"):
+        try:
+            return _json_safe_copy(value.dict(), seen)
+        except Exception:  # pragma: no cover - defensive
+            return str(value)
+    if hasattr(value, "__dict__"):
+        seen.add(marker)
+        try:
+            return _json_safe_copy(vars(value), seen)
+        except Exception:  # pragma: no cover - defensive
+            return str(value)
+        finally:
+            seen.discard(marker)
+    return str(value)
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:

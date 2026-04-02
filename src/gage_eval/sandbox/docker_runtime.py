@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from loguru import logger
+
 from gage_eval.sandbox.base import BaseSandbox, ExecResult, SandboxOptionalMixin
 
 _HOST_GATEWAY = "host.docker.internal:host-gateway"
@@ -37,6 +39,21 @@ _AMD64_RETRY_ERROR_TOKENS = (
     "cannot execute binary file",
     "exec format error",
 )
+_DOCKER_BUILD_TRANSIENT_ERROR_TOKENS = (
+    "connection failed",
+    "connection reset",
+    "connection refused",
+    "connection timed out",
+    "early eof",
+    "temporary failure",
+    "unexpected eof",
+    "unexpected disconnect",
+    "gnutls recv error",
+    "tls packet",
+    "failed to fetch",
+    "read: connection reset by peer",
+)
+_ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}$")
 
 
 class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
@@ -57,11 +74,18 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
     def start(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         self._config = dict(config or {})
         merged_runtime = dict(self._runtime_configs)
-        merged_runtime.update(self._config.get("runtime_configs", {}) or {})
+        sample_runtime = dict(self._config.get("runtime_configs", {}) or {})
+        for merge_key in ("env", "build_args", "labels"):
+            merged_value = _merge_mapping_value(merged_runtime.get(merge_key), sample_runtime.get(merge_key))
+            if merged_value is not None:
+                merged_runtime[merge_key] = merged_value
+                sample_runtime.pop(merge_key, None)
+        merged_runtime.update(sample_runtime)
         managed_labels = _build_managed_labels(self._config)
         if managed_labels:
             merged_runtime["labels"] = _merge_labels(merged_runtime.get("labels"), managed_labels)
         self._runtime_configs = normalize_runtime_configs(merged_runtime)
+        ensure_docker_image(self._runtime_configs)
 
         image = self._resolve_image()
         start_container = bool(self._runtime_configs.get("start_container", True))
@@ -381,6 +405,55 @@ def normalize_runtime_configs(runtime_configs: Dict[str, Any]) -> Dict[str, Any]
     return normalized
 
 
+def ensure_docker_image(runtime_configs: Dict[str, Any]) -> Optional[str]:
+    """Build a per-sample Docker image when build metadata is present."""
+
+    normalized = normalize_runtime_configs(dict(runtime_configs or {}))
+    build_context = normalized.get("build_context")
+    dockerfile = normalized.get("dockerfile")
+    image = normalized.get("image")
+    if not build_context and not dockerfile:
+        return str(image) if image else None
+    if not image:
+        raise RuntimeError("docker_build_missing_image")
+    docker_bin = str(normalized.get("docker_bin") or "docker")
+    _ensure_docker_available(docker_bin)
+    if not bool(normalized.get("force_rebuild")) and bool(normalized.get("reuse_existing_image", True)):
+        if _docker_image_exists(docker_bin, str(image)):
+            return str(image)
+    command = build_docker_build_command(runtime_configs=normalized, image=str(image))
+    timeout = _coerce_timeout_seconds(normalized.get("build_timeout_s"))
+    retry_attempts = _coerce_retry_attempts(normalized.get("build_retry_attempts"))
+    retry_backoff_s = _coerce_retry_backoff_seconds(normalized.get("build_retry_backoff_s"))
+    last_error: str | None = None
+    for attempt in range(1, retry_attempts + 1):
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"docker_build_timeout:{image}") from exc
+        if completed.returncode == 0:
+            return str(image)
+        error = (completed.stderr or completed.stdout).strip()
+        last_error = error
+        if attempt >= retry_attempts or not _is_transient_docker_build_error(error):
+            raise RuntimeError(f"docker_build_failed: {error}")
+        logger.warning(
+            "Docker build failed for image={} on attempt {}/{}; retrying in {}s",
+            image,
+            attempt,
+            retry_attempts,
+            retry_backoff_s,
+        )
+        time.sleep(retry_backoff_s)
+    raise RuntimeError(f"docker_build_failed: {last_error or image}")
+
+
 def _merge_extra_hosts(raw: Any, entry: str) -> List[str]:
     extra_hosts: List[str] = []
     if isinstance(raw, dict):
@@ -391,6 +464,17 @@ def _merge_extra_hosts(raw: Any, entry: str) -> List[str]:
     if entry not in extra_hosts:
         extra_hosts.append(entry)
     return extra_hosts
+
+
+def _merge_mapping_value(base: Any, overrides: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(base, dict) and not isinstance(overrides, dict):
+        return None
+    merged: Dict[str, Any] = {}
+    if isinstance(base, dict):
+        merged.update(base)
+    if isinstance(overrides, dict):
+        merged.update(overrides)
+    return merged
 
 
 def _sanitize_container_name(value: str) -> str:
@@ -451,6 +535,29 @@ def build_docker_run_command(
     args.append(image)
     for command in _normalize_command(runtime_configs.get("command") or runtime_configs.get("cmd")):
         args.append(command)
+    return args
+
+
+def build_docker_build_command(*, runtime_configs: Dict[str, Any], image: str) -> List[str]:
+    runtime_configs = dict(runtime_configs or {})
+    docker_bin = str(runtime_configs.get("docker_bin") or "docker")
+    build_context = runtime_configs.get("build_context")
+    if not build_context:
+        raise RuntimeError("docker_build_missing_context")
+    args: List[str] = [docker_bin, "build", "-t", image]
+    dockerfile = runtime_configs.get("dockerfile")
+    if dockerfile:
+        args.extend(["-f", str(Path(str(dockerfile)).expanduser().resolve())])
+    platform = runtime_configs.get("platform")
+    if platform:
+        args.extend(["--platform", str(platform)])
+    for label in _normalize_labels(runtime_configs.get("build_labels")):
+        args.extend(["--label", label])
+    for build_arg in _normalize_build_args(runtime_configs.get("build_args")):
+        args.extend(["--build-arg", build_arg])
+    if bool(runtime_configs.get("pull")):
+        args.append("--pull")
+    args.append(str(Path(str(build_context)).expanduser().resolve()))
     return args
 
 
@@ -537,18 +644,45 @@ def _normalize_env(raw: Any) -> List[str]:
     envs: List[str] = []
     if isinstance(raw, dict):
         for key, value in raw.items():
-            if value is None:
+            resolved = _resolve_runtime_env_value(str(key), value)
+            if resolved is None:
+                continue
+            if value is None and resolved == str(key):
                 envs.append(str(key))
-            else:
-                envs.append(f"{key}={value}")
+                continue
+            envs.append(resolved)
         return envs
     if isinstance(raw, (list, tuple)):
         for entry in raw:
             if isinstance(entry, (list, tuple)) and len(entry) == 2:
-                envs.append(f"{entry[0]}={entry[1]}")
+                resolved = _resolve_runtime_env_value(str(entry[0]), entry[1])
+                if resolved is not None:
+                    envs.append(resolved)
             else:
                 envs.append(str(entry))
         return envs
+    return [str(raw)]
+
+
+def _normalize_build_args(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    args: List[str] = []
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            resolved = _resolve_runtime_env_value(str(key), value, bare_when_missing=False)
+            if resolved is not None:
+                args.append(resolved)
+        return args
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                resolved = _resolve_runtime_env_value(str(entry[0]), entry[1], bare_when_missing=False)
+                if resolved is not None:
+                    args.append(resolved)
+            else:
+                args.append(str(entry))
+        return args
     return [str(raw)]
 
 
@@ -645,6 +779,27 @@ def _normalize_command(raw: Any) -> List[str]:
     return [str(raw)]
 
 
+def _resolve_runtime_env_value(
+    key: str,
+    value: Any,
+    *,
+    bare_when_missing: bool = True,
+) -> Optional[str]:
+    if value is None:
+        return str(key) if bare_when_missing else f"{key}="
+    if isinstance(value, str):
+        match = _ENV_PLACEHOLDER_PATTERN.fullmatch(value.strip())
+        if match:
+            source_name = match.group("name")
+            if source_name == key and bare_when_missing:
+                return str(key)
+            source_value = os.environ.get(source_name)
+            if source_value is None:
+                return str(key) if (bare_when_missing and source_name == key) else f"{key}="
+            return f"{key}={source_value}"
+    return f"{key}={value}"
+
+
 def _should_retry_with_amd64_loader(runtime_configs: Dict[str, Any], error: str) -> bool:
     if str(runtime_configs.get("platform") or "").lower() != "linux/amd64":
         return False
@@ -661,6 +816,50 @@ def _run_docker_command(args: List[str]) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+def _docker_image_exists(docker_bin: str, image: str) -> bool:
+    completed = subprocess.run(
+        [docker_bin, "image", "inspect", image],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _coerce_timeout_seconds(value: Any) -> Optional[float]:
+    if value in (None, "", 0):
+        return None
+    try:
+        return max(1.0, float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_retry_attempts(value: Any) -> int:
+    if value in (None, "", 0):
+        return 1
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _coerce_retry_backoff_seconds(value: Any) -> float:
+    if value in (None, ""):
+        return 3.0
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 3.0
+
+
+def _is_transient_docker_build_error(error: str) -> bool:
+    message = str(error or "").strip().lower()
+    if not message:
+        return False
+    return any(token in message for token in _DOCKER_BUILD_TRANSIENT_ERROR_TOKENS)
 
 
 def _merge_labels(raw: Any, extra: Dict[str, str]) -> Dict[str, Optional[str]]:

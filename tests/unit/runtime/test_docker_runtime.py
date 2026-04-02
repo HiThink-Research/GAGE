@@ -4,7 +4,13 @@ from pathlib import Path
 import pytest
 
 import gage_eval.sandbox.docker_runtime as docker_runtime
-from gage_eval.sandbox.docker_runtime import DockerSandbox, build_docker_run_command, normalize_runtime_configs
+from gage_eval.sandbox.docker_runtime import (
+    DockerSandbox,
+    build_docker_build_command,
+    build_docker_run_command,
+    ensure_docker_image,
+    normalize_runtime_configs,
+)
 
 
 def _arg_value(args: list[str], flag: str) -> str:
@@ -76,6 +82,138 @@ def test_build_docker_run_command_resolves_relative_volume_host_paths(monkeypatc
 
     assert volume_value.endswith(":/workspace")
     assert volume_value.startswith(str(Path.cwd()))
+
+
+@pytest.mark.fast
+def test_build_docker_run_command_resolves_placeholder_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GH_AUTH_TOKEN", "token-123")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    args = build_docker_run_command(
+        image="gage-skillsbench:latest",
+        container_name="gage-test",
+        runtime_configs={
+            "env": {
+                "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+                "GITHUB_TOKEN": "${GH_AUTH_TOKEN}",
+            }
+        },
+        resources={},
+    )
+
+    assert "OPENAI_API_KEY" in args
+    assert "GITHUB_TOKEN=token-123" in args
+
+
+@pytest.mark.fast
+def test_build_docker_build_command_uses_context_and_dockerfile(tmp_path: Path) -> None:
+    context_dir = tmp_path / "context"
+    context_dir.mkdir()
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+
+    args = build_docker_build_command(
+        runtime_configs={
+            "build_context": str(context_dir),
+            "dockerfile": str(dockerfile),
+            "platform": "linux/amd64",
+            "build_args": {"GITHUB_TOKEN": "${GH_AUTH_TOKEN}"},
+        },
+        image="gage-skillsbench:latest",
+    )
+
+    assert args[:2] == ["docker", "build"]
+    assert _arg_value(args, "-t") == "gage-skillsbench:latest"
+    assert _arg_value(args, "-f") == str(dockerfile.resolve())
+    assert _arg_value(args, "--platform") == "linux/amd64"
+    assert args[-1] == str(context_dir.resolve())
+
+
+@pytest.mark.fast
+def test_ensure_docker_image_skips_existing_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._ensure_docker_available", lambda _bin: None)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._docker_image_exists", lambda _bin, _image: True)
+
+    called = {"run": False}
+
+    def fake_run(args, **kwargs):
+        called["run"] = True
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.subprocess.run", fake_run)
+
+    image = ensure_docker_image({"image": "gage-skillsbench:latest", "build_context": "."})
+
+    assert image == "gage-skillsbench:latest"
+    assert called["run"] is False
+
+
+@pytest.mark.fast
+def test_ensure_docker_image_retries_transient_build_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    sleep_calls: list[float] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                args,
+                1,
+                stdout="",
+                stderr="fatal: early EOF while cloning repository",
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._ensure_docker_available", lambda _bin: None)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._docker_image_exists", lambda _bin, _image: False)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.subprocess.run", fake_run)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    image = ensure_docker_image(
+        {
+            "image": "gage-skillsbench:latest",
+            "build_context": ".",
+            "build_retry_attempts": 2,
+            "build_retry_backoff_s": 0.5,
+        }
+    )
+
+    assert image == "gage-skillsbench:latest"
+    assert len(calls) == 2
+    assert sleep_calls == [0.5]
+
+
+@pytest.mark.fast
+def test_ensure_docker_image_does_not_retry_non_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    sleep_calls: list[float] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            stdout="",
+            stderr="403 Forbidden while resolving docker manifest",
+        )
+
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._ensure_docker_available", lambda _bin: None)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._docker_image_exists", lambda _bin, _image: False)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.subprocess.run", fake_run)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    with pytest.raises(RuntimeError, match="docker_build_failed"):
+        ensure_docker_image(
+            {
+                "image": "gage-skillsbench:latest",
+                "build_context": ".",
+                "build_retry_attempts": 3,
+                "build_retry_backoff_s": 0.5,
+            }
+        )
+
+    assert len(calls) == 1
+    assert sleep_calls == []
 
 
 @pytest.mark.fast

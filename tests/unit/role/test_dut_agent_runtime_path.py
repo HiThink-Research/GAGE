@@ -207,6 +207,80 @@ def test_dut_agent_runtime_writes_swebench_eval_result(monkeypatch) -> None:
 
 
 @pytest.mark.fast
+def test_dut_agent_runtime_writes_skillsbench_eval_result(monkeypatch) -> None:
+    class _FakeEnvironment:
+        pass
+
+    captured = {}
+
+    class _SkillsBenchScheduler:
+        def run(self, session):
+            captured["artifacts"] = session.artifacts
+            return SchedulerResult(
+                status="success",
+                answer="done",
+                patch_path="/tmp/submission.patch",
+                stdout_path="/tmp/stdout.log",
+                trajectory_path="/tmp/trajectory.json",
+                artifacts={"agent_workspace_dir": "/tmp/workspace"},
+                raw_output={"answer": "done"},
+            )
+
+    class _SkillsBenchResolver(_FakeResolver):
+        def resolve(self, runtime_id: str):
+            return type(
+                "Plan",
+                (),
+                {
+                    "runtime_spec": AgentRuntimeSpec(
+                        agent_runtime_id=runtime_id,
+                        scheduler="installed_client",
+                        benchmark_kit_id="skillsbench",
+                    ),
+                    "benchmark_kit_id": "skillsbench",
+                    "params": {"verifier": {}},
+                },
+            )()
+
+        def build_scheduler(self, plan):
+            return _SkillsBenchScheduler()
+
+    from gage_eval.agent_runtime.environment import provider as provider_module
+    import gage_eval.role.judge.skillsbench_evaluate as skillsbench_module
+
+    monkeypatch.setattr(
+        provider_module.EnvironmentProvider,
+        "build",
+        lambda self, plan, sample: _FakeEnvironment(),
+    )
+    monkeypatch.setattr(
+        skillsbench_module.SkillsBenchEvaluate,
+        "invoke",
+        lambda self, payload, state=None: {"resolved": True, "score": 1.0, "failure_reason": None},
+    )
+    adapter = DUTAgentAdapter(
+        adapter_id="dut-skillsbench",
+        role_type="dut_agent",
+        capabilities=(),
+        agent_runtime_resolver=_SkillsBenchResolver(),
+        agent_runtime_id="runtime-skillsbench",
+    )
+    sample = {
+        "instruction": "Complete the task.",
+        "instance_id": "skillsbench__1",
+        "metadata": {"skillsbench": {"task_id": "skillsbench__1"}},
+    }
+
+    result = adapter.invoke({"sample": sample, "trace": ObservabilityTrace()}, RoleAdapterState())
+
+    assert result["status"] == "success"
+    assert result["verifier_result"]["status"] == "pass"
+    assert sample["eval_result"]["status"] == "pass"
+    persisted = json.loads(Path(captured["artifacts"].verifier_result_file).read_text(encoding="utf-8"))
+    assert persisted["status"] == "pass"
+
+
+@pytest.mark.fast
 def test_persist_runtime_verifier_result_serializes_dataclass_payload(tmp_path) -> None:
     artifacts = ArtifactLayout.for_sample(str(tmp_path), "run-1", "sample-1")
 
@@ -227,6 +301,19 @@ def test_persist_runtime_verifier_result_serializes_dataclass_payload(tmp_path) 
 
     persisted = json.loads(Path(artifacts.verifier_result_file).read_text(encoding="utf-8"))
     assert persisted["raw_output"]["verifier_input"]["sample_id"] == "sample-1"
+
+
+@pytest.mark.fast
+def test_persist_runtime_verifier_result_handles_recursive_payload(tmp_path) -> None:
+    artifacts = ArtifactLayout.for_sample(str(tmp_path), "run-1", "sample-1")
+    payload = {"status": "pass"}
+    payload["self"] = payload
+
+    _persist_runtime_verifier_result(artifacts, payload)
+
+    persisted = json.loads(Path(artifacts.verifier_result_file).read_text(encoding="utf-8"))
+    assert persisted["status"] == "pass"
+    assert persisted["self"] == "<recursive_ref>"
 
 
 @pytest.mark.fast

@@ -168,6 +168,103 @@ def test_installed_client_scheduler_builds_codex_client_with_default_args() -> N
 
 
 @pytest.mark.fast
+def test_installed_client_scheduler_runs_environment_hooks(monkeypatch, tmp_path) -> None:
+    scheduler = InstalledClientScheduler(_build_plan())
+    session = AgentRuntimeSession(
+        sample={"instruction": "fix the failing test", "messages": []},
+        trace=ObservabilityTrace(),
+        plan=_build_plan(),
+        resources=ResourceBundle(environment=FakeEnvironment()),
+        artifacts=ArtifactLayout.for_sample(str(tmp_path), "run-1", "sample-1"),
+    )
+
+    class _FakeClient:
+        def setup(self, environment, runtime_session) -> None:
+            return None
+
+        def run(self, request, environment):
+            from gage_eval.agent_runtime.clients import ClientRunResult
+
+            return ClientRunResult(exit_code=0, stdout="ok", stderr="")
+
+        def cleanup(self, environment, runtime_session) -> None:
+            return None
+
+    def _resolve_kit_hook(_module_name, attr_name):
+        if attr_name == "prepare_environment":
+            return lambda sample, runtime_session, environment, request: {"prepare_environment_exit_code": 0}
+        if attr_name == "capture_environment_artifacts":
+            return (
+                lambda sample, runtime_session, environment, client_result, request: {
+                    "agent_workspace_dir": str(tmp_path / "captured-workspace")
+                }
+            )
+        return None
+
+    monkeypatch.setattr(scheduler, "_build_client", lambda: _FakeClient())
+    monkeypatch.setattr(scheduler, "_resolve_kit_hook", _resolve_kit_hook)
+
+    result = scheduler.run(session)
+
+    assert result.raw_output["prepare_environment"]["prepare_environment_exit_code"] == 0
+    assert result.raw_output["capture_environment_artifacts"]["agent_workspace_dir"].endswith(
+        "captured-workspace"
+    )
+    assert result.artifacts["agent_workspace_dir"].endswith("captured-workspace")
+
+
+@pytest.mark.fast
+def test_installed_client_scheduler_persists_recursive_metadata(monkeypatch, tmp_path) -> None:
+    scheduler = InstalledClientScheduler(_build_plan())
+    session = AgentRuntimeSession(
+        sample={"instruction": "fix the failing test", "messages": []},
+        trace=ObservabilityTrace(),
+        plan=_build_plan(),
+        resources=ResourceBundle(environment=FakeEnvironment()),
+        artifacts=ArtifactLayout.for_sample(str(tmp_path), "run-1", "sample-1"),
+    )
+
+    class _FakeClient:
+        def setup(self, environment, runtime_session) -> None:
+            return None
+
+        def run(self, request, environment):
+            from gage_eval.agent_runtime.clients import ClientRunResult
+
+            return ClientRunResult(exit_code=0, stdout="ok", stderr="")
+
+        def cleanup(self, environment, runtime_session) -> None:
+            return None
+
+    def _resolve_kit_hook(_module_name, attr_name):
+        if attr_name != "finalize_result":
+            return None
+
+        def _finalize(_sample, result, _artifacts):
+            recursive = {"status": result.status}
+            recursive["self"] = recursive
+            return {"recursive_payload": recursive}
+
+        return _finalize
+
+    monkeypatch.setattr(scheduler, "_build_client", lambda: _FakeClient())
+    monkeypatch.setattr(scheduler, "_resolve_kit_hook", _resolve_kit_hook)
+
+    result = scheduler.run(session)
+
+    assert result.status == "success"
+    metadata = json.loads(
+        tmp_path.joinpath("run-1/samples/global/sample-1/runtime_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        metadata["scheduler_result"]["raw_output"]["recursive_payload"]["self"]
+        == "<recursive_ref>"
+    )
+
+
+@pytest.mark.fast
 def test_framework_loop_scheduler_is_importable() -> None:
     scheduler = FrameworkLoopScheduler(_build_plan(scheduler="framework_loop"))
 
