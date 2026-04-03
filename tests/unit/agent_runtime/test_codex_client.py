@@ -17,6 +17,7 @@ class _FakeEnvironment:
         self.tracked_diff: str = "diff --git a/a b/a\n"
         self.untracked_files: list[str] = []
         self.untracked_diff: str = ""
+        self.path_resolver = None
 
     def exec(self, command: str, *, cwd: str | None = None, env=None, timeout_sec: int = 30):
         self.commands.append(command)
@@ -35,6 +36,11 @@ class _FakeEnvironment:
 
     def write_file(self, path: str, content: bytes) -> None:
         self.files[path] = content
+
+    def resolve_execution_path(self, path: str) -> str:
+        if callable(self.path_resolver):
+            return self.path_resolver(path)
+        return path
 
 
 @pytest.mark.fast
@@ -57,10 +63,11 @@ def test_codex_client_runs_codex_exec_and_collects_artifacts() -> None:
         environment,
     )
 
-    assert environment.commands
-    assert environment.commands[0].startswith("codex exec --skip-git-repo-check --full-auto")
-    assert "--output-last-message /tmp/stdout.log" in environment.commands[0]
-    assert " --cd " not in environment.commands[0]
+    codex_command = next(command for command in environment.commands if command.startswith("codex exec "))
+    assert environment.commands[0] == "mkdir -p /tmp"
+    assert codex_command.startswith("codex exec --skip-git-repo-check --full-auto")
+    assert "--output-last-message /tmp/stdout.log" in codex_command
+    assert " --cd " not in codex_command
     assert result.stdout == "final message"
     assert result.patch_path == "/tmp/submission.patch"
     assert result.patch_content == "diff --git a/a b/a\n"
@@ -189,3 +196,30 @@ def test_resolve_command_skips_full_auto_for_dangerous_bypass() -> None:
 
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "--full-auto" not in command
+
+
+@pytest.mark.fast
+def test_codex_client_maps_output_last_message_path_for_environment(monkeypatch, tmp_path) -> None:
+    environment = _FakeEnvironment()
+    monkeypatch.chdir(tmp_path)
+
+    def _resolve(path: str) -> str:
+        return f"/sandbox/{path}"
+
+    environment.path_resolver = _resolve
+    environment.files["/sandbox/runs/out.log"] = b"final message"
+    client = CodexClient()
+
+    result = client.run(
+        ClientRunRequest(
+            instruction="Fix the test and stop.",
+            cwd="/workspace/repo",
+            metadata={"stdout_path": "runs/out.log"},
+        ),
+        environment,
+    )
+
+    assert environment.commands[0] == "mkdir -p /sandbox/runs"
+    assert "--output-last-message /sandbox/runs/out.log" in environment.commands[1]
+    assert result.stdout == "final message"
+    assert (tmp_path / "runs/out.log").read_text(encoding="utf-8") == "final message"

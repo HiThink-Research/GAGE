@@ -39,6 +39,9 @@ class AgentEnvironment(Protocol):
     def write_file(self, remote_path: str, content: bytes) -> None:
         """Write a file inside the environment."""
 
+    def resolve_execution_path(self, path: str) -> str:
+        """Map a host artifact path to the path visible to the execution environment."""
+
     def runtime_handle(self) -> dict[str, object]:
         """Return the materialized runtime handle when available."""
 

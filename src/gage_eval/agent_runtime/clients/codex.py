@@ -32,16 +32,25 @@ class CodexClient:
             request.metadata,
             ("stdout_path", "stdout_file", "output_path", "output_last_message_path"),
         )
+        stdout_execution_path = _resolve_execution_path(environment, stdout_path)
         run_in_environment = environment is not None and hasattr(environment, "exec")
+        timeout_sec = _coerce_timeout(request.metadata.get("timeout_sec"), default=1800)
+        env = dict(request.env)
+        if run_in_environment:
+            _ensure_parent_directory(
+                environment=environment,
+                path=stdout_execution_path,
+                cwd=request.cwd,
+                env=env,
+                timeout_sec=timeout_sec,
+            )
         command = _resolve_command(
             request,
             executable=self._executable,
             default_args=self._default_args,
-            output_path=stdout_path,
+            output_path=stdout_execution_path,
             include_cwd=not run_in_environment,
         )
-        timeout_sec = _coerce_timeout(request.metadata.get("timeout_sec"), default=1800)
-        env = dict(request.env)
         result = None
         if run_in_environment:
             result = environment.exec(command, cwd=request.cwd, env=env, timeout_sec=timeout_sec)
@@ -62,23 +71,44 @@ class CodexClient:
         exit_code = _result_exit_code(result)
         patch_path = _resolve_optional_path(request.metadata, ("patch_path", "submission_patch_path"))
         trajectory_path = _resolve_optional_path(request.metadata, ("trajectory_path", "trajectory_log_path"))
+        patch_execution_path = _resolve_execution_path(environment, patch_path)
+        trajectory_execution_path = _resolve_execution_path(environment, trajectory_path)
         artifacts = _collect_artifacts(request.metadata)
         patch_content: Optional[str] = None
-        stdout_capture = _read_optional_file(environment, stdout_path)
+        stdout_capture = _read_optional_file(
+            environment=environment,
+            environment_path=stdout_execution_path,
+            local_path=stdout_path,
+        )
         if stdout_capture:
             stdout = stdout_capture
         if patch_path:
             patch_content = _collect_patch(environment, cwd=request.cwd, timeout_sec=timeout_sec)
             if patch_content:
-                _write_optional_file(environment, patch_path, patch_content)
+                _write_optional_file(
+                    environment=environment,
+                    environment_path=patch_execution_path,
+                    local_path=patch_path,
+                    content=patch_content,
+                )
             artifacts.setdefault("patch_path", patch_path)
         if trajectory_path:
             transcript = _build_transcript(command, stdout, stderr)
-            _write_optional_file(environment, trajectory_path, transcript)
+            _write_optional_file(
+                environment=environment,
+                environment_path=trajectory_execution_path,
+                local_path=trajectory_path,
+                content=transcript,
+            )
             artifacts.setdefault("trajectory_path", trajectory_path)
         if stdout_path:
             artifacts.setdefault("stdout_path", stdout_path)
-            _write_optional_file(environment, stdout_path, stdout)
+            _write_optional_file(
+                environment=environment,
+                environment_path=stdout_execution_path,
+                local_path=stdout_path,
+                content=stdout,
+            )
         return ClientRunResult(
             exit_code=exit_code,
             stdout=stdout,
@@ -168,16 +198,58 @@ def _collect_artifacts(metadata: Mapping[str, Any]) -> dict[str, str]:
     return {}
 
 
-def _write_optional_file(environment: Any, path: str, content: str) -> None:
+def _resolve_execution_path(environment: Any, path: Optional[str]) -> Optional[str]:
     if not path:
+        return None
+    resolver = getattr(environment, "resolve_execution_path", None)
+    if callable(resolver):
+        try:
+            resolved = resolver(path)
+        except Exception:
+            resolved = None
+        if isinstance(resolved, str) and resolved.strip():
+            return resolved
+    return path
+
+
+def _ensure_parent_directory(
+    *,
+    environment: Any,
+    path: Optional[str],
+    cwd: str,
+    env: Mapping[str, str],
+    timeout_sec: int,
+) -> None:
+    if not path or environment is None or not hasattr(environment, "exec"):
+        return
+    parent = Path(path).parent
+    if not str(parent) or str(parent) == ".":
+        return
+    command = f"mkdir -p {shlex.quote(str(parent))}"
+    try:
+        environment.exec(command, cwd=cwd, env=env, timeout_sec=timeout_sec)
+    except Exception:
+        return
+
+
+def _write_optional_file(
+    *,
+    environment: Any,
+    environment_path: Optional[str],
+    local_path: Optional[str],
+    content: str,
+) -> None:
+    if not environment_path and not local_path:
         return
     writer = getattr(environment, "write_file", None)
-    if callable(writer):
+    if callable(writer) and environment_path:
         try:
-            writer(path, content.encode("utf-8"))
+            writer(environment_path, content.encode("utf-8"))
         except Exception:
             pass
-    target = Path(path)
+    if not local_path:
+        return
+    target = Path(local_path)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -185,19 +257,26 @@ def _write_optional_file(environment: Any, path: str, content: str) -> None:
         return
 
 
-def _read_optional_file(environment: Any, path: Optional[str]) -> Optional[str]:
-    if not path:
+def _read_optional_file(
+    *,
+    environment: Any,
+    environment_path: Optional[str],
+    local_path: Optional[str],
+) -> Optional[str]:
+    if not environment_path and not local_path:
         return None
     reader = getattr(environment, "read_file", None)
-    if callable(reader):
+    if callable(reader) and environment_path:
         try:
-            content = reader(path)
+            content = reader(environment_path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)
         except Exception:
             pass
-    target = Path(path)
+    if not local_path:
+        return None
+    target = Path(local_path)
     try:
         return target.read_text(encoding="utf-8")
     except Exception:

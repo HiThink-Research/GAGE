@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shlex
 from typing import Any, Mapping, Optional, Type
 
@@ -106,6 +106,26 @@ class RemoteEnvironment:
     def write_file(self, remote_path: str, content: bytes) -> None:
         sandbox = self._ensure_started()
         sandbox.write_file(remote_path, content)
+
+    def resolve_execution_path(self, path: str) -> str:
+        if not path:
+            return path
+        normalized = str(path)
+        candidate = Path(normalized).expanduser()
+        if candidate.is_absolute():
+            return str(candidate)
+        if self._contract is not None and self._contract.mode == "attached":
+            return str((Path.cwd() / candidate).resolve())
+        workspace_root = (
+            self._runtime_handle.get("workspace_root")
+            or (self._contract.workspace_root if self._contract is not None else None)
+            or (self._contract.attach_target if self._contract is not None else None)
+            or self._runtime_configs.get("workspace_root")
+            or self._runtime_configs.get("attach_target")
+        )
+        if workspace_root:
+            return str(PurePosixPath(str(workspace_root)) / PurePosixPath(normalized))
+        return normalized
 
     def probe(self, timeout_s: float | None = None) -> bool:
         sandbox = self._ensure_sandbox()

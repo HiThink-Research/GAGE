@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
 from gage_eval.sandbox.base import ExecResult
@@ -47,3 +48,8 @@ class FakeEnvironment:
 
     def write_file(self, remote_path: str, content: bytes) -> None:
         self.files[remote_path] = content
+
+    def resolve_execution_path(self, path: str) -> str:
+        if not path:
+            return path
+        return str(Path(path).expanduser())

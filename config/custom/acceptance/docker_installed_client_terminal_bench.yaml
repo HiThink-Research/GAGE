@@ -51,6 +51,13 @@ role_adapters:
     role_type: dut_agent
     agent_runtime_id: codex_terminal_bench_docker
 
+metrics:
+  - metric_id: terminal_bench_resolve_rate
+    implementation: terminal_bench_resolve_rate
+  - metric_id: terminal_bench_failure_reason
+    implementation: terminal_bench_failure_reason
+    aggregation: categorical_count
+
 tasks:
   - task_id: tb2_docker_agent_eval
     dataset_id: tb2_docker_acceptance

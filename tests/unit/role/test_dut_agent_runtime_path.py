@@ -201,9 +201,12 @@ def test_dut_agent_runtime_writes_swebench_eval_result(monkeypatch) -> None:
 
     assert result["status"] == "success"
     assert result["verifier_result"]["status"] == "pass"
+    assert result["verifier_result"]["resolved"] is True
     assert sample["eval_result"]["status"] == "pass"
+    assert sample["eval_result"]["resolved"] is True
     persisted = json.loads(Path(captured["artifacts"].verifier_result_file).read_text(encoding="utf-8"))
     assert persisted["status"] == "pass"
+    assert persisted["resolved"] is True
 
 
 @pytest.mark.fast
@@ -275,9 +278,12 @@ def test_dut_agent_runtime_writes_skillsbench_eval_result(monkeypatch) -> None:
 
     assert result["status"] == "success"
     assert result["verifier_result"]["status"] == "pass"
+    assert result["verifier_result"]["resolved"] is True
     assert sample["eval_result"]["status"] == "pass"
+    assert sample["eval_result"]["resolved"] is True
     persisted = json.loads(Path(captured["artifacts"].verifier_result_file).read_text(encoding="utf-8"))
     assert persisted["status"] == "pass"
+    assert persisted["resolved"] is True
 
 
 @pytest.mark.fast
@@ -356,7 +362,10 @@ def test_dut_agent_runtime_writes_terminal_bench_eval_result(monkeypatch) -> Non
 
     assert result["status"] == "success"
     assert result["verifier_result"]["status"] == "passed"
+    assert result["verifier_result"]["resolved"] is True
+    assert result["verifier_result"]["failure_reason"] is None
     assert sample["eval_result"]["status"] == "passed"
+    assert sample["eval_result"]["resolved"] is True
 
 
 @pytest.mark.fast

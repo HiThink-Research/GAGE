@@ -85,6 +85,17 @@ class DockerEnvironment:
         sandbox = self._ensure_started()
         sandbox.write_file(self._resolve_remote_path(remote_path), content)
 
+    def resolve_execution_path(self, path: str) -> str:
+        if not path:
+            return path
+        normalized = str(path)
+        mapped = _map_host_path_to_container_path(normalized, self._runtime_configs.get("volumes"))
+        if mapped is not None:
+            return mapped
+        if PurePosixPath(normalized).is_absolute():
+            return normalized
+        return self._resolve_remote_path(normalized)
+
     def probe(self, timeout_s: float | None = None) -> bool:
         sandbox = self._ensure_sandbox()
         checker = getattr(sandbox, "is_alive", None)
@@ -179,3 +190,42 @@ def _compose_shell_command(
     if cwd:
         shell_command = f"cd {shlex.quote(str(cwd))} && {shell_command}"
     return shell_command
+
+
+def _map_host_path_to_container_path(path: str, volumes: Any) -> str | None:
+    host_path = Path(path).expanduser()
+    if not host_path.is_absolute():
+        host_path = (Path.cwd() / host_path).resolve()
+    best_match: tuple[int, str] | None = None
+    if not isinstance(volumes, (list, tuple)):
+        return None
+    for item in volumes:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        host_root = _normalize_host_mount_path(item[0])
+        container_root = item[1]
+        if host_root is None or not isinstance(container_root, str) or not container_root:
+            continue
+        try:
+            relative = host_path.relative_to(host_root)
+        except ValueError:
+            continue
+        candidate = str(PurePosixPath(container_root) / PurePosixPath(relative.as_posix()))
+        score = len(host_root.parts)
+        if best_match is None or score > best_match[0]:
+            best_match = (score, candidate)
+    if best_match is None:
+        return None
+    return best_match[1]
+
+
+def _normalize_host_mount_path(value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if "${" in raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    return path

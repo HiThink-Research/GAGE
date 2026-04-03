@@ -60,8 +60,14 @@ def prepare_environment(sample: dict, session: Any, environment: Any, request: A
     code_home = str(raw_code_home).strip() if raw_code_home is not None else ""
     if not code_home or code_home.lower() == "none":
         code_home = "/root/.codex"
+    # SkillsBench runs inside task-provided images instead of the standard
+    # gage-codex-sandbox image/entrypoint. We only inject the Codex runtime into
+    # those images at build time, so auth material and a git baseline must be
+    # normalized just before `codex exec`.
     command = f"""
 CODEX_HOME={shlex.quote(code_home)}
+# Recreate the auth bootstrap because task images do not inherit the standard
+# bootstrap_codex.sh entrypoint used by the shared Codex sandbox image.
 mkdir -p "$CODEX_HOME"
 chmod 700 "$CODEX_HOME" || true
 if [ ! -f "$CODEX_HOME/auth.json" ] && [ -n "${{GAGE_CODEX_HOST_HOME:-}}" ] && [ -d "${{GAGE_CODEX_HOST_HOME}}" ]; then
@@ -73,6 +79,8 @@ if [ ! -f "$CODEX_HOME/auth.json" ] && [ -n "${{OPENAI_API_KEY:-}}" ]; then
   umask 077
   printf '{{\\n  "OPENAI_API_KEY": "%s"\\n}}\\n' "$OPENAI_API_KEY" > "$CODEX_HOME/auth.json"
 fi
+# Many SkillsBench workdirs are plain task folders rather than git repos. Create
+# a baseline commit so patch capture can later use git diff consistently.
 if command -v git >/dev/null 2>&1; then
   if [ ! -d .git ]; then
     git init >/dev/null 2>&1 || true

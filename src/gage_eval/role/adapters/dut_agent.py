@@ -353,11 +353,14 @@ def _extract_system_prompt(messages: Sequence[Dict[str, Any]]) -> Optional[str]:
 
 
 def _normalize_verifier_result(verifier_result: Any) -> Dict[str, Any]:
+    raw_output = dict(verifier_result.raw_output or {})
     return {
         "status": verifier_result.status,
         "score": verifier_result.score,
         "summary": verifier_result.summary,
-        "raw_output": dict(verifier_result.raw_output or {}),
+        "resolved": raw_output.get("resolved"),
+        "failure_reason": raw_output.get("failure_reason"),
+        "raw_output": raw_output,
     }
 
 

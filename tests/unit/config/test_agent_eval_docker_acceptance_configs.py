@@ -33,10 +33,27 @@ def test_docker_installed_client_terminal_bench_config_is_parseable() -> None:
     config = _load_config("docker_installed_client_terminal_bench.yaml")
 
     runtime = config.agent_runtimes[0]
+    metric_ids = [metric.metric_id for metric in config.metrics]
 
     assert config.metadata["name"] == "docker_installed_client_terminal_bench"
     assert runtime.agent_runtime_id == "codex_terminal_bench_docker"
     assert runtime.benchmark_kit_id == "terminal_bench"
     assert runtime.resource_policy.environment_kind == "docker"
     assert runtime.params["image"] == "gage-codex-sandbox:latest"
-    assert runtime.params["runtime_configs"]["volumes"] == [[".", "/workspace"]]
+    assert [".", "/workspace"] in runtime.params["runtime_configs"]["volumes"]
+    assert metric_ids == ["terminal_bench_resolve_rate", "terminal_bench_failure_reason"]
+
+
+@pytest.mark.io
+def test_real_attached_terminal_bench_config_is_parseable() -> None:
+    config = _load_config("real_attached_terminal_bench.yaml")
+
+    runtime = config.agent_runtimes[0]
+    metric_ids = [metric.metric_id for metric in config.metrics]
+
+    assert config.metadata["name"] == "real_attached_terminal_bench"
+    assert runtime.agent_runtime_id == "codex_terminal_bench_real"
+    assert runtime.benchmark_kit_id == "terminal_bench"
+    assert runtime.resource_policy.environment_kind == "remote"
+    assert runtime.sandbox_policy.remote_mode == "attached"
+    assert metric_ids == ["terminal_bench_resolve_rate", "terminal_bench_failure_reason"]

@@ -588,6 +588,24 @@
     },
     {
       "kind": "metrics",
+      "name": "skillsbench_failure_reason",
+      "module": "gage_eval.metrics.builtin.skillsbench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/skillsbench.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "skillsbench_resolve_rate",
+      "module": "gage_eval.metrics.builtin.skillsbench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/skillsbench.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
       "name": "stock_price_predict_short_term",
       "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.stock_price_predict_short_term",
       "load_phase": "prepare_only",
@@ -655,6 +673,24 @@
       "module": "gage_eval.metrics.builtin.tau2",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/metrics/builtin/tau2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "terminal_bench_failure_reason",
+      "module": "gage_eval.metrics.builtin.terminal_bench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/terminal_bench.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "terminal_bench_resolve_rate",
+      "module": "gage_eval.metrics.builtin.terminal_bench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/terminal_bench.py",
       "aliases": [],
       "optional": false
     },

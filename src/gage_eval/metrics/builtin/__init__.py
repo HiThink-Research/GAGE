@@ -75,6 +75,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         "gage_eval.metrics.builtin.screenspot_pro",
         "ScreenSpotPointInBboxMetric",
     ),
+    "SkillsBenchFailureReasonMetric": (
+        "gage_eval.metrics.builtin.skillsbench",
+        "SkillsBenchFailureReasonMetric",
+    ),
+    "SkillsBenchResolveRateMetric": (
+        "gage_eval.metrics.builtin.skillsbench",
+        "SkillsBenchResolveRateMetric",
+    ),
     "SimpleQAVerifiedAccuracyMetric": (
         "gage_eval.metrics.builtin.simpleqa_verified",
         "SimpleQAVerifiedAccuracyMetric",
@@ -88,6 +96,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "Tau2PassMetric": ("gage_eval.metrics.builtin.tau2", "Tau2PassMetric"),
     "Tau2RewardMetric": ("gage_eval.metrics.builtin.tau2", "Tau2RewardMetric"),
     "Tau2UserCostMetric": ("gage_eval.metrics.builtin.tau2", "Tau2UserCostMetric"),
+    "TerminalBenchFailureReasonMetric": (
+        "gage_eval.metrics.builtin.terminal_bench",
+        "TerminalBenchFailureReasonMetric",
+    ),
+    "TerminalBenchResolveRateMetric": (
+        "gage_eval.metrics.builtin.terminal_bench",
+        "TerminalBenchResolveRateMetric",
+    ),
     "TerminationReasonMetric": ("gage_eval.metrics.builtin.arena", "TerminationReasonMetric"),
     "TextLengthMetric": ("gage_eval.metrics.builtin.text", "TextLengthMetric"),
     "TimeoutCountMetric": ("gage_eval.metrics.builtin.arena", "TimeoutCountMetric"),

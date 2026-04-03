@@ -104,6 +104,22 @@ def test_docker_environment_resolves_relative_artifact_paths_to_exec_workdir(tmp
 
 
 @pytest.mark.fast
+def test_docker_environment_maps_host_artifact_path_into_mounted_workspace(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    env = DockerEnvironment(
+        runtime_configs={
+            "exec_workdir": "/workspace/project",
+            "volumes": [[".", "/workspace/project"]],
+        },
+        sandbox_cls=DummyDockerSandbox,
+    )
+
+    resolved = env.resolve_execution_path("runs/out.txt")
+
+    assert resolved == "/workspace/project/runs/out.txt"
+
+
+@pytest.mark.fast
 def test_docker_environment_resolves_relative_cwd_to_exec_workdir() -> None:
     env = DockerEnvironment(
         runtime_configs={"exec_workdir": "/workspace/project"},
@@ -270,6 +286,39 @@ def test_remote_environment_attached_upload_and_download(tmp_path) -> None:
     assert local_target.read_text(encoding="utf-8") == "downloaded"
     assert any(url.endswith("/write_file") for url, *_ in calls)
     assert any(url.endswith("/read_file") for url, *_ in calls)
+
+
+@pytest.mark.fast
+def test_remote_environment_attached_resolves_relative_execution_paths_to_host_absolute(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    contract = RemoteSandboxContract(
+        mode="attached",
+        exec_endpoint="http://remote/api/run_command",
+        file_endpoint="http://remote/api",
+        attach_target="/workspace/attached",
+    )
+    env = RemoteEnvironment(contract=contract)
+
+    resolved = env.resolve_execution_path("runs/out.txt")
+
+    assert resolved == str((tmp_path / "runs/out.txt").resolve())
+
+
+@pytest.mark.fast
+def test_remote_environment_managed_resolves_relative_execution_paths_to_workspace_root() -> None:
+    contract = RemoteSandboxContract(
+        mode="managed",
+        control_endpoint="http://platform/v1",
+        workspace_root="/workspace/runtime",
+    )
+    env = RemoteEnvironment(contract=contract)
+
+    resolved = env.resolve_execution_path("runs/out.txt")
+
+    assert resolved == "/workspace/runtime/runs/out.txt"
 
 
 @pytest.mark.fast

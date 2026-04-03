@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from gage_eval.agent_runtime.verifier.base import VerifierInput, VerifierResult
@@ -21,7 +22,11 @@ class TerminalBenchVerifier:
                 status="error",
                 score=0.0,
                 summary=f"Unexpected benchmark_kit_id: {verifier_input.benchmark_kit_id}",
-                raw_output={"benchmark_kit_id": verifier_input.benchmark_kit_id},
+                raw_output={
+                    "resolved": False,
+                    "failure_reason": "unexpected_benchmark_kit_id",
+                    "benchmark_kit_id": verifier_input.benchmark_kit_id,
+                },
             )
 
         payload = verifier_input.payload if isinstance(verifier_input.payload, dict) else {}
@@ -32,6 +37,8 @@ class TerminalBenchVerifier:
                 score=0.0,
                 summary=f"Missing required surfaces: {', '.join(missing_surfaces)}",
                 raw_output={
+                    "resolved": False,
+                    "failure_reason": "missing_required_surfaces",
                     "missing_surfaces": missing_surfaces,
                     "payload": payload,
                     "runtime_handle": dict(verifier_input.runtime_handle or {}),
@@ -48,7 +55,12 @@ class TerminalBenchVerifier:
                 status="failed",
                 score=0.0,
                 summary=str(summary),
-                raw_output={"scheduler_result": scheduler_result, "payload": payload},
+                raw_output={
+                    "resolved": False,
+                    "failure_reason": _scheduler_failure_reason(scheduler_result),
+                    "scheduler_result": scheduler_result,
+                    "payload": payload,
+                },
             )
 
         return VerifierResult(
@@ -56,6 +68,8 @@ class TerminalBenchVerifier:
             score=1.0,
             summary="Terminal benchmark requirements satisfied.",
             raw_output={
+                "resolved": True,
+                "failure_reason": None,
                 "scheduler_result": scheduler_result,
                 "payload": payload,
                 "runtime_handle": dict(verifier_input.runtime_handle or {}),
@@ -95,3 +109,20 @@ class TerminalBenchVerifier:
 
 def _surface_is_available(surface: ClientSurface) -> bool:
     return str(surface.status or "available").strip().lower() != "unavailable"
+
+
+def _scheduler_failure_reason(scheduler_result: Mapping[str, Any]) -> str:
+    status = str(scheduler_result.get("status") or "").strip().lower()
+    if status:
+        return _slugify_reason(status)
+    exit_code = scheduler_result.get("exit_code")
+    if exit_code is None:
+        exit_code = scheduler_result.get("returncode")
+    if exit_code not in (None, 0):
+        return "scheduler_exit_nonzero"
+    return "scheduler_failed"
+
+
+def _slugify_reason(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return normalized or "scheduler_failed"

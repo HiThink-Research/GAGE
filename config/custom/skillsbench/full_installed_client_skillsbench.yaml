@@ -24,6 +24,13 @@ role_adapters:
     role_type: dut_agent
     agent_runtime_id: codex_skillsbench_full
 
+metrics:
+  - metric_id: skillsbench_resolve_rate
+    implementation: skillsbench_resolve_rate
+  - metric_id: skillsbench_failure_reason
+    implementation: skillsbench_failure_reason
+    aggregation: categorical_count
+
 summary_generators:
   - skillsbench_summary
 

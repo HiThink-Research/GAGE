@@ -171,3 +171,7 @@ def test_skillsbench_smoke_config_is_parseable() -> None:
     assert payload["agent_runtimes"][0]["benchmark_kit_id"] == "skillsbench"
     assert payload["benchmark_kits"][0]["kit_id"] == "skillsbench"
     assert config.metadata["name"] == "smoke_installed_client_skillsbench"
+    assert [metric.metric_id for metric in config.metrics] == [
+        "skillsbench_resolve_rate",
+        "skillsbench_failure_reason",
+    ]
