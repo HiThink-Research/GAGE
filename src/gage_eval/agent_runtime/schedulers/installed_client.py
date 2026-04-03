@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from gage_eval.agent_runtime.clients import ClientRunRequest
+from repo.src.gage_eval.agent_runtime.artifacts.clients import ClientRunRequest
 from gage_eval.agent_runtime.compiled_plan import CompiledRuntimePlan
 from gage_eval.agent_runtime.schedulers import SchedulerResult
 from gage_eval.sandbox.surfaces import serialize_surfaces
@@ -106,11 +106,11 @@ class InstalledClientScheduler:
         if not isinstance(client_default_args, (list, tuple)):
             client_default_args = None
         if client_id == "codex":
-            from gage_eval.agent_runtime.clients.codex import CodexClient
+            from repo.src.gage_eval.agent_runtime.artifacts.clients.codex import CodexClient
 
             return CodexClient(default_args=client_default_args)
         if client_id == "claude":
-            from gage_eval.agent_runtime.clients.claude import ClaudeClient
+            from repo.src.gage_eval.agent_runtime.artifacts.clients.claude import ClaudeClient
 
             return ClaudeClient()
         raise ValueError(f"Unsupported installed client '{client_id}'")

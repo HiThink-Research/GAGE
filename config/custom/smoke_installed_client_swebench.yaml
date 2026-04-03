@@ -23,6 +23,13 @@ role_adapters:
     role_type: dut_agent
     agent_runtime_id: codex_swebench
 
+metrics:
+  - metric_id: swebench_resolve_rate
+    implementation: swebench_resolve_rate
+  - metric_id: swebench_failure_reason
+    implementation: swebench_failure_reason
+    aggregation: categorical_count
+
 tasks:
   - task_id: swebench_smoke_agent_eval
     dataset_id: swebench_smoke

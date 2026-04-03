@@ -11,6 +11,7 @@ import platform
 import time
 import re
 import copy
+import shlex
 from textwrap import indent
 from pathlib import Path
 from typing import Optional
@@ -841,6 +842,103 @@ def ensure_save_dir(directory: Optional[str]) -> None:
     os.environ["GAGE_EVAL_SAVE_DIR"] = str(resolved)
 
 
+def _detect_workspace_root(repo_root: Path | None = None) -> Path:
+    """Best-effort workspace root detection mirroring the shell helpers."""
+
+    root = (repo_root or REPO_ROOT).resolve()
+    candidates = [root.parent, root]
+    markers = ("env/.venv", "env/scripts/run.env", "env/localenv")
+    for candidate in candidates:
+        if any((candidate / marker).exists() for marker in markers):
+            return candidate
+    current = root
+    while current != current.parent:
+        if any((current / marker).exists() for marker in markers):
+            return current
+        current = current.parent
+    return root
+
+
+def _default_local_env_files(workspace_root: Path) -> list[Path]:
+    explicit = os.environ.get("GAGE_LOCAL_ENV_FILE")
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        return [candidate] if candidate.is_file() else []
+    candidates: list[Path] = []
+    for rel in ("env/scripts/run.env", "env/localenv"):
+        candidate = workspace_root / rel
+        if candidate.is_file():
+            candidates.append(candidate)
+    return candidates
+
+
+def _parse_local_env_assignment(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    match = re.match(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$", stripped)
+    if match is None:
+        return None
+    key = match.group(1)
+    raw_value = match.group(2).strip()
+    if not raw_value:
+        return key, ""
+    try:
+        parts = shlex.split(raw_value, posix=True)
+    except ValueError:
+        parts = [raw_value]
+    value = " ".join(parts) if parts else ""
+    return key, value
+
+
+def _load_local_env_file(
+    env_file: Path,
+    *,
+    override: bool = False,
+    protected_keys: set[str] | None = None,
+) -> dict[str, str]:
+    """Load simple KEY=VALUE assignments from a local env file into os.environ."""
+
+    loaded: dict[str, str] = {}
+    protected = protected_keys or set()
+    if not env_file.is_file():
+        return loaded
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_local_env_assignment(line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        if key in protected:
+            continue
+        if not override and key in os.environ:
+            continue
+        os.environ[key] = value
+        loaded[key] = value
+    return loaded
+
+
+def _load_workspace_local_env(repo_root: Path | None = None) -> list[Path]:
+    workspace_root = _detect_workspace_root(repo_root)
+    os.environ.setdefault("GAGE_WORKSPACE_ROOT", str(workspace_root))
+    env_files = _default_local_env_files(workspace_root)
+    if not env_files:
+        return []
+    protected_keys = set(os.environ)
+    loaded_files: list[Path] = []
+    for index, env_file in enumerate(env_files):
+        loaded = _load_local_env_file(
+            env_file,
+            override=index > 0,
+            protected_keys=protected_keys,
+        )
+        if loaded:
+            loaded_files.append(env_file)
+    if loaded_files:
+        joined = ", ".join(str(path) for path in loaded_files)
+        print(f"[gage-eval] loaded local env from {joined}")
+    return loaded_files
+
+
 def _detect_gpu_count() -> Optional[int]:
     """Best-effort GPU count detection covering torch/nvidia-smi/env hints."""
 
@@ -1121,6 +1219,7 @@ def _validate_config_wiring(config: PipelineConfig) -> list[str]:
 def main() -> None:
     wall_clock_start = time.perf_counter()
     args = parse_args()
+    _load_workspace_local_env()
     if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
         os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
 

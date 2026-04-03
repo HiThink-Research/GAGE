@@ -1,2 +1,2 @@
 def compute_answer() -> int:
-    return 42
+    return 41

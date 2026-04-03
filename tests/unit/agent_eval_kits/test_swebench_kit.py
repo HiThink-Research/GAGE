@@ -108,8 +108,10 @@ def test_smoke_installed_client_swebench_config_is_parseable() -> None:
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)
+    metric_ids = [metric.metric_id for metric in config.metrics]
 
     assert payload["metadata"]["name"] == "smoke_installed_client_swebench"
     assert payload["agent_runtimes"][0]["agent_runtime_id"] == "codex_swebench"
     assert payload["benchmark_kits"][0]["kit_id"] == "swebench"
     assert config.metadata["name"] == "smoke_installed_client_swebench"
+    assert metric_ids == ["swebench_resolve_rate", "swebench_failure_reason"]

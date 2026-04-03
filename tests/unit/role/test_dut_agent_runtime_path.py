@@ -92,6 +92,53 @@ def test_dut_agent_uses_agent_runtime_path(monkeypatch) -> None:
 
 
 @pytest.mark.fast
+def test_dut_agent_uses_save_dir_for_runtime_artifacts(monkeypatch, tmp_path: Path) -> None:
+    class _FakeEnvironment:
+        pass
+
+    captured = {}
+
+    class _CapturingScheduler(_FakeScheduler):
+        def run(self, session):
+            captured["artifacts"] = session.artifacts
+            return super().run(session)
+
+    class _CapturingResolver(_FakeResolver):
+        def build_scheduler(self, plan):
+            return _CapturingScheduler()
+
+    from gage_eval.agent_runtime.environment import provider as provider_module
+
+    monkeypatch.setattr(
+        provider_module.EnvironmentProvider,
+        "build",
+        lambda self, plan, sample: _FakeEnvironment(),
+    )
+    monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path / "shared-runs"))
+    adapter = DUTAgentAdapter(
+        adapter_id="dut-save-dir",
+        role_type="dut_agent",
+        capabilities=(),
+        agent_runtime_resolver=_CapturingResolver(),
+        agent_runtime_id="runtime-save-dir",
+    )
+
+    result = adapter.invoke(
+        {
+            "task_id": "task/save-dir",
+            "sample": {"instruction": "fix the failing test", "instance_id": "sample-save-dir"},
+            "trace": ObservabilityTrace(),
+        },
+        RoleAdapterState(),
+    )
+
+    assert result["status"] == "success"
+    assert Path(captured["artifacts"].run_dir).parent == tmp_path / "shared-runs"
+    assert captured["artifacts"].task_dir.startswith(str(tmp_path / "shared-runs"))
+    assert captured["artifacts"].sample_file.startswith(str(tmp_path / "shared-runs"))
+
+
+@pytest.mark.fast
 def test_dut_agent_uses_sample_gage_task_id_for_artifact_path(monkeypatch) -> None:
     class _FakeEnvironment:
         pass

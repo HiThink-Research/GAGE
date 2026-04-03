@@ -19,6 +19,7 @@ def test_docker_installed_client_swebench_config_is_parseable() -> None:
     config = _load_config("docker_installed_client_swebench.yaml")
 
     runtime = config.agent_runtimes[0]
+    metric_ids = [metric.metric_id for metric in config.metrics]
 
     assert config.metadata["name"] == "docker_installed_client_swebench"
     assert runtime.agent_runtime_id == "codex_swebench_docker"
@@ -26,6 +27,7 @@ def test_docker_installed_client_swebench_config_is_parseable() -> None:
     assert runtime.resource_policy.environment_kind == "docker"
     assert runtime.params["image"] == "gage-codex-sandbox:latest"
     assert runtime.params["runtime_configs"]["exec_workdir"] == "/workspace"
+    assert metric_ids == ["swebench_resolve_rate", "swebench_failure_reason"]
 
 
 @pytest.mark.io
@@ -57,3 +59,18 @@ def test_real_attached_terminal_bench_config_is_parseable() -> None:
     assert runtime.resource_policy.environment_kind == "remote"
     assert runtime.sandbox_policy.remote_mode == "attached"
     assert metric_ids == ["terminal_bench_resolve_rate", "terminal_bench_failure_reason"]
+
+
+@pytest.mark.io
+def test_real_attached_swebench_config_is_parseable() -> None:
+    config = _load_config("real_attached_installed_client_swebench.yaml")
+
+    runtime = config.agent_runtimes[0]
+    metric_ids = [metric.metric_id for metric in config.metrics]
+
+    assert config.metadata["name"] == "real_attached_installed_client_swebench"
+    assert runtime.agent_runtime_id == "codex_swebench_real"
+    assert runtime.benchmark_kit_id == "swebench"
+    assert runtime.resource_policy.environment_kind == "remote"
+    assert runtime.sandbox_policy.remote_mode == "attached"
+    assert metric_ids == ["swebench_resolve_rate", "swebench_failure_reason"]

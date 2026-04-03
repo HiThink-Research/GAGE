@@ -17,6 +17,8 @@ class _FakeEnvironment:
         self.tracked_diff: str = "diff --git a/a b/a\n"
         self.untracked_files: list[str] = []
         self.untracked_diff: str = ""
+        self.command_stdout: str = "raw-cli-output"
+        self.command_stderr: str = ""
         self.path_resolver = None
 
     def exec(self, command: str, *, cwd: str | None = None, env=None, timeout_sec: int = 30):
@@ -29,7 +31,7 @@ class _FakeEnvironment:
             return ExecResult(exit_code=0, stdout="\n".join(self.untracked_files), stderr="")
         if command.startswith("git diff --no-index --binary /dev/null "):
             return ExecResult(exit_code=1, stdout=self.untracked_diff, stderr="")
-        return ExecResult(exit_code=0, stdout="raw-cli-output", stderr="")
+        return ExecResult(exit_code=0, stdout=self.command_stdout, stderr=self.command_stderr)
 
     def read_file(self, path: str) -> bytes:
         return self.files[path]
@@ -163,6 +165,45 @@ def test_codex_client_collects_patch_from_untracked_files() -> None:
     assert "return 42" in result.patch_content
     assert environment.commands.count("git diff --binary -- .") == 1
     assert "git ls-files --others --exclude-standard -- ." in environment.commands
+
+
+@pytest.mark.fast
+def test_codex_client_falls_back_to_patch_embedded_in_transcript() -> None:
+    environment = _FakeEnvironment()
+    environment.tracked_diff = ""
+    environment.command_stderr = (
+        "OpenAI Codex v0.117.0\n"
+        "codex\n"
+        "准备修改 answer.py\n"
+        "diff --git a/tests/data/agent_eval/workspaces/swebench/case1/answer.py "
+        "b/tests/data/agent_eval/workspaces/swebench/case1/answer.py\n"
+        "index 58e0dc6..bbf766d 100644\n"
+        "--- a/tests/data/agent_eval/workspaces/swebench/case1/answer.py\n"
+        "+++ b/tests/data/agent_eval/workspaces/swebench/case1/answer.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def compute_answer() -> int:\n"
+        "-    return 41\n"
+        "+    return 42\n"
+        "\n"
+        "tokens used\n"
+        "5,170\n"
+    )
+    client = CodexClient()
+
+    result = client.run(
+        ClientRunRequest(
+            instruction="Fix the test and stop.",
+            cwd="/workspace/repo",
+            metadata={
+                "patch_path": "/tmp/submission.patch",
+            },
+        ),
+        environment,
+    )
+
+    assert result.patch_content is not None
+    assert "return 42" in result.patch_content
+    assert Path("/tmp/submission.patch").read_text(encoding="utf-8").startswith("diff --git")
 
 
 @pytest.mark.fast

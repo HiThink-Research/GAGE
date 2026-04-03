@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
@@ -147,7 +148,7 @@ class DUTAgentAdapter(RoleAdapter):
             or state.metadata.get("task_id")
         )
         artifacts = ArtifactLayout.for_sample(
-            base_dir=str(sample.get("output_dir", "runs")),
+            base_dir=str(sample.get("output_dir") or os.environ.get("GAGE_EVAL_SAVE_DIR") or "runs"),
             run_id=str(sample.get("run_id") or trace.run_id),
             sample_id=sample_id,
             task_id=None if task_id is None else str(task_id),
