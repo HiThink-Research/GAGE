@@ -36,40 +36,43 @@ function HostHome() {
 
 export function App() {
   const location = useLocation();
+  const isSessionRoute = location.pathname.startsWith("/sessions/");
   const className = [
     "app-shell",
-    location.pathname.startsWith("/sessions/") ? "app-shell--session" : "",
+    isSessionRoute ? "app-shell--session" : "",
   ]
     .filter((value) => value !== "")
     .join(" ");
 
   return (
     <div className={className}>
-      <header className="app-shell__header">
-        <div>
-          <p className="eyebrow">Arena Visual</p>
-          <p className="app-shell__title">Unified session workspace</p>
-        </div>
-        <nav className="app-shell__nav" aria-label="Primary">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              isActive ? "app-shell__nav-link is-active" : "app-shell__nav-link"
-            }
-          >
-            Home
-          </NavLink>
-          <NavLink
-            to="/sessions/demo-session"
-            className={({ isActive }) =>
-              isActive ? "app-shell__nav-link is-active" : "app-shell__nav-link"
-            }
-          >
-            Demo session
-          </NavLink>
-        </nav>
-      </header>
+      {!isSessionRoute ? (
+        <header className="app-shell__header">
+          <div>
+            <p className="eyebrow">Arena Visual</p>
+            <p className="app-shell__title">Unified session workspace</p>
+          </div>
+          <nav className="app-shell__nav" aria-label="Primary">
+            <NavLink
+              to="/"
+              end
+              className={({ isActive }) =>
+                isActive ? "app-shell__nav-link is-active" : "app-shell__nav-link"
+              }
+            >
+              Home
+            </NavLink>
+            <NavLink
+              to="/sessions/demo-session"
+              className={({ isActive }) =>
+                isActive ? "app-shell__nav-link is-active" : "app-shell__nav-link"
+              }
+            >
+              Demo session
+            </NavLink>
+          </nav>
+        </header>
+      ) : null}
 
       <Routes>
         <Route path="/" element={<HostHome />} />

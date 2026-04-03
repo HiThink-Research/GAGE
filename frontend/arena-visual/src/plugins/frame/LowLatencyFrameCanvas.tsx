@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 interface LowLatencyFrameCanvasProps {
   altText: string;
   className: string;
+  onFrameSizeChange?: (size: { width: number; height: number }) => void;
   streamUrl: string;
+  style?: CSSProperties;
   testId?: string;
 }
 
@@ -33,11 +35,23 @@ export function resolveLowLatencyStreamUrl(
 export function LowLatencyFrameCanvas({
   altText,
   className,
+  onFrameSizeChange,
   streamUrl,
+  style,
   testId = "frame-surface-canvas",
 }: LowLatencyFrameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frameSizeChangeRef = useRef(onFrameSizeChange);
+  const reportedFrameSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
+
+  useEffect(() => {
+    frameSizeChangeRef.current = onFrameSizeChange;
+  }, [onFrameSizeChange]);
+
+  useEffect(() => {
+    reportedFrameSizeRef.current = null;
+  }, [streamUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +79,19 @@ export function LowLatencyFrameCanvas({
             frame.mimeType,
           );
           if (drewFrame && !cancelled) {
+            const nextFrameSize = {
+              width: canvasRef.current.width,
+              height: canvasRef.current.height,
+            };
+            const reportedFrameSize = reportedFrameSizeRef.current;
+            if (
+              !reportedFrameSize ||
+              reportedFrameSize.width !== nextFrameSize.width ||
+              reportedFrameSize.height !== nextFrameSize.height
+            ) {
+              reportedFrameSizeRef.current = nextFrameSize;
+              frameSizeChangeRef.current?.(nextFrameSize);
+            }
             setHasFrame(true);
           }
         }
@@ -117,6 +144,7 @@ export function LowLatencyFrameCanvas({
         className={className}
         data-testid={testId}
         ref={canvasRef}
+        style={style}
       />
       {!hasFrame ? <div className="frame-surface__fallback">Loading frame...</div> : null}
     </>

@@ -6,7 +6,7 @@ import gomokuScene from "../../test/fixtures/gomoku.visual.json";
 import { SharedSidePanel } from "./SharedSidePanel";
 
 describe("SharedSidePanel", () => {
-  it("renders fixed host tabs for players, events, chat, and trace", () => {
+  it("renders fixed host tabs for control, players, events, chat, and trace", () => {
     render(
       <SharedSidePanel
         session={{
@@ -62,10 +62,35 @@ describe("SharedSidePanel", () => {
       />,
     );
 
+    expect(screen.getByRole("tab", { name: "Control" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Players" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Events" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Trace" })).toBeInTheDocument();
+  });
+
+  it("renders control panel metadata when the Control tab is active", () => {
+    render(
+      <SharedSidePanel
+        activeTab="Control"
+        controlPanel={{
+          title: "Low latency input",
+          meta: [
+            { label: "Mode", value: "Live tail" },
+            { label: "Seq", value: "7" },
+          ],
+          signals: ["Tail locked", "Human input enabled"],
+          operatorHint: "Keyboard: arrows/WASD move, Space/J/Z jump.",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Low latency input")).toBeInTheDocument();
+    expect(screen.getByText("Mode Live tail")).toBeInTheDocument();
+    expect(screen.getByText("Seq 7")).toBeInTheDocument();
+    expect(screen.getByText("Tail locked")).toBeInTheDocument();
+    expect(screen.getByText("Human input enabled")).toBeInTheDocument();
+    expect(screen.getByText(/Keyboard: arrows\/WASD move/i)).toBeInTheDocument();
   });
 
   it("reads observer options from frozen session capabilities and host labels", () => {

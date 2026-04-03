@@ -37,6 +37,7 @@ export interface ArenaPluginDefinition<
 > {
   pluginId: string;
   displayName: string;
+  operatorHint?: string;
   manifest: GamePluginManifest;
   render: ComponentType<ArenaPluginRenderProps<TDeviceEvent, TIntent>>;
   inputInterpreter?: InputInterpreter<TDeviceEvent, TIntent>;

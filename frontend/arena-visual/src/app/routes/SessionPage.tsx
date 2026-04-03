@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { usePlaybackControls } from "../hooks/usePlaybackControls";
@@ -15,12 +15,16 @@ import {
   createArenaMediaResolver,
   type ArenaMediaResolver,
 } from "../../gateway/media";
-import type { ActionIntentReceipt } from "../../gateway/types";
+import type { ActionIntentReceipt, PlaybackMode } from "../../gateway/types";
 import { resolveArenaPlugin } from "../../plugins/registry";
 import { useInputBridge } from "../../plugins/sdk/useInputBridge";
 import { GlobalControlBar } from "../../ui/controls/GlobalControlBar";
 import { ArenaLayout } from "../../ui/layout/ArenaLayout";
-import { SharedSidePanel } from "../../ui/panes/SharedSidePanel";
+import {
+  SharedSidePanel,
+  type SharedSidePanelControlPanel,
+  type SharedSidePanelTab,
+} from "../../ui/panes/SharedSidePanel";
 import { TimelineView } from "../../ui/timeline/TimelineView";
 
 const LIVE_SESSION_REFRESH_POLL_MS = 150;
@@ -29,6 +33,18 @@ const LIVE_LOW_LATENCY_TIMELINE_POLL_MS = 500;
 const POST_LIVE_AUTO_FINISH_MS = 15000;
 const REPLAY_TICK_BASE_MS = 800;
 const WIDE_STAGE_GAMES = new Set(["mahjong", "doudizhu"]);
+const DEFAULT_SIDE_PANEL_TAB: SharedSidePanelTab = "Players";
+const SIDE_PANEL_TABS: Array<{
+  tab: SharedSidePanelTab;
+  label: string;
+  cue: string;
+}> = [
+  { tab: "Control", label: "Control", cue: "Deck" },
+  { tab: "Players", label: "Players", cue: "Roster" },
+  { tab: "Events", label: "Events", cue: "Pulse" },
+  { tab: "Chat", label: "Chat", cue: "Comms" },
+  { tab: "Trace", label: "Trace", cue: "Logs" },
+];
 
 function isStageFullscreenTarget(stageElement: HTMLElement | null): boolean {
   if (!stageElement || !document.fullscreenElement) {
@@ -98,11 +114,51 @@ export function SessionPage() {
   );
   const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
   const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
+  const sessionPlugin =
+    session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined;
+  const currentSceneSeq = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.currentSceneSeq,
+  );
+  const timeline = useArenaStoreSelector(store, (snapshot) => snapshot.timeline);
   const arenaLayoutMode = WIDE_STAGE_GAMES.has(sessionGameId) ? "wide-stage" : "default";
   const compactLiveWorkspace = shouldCompactLiveWorkspace(session, scene);
+  const playbackMode = session?.playback.mode ?? "live_tail";
+  const [timelineExpanded, setTimelineExpanded] = useState(playbackMode !== "live_tail");
+  const [controlsExpanded, setControlsExpanded] = useState(false);
+  const [activeSidePanelTab, setActiveSidePanelTab] =
+    useState<SharedSidePanelTab>(DEFAULT_SIDE_PANEL_TAB);
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+
+  useEffect(() => {
+    startTransition(() => {
+      setTimelineExpanded(playbackMode !== "live_tail");
+    });
+  }, [playbackMode, sessionId]);
+
+  useEffect(() => {
+    startTransition(() => {
+      setActiveSidePanelTab(DEFAULT_SIDE_PANEL_TAB);
+      setSidePanelOpen(false);
+    });
+    setControlsExpanded(false);
+  }, [sessionId]);
+
+  const eventCounts = {
+    total: timeline.events.length,
+    warn: timeline.events.filter((event) => event.severity === "warn").length,
+    critical: timeline.events.filter((event) => event.severity === "critical").length,
+  };
+
+  const handleSidePanelToggle = (tab: SharedSidePanelTab) => {
+    startTransition(() => {
+      setActiveSidePanelTab(tab);
+      setSidePanelOpen((current) => !(current && activeSidePanelTab === tab));
+    });
+  };
 
   return (
-    <main className="app-shell__body">
+    <main className="session-workspace">
       <SessionRuntimeEffects
         client={client}
         runIdParam={runIdParam}
@@ -110,29 +166,298 @@ export function SessionPage() {
         store={store}
       />
 
-      <section className="hero-panel">
-        <p className="eyebrow">Session Workspace</p>
-        <h1>{sessionId ?? "Unknown session"}</h1>
-        <p className="hero-copy">
-          The arena host is rendering the active plugin, synchronized timeline,
-          shared controls, and observer-aware inspector for this session.
-        </p>
-      </section>
-
       <ArenaLayout
         layoutMode={arenaLayoutMode}
-        controls={<SessionControls store={store} />}
-        stage={<SessionStage client={client} mediaResolver={mediaResolver} store={store} />}
-        timeline={compactLiveWorkspace ? null : <SessionTimeline store={store} />}
-        sidePanel={compactLiveWorkspace ? null : <SessionSidePanelRegion store={store} />}
+        timelineExpanded={timelineExpanded}
+        sidePanelOpen={sidePanelOpen}
+        controls={
+          <SessionCommandDeck
+            session={session}
+            sessionId={sessionId}
+            pluginDisplayName={sessionPlugin?.displayName}
+            controlsExpanded={controlsExpanded}
+            currentSceneSeq={currentSceneSeq}
+            onToggleControls={() => {
+              setControlsExpanded((current) => !current);
+            }}
+          >
+            <SessionControls store={store} />
+          </SessionCommandDeck>
+        }
+        stage={
+          <SessionStage
+            client={client}
+            mediaResolver={mediaResolver}
+            pluginDefinition={sessionPlugin}
+            store={store}
+          />
+        }
+        utilityRail={
+          <SessionUtilityRail
+            activeTab={activeSidePanelTab}
+            sidePanelOpen={sidePanelOpen}
+            onToggle={handleSidePanelToggle}
+          />
+        }
+        timeline={
+          compactLiveWorkspace ? null : (
+            <SessionTimelineDrawer
+              store={store}
+              expanded={timelineExpanded}
+              eventCounts={eventCounts}
+              onToggle={() => {
+                setTimelineExpanded((current) => !current);
+              }}
+            />
+          )
+        }
+        sidePanel={
+          <SessionSidePanelRegion
+            activeTab={activeSidePanelTab}
+            store={store}
+            onActiveTabChange={setActiveSidePanelTab}
+            onClose={() => {
+              setSidePanelOpen(false);
+            }}
+          />
+        }
       />
-
-      <div className="app-shell__footer">
-        <Link className="app-shell__nav-link" to="/">
-          Back to host
-        </Link>
-      </div>
     </main>
+  );
+}
+
+function formatPlaybackModeLabel(playbackMode: PlaybackMode | undefined): string {
+  switch (playbackMode) {
+    case "paused":
+      return "Paused";
+    case "replay_playing":
+      return "Replay";
+    case "live_tail":
+    default:
+      return "Live tail";
+  }
+}
+
+function formatLifecycleLabel(lifecycle: string | undefined): string {
+  if (!lifecycle) {
+    return "warming";
+  }
+  return lifecycle.replaceAll("_", " ");
+}
+
+function formatStageInputMode(session: ReturnType<ArenaSessionStore["getSnapshot"]>["session"]): string {
+  if (session?.capabilities.supportsRealtimeInputWebSocket === true) {
+    return "Realtime socket";
+  }
+  if (session?.capabilities.supportsLowLatencyRealtimeInput === true) {
+    return "Low latency input";
+  }
+  return "Host bridge";
+}
+
+function readStageReadinessSignals({
+  session,
+  playbackMode,
+  isFullscreen,
+}: {
+  session?: ReturnType<ArenaSessionStore["getSnapshot"]>["session"];
+  playbackMode: PlaybackMode;
+  isFullscreen: boolean;
+}): string[] {
+  const signals: string[] = [];
+
+  signals.push(playbackMode === "live_tail" ? "Tail locked" : formatPlaybackModeLabel(playbackMode));
+
+  if (session?.scheduling.acceptsHumanIntent === true) {
+    signals.push("Human input enabled");
+  }
+
+  if (isFullscreen) {
+    signals.push("Esc exits fullscreen");
+  }
+
+  return signals;
+}
+
+function buildStageControlPanel({
+  session,
+  scene,
+  playbackMode,
+  currentSceneSeq,
+  isFullscreen,
+  operatorHint,
+}: {
+  session?: ReturnType<ArenaSessionStore["getSnapshot"]>["session"];
+  scene?: ReturnType<ArenaSessionStore["getSnapshot"]>["scene"];
+  playbackMode: PlaybackMode;
+  currentSceneSeq?: number;
+  isFullscreen: boolean;
+  operatorHint?: string;
+}): SharedSidePanelControlPanel {
+  return {
+    title: formatStageInputMode(session),
+    meta: [
+      {
+        label: "Mode",
+        value: formatPlaybackModeLabel(playbackMode),
+      },
+      {
+        label: "Seq",
+        value: `${currentSceneSeq ?? scene?.seq ?? "--"}`,
+      },
+      {
+        label: "Actor",
+        value:
+          session?.scheduling.activeActorId ??
+          scene?.activePlayerId ??
+          session?.observer.observerId ??
+          "standby",
+      },
+      {
+        label: "Observer",
+        value:
+          session?.observer.observerKind === "player" && session.observer.observerId !== ""
+            ? session.observer.observerId
+            : session?.observer.observerKind ?? "spectator",
+      },
+    ],
+    signals: readStageReadinessSignals({
+      session,
+      playbackMode,
+      isFullscreen,
+    }),
+    operatorHint,
+  };
+}
+
+function SessionCommandDeck({
+  session,
+  sessionId,
+  pluginDisplayName,
+  controlsExpanded,
+  currentSceneSeq,
+  children,
+  onToggleControls,
+}: {
+  session?: ReturnType<ArenaSessionStore["getSnapshot"]>["session"];
+  sessionId?: string;
+  pluginDisplayName?: string;
+  controlsExpanded: boolean;
+  currentSceneSeq?: number;
+  children: ReactNode;
+  onToggleControls: () => void;
+}) {
+  return (
+    <section
+      className={[
+        "session-command-deck",
+        controlsExpanded ? "is-expanded" : "is-collapsed",
+      ]
+        .filter((value) => value !== "")
+        .join(" ")}
+      aria-label="Session command deck"
+    >
+      <div className="session-command-deck__overview">
+        <div className="session-command-deck__identity">
+          <div
+            className="session-command-deck__brand"
+            aria-label="GAGE GAME ARENA"
+            data-testid="session-brand"
+          >
+            <span className="session-command-deck__brand-mark">GAGE</span>
+            <span className="session-command-deck__brand-wordmark">GAME ARENA</span>
+          </div>
+          <p className="eyebrow">Live Session Workspace</p>
+          <div className="session-command-deck__headline">
+            <div>
+              <h1>{sessionId ?? "Unknown session"}</h1>
+              {controlsExpanded ? (
+                <p className="session-command-deck__subtitle">
+                  Stage-first workspace for live operation, human intervention, and immediate fullscreen
+                  takeover.
+                </p>
+              ) : null}
+            </div>
+            <div className="session-command-deck__actions">
+              <button
+                type="button"
+                className="session-command-deck__drawer-button session-command-deck__drawer-button--accent"
+                aria-expanded={controlsExpanded}
+                aria-controls="session-command-deck-controls"
+                onClick={onToggleControls}
+              >
+                {controlsExpanded ? "Collapse session controls" : "Expand session controls"}
+              </button>
+              <Link className="session-command-deck__back-link" to="/">
+                Back to host
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        <div className="session-command-deck__status-strip">
+          <span className="session-command-deck__status-pill session-command-deck__status-pill--mode">
+            {formatPlaybackModeLabel(session?.playback.mode)}
+          </span>
+          <span className="session-command-deck__status-pill">
+            {pluginDisplayName ?? session?.gameId ?? "game loading"}
+          </span>
+          <span className="session-command-deck__status-pill">
+            {formatLifecycleLabel(session?.lifecycle)}
+          </span>
+          <span className="session-command-deck__status-pill">
+            seq {currentSceneSeq ?? "--"}
+          </span>
+          <span className="session-command-deck__status-pill">
+            observer {session?.observer.observerKind ?? "spectator"}
+          </span>
+          <span className="session-command-deck__status-pill">
+            {session?.scheduling.family ?? "idle"} / {session?.scheduling.phase ?? "idle"}
+          </span>
+        </div>
+      </div>
+
+      {controlsExpanded ? (
+        <div className="session-command-deck__control-strip" id="session-command-deck-controls">
+          {children}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function SessionUtilityRail({
+  activeTab,
+  sidePanelOpen,
+  onToggle,
+}: {
+  activeTab: SharedSidePanelTab;
+  sidePanelOpen: boolean;
+  onToggle: (tab: SharedSidePanelTab) => void;
+}) {
+  return (
+    <div className="session-utility-rail" aria-label="Session utility rail">
+      {SIDE_PANEL_TABS.map(({ tab, label, cue }) => {
+        const isActive = sidePanelOpen && activeTab === tab;
+        return (
+          <button
+            key={tab}
+            type="button"
+            className={isActive ? "session-utility-rail__button is-active" : "session-utility-rail__button"}
+            aria-pressed={isActive}
+            data-panel-tab={tab.toLowerCase()}
+            onClick={() => {
+              onToggle(tab);
+            }}
+          >
+            <span className="session-utility-rail__button-label">{label}</span>
+            <span aria-hidden="true" className="session-utility-rail__button-cue">
+              {cue}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -557,10 +882,12 @@ function SessionStage({
   client,
   store,
   mediaResolver,
+  pluginDefinition,
 }: {
   client: ReturnType<typeof createArenaGatewayClient>;
   store: ArenaSessionStore;
   mediaResolver: ArenaMediaResolver;
+  pluginDefinition?: ReturnType<typeof resolveArenaPlugin>;
 }) {
   const stageRef = useRef<HTMLElement | null>(null);
   const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
@@ -578,7 +905,7 @@ function SessionStage({
     (snapshot) => snapshot.latestActionReceipt,
   );
   const plugin =
-    session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined;
+    pluginDefinition ?? (session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined);
   const inputBridge = useInputBridge({
     latestReceipt: latestActionReceipt,
     submitAction: store.submitAction,
@@ -740,20 +1067,34 @@ function SessionStage({
           .join(" ")}
         ref={stageRef}
         aria-busy={showSceneTransition}
+        data-testid="session-stage"
+        onDoubleClick={() => {
+          void handleToggleFullscreen();
+        }}
       >
         {showStageChrome ? (
-          <div className="session-stage__chrome">
-            <button
-              className="session-stage__fullscreen-button"
-              onClick={() => {
-                void handleToggleFullscreen();
-              }}
-              type="button"
-              aria-pressed={isFullscreen}
-            >
-              {isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            </button>
-          </div>
+          <>
+            <div className="session-stage__hud session-stage__hud--top-left">
+              <span className="session-stage__hud-pill session-stage__hud-pill--accent">
+                {plugin?.displayName ?? session.gameId}
+              </span>
+              <span className="session-stage__hud-pill">{scene?.kind ?? "scene"}</span>
+            </div>
+            <div className="session-stage__chrome">
+              {!isImmersivePlugin ? (
+                <button
+                  className="session-stage__fullscreen-button"
+                  onClick={() => {
+                    void handleToggleFullscreen();
+                  }}
+                  type="button"
+                  aria-pressed={isFullscreen}
+                >
+                  {isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                </button>
+              ) : null}
+            </div>
+          </>
         ) : null}
         <div className="session-stage__surface">
           <PluginView
@@ -820,25 +1161,150 @@ function SessionTimeline({ store }: { store: ArenaSessionStore }) {
   );
 }
 
-function SessionSidePanelRegion({ store }: { store: ArenaSessionStore }) {
+function SessionTimelineDrawer({
+  store,
+  expanded,
+  eventCounts,
+  onToggle,
+}: {
+  store: ArenaSessionStore;
+  expanded: boolean;
+  eventCounts: {
+    total: number;
+    warn: number;
+    critical: number;
+  };
+  onToggle: () => void;
+}) {
+  const timeline = useArenaStoreSelector(store, (snapshot) => snapshot.timeline);
+  const currentSceneSeq = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.currentSceneSeq,
+  );
+  const timelineStatus = useArenaStoreSelector(store, (snapshot) => snapshot.timeline.status);
+  const playbackControls = usePlaybackControls(store);
+  const previewEvents = timeline.events.slice(-3).reverse();
+
+  return (
+    <section
+      className={expanded ? "session-timeline-drawer is-expanded" : "session-timeline-drawer"}
+      aria-label="Session timeline drawer"
+    >
+      <div className="session-timeline-drawer__topline">
+        <div>
+          <p className="eyebrow">Timeline Rail</p>
+          <h2>Event flow</h2>
+        </div>
+        <button
+          type="button"
+          className="session-command-deck__drawer-button"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          {expanded ? "Hide timeline drawer" : "Show timeline drawer"}
+        </button>
+      </div>
+      <div className="session-timeline-drawer__rail">
+        <span>seq {currentSceneSeq ?? "--"}</span>
+        <span>{timelineStatus}</span>
+        <span>{eventCounts.total} events</span>
+        <span>{eventCounts.warn} warn</span>
+        <span>{eventCounts.critical} critical</span>
+      </div>
+      {previewEvents.length > 0 ? (
+        <div className="session-timeline-drawer__preview-list" aria-label="Recent timeline events">
+          {previewEvents.map((event) => (
+            <button
+              key={event.seq}
+              type="button"
+              className={[
+                "session-timeline-drawer__preview-event",
+                event.severity ? `is-${event.severity}` : "",
+              ]
+                .filter((value) => value !== "")
+                .join(" ")}
+              onClick={() => {
+                if (!expanded) {
+                  onToggle();
+                }
+                void playbackControls.selectEvent(event.seq);
+              }}
+            >
+              <span className="session-timeline-drawer__preview-seq">#{event.seq}</span>
+              <span className="session-timeline-drawer__preview-copy">
+                <strong>{event.label}</strong>
+                <small>{event.type}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {expanded ? <SessionTimeline store={store} /> : null}
+    </section>
+  );
+}
+
+function SessionSidePanelRegion({
+  store,
+  activeTab,
+  onActiveTabChange,
+  onClose,
+}: {
+  store: ArenaSessionStore;
+  activeTab: SharedSidePanelTab;
+  onActiveTabChange: (tab: SharedSidePanelTab) => void;
+  onClose: () => void;
+}) {
   const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
   const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
+  const currentSceneSeq = useArenaStoreSelector(
+    store,
+    (snapshot) => snapshot.currentSceneSeq,
+  );
   const latestActionReceipt = useArenaStoreSelector(
     store,
     (snapshot) => snapshot.latestActionReceipt,
   );
   const error = useArenaStoreSelector(store, (snapshot) => snapshot.error);
+  const pluginDefinition =
+    session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined;
+  const playbackMode = session?.playback.mode ?? "live_tail";
 
   return (
-    <SharedSidePanel
-      session={session}
-      scene={scene}
-      latestActionReceipt={latestActionReceipt}
-      error={error}
-      onObserverChange={(observer) => {
-        void store.setObserver(observer).catch(() => {});
-      }}
-      onChatSubmit={(payload) => store.submitChat(payload)}
-    />
+    <div className="session-side-drawer">
+      <div className="session-side-drawer__header">
+        <div>
+          <p className="eyebrow">Utility Drawer</p>
+          <h2>{activeTab}</h2>
+        </div>
+        <button
+          type="button"
+          className="session-command-deck__drawer-button"
+          onClick={onClose}
+        >
+          Close utility drawer
+        </button>
+      </div>
+      <SharedSidePanel
+        session={session}
+        scene={scene}
+        latestActionReceipt={latestActionReceipt}
+        error={error}
+        activeTab={activeTab}
+        controlPanel={buildStageControlPanel({
+          session,
+          scene,
+          playbackMode,
+          currentSceneSeq,
+          isFullscreen: false,
+          operatorHint: pluginDefinition?.operatorHint,
+        })}
+        onActiveTabChange={onActiveTabChange}
+        onObserverChange={(observer) => {
+          void store.setObserver(observer).catch(() => {});
+        }}
+        onChatSubmit={(payload) => store.submitChat(payload)}
+      />
+    </div>
   );
 }

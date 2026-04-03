@@ -108,6 +108,11 @@ describe("RetroMarioPlugin", () => {
       await waitFor(() =>
         expect(screen.getByTestId("frame-surface-canvas")).toBeInTheDocument(),
       );
+      expect(screen.getByTestId("frame-surface-canvas")).toHaveStyle({
+        width: "100%",
+        height: "100%",
+        maxHeight: "none",
+      });
       await waitFor(() =>
         expect(fetchMock).toHaveBeenCalled(),
       );
@@ -125,7 +130,121 @@ describe("RetroMarioPlugin", () => {
     }
   });
 
-  it("renders Mario in immersive mode without frame metadata chrome or action chips", async () => {
+  it("uses decoded low-latency frame dimensions when viewport metadata is missing", async () => {
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                "--frame\r\nContent-Type: image/png\r\nContent-Length: 11\r\n\r\n",
+              ),
+            );
+            controller.enqueue(encoder.encode("frame-bytes"));
+            controller.enqueue(encoder.encode("\r\n--frame--\r\n"));
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+          },
+        },
+      ),
+    );
+    const createImageBitmapMock = vi.fn().mockResolvedValue({
+      width: 256,
+      height: 224,
+      close: vi.fn(),
+    });
+    const getContextMock = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue({ drawImage: vi.fn(), clearRect: vi.fn() } as unknown as CanvasRenderingContext2D);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("createImageBitmap", createImageBitmapMock);
+
+    const lowLatencyScene = JSON.parse(JSON.stringify(retroScene)) as VisualScene;
+    const frameBody = lowLatencyScene.body as
+      | { frame?: { viewport?: { width: number; height: number } | null } }
+      | undefined;
+    if (frameBody?.frame) {
+      frameBody.frame.viewport = null;
+    }
+    if (lowLatencyScene.media?.primary) {
+      lowLatencyScene.media.primary.mediaId = "live-channel-main";
+      lowLatencyScene.media.primary.transport = "low_latency_channel";
+      lowLatencyScene.media.primary.mimeType = "multipart/x-mixed-replace";
+      lowLatencyScene.media.primary.url =
+        "/arena_visual/sessions/retro-sample/media/live-channel-main/stream?run_id=run-live";
+    }
+
+    try {
+      render(
+        <RetroMarioPlugin
+          session={{
+            sessionId: "retro-sample",
+            gameId: "retro_platformer",
+            pluginId: "arena.visualization.retro_platformer.frame_v1",
+            lifecycle: "live_running",
+            playback: {
+              mode: "live_tail",
+              cursorTs: 4023,
+              cursorEventSeq: 23,
+              speed: 1,
+              canSeek: true
+            },
+            observer: {
+              observerId: "player_0",
+              observerKind: "player"
+            },
+            scheduling: {
+              family: "real_time_tick",
+              phase: "waiting_for_intent",
+              acceptsHumanIntent: true,
+              activeActorId: "player_0"
+            },
+            capabilities: {},
+            summary: {},
+            timeline: {}
+          }}
+          scene={lowLatencyScene}
+          submitAction={vi.fn()}
+          submitInput={vi.fn()}
+          mediaSubscribe={(request, listener) => {
+            listener({
+              mediaId: request.mediaId,
+              status: "ready",
+              src: "http://arena.local/arena_visual/sessions/retro-sample/media/live-channel-main/stream?run_id=run-live",
+              ref: {
+                mediaId: request.mediaId,
+                transport: "low_latency_channel",
+                mimeType: "multipart/x-mixed-replace",
+                url: "/arena_visual/sessions/retro-sample/media/live-channel-main/stream?run_id=run-live"
+              }
+            } as ResolvedMediaSource);
+            return () => {};
+          }}
+          isFallback={false}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(createImageBitmapMock).toHaveBeenCalled(),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("frame-surface-viewport")).toHaveStyle({
+          aspectRatio: "256 / 224",
+        }),
+      );
+    } finally {
+      getContextMock.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("renders Mario in immersive mode with a compact stats HUD instead of large info overlays or action chips", async () => {
     render(
       <RetroMarioPlugin
         session={{
@@ -174,8 +293,24 @@ describe("RetroMarioPlugin", () => {
     );
 
     expect(screen.getByTestId("frame-surface-root")).toHaveClass("frame-surface--immersive");
+    expect(screen.getByTestId("frame-surface-viewport")).toHaveStyle({
+      width: "auto",
+      maxWidth: "100%",
+      aspectRatio: "256 / 224",
+    });
+    expect(screen.getByTestId("frame-surface-viewport").style.height).toBe("");
+    expect(screen.getByTestId("frame-surface-viewport").style.maxHeight).toBe("");
+    expect(screen.getByTestId("frame-surface-image")).toHaveStyle({
+      width: "100%",
+      height: "100%",
+      maxHeight: "none",
+    });
+    expect(screen.getByTestId("frame-surface-immersive-stats")).toBeInTheDocument();
+    expect(screen.queryByTestId("frame-surface-immersive-info")).not.toBeInTheDocument();
     expect(screen.queryByText("Retro Mario Frame")).not.toBeInTheDocument();
-    expect(screen.queryByText("Tick 23")).not.toBeInTheDocument();
+    expect(screen.getByText("Tick")).toBeInTheDocument();
+    expect(screen.getByText("23")).toBeInTheDocument();
+    expect(screen.getByText("Last move")).toBeInTheDocument();
     expect(screen.queryByTestId("frame-status-line")).not.toBeInTheDocument();
     expect(screen.queryByTestId("frame-keyboard-hint")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /right \+ jump/i })).not.toBeInTheDocument();

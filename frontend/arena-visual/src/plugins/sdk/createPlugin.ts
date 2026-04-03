@@ -10,6 +10,7 @@ interface CreatePluginInput<
 > {
   pluginId: string;
   displayName: string;
+  operatorHint?: string;
   manifest: GamePluginManifest;
   render: ComponentType<ArenaPluginRenderProps<TDeviceEvent, TIntent>>;
   inputInterpreter?: InputInterpreter<TDeviceEvent, TIntent>;
@@ -23,6 +24,7 @@ export function createPlugin<
 >({
   pluginId,
   displayName,
+  operatorHint,
   manifest,
   render,
   inputInterpreter,
@@ -32,6 +34,7 @@ export function createPlugin<
   return {
     pluginId,
     displayName,
+    operatorHint,
     manifest,
     render,
     inputInterpreter,

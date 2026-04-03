@@ -46,4 +46,22 @@ describe("createPlugin", () => {
     expect(plugin.manifest.sceneKinds).toEqual(["frame"]);
     expect(plugin.manifest.supportedObservers).toEqual(["global"]);
   });
+
+  it("preserves optional operator hints for shell-level guidance", () => {
+    const plugin = createPlugin({
+      pluginId: "arena.visualization.retro_platformer.frame_v1",
+      displayName: "Retro Mario",
+      manifest: {
+        sceneKinds: ["frame"],
+        supportedObservers: ["player", "camera"],
+        acceptsHumanIntent: true,
+      },
+      render: () => null,
+      operatorHint: "Keyboard: arrows/WASD move, Space/J/Z jump, X/K run.",
+    });
+
+    expect(plugin.operatorHint).toBe(
+      "Keyboard: arrows/WASD move, Space/J/Z jump, X/K run.",
+    );
+  });
 });

@@ -20,6 +20,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.gomoku.board_v1",
     displayName: "Gomoku",
+    operatorHint: "Click a highlighted intersection to submit the next move.",
     manifest: {
       sceneKinds: ["board"],
       supportedObservers: ["player", "global"],
@@ -29,6 +30,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.tictactoe.board_v1",
     displayName: "Tic-Tac-Toe",
+    operatorHint: "Click a highlighted tile to claim the next turn.",
     manifest: {
       sceneKinds: ["board"],
       supportedObservers: ["player", "global"],
@@ -38,6 +40,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.doudizhu.table_v1",
     displayName: "Doudizhu",
+    operatorHint: "Use the stage controls and drawer to inspect seats, chat, and trace.",
     manifest: {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
@@ -47,6 +50,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.mahjong.table_v1",
     displayName: "Mahjong",
+    operatorHint: "Use the stage controls and drawer to inspect seats, events, and trace.",
     manifest: {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
@@ -56,6 +60,8 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.pettingzoo.frame_v1",
     displayName: "PettingZoo",
+    operatorHint:
+      "Watch the live frame and use the action controls when the decision window opens.",
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "global"],
@@ -65,6 +71,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.vizdoom.frame_v1",
     displayName: "VizDoom",
+    operatorHint: "Keyboard: W or Up moves, A/Left and D/Right turn, Space or J fires.",
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "camera"],
@@ -74,6 +81,8 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.retro_platformer.frame_v1",
     displayName: "Retro Mario",
+    operatorHint:
+      "Keyboard: arrows/WASD move, Space/J/Z jump, X/K run, Enter start, Shift/L select.",
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "camera"],
@@ -83,6 +92,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.openra.rts_v1",
     displayName: "OpenRA",
+    operatorHint: "Use the RTS stage controls to issue commands and inspect native match state.",
     manifest: {
       sceneKinds: ["rts"],
       supportedObservers: ["player", "spectator", "camera"],
@@ -92,6 +102,7 @@ const KNOWN_PLUGIN_META = [
 ] as const satisfies ReadonlyArray<{
   pluginId: string;
   displayName: string;
+  operatorHint?: string;
   manifest: GamePluginManifest;
 }>;
 

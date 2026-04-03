@@ -1,4 +1,10 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { VisualScene, VisualSession } from "../../gateway/types";
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
@@ -16,6 +22,15 @@ interface FrameBadge {
   kind: string;
   label: string;
   value: string;
+}
+
+interface FrameBounds {
+  width: number;
+  height: number;
+}
+
+interface FrameMeasurementCandidate extends FrameBounds {
+  top: number;
 }
 
 interface FrameSceneData {
@@ -218,11 +233,120 @@ function resolveCanvasClassName(fit: string): string {
     : "frame-surface__canvas frame-surface__canvas--contain";
 }
 
+export function fitViewportWithinBounds(
+  viewport: FrameViewport,
+  bounds: FrameBounds,
+): FrameBounds | null {
+  if (
+    viewport.width <= 0 ||
+    viewport.height <= 0 ||
+    bounds.width <= 0 ||
+    bounds.height <= 0
+  ) {
+    return null;
+  }
+
+  const scale = Math.min(bounds.width / viewport.width, bounds.height / viewport.height);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return null;
+  }
+
+  return {
+    width: viewport.width * scale,
+    height: viewport.height * scale,
+  };
+}
+
+export function resolveImmersiveViewportBounds(
+  viewport: FrameViewport,
+  candidates: FrameMeasurementCandidate[],
+  options: {
+    windowHeight: number;
+    fullscreenActive: boolean;
+  },
+): FrameBounds | null {
+  const fullscreenBottomInset = options.fullscreenActive ? 0 : 32;
+  let bestBounds: FrameBounds | null = null;
+  let bestArea = 0;
+
+  for (const candidate of candidates) {
+    const stageTop = Math.max(0, candidate.top);
+    const visibleHeight = Math.max(
+      0,
+      options.windowHeight - stageTop - fullscreenBottomInset,
+    );
+    const boundedHeight = Math.min(candidate.height, visibleHeight);
+    const nextBounds = fitViewportWithinBounds(viewport, {
+      width: candidate.width,
+      height: boundedHeight,
+    });
+    if (!nextBounds) {
+      continue;
+    }
+    const nextArea = nextBounds.width * nextBounds.height;
+    if (nextArea <= bestArea) {
+      continue;
+    }
+    bestBounds = nextBounds;
+    bestArea = nextArea;
+  }
+
+  return bestBounds;
+}
+
+function readMeasurementCandidate(element: HTMLElement | null): FrameMeasurementCandidate | null {
+  if (!element) {
+    return null;
+  }
+  const rect = element.getBoundingClientRect();
+  return {
+    width: rect.width,
+    height: rect.height,
+    top: rect.top,
+  };
+}
+
+function collectImmersiveMeasurementCandidates(
+  element: HTMLElement,
+): FrameMeasurementCandidate[] {
+  const candidates: FrameMeasurementCandidate[] = [];
+  const seen = new Set<HTMLElement>();
+
+  const appendCandidate = (candidateElement: HTMLElement | null) => {
+    if (!candidateElement || seen.has(candidateElement)) {
+      return;
+    }
+    seen.add(candidateElement);
+    const candidate = readMeasurementCandidate(candidateElement);
+    if (!candidate) {
+      return;
+    }
+    candidates.push(candidate);
+  };
+
+  appendCandidate(element);
+  appendCandidate(element.parentElement);
+  appendCandidate(element.closest(".session-stage__surface"));
+  appendCandidate(element.closest(".session-stage"));
+
+  return candidates;
+}
+
 function resolveViewportStyle(
   viewport: FrameViewport | null,
   presentation: "default" | "immersive",
+  fittedViewport: FrameBounds | null = null,
 ): CSSProperties {
   if (presentation === "immersive") {
+    if (viewport && fittedViewport) {
+      return {
+        width: `${fittedViewport.width}px`,
+        height: `${fittedViewport.height}px`,
+        maxWidth: "100%",
+        maxHeight: "100%",
+        aspectRatio: `${viewport.width} / ${viewport.height}`,
+      };
+    }
     if (!viewport) {
       return {
         width: "100%",
@@ -230,7 +354,7 @@ function resolveViewportStyle(
       };
     }
     return {
-      width: "100%",
+      width: "auto",
       maxWidth: "100%",
       aspectRatio: `${viewport.width} / ${viewport.height}`,
     };
@@ -250,6 +374,23 @@ function resolveViewportStyle(
   };
 }
 
+function resolveImmersiveCanvasStyle(): CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    maxHeight: "none",
+  };
+}
+
+function resolveImmersiveImageStyle(fit: string): CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    maxHeight: "none",
+    objectFit: fit === "cover" ? "cover" : "contain",
+  };
+}
+
 export function FrameSurface({
   gameLabel,
   session,
@@ -259,9 +400,13 @@ export function FrameSurface({
   keyboardControls,
   presentation = "default",
 }: FrameSurfaceProps) {
+  const rootRef = useRef<HTMLElement | null>(null);
   const isImmersive = presentation === "immersive";
   const frameScene = readFrameScene(scene);
   const actionDescriptors = readFrameActions(scene);
+  const [immersiveViewportBounds, setImmersiveViewportBounds] = useState<FrameBounds | null>(null);
+  const [immersiveFullscreenActive, setImmersiveFullscreenActive] = useState(false);
+  const [observedViewport, setObservedViewport] = useState<FrameViewport | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
   const keyboardInputSequenceRef = useRef(0);
@@ -272,6 +417,7 @@ export function FrameSurface({
     subscribe: mediaSubscribe,
   });
   const resolvedActorId = frameScene ? resolveFrameActorId(session, scene, frameScene) : null;
+  const effectiveViewport = frameScene?.frame.viewport ?? observedViewport;
   const canSubmitActions =
     frameScene !== null && session.scheduling.acceptsHumanIntent && resolvedActorId !== null;
   const keyboardSceneToken =
@@ -343,6 +489,35 @@ export function FrameSurface({
   }
 
   useEffect(() => {
+    setObservedViewport(null);
+  }, [primaryMediaId]);
+
+  useEffect(() => {
+    if (!isImmersive) {
+      setImmersiveFullscreenActive(false);
+      return;
+    }
+
+    const syncFullscreenState = () => {
+      const stageElement = rootRef.current?.closest(".session-stage");
+      const fullscreenElement = document.fullscreenElement;
+      const isFullscreen =
+        stageElement instanceof HTMLElement &&
+        fullscreenElement instanceof Element &&
+        (fullscreenElement === stageElement ||
+          stageElement.contains(fullscreenElement) ||
+          fullscreenElement.contains(stageElement));
+      setImmersiveFullscreenActive(isFullscreen);
+    };
+
+    syncFullscreenState();
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+    };
+  }, [isImmersive]);
+
+  useEffect(() => {
     if (!keyboardControls) {
       pressedKeysRef.current = new Set();
       lastKeyboardDispatchRef.current = null;
@@ -389,6 +564,79 @@ export function FrameSurface({
     };
   }, [actionDescriptors, canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput]);
 
+  useLayoutEffect(() => {
+    if (!isImmersive || !effectiveViewport) {
+      setImmersiveViewportBounds(null);
+      return;
+    }
+    const viewport = effectiveViewport;
+
+    const element = rootRef.current;
+    if (!element) {
+      setImmersiveViewportBounds(null);
+      return;
+    }
+
+    let frameId = 0;
+
+    const measure = () => {
+      const windowHeight =
+        window.innerHeight ||
+        document.documentElement.clientHeight ||
+        element.getBoundingClientRect().height;
+      const nextBounds = resolveImmersiveViewportBounds(
+        viewport,
+        collectImmersiveMeasurementCandidates(element),
+        {
+          windowHeight,
+          fullscreenActive: Boolean(document.fullscreenElement),
+        },
+      );
+
+      setImmersiveViewportBounds((currentBounds) => {
+        if (!nextBounds) {
+          return null;
+        }
+        if (
+          currentBounds &&
+          Math.abs(currentBounds.width - nextBounds.width) < 0.5 &&
+          Math.abs(currentBounds.height - nextBounds.height) < 0.5
+        ) {
+          return currentBounds;
+        }
+        return nextBounds;
+      });
+    };
+
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measure);
+    };
+
+    scheduleMeasure();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        scheduleMeasure();
+      });
+      resizeObserver.observe(element);
+      if (element.parentElement) {
+        resizeObserver.observe(element.parentElement);
+      }
+    }
+
+    window.addEventListener("resize", scheduleMeasure);
+    document.addEventListener("fullscreenchange", scheduleMeasure);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      document.removeEventListener("fullscreenchange", scheduleMeasure);
+    };
+  }, [effectiveViewport?.height, effectiveViewport?.width, isImmersive]);
+
   if (!frameScene) {
     return (
       <section className="plugin-stage-card">
@@ -404,7 +652,39 @@ export function FrameSurface({
   const canvasClassName = resolveCanvasClassName(frameScene.frame.fit);
   const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
   const lowLatencyStreamUrl = resolveLowLatencyStreamUrl(mediaState?.ref?.url, mediaState?.ref?.transport);
-  const viewportStyle = resolveViewportStyle(frameScene.frame.viewport, presentation);
+  const viewportStyle = resolveViewportStyle(
+    effectiveViewport,
+    presentation,
+    immersiveViewportBounds,
+  );
+  const immersiveCanvasStyle = isImmersive ? resolveImmersiveCanvasStyle() : undefined;
+  const immersiveImageStyle = isImmersive
+    ? resolveImmersiveImageStyle(frameScene.frame.fit)
+    : undefined;
+  const showImmersiveStatsPanel = isImmersive && frameScene.overlays.length > 0;
+
+  const handleImmersiveFullscreenToggle = async () => {
+    const stageElement = rootRef.current?.closest(".session-stage");
+    if (!(stageElement instanceof HTMLElement)) {
+      return;
+    }
+
+    try {
+      const fullscreenElement = document.fullscreenElement;
+      const stageIsFullscreen =
+        fullscreenElement instanceof Element &&
+        (fullscreenElement === stageElement ||
+          stageElement.contains(fullscreenElement) ||
+          fullscreenElement.contains(stageElement));
+      if (stageIsFullscreen) {
+        await document.exitFullscreen?.();
+        return;
+      }
+      await stageElement.requestFullscreen?.();
+    } catch {
+      // Fullscreen is a convenience affordance, not a required action.
+    }
+  };
 
   return (
     <section
@@ -415,6 +695,7 @@ export function FrameSurface({
         .filter((value) => value !== "")
         .join(" ")}
       data-testid="frame-surface-root"
+      ref={rootRef}
     >
       {!isImmersive ? (
         <>
@@ -434,11 +715,42 @@ export function FrameSurface({
         data-testid="frame-surface-viewport"
         style={viewportStyle}
       >
+        {isImmersive ? (
+          <button
+            type="button"
+            className="frame-surface__immersive-fullscreen"
+            data-testid="frame-surface-immersive-fullscreen"
+            aria-label={immersiveFullscreenActive ? "Exit fullscreen" : "Enter fullscreen"}
+            title={immersiveFullscreenActive ? "Exit fullscreen" : "Enter fullscreen"}
+            onClick={() => {
+              void handleImmersiveFullscreenToggle();
+            }}
+          >
+            <span className="frame-surface__immersive-fullscreen-icon" aria-hidden="true" />
+          </button>
+        ) : null}
+
         {lowLatencyStreamUrl ? (
           <LowLatencyFrameCanvas
             altText={frameScene.frame.altText}
             className={canvasClassName}
+            onFrameSizeChange={(size) => {
+              setObservedViewport((current) => {
+                if (
+                  current &&
+                  current.width === size.width &&
+                  current.height === size.height
+                ) {
+                  return current;
+                }
+                return {
+                  width: size.width,
+                  height: size.height,
+                };
+              });
+            }}
             streamUrl={lowLatencyStreamUrl}
+            style={immersiveCanvasStyle}
           />
         ) : imageSrc ? (
           <img
@@ -446,12 +758,31 @@ export function FrameSurface({
             className={imageClassName}
             data-testid="frame-surface-image"
             src={imageSrc}
+            onLoad={(event) => {
+              const target = event.currentTarget;
+              const width = target.naturalWidth || target.width;
+              const height = target.naturalHeight || target.height;
+              if (width <= 0 || height <= 0) {
+                return;
+              }
+              setObservedViewport((current) => {
+                if (
+                  current &&
+                  current.width === width &&
+                  current.height === height
+                ) {
+                  return current;
+                }
+                return { width, height };
+              });
+            }}
+            style={immersiveImageStyle}
           />
         ) : (
           <div className="frame-surface__fallback">Loading frame...</div>
         )}
 
-        {frameScene.overlays.length > 0 ? (
+        {!isImmersive && frameScene.overlays.length > 0 ? (
           <div className="frame-surface__overlay-strip">
             {frameScene.overlays.map((overlay) => (
               <div
@@ -465,6 +796,23 @@ export function FrameSurface({
           </div>
         ) : null}
       </div>
+
+      {showImmersiveStatsPanel ? (
+        <div
+          className="frame-surface__immersive-stats"
+          data-testid="frame-surface-immersive-stats"
+        >
+          {frameScene.overlays.map((overlay) => (
+            <div
+              className="frame-surface__immersive-stat"
+              key={`${overlay.kind}:${overlay.label}:${overlay.value}`}
+            >
+              <span>{overlay.label}</span>
+              <strong>{overlay.value}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {!isImmersive ? (
         <>

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -89,6 +89,13 @@ describe("SessionPage", () => {
         clearLatestActionReceipt: vi.fn(),
       } as unknown as ArenaSessionStore,
     };
+  }
+
+  function expandSessionControls(): void {
+    const expandButton = screen.queryByRole("button", { name: /expand session controls/i });
+    if (expandButton) {
+      fireEvent.click(expandButton);
+    }
   }
 
   it("routes host controls side-panel actions and plugin input through the session store", async () => {
@@ -194,6 +201,18 @@ describe("SessionPage", () => {
       expect(loadSession).toHaveBeenCalledWith({ sessionId: "sample-1" });
     });
 
+    expect(screen.getByRole("button", { name: /expand session controls/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /live tail/i })).not.toBeInTheDocument();
+
+    expandSessionControls();
+
+    expect(screen.getByRole("button", { name: /hide timeline drawer/i })).toBeInTheDocument();
+    const utilityRail = screen.getByRole("navigation", { name: /session utility rail/i });
+    expect(utilityRail).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Control" })).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Players" })).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Chat" })).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: /live tail/i }));
     await waitFor(() => {
       expect(submitControl).toHaveBeenNthCalledWith(1, {
@@ -238,6 +257,8 @@ describe("SessionPage", () => {
       });
     });
 
+    fireEvent.click(within(utilityRail).getByRole("button", { name: "Players" }));
+
     fireEvent.change(screen.getByLabelText(/observer view/i), {
       target: { value: "global" },
     });
@@ -258,7 +279,9 @@ describe("SessionPage", () => {
       });
     });
 
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(within(utilityRail).getByRole("button", { name: "Chat" }));
+    expect(screen.getByRole("button", { name: /close utility drawer/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     fireEvent.change(screen.getByLabelText(/chat message/i), {
       target: { value: "hello host" },
     });
@@ -270,6 +293,305 @@ describe("SessionPage", () => {
         text: "hello host",
       });
     });
+  });
+
+  it("collapses the session command deck on entry and expands on demand", () => {
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-collapsed",
+      },
+      session: {
+        sessionId: "sample-collapsed",
+        gameId: "gomoku",
+        pluginId: "arena.visualization.gomoku.board_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 1005,
+          cursorEventSeq: 5,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "Black",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "turn",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+          activeActorId: "Black",
+        },
+        capabilities: {
+          observerModes: ["global", "player"],
+        },
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: gomokuScene as VisualScene,
+      currentSceneSeq: 5,
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession: vi.fn().mockResolvedValue(undefined),
+      refreshSession: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      advanceReplayPlayback: vi.fn(),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    } as unknown as ArenaSessionStore);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-collapsed"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: /expand session controls/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /live tail/i })).not.toBeInTheDocument();
+
+    expandSessionControls();
+
+    expect(screen.getByRole("button", { name: /collapse session controls/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /live tail/i })).toBeInTheDocument();
+  });
+
+  it("shows latest timeline events in the collapsed rail before the drawer is expanded", async () => {
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-live",
+      },
+      session: {
+        sessionId: "sample-live",
+        gameId: "gomoku",
+        pluginId: "arena.visualization.gomoku.board_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 1005,
+          cursorEventSeq: 5,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "Black",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "turn",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+          activeActorId: "White",
+        },
+        capabilities: {
+          observerModes: ["global", "player"],
+        },
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: gomokuScene as VisualScene,
+      currentSceneSeq: 5,
+      timeline: {
+        status: "ready",
+        events: [
+          {
+            seq: 3,
+            tsMs: 1003,
+            type: "snapshot",
+            label: "Scene snapshot committed",
+            severity: "info",
+          },
+          {
+            seq: 4,
+            tsMs: 1004,
+            type: "action_intent",
+            label: "Human move window open",
+            severity: "warn",
+            tags: ["human_intent"],
+          },
+          {
+            seq: 5,
+            tsMs: 1005,
+            type: "system_marker",
+            label: "Latency spike detected",
+            severity: "critical",
+          },
+        ],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession: vi.fn().mockResolvedValue(undefined),
+      refreshSession: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      advanceReplayPlayback: vi.fn(),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    } as unknown as ArenaSessionStore);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-live"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Human move window open")).toBeInTheDocument();
+    expect(screen.getByText("Latency spike detected")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /event stream/i })).not.toBeInTheDocument();
+  });
+
+  it("surfaces live human-input readiness cues inside the stage hud", async () => {
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-human-live",
+      },
+      session: {
+        sessionId: "sample-human-live",
+        gameId: "gomoku",
+        pluginId: "arena.visualization.gomoku.board_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 1005,
+          cursorEventSeq: 5,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "Black",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "turn",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+          activeActorId: "White",
+        },
+        capabilities: {
+          observerModes: ["global", "player"],
+          supportsLowLatencyRealtimeInput: true,
+        },
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: gomokuScene as VisualScene,
+      currentSceneSeq: 5,
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue({
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession: vi.fn().mockResolvedValue(undefined),
+      refreshSession: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      advanceReplayPlayback: vi.fn(),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitActionLowLatency: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    } as unknown as ArenaSessionStore);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-human-live"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("session-brand")).toHaveTextContent("GAGE");
+    expect(screen.getByTestId("session-brand")).toHaveTextContent("GAME ARENA");
+    const utilityRail = screen.getByRole("navigation", { name: /session utility rail/i });
+    expect(within(utilityRail).getByRole("button", { name: "Control" })).toBeInTheDocument();
+    fireEvent.click(within(utilityRail).getByRole("button", { name: "Control" }));
+    expect(screen.getByRole("tab", { name: "Control" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Tail locked")).toBeInTheDocument();
+    expect(screen.getByText("Human input enabled")).toBeInTheDocument();
+    expect(screen.getByText("Low latency input")).toBeInTheDocument();
   });
 
   it("toggles fullscreen mode for the game stage", async () => {
@@ -395,7 +717,7 @@ describe("SessionPage", () => {
         screen.getByRole("button", { name: /^enter fullscreen$/i }),
       ).toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: /^enter fullscreen$/i }));
+      fireEvent.doubleClick(screen.getByTestId("session-stage"));
       await waitFor(() => {
         expect(requestFullscreen).toHaveBeenCalled();
         expect(screen.getByRole("button", { name: /exit fullscreen/i })).toBeInTheDocument();
@@ -532,12 +854,24 @@ describe("SessionPage", () => {
         </MemoryRouter>,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: /^enter fullscreen$/i }));
+      const utilityRail = screen.getByRole("navigation", { name: /session utility rail/i });
+      fireEvent.click(within(utilityRail).getByRole("button", { name: "Control" }));
+      expect(
+        screen.getByText(/keyboard: arrows\/wasd move, space\/j\/z jump/i),
+      ).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("frame-surface-immersive-fullscreen"));
       await waitFor(() => {
         expect(requestFullscreen).toHaveBeenCalled();
       });
 
-      expect(screen.queryByRole("button", { name: /exit fullscreen/i })).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId("session-stage").querySelector(".session-stage__fullscreen-button"),
+      ).toBeNull();
+      expect(screen.getByTestId("frame-surface-immersive-fullscreen")).toHaveAttribute(
+        "aria-label",
+        "Exit fullscreen",
+      );
     } finally {
       if (originalFullscreenElement) {
         Object.defineProperty(document, "fullscreenElement", originalFullscreenElement);
@@ -1331,6 +1665,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     expect(screen.getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
 
     await act(async () => {
@@ -1431,6 +1766,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     expect(screen.getByRole("button", { name: /^restart$/i })).toBeInTheDocument();
 
     await act(async () => {
@@ -1443,7 +1779,7 @@ describe("SessionPage", () => {
     });
   });
 
-  it("hides timeline and shared side panel during pure human realtime live play", async () => {
+  it("keeps the live utility rail available during pure human realtime play while leaving the timeline hidden", async () => {
     const snapshot: ArenaSessionStoreSnapshot = {
       status: "ready",
       sessionRequest: {
@@ -1554,7 +1890,18 @@ describe("SessionPage", () => {
     );
 
     expect(screen.queryByRole("heading", { name: /event stream/i })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/shared session context/i)).not.toBeInTheDocument();
+    const utilityRail = screen.getByRole("navigation", { name: /session utility rail/i });
+    expect(utilityRail).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Control" })).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Players" })).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Events" })).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Chat" })).toBeInTheDocument();
+    expect(within(utilityRail).getByRole("button", { name: "Trace" })).toBeInTheDocument();
+
+    fireEvent.click(within(utilityRail).getByRole("button", { name: "Players" }));
+
+    expect(screen.getByRole("button", { name: /close utility drawer/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Players" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("ticks replay playback forward while the session is replaying", async () => {
@@ -2029,6 +2376,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /replay/i }));
       await Promise.resolve();
@@ -2137,6 +2485,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /replay/i }));
       await Promise.resolve();
@@ -2239,6 +2588,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^stop$/i }));
       await Promise.resolve();
@@ -2341,6 +2691,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     expect(screen.getByRole("button", { name: /live tail/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /pause/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /replay/i })).toBeEnabled();
@@ -2443,6 +2794,7 @@ describe("SessionPage", () => {
       </MemoryRouter>,
     );
 
+    expandSessionControls();
     expect(screen.getByRole("button", { name: /live tail/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /pause/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /replay/i })).toBeDisabled();

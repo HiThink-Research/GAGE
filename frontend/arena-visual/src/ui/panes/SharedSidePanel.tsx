@@ -8,13 +8,29 @@ import type {
 import { useState } from "react";
 import { ActionIntentFlow } from "../../app/ActionIntentFlow";
 
+export const SHARED_SIDE_PANEL_TABS = ["Control", "Players", "Events", "Chat", "Trace"] as const;
+export type SharedSidePanelTab = (typeof SHARED_SIDE_PANEL_TABS)[number];
+
+export interface SharedSidePanelControlPanel {
+  title: string;
+  meta: Array<{
+    label: string;
+    value: string;
+  }>;
+  signals: string[];
+  operatorHint?: string;
+}
+
 interface SharedSidePanelProps {
   session?: VisualSession;
   scene?: VisualScene;
   latestActionReceipt?: ActionIntentReceipt;
   error?: string;
   isSubmitting?: boolean;
+  activeTab?: SharedSidePanelTab;
+  controlPanel?: SharedSidePanelControlPanel;
   onObserverChange?: (observer: ObserverRef) => void;
+  onActiveTabChange?: (tab: SharedSidePanelTab) => void;
   onChatSubmit?: (payload: Record<string, unknown>) => Promise<unknown>;
 }
 
@@ -252,16 +268,27 @@ export function SharedSidePanel({
   latestActionReceipt,
   error,
   isSubmitting,
+  activeTab: controlledActiveTab,
+  controlPanel,
   onObserverChange,
+  onActiveTabChange,
   onChatSubmit,
 }: SharedSidePanelProps) {
-  const [activeTab, setActiveTab] = useState<"Players" | "Events" | "Chat" | "Trace">("Players");
+  const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState<SharedSidePanelTab>("Players");
   const [chatMessage, setChatMessage] = useState("");
   const [isSubmittingChat, setIsSubmittingChat] = useState(false);
   const panels = readScenePanels(scene);
   const players = readPlayers(scene);
   const observerOptions = readObserverOptions(session, scene);
   const selectedObserverValue = readSelectedObserverValue(session);
+  const activeTab = controlledActiveTab ?? uncontrolledActiveTab;
+
+  const setActiveTab = (tab: SharedSidePanelTab) => {
+    if (controlledActiveTab === undefined) {
+      setUncontrolledActiveTab(tab);
+    }
+    onActiveTabChange?.(tab);
+  };
 
   async function handleChatSubmit(): Promise<void> {
     const nextMessage = chatMessage.trim();
@@ -287,7 +314,7 @@ export function SharedSidePanel({
   return (
     <section className="side-panel" aria-label="Shared session context">
       <div role="tablist" aria-label="Shared side panel sections">
-        {(["Players", "Events", "Chat", "Trace"] as const).map((tab) => (
+        {SHARED_SIDE_PANEL_TABS.map((tab) => (
           <button
             key={tab}
             type="button"
@@ -301,6 +328,37 @@ export function SharedSidePanel({
           </button>
         ))}
       </div>
+
+      {activeTab === "Control" ? (
+        <article className="side-panel__card side-panel__card--control">
+          <h2>Control</h2>
+          <p>{controlPanel?.title ?? "Waiting for session control state..."}</p>
+          {controlPanel?.meta.length ? (
+            <div className="side-panel__control-meta">
+              {controlPanel.meta.map((entry) => (
+                <span key={entry.label}>{entry.label} {entry.value}</span>
+              ))}
+            </div>
+          ) : null}
+          {controlPanel?.signals.length ? (
+            <div className="side-panel__control-signals">
+              {controlPanel.signals.map((signal) => (
+                <span className="side-panel__control-chip" key={signal}>
+                  {signal}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {controlPanel?.operatorHint ? (
+            <div
+              className="side-panel__control-hint"
+              title={controlPanel.operatorHint}
+            >
+              {controlPanel.operatorHint}
+            </div>
+          ) : null}
+        </article>
+      ) : null}
 
       {activeTab === "Players" ? (
         <article className="side-panel__card">

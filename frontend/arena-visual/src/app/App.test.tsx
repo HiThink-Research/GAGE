@@ -164,6 +164,7 @@ describe("App", () => {
 
     expect(screen.getByRole("heading", { name: /demo-session/i })).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: /expand session controls/i }));
     fireEvent.click(screen.getByRole("button", { name: /step \+1/i }));
 
     await waitFor(() => {
@@ -174,11 +175,12 @@ describe("App", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /live tail/i }));
+    fireEvent.click(screen.getByRole("button", { name: /open players panel/i }));
     fireEvent.change(screen.getByLabelText(/observer view/i), {
       target: { value: "global" },
     });
     fireEvent.click(screen.getByTestId("board-cell-B1"));
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: /open chat panel/i }));
     fireEvent.change(screen.getByLabelText(/chat message/i), {
       target: { value: "hello from app" },
     });
