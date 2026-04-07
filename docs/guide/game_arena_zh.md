@@ -2,7 +2,7 @@
 
 中文 | [English](game_arena.md)
 
-Game Arena 是 GAGE 中基于 `arena` 角色构建的统一游戏对战运行框架，覆盖五子棋、井字棋、ViZDoom、PettingZoo、Retro Mario、OpenRA、斗地主、麻将等多类对战场景，支持环境驱动、动作解析、回放记录和人机交互。
+Game Arena 是 GAGE 中基于 `arena` 角色构建的统一游戏对战运行框架，覆盖五子棋、井字棋、ViZDoom、PettingZoo、Retro Mario、斗地主、麻将等多类对战场景，支持环境驱动、动作解析、回放记录和人机交互。
 
 当前主实现位于：
 
@@ -35,7 +35,6 @@ Game Arena 是 GAGE 中基于 `arena` 角色构建的统一游戏对战运行框
 - ViZDoom：当前属于帧驱动 / 动作离散化环境，核心围绕 `vizdoom_env_v1 + vizdoom_parser_v1`、tick 或 record 调度、图像帧采集、websocketRGB 显示与回放展开。
 - PettingZoo：当前使用 `pettingzoo_aec_v1 + discrete_action_parser_v1` 这一类组合接入 AEC 环境，重点在离散动作、轮转 agent、图像流展示和回放。当前文档与截图示例使用的是 PettingZoo Atari 的 `space_invaders`。
 - Retro Mario：当前通过 `retro_env_v1` 接入 stable-retro 运行时，重点在持续运行环境、动作映射、录像与 websocketRGB/回放链路。
-- OpenRA：当前作为 RTS 风格 GameKit 接入，首版重点是 `rts` 场景契约、结构化 typed action、浏览器人类输入和后续 native bridge 的边界准备。
 - 斗地主 / 麻将：这两类更适合围绕 RLCard 环境、formatter/parser/renderer、结构化结果和前端回放来理解。
 
 ## 2. Pipeline 中的位置
@@ -214,7 +213,6 @@ ViZDoom 在这里体现的是一个带图像观察、动作映射、调度和回
 相关专题文档：
 
 - [Retro Mario 指南](game_arena_topics/game_arena_retro_mario_zh.md)
-- [OpenRA 指南](game_arena_topics/game_arena_openra_zh.md)
 - [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
 
 ## 8. 专题入口

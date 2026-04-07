@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import gage_eval.role.arena.schedulers.real_time_tick as real_time_tick_module
 import threading
 import time
@@ -12,6 +13,7 @@ from gage_eval.role.arena.core.arena_core import GameArenaCore
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
 from gage_eval.role.arena.core.game_session import (
     GameSession,
+    _build_visual_snapshot_observation,
     _build_action_server,
     _resolve_max_steps,
 )
@@ -34,7 +36,7 @@ from gage_eval.role.arena.support.units.action_shaping import (
     ContinuousActionShapingUnit,
 )
 from gage_eval.role.arena.support.workflow import GameSupportWorkflow
-from gage_eval.role.arena.types import ArenaAction
+from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.core.players import PlayerBindingSpec
 from gage_eval.role.arena.visualization.contracts import ControlCommand
@@ -190,8 +192,8 @@ def test_game_session_capture_output_tick_is_available_for_record_cadence() -> N
 
 def test_game_session_resolves_max_decisions_before_default_max_steps() -> None:
     sample = ArenaSample(
-        game_kit="openra",
-        env="ra_skirmish_1v1",
+        game_kit="sample_realtime",
+        env="queued_command",
         runtime_overrides={"max_decisions": 7200},
     )
     resolved = SimpleNamespace(scheduler=SimpleNamespace(defaults={"max_steps": 256}))
@@ -645,6 +647,146 @@ def test_game_session_wires_human_action_router_before_binding_and_cleans_it_up(
 
     assert runtime_hub.clear_calls == [("sample-human-1", runtime_hub.action_server)]
     assert runtime_hub.action_server.unregister_calls == ["sample-human-1"]
+
+
+def test_game_session_passes_runtime_queue_limits_to_human_action_router() -> None:
+    class _StubActionServer:
+        def __init__(self) -> None:
+            self.register_calls: list[tuple[str, object]] = []
+
+        def register_action_queue(self, sample_id: str, action_router: object) -> None:
+            self.register_calls.append((sample_id, action_router))
+
+    class _StubRuntimeServiceHub:
+        def __init__(self) -> None:
+            self.action_server = _StubActionServer()
+            self.bind_calls: list[tuple[str, object, object]] = []
+
+        def ensure_action_server(self, factory):
+            _ = factory
+            return self.action_server
+
+        def bind_sample_routes(
+            self,
+            *,
+            sample_id: str,
+            action_server: object | None = None,
+            action_router: object | None = None,
+            visualizer: object | None = None,
+        ) -> None:
+            _ = visualizer
+            self.bind_calls.append((sample_id, action_server, action_router))
+            if action_server is not None and action_router is not None:
+                action_server.register_action_queue(sample_id, action_router)
+
+        def clear_sample_routes(
+            self,
+            *,
+            sample_id: str,
+            action_server: object | None = None,
+            visualizer: object | None = None,
+        ) -> None:
+            _ = sample_id, action_server, visualizer
+
+    class FakeEnvironment:
+        def get_active_player(self) -> str:
+            return "Human"
+
+        def observe(self, player_id: str) -> dict[str, object]:
+            return {"player_id": player_id, "legal_moves": ["A1"]}
+
+        def apply(self, action):
+            return GameResult(
+                winner=action.player,
+                result="completed",
+                reason="applied",
+                move_count=1,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": action.move}],
+            )
+
+        def is_terminal(self) -> bool:
+            return False
+
+    runtime_hub = _StubRuntimeServiceHub()
+
+    def _env_factory(*, sample, resolved, resources, player_specs, invocation_context=None):
+        _ = sample, resolved, resources, player_specs, invocation_context
+        return FakeEnvironment()
+
+    resolved = SimpleNamespace(
+        game_kit=SimpleNamespace(kit_id="gomoku", seat_spec={}, defaults={}),
+        env_spec=SimpleNamespace(
+            env_id="gomoku_standard",
+            defaults={"env_factory": _env_factory},
+        ),
+        scheduler=TurnScheduler(binding_id="turn/default"),
+        resource_spec={},
+        player_bindings=(
+            PlayerBindingSpec(
+                seat="human-seat",
+                player_id="Human",
+                player_kind="human",
+                driver_id="player_driver/human_local_input",
+                driver_params={},
+            ),
+        ),
+        player_driver_registry=PlayerDriverRegistry(),
+        observation_workflow=None,
+        support_workflow=None,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=16,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="Human",
+                    semantics="queued_command",
+                    tick_interval_ms=16,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="queued_command",
+                tick_interval_ms=16,
+                max_command_queue_size=1,
+                command_stale_after_ms=500,
+                queue_overflow_policy="drop_newest",
+            ),
+        ),
+        visualization_spec=SimpleNamespace(
+            plugin_id="arena.visualization.gomoku.board_v1",
+            observer_schema={"supported_modes": ["player", "global"]},
+        ),
+    )
+
+    GameSession.from_resolved(
+        ArenaSample(game_kit="gomoku", env="gomoku-standard"),
+        resolved,
+        resources={},
+        invocation_context=GameArenaInvocationContext(
+            adapter_id="arena",
+            sample_id="sample-human-queued-1",
+            human_input_config={"enabled": True, "host": "127.0.0.1", "port": 0},
+            runtime_service_hub=runtime_hub,
+        ),
+    )
+
+    _, _, action_router = runtime_hub.bind_calls[0]
+    assert isinstance(action_router, SampleActionRouter)
+
+    action_router.put({"action": "a", "player_id": "Human", "sample_id": "sample-human-queued-1"})
+    action_router.put({"action": "b", "player_id": "Human", "sample_id": "sample-human-queued-1"})
+
+    queued_route = action_router.queue_for("Human")
+    assert action_router.runtime_diagnostics()["queue_overflow_count"] == 1
+    assert json.loads(queued_route.get_nowait())["action"] == "a"
 
 
 def test_build_action_server_respects_explicit_ephemeral_port() -> None:
@@ -1539,6 +1681,32 @@ def test_game_session_arena_visual_finish_stops_a_live_run_before_finalize(
     assert result.reason == "user_finish"
     assert time.monotonic() - started_at < 0.5
 
+
+def test_realtime_visual_snapshot_observation_preserves_frame_viewport() -> None:
+    observation = _build_visual_snapshot_observation(
+        environment=None,
+        fallback_observation=None,
+        tick=31,
+        step=6,
+        include_inline_frame_image=True,
+        frame_payload={
+            "tick": 31,
+            "step": 6,
+            "active_player_id": "player_0",
+            "viewport": {"width": 1280, "height": 720},
+            "view": {
+                "image": {
+                    "data_url": "data:image/png;base64,ZmFrZQ==",
+                    "mimeType": "image/png",
+                }
+            },
+            "legal_actions": {"items": []},
+        },
+    )
+
+    assert observation is not None
+    assert observation["viewport"] == {"width": 1280, "height": 720}
+
 def test_game_session_records_action_trace_fields_for_illegal_result() -> None:
     class FakeEnvironment:
         def __init__(self) -> None:
@@ -1650,9 +1818,9 @@ def test_scheduler_owned_queued_command_idle_tick_does_not_increment_step_or_mov
         def observe(self, player_id: str) -> object:
             return SimpleNamespace(
                 active_player=player_id,
-                legal_actions_items=("noop", "bridge_input"),
-                view_text="openra frame",
-                board_text="openra frame",
+                legal_actions_items=("noop", "issue_command"),
+                view_text="realtime frame",
+                board_text="realtime frame",
                 last_action=None,
             )
 
@@ -1712,7 +1880,7 @@ def test_scheduler_owned_queued_command_idle_tick_does_not_increment_step_or_mov
     )
     environment = AsyncEnvironment()
     session = GameSession(
-        sample=ArenaSample(game_kit="openra", env="ra_skirmish_1v1"),
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
         environment=environment,
         player_specs=(player,),
         max_steps=1,
@@ -1762,9 +1930,9 @@ def test_scheduler_owned_queued_command_idle_tick_advance_compatibility_keeps_st
         def observe(self, player_id: str) -> object:
             return SimpleNamespace(
                 active_player=player_id,
-                legal_actions_items=("noop", "bridge_input"),
-                view_text="openra frame",
-                board_text="openra frame",
+                legal_actions_items=("noop", "issue_command"),
+                view_text="realtime frame",
+                board_text="realtime frame",
             )
 
         def consume_session_progress_delta(self) -> int:
@@ -1774,7 +1942,7 @@ def test_scheduler_owned_queued_command_idle_tick_advance_compatibility_keeps_st
             return False
 
     session = GameSession(
-        sample=ArenaSample(game_kit="openra", env="ra_skirmish_1v1"),
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
         environment=FakeEnvironment(),
         player_specs=(SimpleNamespace(player_id="player_0", player_kind="human"),),
         runtime_profile=ResolvedRuntimeProfile(
@@ -1929,6 +2097,7 @@ def test_game_session_realtime_live_snapshots_throttle_inline_frame_images(
     session.advance()
     session.capture_output_tick()
 
+    recorder.export_live_header()
     snapshots = recorder.export_live_state().snapshot_payloads
     first_observation = snapshots[0]["snapshot"]["observation"]
     second_observation = snapshots[1]["snapshot"]["observation"]
@@ -2016,6 +2185,89 @@ def test_game_session_realtime_snapshot_cadence_respects_frame_output_hz_policy(
     assert len(snapshots) == 2
     assert snapshots[0]["tsMs"] == 1000
     assert snapshots[1]["tsMs"] == 1105
+
+
+def test_game_session_low_latency_live_snapshots_do_not_inline_every_frame_for_pure_human_realtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEnvironment:
+        def is_terminal(self) -> bool:
+            return False
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "board_text": "live frame state",
+                "stream_id": "main",
+                "metadata": {"stream_id": "main"},
+                "view": {
+                    "text": "live frame state",
+                    "image": {
+                        "data_url": "data:image/png;base64,Zm9v",
+                        "mimeType": "image/png",
+                    },
+                },
+            }
+
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.vizdoom.frame_v1",
+        game_id="vizdoom",
+        scheduling_family="real_time_tick",
+        session_id="sample-realtime-low-latency-inline-media",
+        visual_kind="frame",
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
+        environment=FakeEnvironment(),
+        visual_recorder=recorder,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=50,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="queued_command",
+                    tick_interval_ms=50,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="queued_command",
+                tick_interval_ms=50,
+                input_transport="realtime_ws",
+                frame_output_hz=20,
+                artifact_sampling_mode="async_decimated_live",
+                fallback_move="noop",
+            ),
+        ),
+    )
+    session._visualization_mode = "arena_visual"  # noqa: SLF001
+    session._visualization_live_scene_scheme = "low_latency_channel"  # noqa: SLF001
+
+    current_ts = {"value": 1000}
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.wall_clock_ms",
+        lambda: current_ts["value"],
+    )
+
+    session.advance()
+    session.capture_output_tick()
+    current_ts["value"] = 1055
+    session.advance()
+    session.capture_output_tick()
+
+    recorder.export_live_header()
+    snapshots = recorder.export_live_state().snapshot_payloads
+    first_observation = snapshots[0]["snapshot"]["observation"]
+    second_observation = snapshots[1]["snapshot"]["observation"]
+
+    assert first_observation["view"]["image"]["data_url"] == "data:image/png;base64,Zm9v"
+    assert "image" not in second_observation["view"]
 
 
 def test_game_session_scheduler_owned_realtime_uses_lightweight_visual_events(
@@ -2327,6 +2579,364 @@ def test_realtime_tick_scheduler_uses_fixed_cadence_for_scheduler_owned_human_re
     assert environment.applied_moves == ["noop"]
     assert session.final_result is not None
     assert session.final_result.result == "completed"
+
+
+def test_realtime_tick_scheduler_drains_multiple_scheduler_owned_queued_commands_in_single_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RealtimeQueuedCommandPlayer:
+        player_id = "player_0"
+        display_name = "player_0"
+        seat = "player_0"
+        player_kind = "human"
+        metadata: dict[str, object] = {}
+
+        def __init__(self) -> None:
+            self.drain_calls = 0
+            self.observations: list[ArenaObservation] = []
+
+        def drain_scheduler_owned_actions(
+            self,
+            observation: ArenaObservation,
+            *,
+            max_items: int,
+        ) -> list[ArenaAction]:
+            self.drain_calls += 1
+            self.observations.append(observation)
+            assert max_items == 2
+            return [
+                ArenaAction(player="player_0", move="issue_command", raw="issue_command"),
+                ArenaAction(player="player_0", move="followup_command", raw="followup_command"),
+            ]
+
+        def poll_scheduler_owned_action(self, observation: object) -> ArenaAction | None:
+            raise AssertionError("scheduler should drain queued commands in batch")
+
+        def next_action(self, observation: object) -> ArenaAction:
+            raise AssertionError("scheduler-owned realtime should not fall back to next_action")
+
+    class AsyncEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+            self.applied_moves: list[str] = []
+            self.observe_calls = 0
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> ArenaObservation:
+            self.observe_calls += 1
+            return ArenaObservation(
+                board_text="realtime frame",
+                legal_moves=("issue_command", "followup_command"),
+                active_player=player_id,
+            )
+
+        def apply(self, action: ArenaAction) -> GameResult | None:
+            self.applied_moves.append(action.move)
+            if len(self.applied_moves) < 2:
+                return None
+            self._terminal = True
+            return GameResult(
+                winner=action.player,
+                result="completed",
+                reason="applied",
+                move_count=len(self.applied_moves),
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[{"move": move} for move in self.applied_moves],
+            )
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+    current_time = {"value": 100.0}
+    slept: list[float] = []
+
+    def fake_monotonic() -> float:
+        return current_time["value"]
+
+    def fake_sleep(delay: float) -> None:
+        slept.append(delay)
+        current_time["value"] += delay
+
+    monkeypatch.setattr(
+        real_time_tick_module,
+        "time",
+        SimpleNamespace(sleep=fake_sleep, monotonic=fake_monotonic),
+        raising=False,
+    )
+
+    player = RealtimeQueuedCommandPlayer()
+    environment = AsyncEnvironment()
+    session = GameSession(
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
+        environment=environment,
+        player_specs=(player,),
+        max_steps=4,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=50,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="queued_command",
+                    tick_interval_ms=50,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="queued_command",
+                tick_interval_ms=50,
+                input_transport="realtime_ws",
+                frame_output_hz=20,
+                artifact_sampling_mode="async_decimated_live",
+                fallback_move="noop",
+                max_commands_per_tick=2,
+            ),
+        ),
+    )
+
+    RealTimeTickScheduler(binding_id="real_time_tick/default").run(session)
+
+    assert player.drain_calls == 1
+    assert len(player.observations) == 1
+    assert environment.observe_calls == 1
+    assert environment.applied_moves == ["issue_command", "followup_command"]
+    assert session.tick == 1
+    assert session.step == 2
+    assert sum(slept) <= 0.050001
+    assert session.final_result is not None
+    assert session.final_result.result == "completed"
+
+
+def test_realtime_tick_scheduler_batched_drain_keeps_decision_scoped_trace_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RealtimeQueuedCommandPlayer:
+        player_id = "player_0"
+        display_name = "player_0"
+        seat = "player_0"
+        player_kind = "human"
+        metadata: dict[str, object] = {}
+
+        def drain_scheduler_owned_actions(
+            self,
+            observation: ArenaObservation,
+            *,
+            max_items: int,
+        ) -> list[ArenaAction]:
+            del observation
+            assert max_items == 2
+            return [
+                ArenaAction(player="player_0", move="issue_command", raw="issue_command"),
+                ArenaAction(player="player_0", move="followup_command", raw="followup_command"),
+            ]
+
+    class AsyncEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text="realtime frame",
+                legal_moves=("issue_command", "followup_command"),
+                active_player=player_id,
+            )
+
+        def apply(self, action: ArenaAction) -> GameResult | None:
+            if action.move == "followup_command":
+                self._terminal = True
+                return GameResult(
+                    winner=action.player,
+                    result="completed",
+                    reason="applied",
+                    move_count=2,
+                    illegal_move_count=0,
+                    final_board="board",
+                    move_log=[
+                        {"move": "issue_command"},
+                        {"move": "followup_command"},
+                    ],
+                )
+            return None
+
+        def is_terminal(self) -> bool:
+            return self._terminal
+
+    current_time = {"value": 1000}
+
+    monkeypatch.setattr(
+        "gage_eval.role.arena.core.game_session.wall_clock_ms",
+        lambda: current_time["value"],
+    )
+    monkeypatch.setattr(
+        real_time_tick_module,
+        "time",
+        SimpleNamespace(
+            sleep=lambda delay: None,
+            monotonic=lambda: 100.0,
+        ),
+        raising=False,
+    )
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
+        environment=AsyncEnvironment(),
+        player_specs=(RealtimeQueuedCommandPlayer(),),
+        max_steps=4,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=50,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="queued_command",
+                    tick_interval_ms=50,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="queued_command",
+                tick_interval_ms=50,
+                input_transport="realtime_ws",
+                frame_output_hz=20,
+                artifact_sampling_mode="async_decimated_live",
+                fallback_move="noop",
+                max_commands_per_tick=2,
+            ),
+        ),
+    )
+
+    RealTimeTickScheduler(binding_id="real_time_tick/default").run(session)
+
+    assert len(session.arena_trace) == 2
+    assert [entry["step_index"] for entry in session.arena_trace] == [0, 1]
+    assert [entry["action_applied"] for entry in session.arena_trace] == [
+        "issue_command",
+        "followup_command",
+    ]
+    assert [entry["t_obs_ready_ms"] for entry in session.arena_trace] == [1000, 1000]
+    assert all(entry["t_obs_ready_ms"] is not None for entry in session.arena_trace)
+
+
+def test_realtime_tick_scheduler_clamps_driver_batch_to_max_commands_per_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RealtimeQueuedCommandPlayer:
+        player_id = "player_0"
+        display_name = "player_0"
+        seat = "player_0"
+        player_kind = "human"
+        metadata: dict[str, object] = {}
+
+        def drain_scheduler_owned_actions(
+            self,
+            observation: ArenaObservation,
+            *,
+            max_items: int,
+        ) -> list[ArenaAction]:
+            del observation
+            assert max_items == 2
+            return [
+                ArenaAction(player="player_0", move="issue_command", raw="issue_command"),
+                ArenaAction(player="player_0", move="followup_command", raw="followup_command"),
+                ArenaAction(player="player_0", move="extra_command", raw="extra_command"),
+            ]
+
+    class AsyncEnvironment:
+        def __init__(self) -> None:
+            self._terminal = False
+            self.applied_moves: list[str] = []
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text="realtime frame",
+                legal_moves=("issue_command", "followup_command", "extra_command"),
+                active_player=player_id,
+            )
+
+        def apply(self, action: ArenaAction) -> GameResult | None:
+            self.applied_moves.append(action.move)
+            return None
+
+        def is_terminal(self) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        real_time_tick_module,
+        "time",
+        SimpleNamespace(
+            sleep=lambda delay: None,
+            monotonic=lambda: 100.0,
+        ),
+        raising=False,
+    )
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
+        environment=AsyncEnvironment(),
+        player_specs=(RealtimeQueuedCommandPlayer(),),
+        max_steps=4,
+        max_ticks=1,
+        runtime_profile=ResolvedRuntimeProfile(
+            scheduler_binding="real_time_tick/default",
+            scheduler_family="real_time_tick",
+            tick_interval_ms=50,
+            pure_human_realtime=True,
+            scheduler_owns_realtime_clock=True,
+            supports_low_latency_realtime_input=True,
+            supports_realtime_input_websocket=True,
+            human_realtime_inputs=(
+                HumanRealtimeInputProfile(
+                    player_id="player_0",
+                    semantics="queued_command",
+                    tick_interval_ms=50,
+                ),
+            ),
+            realtime_human_control=RealtimeHumanControlProfile(
+                mode="scheduler_owned_human_realtime",
+                activation_scope="pure_human_only",
+                input_model="queued_command",
+                tick_interval_ms=50,
+                input_transport="realtime_ws",
+                frame_output_hz=20,
+                artifact_sampling_mode="async_decimated_live",
+                fallback_move="noop",
+                max_commands_per_tick=2,
+            ),
+        ),
+    )
+
+    RealTimeTickScheduler(binding_id="real_time_tick/default").run(session)
+
+    assert session.tick == 1
+    assert session.step == 2
+    assert session.environment.applied_moves == ["issue_command", "followup_command"]
+    assert [entry["action_applied"] for entry in session.arena_trace] == [
+        "issue_command",
+        "followup_command",
+    ]
+    assert session.final_result is not None
+    assert session.final_result["result"] == "max_ticks"
 
 
 def test_arena_output_writer_recursively_freezes_nested_trace_values() -> None:

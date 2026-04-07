@@ -76,8 +76,8 @@ def test_runtime_binding_resolver_parses_scheduler_owned_queued_command_v1_polic
     registry_module = importlib.import_module("gage_eval.game_kits.registry")
 
     sample = ArenaSample(
-        game_kit="openra",
-        env="ra_skirmish_1v1",
+        game_kit="retro_platformer",
+        env="retro_mario",
         players=(
             {
                 "seat": "player_0",
@@ -140,11 +140,12 @@ def test_runtime_binding_resolver_parses_scheduler_owned_queued_command_v1_polic
                 },
             ),
             (
-                "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
+                "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
                 {
-                    "input_semantics": "queued_command",
-                    "tick_interval_ms": 50,
-                    "timeout_ms": 50,
+                    "input_semantics": "continuous_state",
+                    "stateful_actions": True,
+                    "tick_interval_ms": 16,
+                    "timeout_ms": 16,
                     "timeout_fallback_move": "noop",
                 },
             ),
@@ -200,9 +201,9 @@ def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
             False,
         ),
         (
-            "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
-            "queued_command",
-            50,
+            "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
+            "continuous_state",
+            16,
             True,
             True,
         ),
@@ -412,75 +413,6 @@ def test_runtime_binding_resolver_supports_spec_backed_game_kit(fake_game_kit_re
     assert resolved.game_kit.kit_id == "arena/default"
     assert resolved.env_spec.env_id == "arena/default"
     assert resolved.scheduler.binding_id == "turn/default"
-
-
-@pytest.mark.parametrize(
-    ("env_id", "expected_resource_spec", "expected_content_refs"),
-    [
-        (
-            "ra_map01",
-            {"env_id": "ra_map01", "family": "openra"},
-            {
-                "mod": "mod/openra/ra",
-                "map": "map/openra/ra_map01",
-            },
-        ),
-        (
-            "ra_skirmish_1v1",
-            {"env_id": "ra_skirmish_1v1", "family": "openra", "mod": "ra"},
-            {
-                "mod": "mod/openra/ra",
-                "map": "map/openra/ra/marigold-town.oramap",
-            },
-        ),
-        (
-            "cnc_mission_gdi01",
-            {"env_id": "cnc_mission_gdi01", "family": "openra", "mod": "cnc"},
-            {
-                "mod": "mod/openra/cnc",
-                "map": "map/openra/cnc/gdi01",
-                "script": "script/openra/gdi01.lua",
-            },
-        ),
-        (
-            "d2k_skirmish_1v1",
-            {"env_id": "d2k_skirmish_1v1", "family": "openra", "mod": "d2k"},
-            {
-                "mod": "mod/openra/d2k",
-                "map": "map/openra/d2k/chin-rock.oramap",
-            },
-        ),
-    ],
-)
-def test_runtime_binding_resolver_resolves_openra_realtime_kit(
-    env_id: str,
-    expected_resource_spec: dict[str, str],
-    expected_content_refs: dict[str, str],
-) -> None:
-    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
-    registry_module = importlib.import_module("gage_eval.game_kits.registry")
-
-    resolver = runtime_binding.RuntimeBindingResolver(game_kits=registry_module.GameKitRegistry())
-    sample = ArenaSample(
-        game_kit="openra",
-        env=env_id,
-        runtime_overrides={"backend_mode": "dummy"},
-    )
-
-    resolved = resolver.resolve(sample)
-
-    assert resolved.game_kit.kit_id == "openra"
-    assert resolved.env_spec.env_id == env_id
-    assert resolved.scheduler.binding_id == "real_time_tick/default"
-    assert resolved.resource_spec == expected_resource_spec
-    assert resolved.visualization_spec is not None
-    assert resolved.visualization_spec.spec_id == "arena/visualization/openra_rts_v1"
-    assert resolved.visualization_spec.plugin_id == "arena.visualization.openra.rts_v1"
-    assert resolved.input_mapper == (
-        "gage_eval.game_kits.real_time_game.openra.input_mapper.OpenRAInputMapper"
-    )
-    for key, value in expected_content_refs.items():
-        assert resolved.game_content_refs[key] == value
 
 
 def test_runtime_binding_resolver_resolves_support_workflow(fake_game_kit_registry) -> None:

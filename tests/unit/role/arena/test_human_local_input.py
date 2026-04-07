@@ -16,6 +16,27 @@ from gage_eval.role.arena.player_drivers.human_local_input import LocalHumanInpu
 from gage_eval.role.arena.types import ArenaObservation
 
 
+def build_scheduler_owned_queued_command_player(*, action_queue: Queue[str]):
+    return LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "queued_command",
+                "tick_interval_ms": 50,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+            },
+        )
+    )
+
+
 def test_local_human_input_driver_preserves_structured_raw_payload_and_metadata() -> None:
     action_queue: Queue[str] = Queue()
     action_queue.put(
@@ -242,31 +263,46 @@ def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_
 
 def test_local_human_input_driver_scheduler_owned_queued_command_returns_no_action_for_empty_queue() -> None:
     action_queue: Queue[str] = Queue()
-    player = LocalHumanInputDriver(
-        driver_id="player_driver/human_local_input",
-        family="human",
-    ).bind(
-        PlayerBindingSpec(
-            seat="player_0",
-            player_id="player_0",
-            player_kind="human",
-            driver_id="player_driver/human_local_input",
-            driver_params={
-                "action_queue": action_queue,
-                "input_semantics": "queued_command",
-                "tick_interval_ms": 50,
-                "timeout_fallback_move": "noop",
-                "scheduler_owned_realtime": True,
-            },
-        )
-    )
+    player = build_scheduler_owned_queued_command_player(action_queue=action_queue)
     observation = ArenaObservation(
-        board_text="openra frame",
-        legal_moves=("noop", "bridge_input"),
+        board_text="realtime frame",
+        legal_moves=("noop", "issue_command"),
         active_player="player_0",
     )
 
     assert player.poll_scheduler_owned_action(observation) is None
+
+
+def test_local_human_input_driver_scheduler_owned_queued_command_drains_fifo_commands() -> None:
+    action_queue: Queue[str] = Queue()
+    action_queue.put(
+        dump_action_payload(build_action_payload(action="bridge_input", player_id="player_0"))
+    )
+    action_queue.put(
+        dump_action_payload(build_action_payload(action="issue_command", player_id="player_0"))
+    )
+
+    player = build_scheduler_owned_queued_command_player(action_queue=action_queue)
+    observation = ArenaObservation(
+        board_text="frame",
+        legal_moves=("bridge_input", "issue_command"),
+        active_player="player_0",
+    )
+
+    drained = player.drain_scheduler_owned_actions(observation=observation, max_items=4)
+
+    assert [action.move for action in drained] == ["bridge_input", "issue_command"]
+
+
+def test_local_human_input_driver_scheduler_owned_queued_command_returns_empty_list_when_queue_is_empty() -> None:
+    player = build_scheduler_owned_queued_command_player(action_queue=Queue())
+    observation = ArenaObservation(
+        board_text="frame",
+        legal_moves=("bridge_input",),
+        active_player="player_0",
+    )
+
+    assert player.drain_scheduler_owned_actions(observation=observation, max_items=4) == []
 
 
 def test_local_human_input_driver_continuous_state_async_waits_for_scheduler_deadline(
@@ -416,8 +452,8 @@ def test_local_human_input_driver_discrete_mode_supports_async_timeout_fallback(
         )
     )
     observation = ArenaObservation(
-        board_text="openra frame",
-        legal_moves=("noop", "bridge_input"),
+        board_text="realtime frame",
+        legal_moves=("noop", "issue_command"),
         active_player="player_0",
     )
 
@@ -434,9 +470,9 @@ def test_local_human_input_driver_discrete_mode_supports_async_timeout_fallback(
     action_queue.put(
         dump_action_payload(
             build_action_payload(
-                action="bridge_input",
+                action="issue_command",
                 player_id="player_0",
-                sample_id="openra-smoke",
+                sample_id="realtime-smoke",
             )
         )
     )
@@ -448,7 +484,7 @@ def test_local_human_input_driver_discrete_mode_supports_async_timeout_fallback(
 
     assert player.has_action() is True
     action = player.pop_action()
-    assert action.move == "bridge_input"
+    assert action.move == "issue_command"
 
     assert player.start_thinking(observation, deadline_ms=50) is True
     assert player.has_action() is False

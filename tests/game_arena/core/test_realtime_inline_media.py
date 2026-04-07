@@ -24,7 +24,7 @@ def test_game_session_realtime_live_snapshots_throttle_inline_frame_images_for_q
         def observe(self, player_id: str) -> object:
             return SimpleNamespace(
                 active_player=player_id,
-                legal_actions_items=("noop", "bridge_input"),
+                legal_actions_items=("noop", "issue_command"),
                 view_text="live frame state",
                 board_text="live frame state",
             )
@@ -50,14 +50,14 @@ def test_game_session_realtime_live_snapshots_throttle_inline_frame_images_for_q
             }
 
     recorder = ArenaVisualSessionRecorder(
-        plugin_id="arena.visualization.openra.rts_v1",
-        game_id="openra",
+        plugin_id="arena.visualization.vizdoom.frame_v1",
+        game_id="vizdoom",
         scheduling_family="real_time_tick",
-        session_id="sample-openra-live-idle-inline-media",
-        visual_kind="rts",
+        session_id="sample-realtime-live-idle-inline-media",
+        visual_kind="frame",
     )
     session = GameSession(
-        sample=ArenaSample(game_kit="openra", env="ra_skirmish_1v1"),
+        sample=ArenaSample(game_kit="sample_realtime", env="queued_command"),
         environment=FakeEnvironment(),
         visual_recorder=recorder,
         runtime_profile=ResolvedRuntimeProfile(

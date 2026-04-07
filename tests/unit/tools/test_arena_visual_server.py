@@ -19,8 +19,8 @@ from gage_eval.game_kits.board_game.gomoku.visualization import (
 from gage_eval.game_kits.board_game.tictactoe.visualization import (
     VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
 )
-from gage_eval.game_kits.real_time_game.openra.visualization import (
-    VISUALIZATION_SPEC as OPENRA_VISUALIZATION_SPEC,
+from gage_eval.game_kits.real_time_game.vizdoom.visualization import (
+    VISUALIZATION_SPEC as VIZDOOM_VISUALIZATION_SPEC,
 )
 from gage_eval.role.arena.core.game_session import _visual_payload_snapshot
 from gage_eval.game_kits.board_game.gomoku.environment import GomokuArenaEnvironment
@@ -308,13 +308,13 @@ def test_low_latency_http_stream_poll_interval_stays_realtime_friendly() -> None
     assert _LOW_LATENCY_STREAM_POLL_INTERVAL_S <= (1.0 / 144.0)
 
 
-def _build_openra_live_visual_recorder(
+def _build_low_latency_frame_visual_recorder(
     *,
-    session_id: str = "sample-openra-live",
+    session_id: str = "sample-low-latency-live",
 ) -> ArenaVisualSessionRecorder:
     recorder = ArenaVisualSessionRecorder(
-        plugin_id=OPENRA_VISUALIZATION_SPEC.plugin_id,
-        game_id="openra",
+        plugin_id=VIZDOOM_VISUALIZATION_SPEC.plugin_id,
+        game_id="vizdoom",
         scheduling_family="real_time_tick",
         session_id=session_id,
     )
@@ -325,38 +325,18 @@ def _build_openra_live_visual_recorder(
         player_id="player_0",
         observation={
             "active_player": "player_0",
-            "board_text": "Native OpenRA runtime",
+            "board_text": "Low latency frame runtime",
             "view": {
-                "text": "Native OpenRA runtime",
+                "text": "Low latency frame runtime",
             },
             "legal_actions": {
                 "items": [
                     {"id": "noop", "label": "No-op"},
-                    {"id": "bridge_input", "label": "Native input"},
+                    {"id": "fire", "label": "Fire"},
                 ]
             },
             "metadata": {
-                "stream_id": "main",
-                "map_id": "ra_skirmish_1v1",
-                "map": {
-                    "id": "ra_skirmish_1v1",
-                    "mod_id": "ra",
-                    "title": "Marigold Town",
-                    "preview_source": "native_runtime",
-                    "image_size": {"width": 1280, "height": 720},
-                },
-                "selection": {
-                    "unit_ids": [],
-                    "primary_unit_id": None,
-                },
-                "economy": {
-                    "credits": 0,
-                    "income_per_minute": 0,
-                    "power": {"produced": 0, "used": 0},
-                },
-                "objectives": [],
-                "units": [],
-                "production": {"queues": []},
+                "stream_id": "pov",
             },
         },
     )
@@ -368,46 +348,26 @@ def _build_openra_live_visual_recorder(
             "step": 1,
             "tick": 1,
             "move_count": 1,
-            "stream_id": "main",
+            "stream_id": "pov",
             "observation": {
                 "active_player": "player_0",
-                "board_text": "Native OpenRA runtime",
+                "board_text": "Low latency frame runtime",
                 "view": {
-                    "text": "Native OpenRA runtime",
+                    "text": "Low latency frame runtime",
                 },
                 "legal_actions": {
                     "items": [
                         {"id": "noop", "label": "No-op"},
-                        {"id": "bridge_input", "label": "Native input"},
+                        {"id": "fire", "label": "Fire"},
                     ]
                 },
                 "metadata": {
-                    "stream_id": "main",
-                    "map_id": "ra_skirmish_1v1",
-                    "map": {
-                        "id": "ra_skirmish_1v1",
-                        "mod_id": "ra",
-                        "title": "Marigold Town",
-                        "preview_source": "native_runtime",
-                        "image_size": {"width": 1280, "height": 720},
-                    },
-                    "selection": {
-                        "unit_ids": [],
-                        "primary_unit_id": None,
-                    },
-                    "economy": {
-                        "credits": 0,
-                        "income_per_minute": 0,
-                        "power": {"produced": 0, "used": 0},
-                    },
-                    "objectives": [],
-                    "units": [],
-                    "production": {"queues": []},
+                    "stream_id": "pov",
                 },
             },
             "media": {
                 "primary": {
-                    "mediaId": "openra-frame-live",
+                    "mediaId": "frame-live",
                     "transport": "http_pull",
                     "mimeType": "image/png",
                     "url": "data:image/png;base64,Zm9v",
@@ -418,7 +378,7 @@ def _build_openra_live_visual_recorder(
                 "height": 720,
             },
         },
-        label="openra_live_snapshot",
+        label="low_latency_live_snapshot",
         anchor=True,
     )
     return recorder
@@ -1166,13 +1126,13 @@ def test_arena_visual_http_server_serves_registered_low_latency_live_stream_with
         server.stop()
 
 
-def test_arena_visual_http_server_serves_registered_low_latency_openra_rts_stream_without_manifest(
+def test_arena_visual_http_server_serves_registered_low_latency_frame_stream_without_manifest(
     tmp_path: Path,
 ) -> None:
-    recorder = _build_openra_live_visual_recorder()
+    recorder = _build_low_latency_frame_visual_recorder()
     live_source = RecorderLiveSessionSource(
         recorder=recorder,
-        run_id="run-openra-live",
+        run_id="run-low-latency-live",
         live_scene_scheme="low_latency_channel",
     )
     server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
@@ -1181,19 +1141,19 @@ def test_arena_visual_http_server_serves_registered_low_latency_openra_rts_strea
     try:
         host, port = server.server_address
         scene_url = (
-            f"http://{host}:{port}/arena_visual/sessions/sample-openra-live/scene"
-            f"?seq=2&run_id=run-openra-live"
+            f"http://{host}:{port}/arena_visual/sessions/sample-low-latency-live/scene"
+            f"?seq=2&run_id=run-low-latency-live"
         )
 
         scene_payload = _get_json(scene_url)
-        assert scene_payload["kind"] == "rts"
+        assert scene_payload["kind"] == "frame"
         primary_media = scene_payload["media"]["primary"]
         assert isinstance(primary_media, dict)
         media_id = str(primary_media["mediaId"])
         media_payload = _get_json(
             "http://"
-            f"{host}:{port}/arena_visual/sessions/sample-openra-live/media/{media_id}"
-            "?run_id=run-openra-live"
+            f"{host}:{port}/arena_visual/sessions/sample-low-latency-live/media/{media_id}"
+            "?run_id=run-low-latency-live"
         )
         stream_url = str(primary_media["url"])
         if stream_url.startswith("/"):
@@ -1203,8 +1163,8 @@ def test_arena_visual_http_server_serves_registered_low_latency_openra_rts_strea
         assert primary_media["transport"] == "low_latency_channel"
         assert media_payload["transport"] == "low_latency_channel"
         assert str(primary_media["url"]).endswith(
-            "/arena_visual/sessions/sample-openra-live/media/"
-            f"{media_id}/stream?run_id=run-openra-live"
+            "/arena_visual/sessions/sample-low-latency-live/media/"
+            f"{media_id}/stream?run_id=run-low-latency-live"
         )
         assert content_type.startswith("multipart/x-mixed-replace")
         assert b"--frame" in prefix
@@ -1213,15 +1173,15 @@ def test_arena_visual_http_server_serves_registered_low_latency_openra_rts_strea
         server.stop()
 
 
-def test_openra_low_latency_live_source_prefers_latest_environment_frame_supplier() -> None:
-    recorder = _build_openra_live_visual_recorder()
+def test_low_latency_live_source_prefers_latest_environment_frame_supplier() -> None:
+    recorder = _build_low_latency_frame_visual_recorder()
 
     def load_latest_frame() -> dict[str, object]:
         return {
-            "stream_id": "main",
+            "stream_id": "pov",
             "media": {
                 "primary": {
-                    "mediaId": "openra-frame-live",
+                    "mediaId": "frame-live",
                     "transport": "http_pull",
                     "mimeType": "image/png",
                     "url": "data:image/png;base64,YmFy",
@@ -1231,7 +1191,7 @@ def test_openra_low_latency_live_source_prefers_latest_environment_frame_supplie
 
     live_source = RecorderLiveSessionSource(
         recorder=recorder,
-        run_id="run-openra-live",
+        run_id="run-low-latency-live",
         live_scene_scheme="low_latency_channel",
         live_frame_supplier=load_latest_frame,
     )
@@ -1241,7 +1201,7 @@ def test_openra_low_latency_live_source_prefers_latest_environment_frame_supplie
     assert scene is not None
     assert scene.media is not None
     assert scene.media.primary is not None
-    assert scene.media.primary.media_id == "live-channel-main"
+    assert scene.media.primary.media_id == "live-channel-pov"
     assert live_source.load_stream_frame(scene.media.primary.media_id) == (b"bar", "image/png")
 
 
@@ -1352,16 +1312,16 @@ def test_low_latency_live_source_streams_latest_rgb_frame_without_inline_snapsho
     assert len(content) > 0
 
 
-def test_openra_low_latency_live_source_preserves_native_png_frames_losslessly() -> None:
-    recorder = _build_openra_live_visual_recorder()
+def test_low_latency_live_source_preserves_png_frames_losslessly() -> None:
+    recorder = _build_low_latency_frame_visual_recorder()
     png_data_url = f"data:image/png;base64,{base64.b64encode(_SMALL_PNG_BYTES).decode('ascii')}"
 
     def load_latest_frame() -> dict[str, object]:
         return {
-            "stream_id": "main",
+            "stream_id": "pov",
             "media": {
                 "primary": {
-                    "mediaId": "openra-frame-live",
+                    "mediaId": "frame-live",
                     "transport": "http_pull",
                     "mimeType": "image/png",
                     "url": png_data_url,
@@ -1371,7 +1331,7 @@ def test_openra_low_latency_live_source_preserves_native_png_frames_losslessly()
 
     live_source = RecorderLiveSessionSource(
         recorder=recorder,
-        run_id="run-openra-live",
+        run_id="run-low-latency-live",
         live_scene_scheme="low_latency_channel",
         live_frame_supplier=load_latest_frame,
     )
@@ -1387,19 +1347,19 @@ def test_openra_low_latency_live_source_preserves_native_png_frames_losslessly()
     )
 
 
-def test_openra_low_latency_http_stream_keeps_png_part_type_for_native_frames(
+def test_low_latency_http_stream_keeps_png_part_type_for_source_frames(
     tmp_path: Path,
 ) -> None:
-    recorder = _build_openra_live_visual_recorder()
+    recorder = _build_low_latency_frame_visual_recorder()
     png_bytes = _build_valid_png_bytes()
     png_data_url = f"data:image/png;base64,{base64.b64encode(png_bytes).decode('ascii')}"
 
     def load_latest_frame() -> dict[str, object]:
         return {
-            "stream_id": "main",
+            "stream_id": "pov",
             "media": {
                 "primary": {
-                    "mediaId": "openra-frame-live",
+                    "mediaId": "frame-live",
                     "transport": "http_pull",
                     "mimeType": "image/png",
                     "url": png_data_url,
@@ -1409,7 +1369,7 @@ def test_openra_low_latency_http_stream_keeps_png_part_type_for_native_frames(
 
     live_source = RecorderLiveSessionSource(
         recorder=recorder,
-        run_id="run-openra-live",
+        run_id="run-low-latency-live",
         live_scene_scheme="low_latency_channel",
         live_frame_supplier=load_latest_frame,
     )
@@ -1419,8 +1379,8 @@ def test_openra_low_latency_http_stream_keeps_png_part_type_for_native_frames(
     try:
         host, port = server.server_address
         stream_url = (
-            f"http://{host}:{port}/arena_visual/sessions/sample-openra-live/media/"
-            "live-channel-main/stream?run_id=run-openra-live"
+            f"http://{host}:{port}/arena_visual/sessions/sample-low-latency-live/media/"
+            "live-channel-pov/stream?run_id=run-low-latency-live"
         )
 
         content_type, prefix = _read_stream_prefix(stream_url)
@@ -1431,7 +1391,7 @@ def test_openra_low_latency_http_stream_keeps_png_part_type_for_native_frames(
         server.stop()
 
 
-def test_openra_low_latency_frame_encoder_keeps_png_when_pillow_is_available(
+def test_low_latency_frame_encoder_keeps_png_when_pillow_is_available(
     monkeypatch,
 ) -> None:
     pil_image = __import__("PIL.Image", fromlist=["Image"])

@@ -2,7 +2,7 @@
 
 English | [中文](game_arena_zh.md)
 
-Game Arena is GAGE's unified runtime framework for game matches, built on the `arena` role. It covers board games such as Gomoku and Tic-Tac-Toe, as well as ViZDoom, PettingZoo, Retro Mario, OpenRA, Doudizhu, Mahjong, and other match scenarios that need environment-driven execution, action parsing, replay output, and human interaction.
+Game Arena is GAGE's unified runtime framework for game matches, built on the `arena` role. It covers board games such as Gomoku and Tic-Tac-Toe, as well as ViZDoom, PettingZoo, Retro Mario, Doudizhu, Mahjong, and other match scenarios that need environment-driven execution, action parsing, replay output, and human interaction.
 
 The current core implementation lives in:
 
@@ -35,7 +35,6 @@ The current implementation covers the following game families:
 - ViZDoom: a frame-driven, discrete-action environment centered on `vizdoom_env_v1 + vizdoom_parser_v1`, tick or record scheduling, frame capture, `websocketRGB` display, and replay.
 - PettingZoo: currently integrated through combinations such as `pettingzoo_aec_v1 + discrete_action_parser_v1`. The focus is discrete actions, rotating agents, image streaming, and replay. The current docs and screenshot use the PettingZoo Atari `space_invaders` example.
 - Retro Mario: integrated through `retro_env_v1` on top of the stable-retro runtime, with emphasis on persistent runtime behavior, action mapping, recording, and `websocketRGB` / replay flows.
-- OpenRA: currently shipped as an RTS-style GameKit with a deterministic stub backend, focused on the `rts` scene contract, structured action intents, browser-hosted human input, and future bridge readiness.
 - Doudizhu / Mahjong: these are better understood through RLCard environments, formatter/parser/renderer composition, structured results, and frontend replay.
 
 ## 2. Position in the Pipeline
@@ -214,7 +213,6 @@ This screenshot shows the current stable-retro Mario integration. Like ViZDoom a
 Related topic guides:
 
 - [Retro Mario Guide](game_arena_topics/game_arena_retro_mario.md)
-- [OpenRA Guide](game_arena_topics/game_arena_openra.md)
 - [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)
 
 ## 8. Topic Entry Points
