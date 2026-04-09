@@ -1,0 +1,51 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: terminal_bench_smoke_runtime
+  description: Terminal-bench runtime-owned smoke config.
+
+datasets:
+  - dataset_id: terminal_bench_smoke
+    loader: jsonl
+    params:
+      path: tests/data/samples/terminal_bench_demo.jsonl
+      streaming: false
+
+metrics:
+  - metric_id: terminal_bench_resolve_rate
+    implementation: gage_eval.metrics.builtin.runtime_judge:RuntimeResolveRateMetric
+  - metric_id: terminal_bench_failure_reason
+    implementation: gage_eval.metrics.builtin.runtime_judge:RuntimeFailureReasonMetric
+    aggregation: categorical_count
+
+agent_backends:
+  - agent_backend_id: terminal_agent
+    type: agent_class
+    config:
+      agent_class: gage_eval.role.agent.backends.demo_agent.RuntimeSmokeAgent
+
+sandbox_profiles:
+  - sandbox_id: terminal_bench_runtime
+    runtime: docker
+    runtime_configs:
+      start_container: false
+
+role_adapters:
+  - adapter_id: terminal_agent_main
+    role_type: dut_agent
+    agent_backend_id: terminal_agent
+    agent_runtime_id: terminal_bench_framework_loop
+    sandbox:
+      sandbox_id: terminal_bench_runtime
+      lifecycle: per_sample
+    params:
+      max_turns: 8
+
+tasks:
+  - task_id: terminal_bench_smoke_runtime
+    dataset_id: terminal_bench_smoke
+    steps:
+      - step: inference
+        adapter_id: terminal_agent_main
+      - step: auto_eval

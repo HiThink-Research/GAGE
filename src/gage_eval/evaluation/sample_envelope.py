@@ -778,6 +778,45 @@ def update_eval_result(sample: Dict[str, Any], judge_output: Optional[Dict[str, 
         eval_result[key] = copy.deepcopy(value)
 
 
+def resolve_runtime_judge_output(
+    model_output: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve runtime-owned judge output embedded in model output.
+
+    Args:
+        model_output: Explicit or resolved model output payload.
+
+    Returns:
+        A dict-shaped judge_output derived from `runtime_judge_outcome` when present.
+    """
+
+    if not isinstance(model_output, Mapping):
+        return {}
+    runtime_outcome = model_output.get("runtime_judge_outcome")
+    if not isinstance(runtime_outcome, Mapping):
+        return {}
+
+    judge_output = runtime_outcome.get("judge_output")
+    if isinstance(judge_output, Mapping) and judge_output:
+        return dict(judge_output)
+
+    failure = runtime_outcome.get("failure")
+    if not isinstance(failure, Mapping) or not failure:
+        return {}
+
+    return {
+        "status": "failed",
+        "resolved": False,
+        "failure_reason": failure.get("failure_code"),
+        "failure_domain": failure.get("failure_domain"),
+        "score": 0.0,
+        "summary": failure.get("summary") or "",
+        "artifact_paths": dict(failure.get("artifact_paths") or {}),
+        "judge_source": "runtime_verifier",
+        "failure": dict(failure),
+    }
+
+
 def resolve_judge_output(
     sample: Optional[Mapping[str, Any]],
     judge_output: Optional[Mapping[str, Any]],
@@ -798,6 +837,9 @@ def resolve_judge_output(
         eval_result = sample.get("eval_result")
         if isinstance(eval_result, Mapping) and eval_result:
             return dict(eval_result)
+        runtime_bound = resolve_runtime_judge_output(resolve_model_output(sample, None))
+        if runtime_bound:
+            return runtime_bound
         legacy = sample.get("judge_output")
         if isinstance(legacy, Mapping) and legacy:
             return dict(legacy)

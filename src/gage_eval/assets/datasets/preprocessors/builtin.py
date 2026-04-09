@@ -29,7 +29,11 @@ from gage_eval.assets.datasets.preprocessors.tau2_preprocessor import Tau2Prepro
 from gage_eval.registry import registry
 
 # benchmark GPQA-diamond
-from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
+try:
+    from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
+except Exception as exc:  # pragma: no cover - optional dependency guard
+    NewGpqaDiamond = None
+    warnings.warn(f"GPQA diamond preprocessor unavailable: {exc}", RuntimeWarning)
 
 # benchmark MathVista
 try:
@@ -338,14 +342,15 @@ if NewMathVista is not None:
 
 
 # benchmark GPQA-diamond
-@registry.asset(
-    "dataset_preprocessors",
-    "gpqa_diamond_multi_choice",
-    desc="GPQA diamond subset multiple-choice prompt wrapper",
-    tags=("prompt", "gpqa", "gpqa_diamond", "multiple-choice"),
-)
-class GpqaDiamondPreprocessor(NewGpqaDiamond):
-    pass
+if NewGpqaDiamond is not None:
+    @registry.asset(
+        "dataset_preprocessors",
+        "gpqa_diamond_multi_choice",
+        desc="GPQA diamond subset multiple-choice prompt wrapper",
+        tags=("prompt", "gpqa", "gpqa_diamond", "multiple-choice"),
+    )
+    class GpqaDiamondPreprocessor(NewGpqaDiamond):
+        pass
 
 # benchmark MathVista
 if NewMathVistaChat is not None:
@@ -532,4 +537,3 @@ class MRCRPreprocessor(MRCRConverter):
 )
 class MMSUPreprocessor(MMSUConverter):
     pass
-

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
-from gage_eval.role.context.tau2_bootstrap import Tau2BootstrapContext
+from gage_eval.agent_eval_kits.tau2.runtime import Tau2RuntimeEntry
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 from tests._support.stubs.tau2_stub import install_tau2_stub
 
 
-def test_tau2_bootstrap_injects_messages_and_policy(tmp_path: Path, monkeypatch) -> None:
+def test_tau2_runtime_bootstrap_injects_messages_and_policy(tmp_path: Path, monkeypatch) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     manager = SandboxManager()
     provider = SandboxProvider(
@@ -21,8 +22,13 @@ def test_tau2_bootstrap_injects_messages_and_policy(tmp_path: Path, monkeypatch)
         "metadata": {"tau2": {"domain": "airline", "trial": 0, "seed": 1}},
         "raw_assets": {"tau2": {"task": {"id": "task-bootstrap", "user_scenario": {"instructions": "Help"}}}},
     }
-    output = Tau2BootstrapContext().provide({"sample": sample, "sandbox_provider": provider})
+    output = Tau2RuntimeEntry().bootstrap(
+        session=SimpleNamespace(),
+        sample=sample,
+        payload={},
+        sandbox_provider=provider,
+    )
 
     assert sample["messages"]
     assert sample["metadata"]["tau2"]["policy"] == "policy"
-    assert "tools_schema" in output
+    assert output["prompt_context"]["tools_schema"]

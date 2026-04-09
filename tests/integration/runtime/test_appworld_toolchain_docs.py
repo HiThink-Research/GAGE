@@ -38,6 +38,7 @@ def test_toolchain_schema_yaml_documentation() -> None:
         meta_tool_mode=False,
         tool_doc_enabled=True,
         tool_doc_format="schema_yaml",
+        allow_runtime_owned_tool_docs=True,
     )
 
     result = asyncio.run(adapter.ainvoke({"sample": {}}, RoleAdapterState()))

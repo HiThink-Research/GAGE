@@ -1,0 +1,87 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: terminal_bench_framework_loop_ollama
+  description: Terminal-bench framework-loop config backed by an Ollama OpenAI-compatible endpoint.
+
+prompts:
+  - prompt_id: terminal_bench_framework_loop_system
+    renderer: jinja_chat
+    template: |
+      <instructions>
+      You are solving a terminal benchmark task inside a sandboxed workspace.
+      Use the `run_shell` tool to inspect or modify files in `/workspace`.
+      Prefer short shell commands.
+      Reply with exactly `done` when the task is complete.
+      </instructions>
+    params:
+      role: system
+      include_existing: true
+
+datasets:
+  - dataset_id: terminal_bench_smoke
+    loader: jsonl
+    params:
+      path: tests/data/samples/terminal_bench_demo.jsonl
+      streaming: false
+
+metrics:
+  - metric_id: terminal_bench_resolve_rate
+    implementation: gage_eval.metrics.builtin.runtime_judge:RuntimeResolveRateMetric
+  - metric_id: terminal_bench_failure_reason
+    implementation: gage_eval.metrics.builtin.runtime_judge:RuntimeFailureReasonMetric
+    aggregation: categorical_count
+
+backends:
+  - backend_id: ollama_openai_http
+    type: openai_http
+    config:
+      base_url: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}
+      model: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      require_api_key: false
+      timeout: 120
+      generation_parameters:
+        temperature: 0.0
+
+agent_backends:
+  - agent_backend_id: terminal_agent
+    type: model_backend
+    backend_id: ollama_openai_http
+    config:
+      force_tool_choice: first_turn
+
+sandbox_profiles:
+  - sandbox_id: terminal_bench_runtime
+    runtime: docker
+    image: ubuntu:22.04
+    runtime_configs:
+      start_container: true
+      auto_remove: true
+      network_mode: none
+      entrypoint: /bin/bash
+      command:
+        - -c
+        - sleep 3600
+      workdir: /workspace
+      exec_workdir: /workspace
+
+role_adapters:
+  - adapter_id: terminal_agent_main
+    role_type: dut_agent
+    agent_backend_id: terminal_agent
+    agent_runtime_id: terminal_bench_framework_loop
+    prompt_id: terminal_bench_framework_loop_system
+    sandbox:
+      sandbox_id: terminal_bench_runtime
+      lifecycle: per_sample
+    params:
+      max_turns: 8
+
+tasks:
+  - task_id: terminal_bench_framework_loop_ollama
+    dataset_id: terminal_bench_smoke
+    steps:
+      - step: inference
+        adapter_id: terminal_agent_main
+      - step: auto_eval

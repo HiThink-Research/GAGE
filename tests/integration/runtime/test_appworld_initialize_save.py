@@ -1,69 +1,66 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from gage_eval.role.agent.loop import AgentLoop
-from gage_eval.role.agent.tool_router import ToolRouter
-from gage_eval.sandbox.integrations.appworld.hooks import AppWorldInitializeHook, AppWorldSaveHook
-from gage_eval.sandbox.manager import SandboxHandle
+from gage_eval.agent_eval_kits.appworld.runtime import AppWorldRuntime
 
 
-class FakeBackend:
-    def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {"answer": "done"}
+class _StubProvider:
+    def __init__(self, runtime_handle: dict[str, Any]) -> None:
+        self._handle = SimpleNamespace(runtime_handle=runtime_handle, sandbox=None)
 
-
-class StubSandbox:
-    def is_alive(self, timeout_s: float | None = None) -> bool:
-        return True
-
-
-class StubProvider:
-    def __init__(self, runtime_handle: Dict[str, Any]) -> None:
-        self._handle = SandboxHandle(
-            sandbox=StubSandbox(),
-            config={},
-            runtime_handle=runtime_handle,
-        )
-
-    def get_handle(self) -> SandboxHandle:
+    def get_handle(self):
         return self._handle
 
 
 @pytest.mark.fast
-def test_appworld_initialize_and_save_hooks() -> None:
-    calls: List[Tuple[str, Dict[str, Any]]] = []
+def test_appworld_runtime_bootstrap_and_save_without_legacy_hooks() -> None:
+    calls: list[tuple[str, str, dict[str, Any], int]] = []
 
-    def requester(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        calls.append((method, payload))
+    def requester(
+        endpoint: str,
+        method: str,
+        payload: dict[str, Any],
+        timeout_s: int,
+    ) -> dict[str, Any]:
+        calls.append((endpoint, method, payload, timeout_s))
         return {"output": {"method": method, "task_id": payload.get("task_id")}}
 
-    loop = AgentLoop(
-        backend=FakeBackend(),
-        tool_router=ToolRouter(),
-        pre_hooks=[AppWorldInitializeHook(requester=requester)],
-        post_hooks=[AppWorldSaveHook(requester=requester)],
+    runtime = AppWorldRuntime(requester=requester)
+    provider = _StubProvider(
+        {
+            "env_endpoint": "http://env",
+            "apis_endpoint": "http://127.0.0.1:9000",
+            "mcp_endpoint": "http://127.0.0.1:5001",
+        }
     )
-    loop.run(
-        messages=[{"role": "user", "content": "hi"}],
-        sandbox_config={
-            "runtime_configs": {
-                "env_endpoint": "http://env",
-                "apis_endpoint": "http://127.0.0.1:9000",
+    sample = {
+        "metadata": {
+            "appworld": {
+                "task_id": "task-1",
+                "ground_truth_mode": "auto",
+                "allowed_apps": ["mail"],
             }
-        },
-        sandbox_provider=StubProvider(
-            {
-                "env_endpoint": "http://env",
-                "apis_endpoint": "http://127.0.0.1:9000",
-            }
-        ),
-        sample={"metadata": {"appworld": {"task_id": "task-1"}}},
-    )
+        }
+    }
 
-    assert calls[0][0] == "initialize"
-    assert calls[0][1]["task_id"] == "task-1"
-    assert calls[0][1]["remote_apis_url"] == "http://127.0.0.1:9000"
-    assert calls[1][0] == "save"
+    bootstrap = runtime.bootstrap(
+        session=SimpleNamespace(),
+        sample=sample,
+        payload={},
+        sandbox_provider=provider,
+    )
+    saved = runtime.save(sample=sample, sandbox_provider=provider)
+
+    assert calls[0][0] == "http://env"
+    assert calls[0][1] == "initialize"
+    assert calls[0][2]["task_id"] == "task-1"
+    assert calls[0][2]["remote_apis_url"] == "http://127.0.0.1:9000"
+    assert calls[0][2]["remote_mcp_url"] == "http://127.0.0.1:5001"
+    assert calls[0][2]["ground_truth_mode"] == "minimal"
+    assert calls[1][1] == "save"
+    assert bootstrap["benchmark_state"]["initialize"]["method"] == "initialize"
+    assert saved["method"] == "save"

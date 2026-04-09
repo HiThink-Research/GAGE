@@ -102,6 +102,8 @@ class RoleAdapterSpec:
     backend: Optional[Dict[str, Any]] = None
     agent_backend_id: Optional[str] = None
     agent_backend: Optional[Dict[str, Any]] = None
+    agent_runtime_id: Optional[str] = None
+    compat_runtime_id: Optional[str] = None
     mcp_client_id: Optional[str] = None
     prompt_id: Optional[str] = None
     prompt_params: Dict[str, Any] = field(default_factory=dict)

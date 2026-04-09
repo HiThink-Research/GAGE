@@ -209,6 +209,8 @@ class PipelineConfigBuilder:
                 backend=dict(item.get("backend", {})) if item.get("backend") else None,
                 agent_backend_id=item.get("agent_backend_id"),
                 agent_backend=dict(item.get("agent_backend", {})) if item.get("agent_backend") else None,
+                agent_runtime_id=item.get("agent_runtime_id"),
+                compat_runtime_id=item.get("compat_runtime_id"),
                 mcp_client_id=item.get("mcp_client_id"),
                 prompt_id=item.get("prompt_id"),
                 prompt_params=item.get("prompt_params") or item.get("prompt_args", {}),

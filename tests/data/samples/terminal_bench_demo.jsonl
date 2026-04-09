@@ -1,0 +1,1 @@
+{"id":"terminal-1","instruction":"Create a file named hello.txt containing the word hello.","expected_answer":"done","messages":[{"role":"user","content":"Create a file named hello.txt containing the word hello."}]}

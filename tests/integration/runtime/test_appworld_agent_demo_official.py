@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
+import gage_eval.agent_eval_kits.appworld.runtime as appworld_runtime_module
 from gage_eval.config import build_default_registry
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
@@ -37,6 +39,17 @@ class DemoAgent:
         return {"answer": "done"}
 
 
+class _ResponseStub:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return dict(self._payload)
+
+
 @pytest.mark.io
 def test_appworld_demo_with_streamable_http(
     temp_workspace: Path,
@@ -47,15 +60,23 @@ def test_appworld_demo_with_streamable_http(
         / "config"
         / "custom"
         / "appworld"
-        / "appworld_agent_demo.yaml"
+        / "appworld_agent_demo_runtime.yaml"
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     stub = AppWorldMcpStub()
+    lifecycle_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_post(url: str, json: dict[str, Any], timeout: int):
+        method = url.rsplit("/", 1)[-1]
+        lifecycle_calls.append((method, dict(json or {})))
+        return _ResponseStub({"output": {"status": "ok", "method": method, "task_id": json.get("task_id")}})
+
     def requester(method: str, payload: dict) -> dict:
         return stub.requester(method, payload)
 
+    monkeypatch.setattr(appworld_runtime_module.requests, "post", fake_post)
     payload["agent_backends"][0]["type"] = "agent_class"
     payload["agent_backends"][0]["config"] = {"agent_class": DemoAgent, "method": "run"}
     payload["backends"][0]["type"] = "dummy"
@@ -63,10 +84,10 @@ def test_appworld_demo_with_streamable_http(
     payload["mcp_clients"][0]["endpoint"] = "http://stub"
     payload["mcp_clients"][0]["params"] = {**payload["mcp_clients"][0].get("params", {}), "requester": requester}
     payload["tasks"][0]["max_samples"] = 1
-    dut_agent = next(item for item in payload["role_adapters"] if item.get("adapter_id") == "dut_agent_main")
-    dut_agent.setdefault("params", {})
-    dut_agent["params"]["pre_hooks"] = []
-    dut_agent["params"]["post_hooks"] = []
+    payload["tasks"][0]["steps"] = [
+        {"step": "support", "adapter_id": "toolchain_main"},
+        {"step": "inference", "adapter_id": "dut_agent_main"},
+    ]
     payload["sandbox_profiles"][0]["runtime_configs"]["start_container"] = False
 
     config = PipelineConfig.from_dict(payload)
@@ -80,3 +101,4 @@ def test_appworld_demo_with_streamable_http(
     runtime.run()
 
     assert stub.tool_calls and stub.tool_calls[0]["name"] == "step"
+    assert [name for name, _ in lifecycle_calls] == ["initialize", "save"]

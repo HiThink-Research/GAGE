@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import importlib
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, TYPE_CHECKING
 
@@ -55,6 +56,22 @@ class _PreprocessorAdapter:
 
     def apply(self, sample: Dict[str, Any], **kwargs):
         return self._preprocessor.transform(sample, **kwargs)
+
+
+_DIRECT_PREPROCESSOR_FALLBACKS: Dict[str, tuple[str, str]] = {
+    "appworld_preprocessor": (
+        "gage_eval.assets.datasets.preprocessors.appworld_preprocessor",
+        "AppWorldPreprocessor",
+    ),
+    "swebench_pro_standardizer": (
+        "gage_eval.assets.datasets.preprocessors.swebench_pro_preprocessor",
+        "SwebenchProPreprocessor",
+    ),
+    "tau2_preprocessor": (
+        "gage_eval.assets.datasets.preprocessors.tau2_preprocessor",
+        "Tau2Preprocessor",
+    ),
+}
 
 
 def resolve_callable(ref: Optional[Any]) -> Optional[Callable[[Dict[str, Any]], Any]]:
@@ -135,6 +152,10 @@ def _resolve_registered_preprocessor(name: str, kwargs: Dict[str, Any]):
     """Resolve registered class-based preprocessor by registry name."""
     if not name:
         return None
+    preprocessor_cls = _resolve_preprocessor_fallback(name)
+    if preprocessor_cls is not None:
+        preprocessor = preprocessor_cls(**kwargs)
+        return _PreprocessorAdapter(preprocessor)
     try:
         preprocessor_cls = registry.get("dataset_preprocessors", name)
     except KeyError:
@@ -142,9 +163,22 @@ def _resolve_registered_preprocessor(name: str, kwargs: Dict[str, Any]):
         try:
             preprocessor_cls = registry.get("dataset_preprocessors", name)
         except KeyError:
-            return None
+            preprocessor_cls = _resolve_preprocessor_fallback(name)
+            if preprocessor_cls is None:
+                return None
     preprocessor = preprocessor_cls(**kwargs)
     return _PreprocessorAdapter(preprocessor)
+
+
+def _resolve_preprocessor_fallback(name: str):
+    """Resolve lightweight preprocessors without importing the whole builtin registry module."""
+
+    target = _DIRECT_PREPROCESSOR_FALLBACKS.get(name)
+    if target is None:
+        return None
+    module_name, class_name = target
+    module = importlib.import_module(module_name)
+    return getattr(module, class_name, None)
 
 
 def inject_default_params(record: Dict[str, Any], default_params: Optional[Dict[str, Any]]) -> Dict[str, Any]:

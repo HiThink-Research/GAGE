@@ -43,7 +43,7 @@ def test_dut_agent_persists_system_prompt() -> None:
     payload = {
         "sample": {
             "messages": [{"role": "user", "content": "hi"}],
-            "support_outputs": [{"tool_documentation": "DOCS"}],
+            "prompt_context": {"tool_documentation": "DOCS"},
         }
     }
 

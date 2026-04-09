@@ -17,8 +17,7 @@ def test_appworld_prompt_asset_renders_api_docs_context() -> None:
     sample = {
         "support_outputs": [
             {
-                "api_docs_context": "# api_docs\n{}",
-                "tool_documentation": "TOOLS",
+                "app_descriptions_string": "Mail app: send and list messages.",
             }
         ]
     }

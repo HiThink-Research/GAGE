@@ -8,6 +8,10 @@ from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 
 from loguru import logger
 
+from gage_eval.agent_runtime.resolver import (
+    build_compiled_runtime_executor,
+    compile_agent_runtime_plan,
+)
 from gage_eval.config.pipeline_config import (
     BackendSpec,
     DatasetSpec,
@@ -17,6 +21,7 @@ from gage_eval.config.pipeline_config import (
     RoleAdapterSpec,
 )
 from gage_eval.registry import RuntimeAssetPlanner, import_asset_from_manifest, import_kind_from_manifest
+from gage_eval.sandbox.manager import SandboxManager
 
 if TYPE_CHECKING:
     from gage_eval.assets.prompts.assets import PromptTemplateAsset
@@ -216,6 +221,30 @@ class ConfigRegistry:
             adapter_kwargs.setdefault("sandbox_profiles", sandbox_profiles)
         if spec.role_type == "dut_agent" and mcp_clients is not None:
             adapter_kwargs.setdefault("mcp_clients", mcp_clients)
+        if spec.role_type == "dut_agent" and spec.agent_runtime_id:
+            sandbox_manager = adapter_kwargs.get("sandbox_manager")
+            if not isinstance(sandbox_manager, SandboxManager):
+                sandbox_manager = SandboxManager(profiles=sandbox_profiles)
+                adapter_kwargs.setdefault("sandbox_manager", sandbox_manager)
+            compiled_plan = compile_agent_runtime_plan(
+                agent_runtime_id=spec.agent_runtime_id,
+                sandbox_config=spec.sandbox,
+            )
+            adapter_kwargs.setdefault("agent_runtime_id", spec.agent_runtime_id)
+            adapter_kwargs.setdefault("compat_runtime_id", spec.compat_runtime_id)
+            adapter_kwargs.setdefault(
+                "executor_ref",
+                build_compiled_runtime_executor(
+                    compiled_plan=compiled_plan,
+                    agent_backend=agent_backend_obj,
+                    prompt_renderer=adapter_kwargs.get("prompt_renderer"),
+                    max_turns=int(adapter_kwargs.get("max_turns", 8)),
+                    pre_hooks=adapter_kwargs.get("pre_hooks"),
+                    post_hooks=adapter_kwargs.get("post_hooks"),
+                    mcp_clients=mcp_clients,
+                    sandbox_manager=sandbox_manager,
+                ),
+            )
         if spec.role_type in {"helper_model", "context_provider", "judge_extend", "arena"}:
             adapter_kwargs.setdefault("registry_view", lookup)
         adapter = adapter_cls(

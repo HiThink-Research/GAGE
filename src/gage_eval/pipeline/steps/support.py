@@ -28,6 +28,9 @@ class SupportStep(SampleStep):
     def __init__(self, steps: Sequence[Dict[str, str]]) -> None:
         super().__init__("SupportStep")
         self._steps = steps
+        self.static_only = True
+        self.support_payload_policy: Dict[str, Any] = {}
+        self.compat_shim_registry: Dict[str, Any] = {}
 
     def execute(
         self,

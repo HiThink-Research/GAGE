@@ -43,8 +43,13 @@ class ContextProviderAdapter(RoleAdapter):
         )
         if not implementation:
             raise ValueError("ContextProviderAdapter requires non-empty implementation")
+        self.implementation = implementation
+        self.implementation_params = dict(implementation_params or {})
+        self.static_context_only = bool(_.get("static_context_only", True))
+        self.allow_sandbox_handle = bool(_.get("allow_sandbox_handle", False))
+        self.mcp_client_id = mcp_client_id
         self._implementation = implementation
-        self._implementation_params = dict(implementation_params or {})
+        self._implementation_params = dict(self.implementation_params)
         if mcp_client_id:
             self._implementation_params.setdefault("mcp_client_id", mcp_client_id)
         if mcp_client is not None:
@@ -72,9 +77,12 @@ class ContextProviderAdapter(RoleAdapter):
         impl_payload = dict(payload or {})
         sandbox_provider = impl_payload.get("sandbox_provider")
         mcp_client = self._implementation_params.get("mcp_client")
-        if isinstance(sandbox_provider, SandboxProvider) and mcp_client is not None:
+        if self.allow_sandbox_handle and isinstance(sandbox_provider, SandboxProvider) and mcp_client is not None:
             runtime_handle = sandbox_provider.runtime_handle()
             sync_mcp_endpoint(mcp_client, runtime_handle)
+        if self.static_context_only or not self.allow_sandbox_handle:
+            impl_payload.pop("sandbox_provider", None)
+            impl_payload.pop("runtime_handle", None)
         impl_payload["params"] = self._merge_params(payload)
         impl_payload.setdefault("implementation", self._implementation)
         impl_payload.setdefault("adapter_id", self.adapter_id)
