@@ -13,6 +13,11 @@ def to_json_safe(value: Any) -> Any:
         return value
     if isinstance(value, Path):
         return str(value)
+    if hasattr(value, "tolist") and callable(value.tolist):
+        try:
+            return to_json_safe(value.tolist())
+        except Exception:
+            return str(value)
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return to_json_safe(value.to_dict())
     if is_dataclass(value):
@@ -152,6 +157,19 @@ def _bounded_json_safe(
             "kind": "bytes",
             "size": len(value),
         }
+    if hasattr(value, "tolist") and callable(value.tolist):
+        try:
+            return _bounded_json_safe(
+                value.tolist(),
+                depth=depth,
+                max_depth=max_depth,
+                max_items=max_items,
+                max_string=max_string,
+                heavy_key_names=heavy_key_names,
+                preserve_data_urls=preserve_data_urls,
+            )
+        except Exception:
+            return str(value)
     if hasattr(value, "to_dict") and callable(value.to_dict):
         return _bounded_json_safe(
             value.to_dict(),

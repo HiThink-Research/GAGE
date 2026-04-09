@@ -911,6 +911,17 @@ function SessionStage({
     submitAction: store.submitAction,
     interpreter: plugin?.inputInterpreter,
   });
+  const mediaSubscribe = (
+    request: Parameters<ArenaMediaResolver["subscribe"]>[0],
+    listener: Parameters<ArenaMediaResolver["subscribe"]>[1],
+  ) =>
+    mediaResolver.subscribe(
+      {
+        ...request,
+        runId: request.runId ?? sessionRequest?.runId,
+      },
+      listener,
+    );
   const PluginView = plugin?.render;
   const playbackMode = session?.playback.mode ?? "live_tail";
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1080,30 +1091,32 @@ function SessionStage({
               </span>
               <span className="session-stage__hud-pill">{scene?.kind ?? "scene"}</span>
             </div>
-            <div className="session-stage__chrome">
-              {!isImmersivePlugin ? (
-                <button
-                  className="session-stage__fullscreen-button"
-                  onClick={() => {
-                    void handleToggleFullscreen();
-                  }}
-                  type="button"
-                  aria-pressed={isFullscreen}
-                >
-                  {isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                </button>
-              ) : null}
-            </div>
           </>
         ) : null}
         <div className="session-stage__surface">
+          <button
+            className="session-stage__fullscreen-button"
+            data-testid="session-stage-fullscreen-button"
+            onClick={() => {
+              void handleToggleFullscreen();
+            }}
+            type="button"
+            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            aria-pressed={isFullscreen}
+          >
+            <span
+              className="session-stage__fullscreen-button-icon"
+              aria-hidden="true"
+            />
+          </button>
           <PluginView
             session={session}
             scene={scene}
             latestActionReceipt={inputBridge.latestReceipt}
             submitAction={inputBridge.submitAction}
             submitInput={submitPluginInput}
-            mediaSubscribe={mediaResolver.subscribe}
+            mediaSubscribe={mediaSubscribe}
             isFallback={plugin.isFallback}
             requestedPluginId={plugin.requestedPluginId}
           />

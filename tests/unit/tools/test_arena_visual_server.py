@@ -29,6 +29,7 @@ from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
 from gage_eval.role.arena.visualization.http_server import (
     ArenaVisualHTTPServer,
+    ArenaVisualRequestHandler,
     _LOW_LATENCY_STREAM_POLL_INTERVAL_S,
 )
 from gage_eval.role.arena.visualization import live_session as live_session_module
@@ -306,6 +307,47 @@ def _build_live_visual_recorder(
 
 def test_low_latency_http_stream_poll_interval_stays_realtime_friendly() -> None:
     assert _LOW_LATENCY_STREAM_POLL_INTERVAL_S <= (1.0 / 144.0)
+
+
+def test_arena_visual_http_server_send_json_normalizes_numpy_payloads() -> None:
+    numpy = pytest.importorskip("numpy")
+
+    class _DummyServer:
+        allow_origin = "*"
+
+    class _DummyHandler:
+        def __init__(self) -> None:
+            self.server = _DummyServer()
+            self.status = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = io.BytesIO()
+
+        def send_response(self, status) -> None:  # noqa: ANN001
+            self.status = status
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            return None
+
+        def _send_cors_headers(self) -> None:
+            ArenaVisualRequestHandler._send_cors_headers(self)
+
+    handler = _DummyHandler()
+    payload = {
+        "frameSeq": numpy.int32(7),
+        "shape": numpy.array([84, 84, 3], dtype=numpy.int32),
+    }
+
+    ArenaVisualRequestHandler._send_json(handler, payload, status=200)
+
+    body = json.loads(handler.wfile.getvalue().decode("utf-8"))
+    assert handler.status == 200
+    assert body == {
+        "frameSeq": 7,
+        "shape": [84, 84, 3],
+    }
 
 
 def _build_low_latency_frame_visual_recorder(

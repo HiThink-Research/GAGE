@@ -25,6 +25,7 @@ from gage_eval.role.arena.visualization.live_session import (
     ArenaVisualLiveRegistry,
     ArenaVisualLiveSessionSource,
 )
+from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 
 ManifestResolver = Callable[[str, str | None], str | Path | None]
 ActionSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
@@ -395,7 +396,12 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
                 logger.exception("Failed to stream live session updates for {}", session_id)
                 break
             session_payload = session.to_dict()
-            serialized_session_payload = json.dumps(session_payload, ensure_ascii=False, sort_keys=True)
+            safe_session_payload = to_scene_json_safe(session_payload)
+            serialized_session_payload = json.dumps(
+                safe_session_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             timeline_payload = {
                 "sessionId": session_id,
                 "afterSeq": page.after_seq,
@@ -410,7 +416,7 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
                 if page.next_after_seq is not None:
                     current_after_seq = page.next_after_seq
                 payload = {
-                    "session": session_payload,
+                    "session": safe_session_payload,
                     "timeline": timeline_payload,
                 }
                 try:
@@ -818,7 +824,8 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _send_json(self, payload: Mapping[str, Any], *, status: HTTPStatus) -> None:
-        body = json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
+        safe_payload = to_scene_json_safe(dict(payload))
+        body = json.dumps(safe_payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -842,7 +849,7 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_sse_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
-        data = json.dumps(dict(payload), ensure_ascii=False)
+        data = json.dumps(to_scene_json_safe(dict(payload)), ensure_ascii=False)
         self.wfile.write(f"event: {event_type}\n".encode("utf-8"))
         self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
         self.wfile.flush()

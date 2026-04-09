@@ -344,6 +344,72 @@ def test_append_arena_contract_derives_footer_from_nested_v2_result() -> None:
     assert footer["final_scores"] == {"Black": 1.0, "White": 0.0}
 
 
+def test_append_arena_contract_syncs_runtime_sample_metadata() -> None:
+    sample = {
+        "metadata": {
+            "board_size": 9,
+            "win_len": 5,
+            "player_ids": ["player_0", "player_1"],
+            "player_names": {"player_0": "Player 0", "player_1": "Player 1"},
+            "start_player_id": "player_0",
+        },
+        "predict_result": [],
+    }
+    output = {
+        "output_kind": "arena",
+        "sample": {
+            "game_kit": "space_invaders",
+            "env": "space_invaders",
+            "players": [
+                {"player_id": "pilot_alpha", "name": "Pilot Alpha"},
+                {"player_id": "pilot_beta", "name": "Pilot Beta"},
+            ],
+            "runtime_overrides": {
+                "board_size": 3,
+                "win_len": 3,
+            },
+        },
+        "header": {
+            "game_kit": "space_invaders",
+            "env": "space_invaders",
+            "player_ids": ["pilot_alpha", "pilot_beta"],
+        },
+        "result": {
+            "winner": "pilot_alpha",
+            "reason": "terminated",
+            "result": "win",
+            "move_count": 4,
+        },
+        "arena_trace": [
+            {
+                "step_index": 0,
+                "trace_state": "done",
+                "timestamp": 1,
+                "player_id": "pilot_alpha",
+                "action_raw": "FIRE",
+                "action_applied": "FIRE",
+                "t_obs_ready_ms": 1,
+                "t_action_submitted_ms": 2,
+                "timeout": False,
+                "is_action_legal": True,
+                "retry_count": 0,
+            }
+        ],
+    }
+
+    envelope.append_arena_contract(sample, output, end_time_ms=7000)
+
+    metadata = sample["metadata"]
+    assert metadata["board_size"] == 3
+    assert metadata["win_len"] == 3
+    assert metadata["player_ids"] == ["pilot_alpha", "pilot_beta"]
+    assert metadata["player_names"] == {
+        "pilot_alpha": "Pilot Alpha",
+        "pilot_beta": "Pilot Beta",
+    }
+    assert metadata["start_player_id"] == "pilot_alpha"
+
+
 def test_append_arena_contract_keeps_non_arena_stale_entries_with_artifacts() -> None:
     sample = {
         "metadata": {"player_ids": ["p0", "p1"]},

@@ -12,13 +12,19 @@ interface UseMediaSourceOptions extends MediaSubscriptionRequest {
   ) => () => void;
 }
 
+interface StoredMediaState {
+  scopeKey: string;
+  source: ResolvedMediaSource;
+}
+
 export function useMediaSource({
   sessionId,
   mediaId,
   runId,
   subscribe,
 }: UseMediaSourceOptions): ResolvedMediaSource | undefined {
-  const [state, setState] = useState<ResolvedMediaSource>();
+  const [state, setState] = useState<StoredMediaState>();
+  const scopeKey = `${sessionId}::${runId ?? ""}`;
 
   useEffect(() => {
     if (!mediaId) {
@@ -26,8 +32,27 @@ export function useMediaSource({
       return undefined;
     }
 
-    return subscribe({ sessionId, mediaId, runId }, setState);
+    return subscribe({ sessionId, mediaId, runId }, (nextState) => {
+      setState((currentState) => {
+        if (
+          nextState.status === "loading" &&
+          currentState?.scopeKey === scopeKey &&
+          currentState.source.status === "ready" &&
+          typeof currentState.source.src === "string" &&
+          currentState.source.src !== ""
+        ) {
+          return currentState;
+        }
+        return {
+          scopeKey,
+          source: nextState,
+        };
+      });
+    });
   }, [mediaId, runId, sessionId, subscribe]);
 
-  return state;
+  if (!mediaId) {
+    return undefined;
+  }
+  return state?.scopeKey === scopeKey ? state.source : undefined;
 }

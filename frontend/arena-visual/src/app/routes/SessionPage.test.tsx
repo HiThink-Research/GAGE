@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import gomokuScene from "../../test/fixtures/gomoku.visual.json";
 import doudizhuScene from "../../test/fixtures/doudizhu.visual.json";
+import pettingzooScene from "../../test/fixtures/pettingzoo.visual.json";
 import retroScene from "../../test/fixtures/retro-mario.visual.json";
 import type { VisualScene } from "../../gateway/types";
 import type { ArenaSessionStore, ArenaSessionStoreSnapshot } from "../store/arenaSessionStore";
@@ -292,6 +293,119 @@ describe("SessionPage", () => {
         playerId: "Black",
         text: "hello host",
       });
+    });
+  });
+
+  it("passes the current run id into plugin media subscriptions", async () => {
+    const loadSession = vi.fn().mockResolvedValue(undefined);
+    const subscribe = vi.fn((request, listener) => {
+      listener({
+        mediaId: request.mediaId,
+        status: "ready",
+        src: FRAME_DATA_URL,
+      });
+      return () => {};
+    });
+
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "pettingzoo-sample",
+        runId: "gamekit-static-run",
+      },
+      session: {
+        sessionId: "pettingzoo-sample",
+        gameId: "pettingzoo",
+        pluginId: "arena.visualization.pettingzoo.frame_v1",
+        lifecycle: "closed",
+        playback: {
+          mode: "paused",
+          cursorTs: 2011,
+          cursorEventSeq: 11,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "pilot_0",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "agent_cycle",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+          activeActorId: "pilot_0",
+        },
+        capabilities: {},
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: pettingzooScene as VisualScene,
+      currentSceneSeq: 11,
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    };
+
+    const store: ArenaSessionStore = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      loadSession,
+      refreshSession: vi.fn().mockResolvedValue(undefined),
+      loadMoreTimeline: vi.fn().mockResolvedValue(undefined),
+      loadScene: vi.fn().mockResolvedValue(undefined),
+      setCurrentSceneSeq: vi.fn(),
+      setPlaybackMode: vi.fn(),
+      setTimelineFilters: vi.fn(),
+      setObserver: vi.fn().mockResolvedValue(undefined),
+      submitControl: vi.fn().mockResolvedValue(undefined),
+      submitAction: vi.fn().mockResolvedValue(undefined),
+      submitActionLowLatency: vi.fn().mockResolvedValue(undefined),
+      submitChat: vi.fn().mockResolvedValue(undefined),
+      clearLatestActionReceipt: vi.fn(),
+    };
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue(store);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/pettingzoo-sample?run_id=gamekit-static-run"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(loadSession).toHaveBeenCalledWith({
+        sessionId: "pettingzoo-sample",
+        runId: "gamekit-static-run",
+      });
+    });
+
+    await waitFor(() => {
+      expect(subscribe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "pettingzoo-sample",
+          mediaId: "pz-frame-3",
+          runId: "gamekit-static-run",
+        }),
+        expect.any(Function),
+      );
     });
   });
 
@@ -860,15 +974,13 @@ describe("SessionPage", () => {
         screen.getByText(/keyboard: arrows\/wasd move, space\/j\/z jump/i),
       ).toBeInTheDocument();
 
-      fireEvent.click(screen.getByTestId("frame-surface-immersive-fullscreen"));
+      fireEvent.click(screen.getByTestId("session-stage-fullscreen-button"));
       await waitFor(() => {
         expect(requestFullscreen).toHaveBeenCalled();
       });
 
-      expect(
-        screen.getByTestId("session-stage").querySelector(".session-stage__fullscreen-button"),
-      ).toBeNull();
-      expect(screen.getByTestId("frame-surface-immersive-fullscreen")).toHaveAttribute(
+      expect(screen.getByTestId("session-stage").querySelector(".session-stage__hud")).toBeNull();
+      expect(screen.getByTestId("session-stage-fullscreen-button")).toHaveAttribute(
         "aria-label",
         "Exit fullscreen",
       );

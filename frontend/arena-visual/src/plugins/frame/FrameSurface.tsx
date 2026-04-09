@@ -405,7 +405,6 @@ export function FrameSurface({
   const frameScene = readFrameScene(scene);
   const actionDescriptors = readFrameActions(scene);
   const [immersiveViewportBounds, setImmersiveViewportBounds] = useState<FrameBounds | null>(null);
-  const [immersiveFullscreenActive, setImmersiveFullscreenActive] = useState(false);
   const [observedViewport, setObservedViewport] = useState<FrameViewport | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
@@ -491,31 +490,6 @@ export function FrameSurface({
   useEffect(() => {
     setObservedViewport(null);
   }, [primaryMediaId]);
-
-  useEffect(() => {
-    if (!isImmersive) {
-      setImmersiveFullscreenActive(false);
-      return;
-    }
-
-    const syncFullscreenState = () => {
-      const stageElement = rootRef.current?.closest(".session-stage");
-      const fullscreenElement = document.fullscreenElement;
-      const isFullscreen =
-        stageElement instanceof HTMLElement &&
-        fullscreenElement instanceof Element &&
-        (fullscreenElement === stageElement ||
-          stageElement.contains(fullscreenElement) ||
-          fullscreenElement.contains(stageElement));
-      setImmersiveFullscreenActive(isFullscreen);
-    };
-
-    syncFullscreenState();
-    document.addEventListener("fullscreenchange", syncFullscreenState);
-    return () => {
-      document.removeEventListener("fullscreenchange", syncFullscreenState);
-    };
-  }, [isImmersive]);
 
   useEffect(() => {
     if (!keyboardControls) {
@@ -663,29 +637,6 @@ export function FrameSurface({
     : undefined;
   const showImmersiveStatsPanel = isImmersive && frameScene.overlays.length > 0;
 
-  const handleImmersiveFullscreenToggle = async () => {
-    const stageElement = rootRef.current?.closest(".session-stage");
-    if (!(stageElement instanceof HTMLElement)) {
-      return;
-    }
-
-    try {
-      const fullscreenElement = document.fullscreenElement;
-      const stageIsFullscreen =
-        fullscreenElement instanceof Element &&
-        (fullscreenElement === stageElement ||
-          stageElement.contains(fullscreenElement) ||
-          fullscreenElement.contains(stageElement));
-      if (stageIsFullscreen) {
-        await document.exitFullscreen?.();
-        return;
-      }
-      await stageElement.requestFullscreen?.();
-    } catch {
-      // Fullscreen is a convenience affordance, not a required action.
-    }
-  };
-
   return (
     <section
       className={[
@@ -715,21 +666,6 @@ export function FrameSurface({
         data-testid="frame-surface-viewport"
         style={viewportStyle}
       >
-        {isImmersive ? (
-          <button
-            type="button"
-            className="frame-surface__immersive-fullscreen"
-            data-testid="frame-surface-immersive-fullscreen"
-            aria-label={immersiveFullscreenActive ? "Exit fullscreen" : "Enter fullscreen"}
-            title={immersiveFullscreenActive ? "Exit fullscreen" : "Enter fullscreen"}
-            onClick={() => {
-              void handleImmersiveFullscreenToggle();
-            }}
-          >
-            <span className="frame-surface__immersive-fullscreen-icon" aria-hidden="true" />
-          </button>
-        ) : null}
-
         {lowLatencyStreamUrl ? (
           <LowLatencyFrameCanvas
             altText={frameScene.frame.altText}

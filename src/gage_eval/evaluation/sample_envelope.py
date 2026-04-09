@@ -110,6 +110,13 @@ def append_arena_contract(
     contract_header = _resolve_arena_contract_mapping(arena_entry, model_output, "header")
     if contract_header is not None:
         _merge_arena_header_contract(sample, contract_header)
+    contract_sample = _resolve_arena_contract_mapping(arena_entry, model_output, "sample")
+    if contract_sample is not None:
+        _merge_arena_runtime_metadata(
+            sample,
+            contract_sample=contract_sample,
+            contract_header=contract_header,
+        )
 
     # STEP 2: Normalize trace/footer payloads under the frozen keys.
     fallback_ts_ms = int(time.time() * 1000)
@@ -332,6 +339,85 @@ def _merge_arena_header_contract(
             canonical_header[key] = str(value)
 
     metadata["game_arena"] = canonical_header
+
+
+def _merge_arena_runtime_metadata(
+    sample: Dict[str, Any],
+    *,
+    contract_sample: Mapping[str, Any],
+    contract_header: Optional[Mapping[str, Any]] = None,
+) -> None:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        sample["metadata"] = metadata
+
+    runtime_overrides = contract_sample.get("runtime_overrides")
+    if isinstance(runtime_overrides, Mapping):
+        for key, value in runtime_overrides.items():
+            if value is None:
+                continue
+            metadata[str(key)] = copy.deepcopy(value)
+
+    runtime_player_ids, runtime_player_names = _extract_runtime_player_metadata(contract_sample)
+    if not runtime_player_ids and isinstance(contract_header, Mapping):
+        header_player_ids = contract_header.get("player_ids")
+        if isinstance(header_player_ids, Sequence) and not isinstance(header_player_ids, (str, bytes)):
+            runtime_player_ids = [
+                str(player_id)
+                for player_id in header_player_ids
+                if player_id not in (None, "")
+            ]
+
+    if runtime_player_ids:
+        metadata["player_ids"] = runtime_player_ids
+        if runtime_player_names:
+            metadata["player_names"] = runtime_player_names
+        elif "player_names" in metadata:
+            metadata["player_names"] = {
+                player_id: str(existing_name)
+                for player_id in runtime_player_ids
+                if (existing_name := (
+                    metadata.get("player_names", {}).get(player_id)
+                    if isinstance(metadata.get("player_names"), Mapping)
+                    else None
+                )) not in (None, "")
+            } or {player_id: player_id for player_id in runtime_player_ids}
+        current_start_player = metadata.get("start_player_id")
+        if current_start_player not in runtime_player_ids:
+            metadata["start_player_id"] = runtime_player_ids[0]
+
+
+def _extract_runtime_player_metadata(
+    contract_sample: Mapping[str, Any],
+) -> tuple[list[str], dict[str, str]]:
+    players = contract_sample.get("players")
+    if not isinstance(players, Sequence) or isinstance(players, (str, bytes)):
+        return [], {}
+
+    runtime_player_ids: list[str] = []
+    runtime_player_names: dict[str, str] = {}
+    for player in players:
+        if not isinstance(player, Mapping):
+            continue
+        player_id = (
+            player.get("player_id")
+            or player.get("id")
+            or player.get("name")
+            or player.get("seat")
+        )
+        if player_id in (None, ""):
+            continue
+        normalized_player_id = str(player_id)
+        runtime_player_ids.append(normalized_player_id)
+        player_name = (
+            player.get("player_name")
+            or player.get("display_name")
+            or player.get("name")
+            or normalized_player_id
+        )
+        runtime_player_names[normalized_player_id] = str(player_name)
+    return runtime_player_ids, runtime_player_names
 
 
 def _normalize_arena_players(

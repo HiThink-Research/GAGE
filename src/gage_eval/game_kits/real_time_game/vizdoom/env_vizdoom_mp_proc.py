@@ -20,6 +20,8 @@ except Exception as exc:  # pragma: no cover - depends on local optional deps.
 
 _AUTOMAP_VIZ_MODULE: Any = None
 _MAX_STALE_RESET_RECOVERY_RESTARTS = 2
+_WORKER_CLOSE_GRACE_TIMEOUT_S = 2.0
+_WORKER_FORCE_JOIN_TIMEOUT_S = 2.0
 
 
 @dataclass
@@ -487,14 +489,21 @@ class ViZDoomMPProcEnv:
                     conn.send({"type": "close"})
                 except Exception as exc:
                     logger.warning("ViZDoomMPProc conn send close failed pid={} err={}", proc_pid, exc)
+                if proc is not None and proc.is_alive():
+                    proc.join(timeout=_WORKER_CLOSE_GRACE_TIMEOUT_S)
                 try:
                     conn.close()
                 except Exception as exc:
                     logger.warning("ViZDoomMPProc conn close failed pid={} err={}", proc_pid, exc)
         finally:
             if proc is not None and proc.is_alive():
+                logger.warning("ViZDoomMPProc worker pid={} did not exit gracefully; terminating", proc_pid)
                 proc.terminate()
-                proc.join(timeout=2.0)
+                proc.join(timeout=_WORKER_FORCE_JOIN_TIMEOUT_S)
+            if proc is not None and proc.is_alive() and hasattr(proc, "kill"):
+                logger.warning("ViZDoomMPProc worker pid={} survived terminate(); killing", proc_pid)
+                proc.kill()
+                proc.join(timeout=_WORKER_FORCE_JOIN_TIMEOUT_S)
         proc_alive_after = bool(proc is not None and proc.is_alive())
         logger.info("ViZDoomMPProc terminate done pid={} alive={}", proc_pid, proc_alive_after)
 
