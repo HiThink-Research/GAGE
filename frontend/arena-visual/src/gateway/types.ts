@@ -147,5 +147,6 @@ export interface GamePluginManifest {
   sceneKinds: VisualSceneKind[];
   supportedObservers: ObserverKind[];
   acceptsHumanIntent: boolean;
+  layoutMode?: "default" | "wide-stage";
   extensionPanels?: string[];
 }

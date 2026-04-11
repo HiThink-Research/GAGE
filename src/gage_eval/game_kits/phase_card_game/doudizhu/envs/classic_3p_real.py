@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from queue import Queue
 from typing import Any, Sequence
 
 from gage_eval.game_kits.phase_card_game.doudizhu.environment import (
@@ -25,6 +26,7 @@ class Classic3pRealEnvironment:
         replay_live: bool = False,
         chat_mode: str = "off",
         chat_every_n: int = 1,
+        chat_queue: Queue[dict[str, str] | str] | None = None,
     ) -> None:
         player_ids = [str(getattr(player, "player_id")) for player in player_specs]
         player_names = {
@@ -43,10 +45,19 @@ class Classic3pRealEnvironment:
             replay_live=bool(replay_live),
             chat_mode=str(chat_mode or "off"),
             chat_every_n=int(chat_every_n),
+            chat_queue=chat_queue,
         )
 
     @classmethod
-    def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
+    def from_runtime(
+        cls,
+        *,
+        sample: Any,
+        resolved: Any,
+        resources: Any,
+        player_specs: Sequence[object],
+        invocation_context: object | None = None,
+    ) -> Any:
         defaults = {
             **dict(resolved.game_kit.defaults),
             **dict(resolved.env_spec.defaults),
@@ -68,6 +79,7 @@ class Classic3pRealEnvironment:
             replay_live=bool(defaults.get("replay_live", False)),
             chat_mode=str(defaults.get("chat_mode", "off")),
             chat_every_n=int(defaults.get("chat_every_n", 1)),
+            chat_queue=_resolve_runtime_chat_queue(invocation_context),
         )
         return attach_runtime_resources(environment, resources)
 
@@ -92,11 +104,11 @@ class Classic3pRealEnvironment:
 
 def build_classic_3p_real_environment(
     *,
-    sample,
-    resolved,
-    resources,
-    player_specs,
-    invocation_context=None,
+    sample: Any,
+    resolved: Any,
+    resources: Any,
+    player_specs: Sequence[object],
+    invocation_context: object | None = None,
 ) -> Any:
     return Classic3pRealEnvironment.from_runtime(
         sample=sample,
@@ -105,3 +117,16 @@ def build_classic_3p_real_environment(
         player_specs=player_specs,
         invocation_context=invocation_context,
     )
+
+
+def _resolve_runtime_chat_queue(invocation_context: object | None) -> object | None:
+    runtime_service_hub = getattr(invocation_context, "runtime_service_hub", None)
+    if runtime_service_hub is None:
+        return None
+    peek_action_server = getattr(runtime_service_hub, "peek_action_server", None)
+    if not callable(peek_action_server):
+        return None
+    action_server = peek_action_server()
+    if action_server is None:
+        return None
+    return getattr(action_server, "chat_queue", None)

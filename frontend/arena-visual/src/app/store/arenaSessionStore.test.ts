@@ -281,8 +281,13 @@ describe("arenaSessionStore", () => {
         method: "POST",
       }),
     );
-    expect(fetchMock).toHaveBeenLastCalledWith(
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
       "http://arena.local/arena_visual/sessions/sample-1?observer_kind=global&observer_id=host",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://arena.local/arena_visual/sessions/sample-1/scene?seq=2&observer_kind=global&observer_id=host",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -1081,6 +1086,80 @@ describe("arenaSessionStore", () => {
       state: "accepted",
       relatedEventSeq: 6,
       reason: "queued",
+    });
+  });
+
+  it("refreshes the current scene after an accepted chat receipt so stage bubbles can update", async () => {
+    const client = createStubClient({
+      loadSession: vi
+        .fn()
+        .mockResolvedValueOnce(
+          buildSession("sample-1", {
+            playback: {
+              mode: "live_tail",
+              cursorTs: 1004,
+              cursorEventSeq: 4,
+              speed: 1,
+              canSeek: true,
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          buildSession("sample-1", {
+            playback: {
+              mode: "live_tail",
+              cursorTs: 1005,
+              cursorEventSeq: 4,
+              speed: 1,
+              canSeek: true,
+            },
+          }),
+        ),
+      loadScene: vi
+        .fn()
+        .mockResolvedValueOnce(buildScene(4))
+        .mockResolvedValueOnce({
+          ...buildScene(4, { observerPlayerId: "player_0" }),
+          body: {
+            seq: 4,
+            status: {
+              observerPlayerId: "player_0",
+            },
+            panels: {
+              chatLog: [
+                {
+                  playerId: "player_0",
+                  text: "hello host",
+                },
+              ],
+            },
+          },
+        }),
+      submitChat: vi.fn().mockResolvedValue({
+        intentId: "chat-2",
+        state: "accepted",
+        relatedEventSeq: 4,
+        reason: "queued",
+      }),
+    });
+    const store = createArenaSessionStore(client);
+
+    await store.loadSession({ sessionId: "sample-1" });
+    await store.loadScene({ seq: 4 });
+    await store.submitChat({
+      playerId: "player_0",
+      text: "hello host",
+    });
+
+    expect(client.loadSession).toHaveBeenCalledTimes(2);
+    expect(client.loadScene).toHaveBeenCalledTimes(2);
+    expect((store.getSnapshot().scene?.body as Record<string, unknown>)?.panels).toEqual({
+      chatLog: [
+        {
+          playerId: "player_0",
+          text: "hello host",
+        },
+      ],
     });
   });
 

@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import type { ArenaPluginRenderProps } from "../sdk/contracts";
 import {
   readTableActionTexts,
@@ -25,21 +26,30 @@ export function MahjongPlugin({
 
   const actionTexts = readTableActionTexts(scene);
   const resolvedActorId = resolveTableActorId(session, scene, tableScene);
+  const preferredObserverPlayerId =
+    session.observer.observerKind === "player" && session.observer.observerId
+      ? session.observer.observerId
+      : null;
+  const handleSubmitAction = useCallback(
+    (actionText: string) => {
+      if (!resolvedActorId) {
+        return;
+      }
+      void submitInput({
+        playerId: resolvedActorId,
+        actionText,
+      });
+    },
+    [resolvedActorId, submitInput],
+  );
 
   return (
     <MahjongTable
       tableScene={tableScene}
+      preferredObserverPlayerId={preferredObserverPlayerId}
       actionTexts={actionTexts}
       canSubmitActions={session.scheduling.acceptsHumanIntent}
-      onSubmitAction={(actionText) => {
-        if (!resolvedActorId) {
-          return;
-        }
-        void submitInput({
-          playerId: resolvedActorId,
-          actionText,
-        });
-      }}
+      onSubmitAction={handleSubmitAction}
     />
   );
 }

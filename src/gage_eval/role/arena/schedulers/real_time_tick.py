@@ -40,10 +40,14 @@ def _run_scheduler_owned_realtime_loop(session, *, tick_ms: int) -> None:
     while not session.should_stop():
         tick_started = _monotonic_seconds()
         observation = session.observe()
-        decision = session.decide_current_player(observation)
-        if decision is not None:
-            session.apply(decision)
-            session.advance()
+        decisions = _drain_scheduler_owned_decisions(session, observation)
+        if decisions:
+            for decision in decisions:
+                session.apply(decision)
+                session.advance(decision_taken=True, tick_delta=0)
+                if getattr(session, "final_result", None) is not None:
+                    break
+            session.advance(decision_taken=False, tick_delta=1)
         else:
             session.advance(decision_taken=False)
         capture_output_tick = getattr(session, "capture_output_tick", None)
@@ -59,6 +63,19 @@ def _run_scheduler_owned_realtime_loop(session, *, tick_ms: int) -> None:
         remaining_s = tick_interval_s - ((_monotonic_seconds() - tick_started))
         if remaining_s > 0.0:
             time.sleep(remaining_s)
+
+
+def _drain_scheduler_owned_decisions(session, observation) -> list[object]:
+    drain_actions = getattr(session, "drain_scheduler_owned_current_player_actions", None)
+    if not callable(drain_actions):
+        decision = session.decide_current_player(observation)
+        return [] if decision is None else [decision]
+
+    max_actions_per_tick = 1
+    max_actions_resolver = getattr(session, "max_scheduler_owned_actions_per_tick", None)
+    if callable(max_actions_resolver):
+        max_actions_per_tick = max(1, int(max_actions_resolver()))
+    return list(drain_actions(observation, max_items=max_actions_per_tick))[:max_actions_per_tick]
 
 
 def _resolve_scheduler_owned_tick_interval_ms(session) -> int | None:

@@ -11,14 +11,14 @@ import time
 import webbrowser
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock
-from typing import TYPE_CHECKING
-from typing import Any, Mapping
+from threading import Lock, RLock
+from typing import Any, Mapping, Sequence
 
 from loguru import logger
 
+from gage_eval.role.arena.core.errors import PlayerStopRequested
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
-from gage_eval.role.arena.core.players import BoundPlayer
+from gage_eval.role.arena.core.players import BoundPlayer, PlayerBindingSpec
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.schedulers._scheduler_utils import (
@@ -33,6 +33,7 @@ from gage_eval.role.arena.schedulers._scheduler_utils import (
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction, GameResult
+from gage_eval.role.arena.visualization.contracts import ObserverRef
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
@@ -45,9 +46,6 @@ try:
     from PIL import Image
 except Exception:  # pragma: no cover - optional dependency
     Image = None
-
-if TYPE_CHECKING:
-    from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
 
 _LIVE_MEDIA_INLINE_SCHEMES = {"binary_stream", "low_latency_channel"}
 _REALTIME_INLINE_SNAPSHOT_TARGET_MS = 250
@@ -96,6 +94,7 @@ class GameSession:
     _latest_live_frame_version: int = field(default=0, init=False, repr=False)
     _last_realtime_snapshot_ts_ms: int = field(default=0, init=False, repr=False)
     _last_input_age_ms: float | None = field(default=None, init=False, repr=False)
+    _environment_lock: RLock = field(default_factory=RLock, init=False, repr=False)
     _stop_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     @classmethod
@@ -150,11 +149,14 @@ class GameSession:
 
     def should_stop(self) -> bool:
         self._consume_requested_restart()
-        if self._stop_requested:
+        with self._stop_lock:
+            stop_requested = self._stop_requested
+            stop_reason = self._stop_reason
+        if stop_requested:
             if self.final_result is None:
                 self.final_result = self._build_result(
                     result="terminated",
-                    reason=self._stop_reason or "user_finish",
+                    reason=stop_reason or "user_finish",
                 )
             return True
         if self.final_result is not None:
@@ -167,7 +169,8 @@ class GameSession:
         if self.max_ticks is not None and self.tick >= self.max_ticks:
             self.final_result = self._build_result(result="max_ticks", reason="max_ticks")
             return True
-        return bool(self.environment.is_terminal())
+        with self._environment_lock:
+            return bool(self.environment.is_terminal())
 
     def request_stop(
         self,
@@ -181,6 +184,8 @@ class GameSession:
             if self.final_result is None:
                 self.final_result = self._build_result(result=result, reason=reason)
             environment = self.environment
+            players = tuple(self.player_specs)
+        _best_effort_stop_players(players)
         _best_effort_stop_environment(environment)
         return self.final_result
 
@@ -196,8 +201,9 @@ class GameSession:
         self._consume_requested_restart()
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
-        player_id = str(self.environment.get_active_player())
-        observation = self.environment.observe(player_id)
+        with self._environment_lock:
+            player_id = str(self.environment.get_active_player())
+            observation = self.environment.observe(player_id)
         workflow = self.observation_workflow
         if workflow is not None:
             observation = workflow.build(observation, self)
@@ -226,25 +232,35 @@ class GameSession:
     def decide_current_player(self, observation) -> ArenaAction | None:
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
-        player_id = str(self.environment.get_active_player())
+        with self._environment_lock:
+            player_id = str(self.environment.get_active_player())
         before_context = self._run_support_hook(
             SupportHook.BEFORE_DECIDE,
             {"observation": observation, "player_id": player_id},
         )
         observation = before_context.payload.get("observation", observation)
         player = self._require_player(player_id)
-        if self._uses_scheduler_owned_human_realtime():
-            poll_scheduler_owned_action = getattr(player, "poll_scheduler_owned_action", None)
-            if callable(poll_scheduler_owned_action):
-                action = poll_scheduler_owned_action(observation)
-                if action is None:
-                    self._current_trace_entry = None
-                    self._last_input_age_ms = None
-                    return None
+        try:
+            if self._uses_scheduler_owned_human_realtime():
+                poll_scheduler_owned_action = getattr(player, "poll_scheduler_owned_action", None)
+                if callable(poll_scheduler_owned_action):
+                    action = poll_scheduler_owned_action(observation)
+                    if action is None:
+                        self._current_trace_entry = None
+                        self._last_input_age_ms = None
+                        return None
+                else:
+                    action = player.next_action(observation)
             else:
                 action = player.next_action(observation)
-        else:
-            action = player.next_action(observation)
+        except PlayerStopRequested:
+            with self._stop_lock:
+                stop_requested = self._stop_requested
+            if stop_requested:
+                self._current_trace_entry = None
+                self._last_input_age_ms = None
+                return None
+            raise
         after_context = self._run_support_hook(
             SupportHook.AFTER_DECIDE,
             {
@@ -270,6 +286,63 @@ class GameSession:
             )
         return resolved_action
 
+    def drain_scheduler_owned_current_player_actions(
+        self,
+        observation,
+        *,
+        max_items: int,
+    ) -> list[ArenaAction]:
+        """Drain queued scheduler-owned realtime actions for the active player."""
+
+        if not self._uses_scheduler_owned_human_realtime():
+            action = self.decide_current_player(observation)
+            return [] if action is None else [action]
+        if self.environment is None:
+            raise RuntimeError("Game session environment is not initialized")
+
+        with self._environment_lock:
+            player_id = str(self.environment.get_active_player())
+        player = self._require_player(player_id)
+        drain_actions = getattr(player, "drain_scheduler_owned_actions", None)
+        if not callable(drain_actions):
+            action = self.decide_current_player(observation)
+            return [] if action is None else [action]
+
+        before_context = self._run_support_hook(
+            SupportHook.BEFORE_DECIDE,
+            {"observation": observation, "player_id": player_id},
+        )
+        observation = before_context.payload.get("observation", observation)
+
+        try:
+            resolved_max_items = max(1, int(max_items))
+            drained_actions = drain_actions(observation, max_items=resolved_max_items)
+            raw_actions = [] if drained_actions is None else list(drained_actions)[:resolved_max_items]
+        except PlayerStopRequested:
+            with self._stop_lock:
+                stop_requested = self._stop_requested
+            if stop_requested:
+                self._current_trace_entry = None
+                self._last_input_age_ms = None
+                return []
+            raise
+
+        actions: list[ArenaAction] = []
+        for raw_action in raw_actions:
+            if raw_action is None:
+                continue
+            resolved_action = self._resolve_decided_action(
+                observation=observation,
+                player_id=player_id,
+                action=raw_action,
+            )
+            actions.append(resolved_action)
+
+        if not actions:
+            self._current_trace_entry = None
+            self._last_input_age_ms = None
+        return actions
+
     def apply(self, action: ArenaAction) -> None:
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
@@ -288,7 +361,8 @@ class GameSession:
         trace_entry["t_action_submitted_ms"] = wall_clock_ms()
         trace_entry["retry_count"] = infer_retry_count(action)
         trace_entry["is_action_legal"] = infer_legality(action)
-        result = self.environment.apply(action)
+        with self._environment_lock:
+            result = self.environment.apply(action)
         if result is not None:
             self.final_result = result
         after_context = self._run_support_hook(
@@ -324,18 +398,33 @@ class GameSession:
         self.arena_trace.append(finalized_trace_entry)
         self._current_trace_entry = None
 
-    def advance(self, *, decision_taken: bool | None = None) -> None:
-        delta = self._resolve_progress_delta()
+    def advance(
+        self,
+        *,
+        decision_taken: bool | None = None,
+        tick_delta: int | None = None,
+        step_delta: int | None = None,
+    ) -> None:
         if decision_taken is None:
             decision_taken = self._current_trace_entry is None
-        if self._uses_scheduler_owned_human_realtime() and not decision_taken:
-            self.tick += delta
+        uses_scheduler_owned = self._uses_scheduler_owned_human_realtime()
+        needs_step_delta = decision_taken or not uses_scheduler_owned
+        needs_progress_delta = tick_delta is None or (step_delta is None and needs_step_delta)
+        delta = self._resolve_progress_delta() if needs_progress_delta else 1
+        resolved_tick_delta = delta if tick_delta is None else max(0, int(tick_delta))
+        resolved_step_delta = delta if step_delta is None else max(0, int(step_delta))
+        if uses_scheduler_owned and not decision_taken:
+            self.tick += resolved_tick_delta
         else:
-            self.tick += delta
-            self.step += delta
-        if not self._uses_scheduler_owned_human_realtime():
+            self.tick += resolved_tick_delta
+            self.step += resolved_step_delta
+        if not uses_scheduler_owned:
             self._record_visual_snapshot()
-        if self.final_result is None and self.environment is not None and self.environment.is_terminal():
+        if self.final_result is None and self.environment is not None:
+            with self._environment_lock:
+                is_terminal = self.environment.is_terminal()
+            if not is_terminal:
+                return
             self.final_result = self._build_result(result="completed", reason="completed")
 
     def capture_output_tick(self) -> None:
@@ -352,7 +441,9 @@ class GameSession:
             return self.final_result
         if self.environment is None:
             return None
-        if self.environment.is_terminal():
+        with self._environment_lock:
+            is_terminal = self.environment.is_terminal()
+        if is_terminal:
             self.final_result = self._build_result(result="completed", reason="completed")
         return self.final_result
 
@@ -421,6 +512,7 @@ class GameSession:
                         live_scene_scheme=self._visualization_live_scene_scheme,
                         finish_gate=self._visualization_finish_gate,
                         live_frame_supplier=self.get_live_frame_payload,
+                        observer_live_frame_supplier=self.get_live_frame_payload_for_observer,
                         stop_callback=self.request_stop,
                         restart_callback=self.request_restart,
                     )
@@ -521,9 +613,10 @@ class GameSession:
     def _build_result(self, *, result: str, reason: str | None) -> object | None:
         if self.environment is None:
             return None
-        builder = getattr(self.environment, "build_result", None)
-        if callable(builder):
-            return builder(result=result, reason=reason)
+        with self._environment_lock:
+            builder = getattr(self.environment, "build_result", None)
+            if callable(builder):
+                return builder(result=result, reason=reason)
         return {
             "winner": None,
             "result": result,
@@ -586,11 +679,12 @@ class GameSession:
     def _resolve_progress_delta(self) -> int:
         if self.environment is None:
             return 1
-        resolver = getattr(self.environment, "consume_session_progress_delta", None)
-        if not callable(resolver):
-            return 1
         try:
-            delta = int(resolver())
+            with self._environment_lock:
+                resolver = getattr(self.environment, "consume_session_progress_delta", None)
+                if not callable(resolver):
+                    return 1
+                delta = int(resolver())
         except Exception:
             return 1
         return max(0, delta)
@@ -605,6 +699,27 @@ class GameSession:
                 t_obs_ready_ms=now_ms,
             )
         return self._current_trace_entry
+
+    def _resolve_decided_action(
+        self,
+        *,
+        observation: object,
+        player_id: str,
+        action: ArenaAction,
+    ) -> ArenaAction:
+        after_context = self._run_support_hook(
+            SupportHook.AFTER_DECIDE,
+            {
+                "observation": observation,
+                "player_id": player_id,
+                "action": action.move,
+                "action_object": action,
+            },
+        )
+        updated_action = after_context.payload.get("action", action.move)
+        resolved_action = self._coerce_action(action, updated_action)
+        self._last_input_age_ms = _resolve_input_age_ms(resolved_action)
+        return resolved_action
 
     @staticmethod
     def _resolve_illegal_reason(result: object | None) -> str | None:
@@ -662,14 +777,43 @@ class GameSession:
             )
 
     def get_live_frame_payload(self) -> Mapping[str, Any] | None:
-        return self._latest_live_frame_payload
+        return self._refresh_live_frame_buffer()
+
+    def get_live_frame_payload_for_observer(
+        self,
+        observer: ObserverRef | None = None,
+    ) -> Mapping[str, Any] | None:
+        with self._environment_lock:
+            payload = _load_environment_frame_payload_for_observer(
+                self.environment,
+                observer=observer,
+            )
+            if payload is not None:
+                return payload
+            return self._refresh_live_frame_buffer()
 
     def _refresh_live_frame_buffer(self) -> Mapping[str, Any] | None:
+        with self._environment_lock:
+            return self._refresh_live_frame_buffer_locked()
+
+    def _refresh_live_frame_buffer_locked(self) -> Mapping[str, Any] | None:
         frame_payload = _load_environment_frame_payload(self.environment)
         if frame_payload is not None:
-            self._latest_live_frame_version += 1
             ts_ms = wall_clock_ms()
             normalized_frame_payload = dict(frame_payload)
+            if (
+                self._latest_live_frame_payload is not None
+                and not _live_frame_payload_changed(
+                    previous=self._latest_live_frame_payload,
+                    current=normalized_frame_payload,
+                )
+            ):
+                retained_frame_payload = dict(self._latest_live_frame_payload)
+                retained_frame_payload["_live_frame_ts_ms"] = ts_ms
+                self._latest_live_frame_payload = retained_frame_payload
+                self._latest_live_frame_ts_ms = ts_ms
+                return retained_frame_payload
+            self._latest_live_frame_version += 1
             normalized_frame_payload["_live_frame_version"] = self._latest_live_frame_version
             normalized_frame_payload["_live_frame_ts_ms"] = ts_ms
             self._latest_live_frame_payload = normalized_frame_payload
@@ -680,9 +824,10 @@ class GameSession:
         return frame_payload
 
     def _capture_realtime_live_frame(self) -> Mapping[str, Any] | None:
-        if self._should_refresh_live_frame_buffer():
-            return self._refresh_live_frame_buffer()
-        return self._latest_live_frame_payload
+        with self._environment_lock:
+            if self._should_refresh_live_frame_buffer():
+                return self._refresh_live_frame_buffer_locked()
+            return self._latest_live_frame_payload
 
     def _should_refresh_live_frame_buffer(self) -> bool:
         if self.final_result is not None:
@@ -1124,10 +1269,14 @@ class GameSession:
 
     def _restart_live_round(self) -> None:
         environment = self.environment
-        reset = getattr(environment, "reset", None)
-        if not callable(reset):
-            return
-        reset_observation = reset()
+        with self._environment_lock:
+            reset = getattr(environment, "reset", None)
+            if not callable(reset):
+                return
+            reset_observation = reset()
+            self._latest_live_frame_payload = None
+            self._latest_live_frame_ts_ms = None
+            self._latest_live_frame_version = 0
         self.final_result = None
         self.tick = 0
         self.step = 0
@@ -1135,9 +1284,6 @@ class GameSession:
         self.support_errors.clear()
         self._current_trace_entry = None
         self._last_observation = reset_observation
-        self._latest_live_frame_payload = None
-        self._latest_live_frame_ts_ms = None
-        self._latest_live_frame_version = 0
         self._last_realtime_snapshot_ts_ms = 0
         self._last_input_age_ms = None
         self._finalized = False
@@ -1241,8 +1387,17 @@ class GameSession:
             normalized_tick_ms = 0
         if normalized_tick_ms <= 0:
             return 1
-        stride = round(self._resolve_realtime_snapshot_interval_ms() / float(normalized_tick_ms))
+        stride = round(_REALTIME_INLINE_SNAPSHOT_TARGET_MS / float(normalized_tick_ms))
         return max(1, int(stride))
+
+    def max_scheduler_owned_actions_per_tick(self) -> int:
+        control_profile = self._realtime_human_control_profile()
+        value = getattr(control_profile, "max_commands_per_tick", None)
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return 1
+        return max(1, normalized)
 
 
 class _VisualizationDisplayAdapter:
@@ -1531,10 +1686,13 @@ def _prepare_human_action_routing(
         return invocation_context, None, None
 
     player_input_semantics = _collect_human_realtime_input_semantics(resolved)
+    realtime_control = getattr(getattr(resolved, "runtime_profile", None), "realtime_human_control", None)
     action_router = SampleActionRouter(
         sample_id=sample_id,
         player_ids=human_player_ids,
         realtime_input_semantics_by_player=player_input_semantics,
+        max_command_queue_size=getattr(realtime_control, "max_command_queue_size", None),
+        queue_overflow_policy=getattr(realtime_control, "queue_overflow_policy", None),
     )
     action_server = _ensure_action_server(service_hub, invocation_context=invocation_context)
     if action_server is not None:
@@ -1863,6 +2021,22 @@ def _normalize_frame_payload(payload: object) -> dict[str, Any]:
     return {"board_text": str(payload)}
 
 
+def _live_frame_payload_changed(*, previous: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    return _strip_live_frame_ephemera(previous) != _strip_live_frame_ephemera(current)
+
+
+def _strip_live_frame_ephemera(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _strip_live_frame_ephemera(item)
+            for key, item in value.items()
+            if str(key) not in {"_live_frame_version", "_live_frame_ts_ms", "timestamp_ms"}
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_strip_live_frame_ephemera(item) for item in value]
+    return value
+
+
 def _visual_payload_snapshot(
     payload: object | None,
     *,
@@ -1892,6 +2066,22 @@ def _build_visual_snapshot_observation(
     observation: dict[str, Any] = {}
     if isinstance(fallback_snapshot, Mapping):
         observation.update(dict(fallback_snapshot))
+
+    for key in (
+        "public_state",
+        "private_state",
+        "ui_state",
+        "player_ids",
+        "player_names",
+        "chat_log",
+        "viewport",
+    ):
+        structured_value = _visual_payload_snapshot(
+            frame_payload.get(key),
+            include_inline_media=include_inline_frame_image,
+        )
+        if structured_value is not None:
+            observation[key] = structured_value
 
     active_player = (
         _string_or_none(frame_payload.get("active_player_id"))
@@ -1983,6 +2173,46 @@ def _load_environment_frame_payload(environment: object | None) -> Mapping[str, 
         return None
     if not isinstance(payload, Mapping):
         return None
+    return payload
+
+
+def _load_environment_frame_payload_for_observer(
+    environment: object | None,
+    *,
+    observer: ObserverRef | None = None,
+) -> Mapping[str, Any] | None:
+    if environment is None or observer is None:
+        return None
+    if observer.observer_kind != "player" or not observer.observer_id.strip():
+        return None
+
+    observe = getattr(environment, "observe", None)
+    if not callable(observe):
+        return None
+
+    active_player: str | None = None
+    get_active_player = getattr(environment, "get_active_player", None)
+    if callable(get_active_player):
+        try:
+            resolved_active_player = get_active_player()
+        except Exception:
+            resolved_active_player = None
+        if resolved_active_player is not None:
+            active_player = str(resolved_active_player).strip() or None
+
+    try:
+        observe(observer.observer_id)
+    except Exception:
+        return None
+
+    payload = _load_environment_frame_payload(environment)
+
+    if active_player is not None and active_player != observer.observer_id:
+        try:
+            observe(active_player)
+        except Exception:
+            pass
+
     return payload
 
 
@@ -2149,6 +2379,24 @@ def _best_effort_stop_environment(environment: object | None) -> None:
             closer()
         except Exception:
             logger.debug("Arena live stop failed to close environment cleanly", exc_info=True)
+
+
+def _best_effort_stop_players(players: Sequence[object] | None) -> None:
+    if not players:
+        return
+    for player in players:
+        for method_name in ("request_stop", "cancel_pending", "stop"):
+            stopper = getattr(player, method_name, None)
+            if not callable(stopper):
+                continue
+            try:
+                stopper()
+            except Exception:
+                logger.debug(
+                    "Arena live stop failed to interrupt player runtime cleanly",
+                    exc_info=True,
+                )
+            break
 
 
 def _maybe_open_browser(viewer_url: str, *, enabled: bool) -> None:

@@ -99,6 +99,89 @@ describe("SessionPage", () => {
     }
   }
 
+  it("shows a terminal result banner on the stage when the session summary has a winner", async () => {
+    const { store } = createMutableStore({
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-1",
+      },
+      session: {
+        sessionId: "sample-1",
+        gameId: "gomoku",
+        pluginId: "arena.visualization.gomoku.board_v1",
+        lifecycle: "live_ended",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 1005,
+          cursorEventSeq: 46,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "Black",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "turn",
+          phase: "completed",
+          acceptsHumanIntent: false,
+          activeActorId: "Black",
+        },
+        capabilities: {
+          observerModes: ["global", "player"],
+        },
+        summary: {
+          result: {
+            winner: "Black",
+            result: "win",
+            reason: "five_in_row",
+            move_count: 9,
+          },
+        },
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: gomokuScene as VisualScene,
+      currentSceneSeq: 46,
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    });
+
+    createArenaGatewayClientMock.mockReturnValue({});
+    createArenaSessionStoreMock.mockReturnValue(store);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/sessions/sample-1"]}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<SessionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(store.loadSession).toHaveBeenCalledWith({ sessionId: "sample-1" });
+    });
+
+    expect(screen.getByText("Black wins")).toBeInTheDocument();
+    expect(screen.getByText("Five In Row")).toBeInTheDocument();
+    expect(screen.getByText("9 moves")).toBeInTheDocument();
+  });
+
   it("routes host controls side-panel actions and plugin input through the session store", async () => {
     const setObserver = vi.fn().mockResolvedValue(undefined);
     const submitAction = vi.fn().mockResolvedValue({
@@ -282,7 +365,7 @@ describe("SessionPage", () => {
 
     fireEvent.click(within(utilityRail).getByRole("button", { name: "Chat" }));
     expect(screen.getByRole("button", { name: /close utility drawer/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/chat message/i), {
       target: { value: "hello host" },
     });
@@ -702,7 +785,7 @@ describe("SessionPage", () => {
     const utilityRail = screen.getByRole("navigation", { name: /session utility rail/i });
     expect(within(utilityRail).getByRole("button", { name: "Control" })).toBeInTheDocument();
     fireEvent.click(within(utilityRail).getByRole("button", { name: "Control" }));
-    expect(screen.getByRole("tab", { name: "Control" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: "Control" })).not.toBeInTheDocument();
     expect(screen.getByText("Tail locked")).toBeInTheDocument();
     expect(screen.getByText("Human input enabled")).toBeInTheDocument();
     expect(screen.getByText("Low latency input")).toBeInTheDocument();
@@ -1384,7 +1467,7 @@ describe("SessionPage", () => {
     expect(refreshSession).toHaveBeenCalled();
   });
 
-  it("reuses a low-latency live scene instead of reloading it on every live-tail seq bump", async () => {
+  it("reloads a low-latency live scene when live-tail seq advances so metadata stays fresh", async () => {
     const lowLatencyScene: VisualScene = {
       ...(retroScene as VisualScene),
       phase: "live",
@@ -1476,7 +1559,8 @@ describe("SessionPage", () => {
       await Promise.resolve();
     });
 
-    expect(store.loadScene).not.toHaveBeenCalled();
+    expect(store.loadScene).toHaveBeenCalledTimes(1);
+    expect(store.loadScene).toHaveBeenCalledWith({ seq: 24 });
   });
 
   it("throttles timeline polling while a low-latency live scene is streaming", async () => {
@@ -2013,7 +2097,8 @@ describe("SessionPage", () => {
     fireEvent.click(within(utilityRail).getByRole("button", { name: "Players" }));
 
     expect(screen.getByRole("button", { name: /close utility drawer/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Players" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: "Players" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/observer view/i)).toBeInTheDocument();
   });
 
   it("ticks replay playback forward while the session is replaying", async () => {

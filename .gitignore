@@ -19,6 +19,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!frontend/arena-visual/src/lib/
+!frontend/arena-visual/src/lib/**
 lib64/
 parts/
 sdist/

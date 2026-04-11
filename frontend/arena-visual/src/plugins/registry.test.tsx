@@ -18,11 +18,13 @@ describe("resolveArenaPlugin", () => {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
     "arena.visualization.mahjong.table_v1": {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
     "arena.visualization.pettingzoo.frame_v1": {
       sceneKinds: ["frame"],

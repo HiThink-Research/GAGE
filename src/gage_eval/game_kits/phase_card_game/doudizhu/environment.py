@@ -51,13 +51,42 @@ from gage_eval.registry import registry
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
 
 
+class _CardArenaPlayerResolutionMixin:
+    _core: AbstractGameCore
+    _player_ids: Sequence[str]
+    _player_id_map: Mapping[int, str]
+    _player_index_map: Mapping[str, int]
+
+    def _resolve_player_index(self, player_id: str) -> int:
+        if player_id not in self._player_index_map:
+            raise KeyError(f"Unknown player id: {player_id}")
+        return int(self._player_index_map[player_id])
+
+    def _safe_payoffs(self) -> list[float]:
+        try:
+            if self._core.is_terminal():
+                return self._core.get_payoffs()
+        except Exception:
+            pass
+        return [0.0 for _ in self._player_ids]
+
+    def _resolve_winner(self, payoffs: Sequence[float]) -> Optional[str]:
+        if not payoffs:
+            return None
+        max_payoff = max(payoffs)
+        if max_payoff <= 0:
+            return None
+        winner_index = list(payoffs).index(max_payoff)
+        return self._player_id_map.get(winner_index)
+
+
 @registry.asset(
     "arena_impls",
     "doudizhu_rlcard_v1",
     desc="RLCard Doudizhu arena environment",
     tags=("doudizhu", "arena", "card"),
 )
-class GenericCardArena:
+class GenericCardArena(_CardArenaPlayerResolutionMixin):
     """Stage manager that coordinates card game components."""
 
     def __init__(
@@ -316,11 +345,6 @@ class GenericCardArena:
             return action
         return str(action)
 
-    def _resolve_player_index(self, player_id: str) -> int:
-        if player_id not in self._player_index_map:
-            raise KeyError(f"Unknown player id: {player_id}")
-        return int(self._player_index_map[player_id])
-
     def _resolve_pass_action(self, legal_action_ids: Sequence[int]) -> Optional[int]:
         if not legal_action_ids:
             return None
@@ -336,23 +360,6 @@ class GenericCardArena:
         if not legal_action_ids:
             return None
         return int(self._rng.choice(list(legal_action_ids)))
-
-    def _safe_payoffs(self) -> list[float]:
-        try:
-            if self._core.is_terminal():
-                return self._core.get_payoffs()
-        except Exception:
-            pass
-        return [0.0 for _ in self._player_ids]
-
-    def _resolve_winner(self, payoffs: Sequence[float]) -> Optional[str]:
-        if not payoffs:
-            return None
-        max_payoff = max(payoffs)
-        if max_payoff <= 0:
-            return None
-        winner_index = list(payoffs).index(max_payoff)
-        return self._player_id_map.get(winner_index)
 
     def _stringify_replay(self, replay: dict[str, Any] | str) -> str:
         if isinstance(replay, str):
@@ -383,7 +390,7 @@ class GenericCardArena:
     desc="Arena environment adapter for RLCard Doudizhu",
     tags=("doudizhu", "arena"),
 )
-class DoudizhuArenaEnvironment:
+class DoudizhuArenaEnvironment(_CardArenaPlayerResolutionMixin):
     """Arena environment that adapts RLCard Doudizhu to ArenaRoleAdapter."""
 
     def __init__(
@@ -479,6 +486,7 @@ class DoudizhuArenaEnvironment:
         self._illegal_move_count = 0
         self._last_move: Optional[str] = None
         self._hand_cards_with_suit: list[list[str]] = []
+        self._public_cards_with_suit: list[str] = []
         self._initial_hands: list[list[str]] = []
         self._latest_actions: list[list[str] | str] = []
         self._landlord_id: Optional[str] = None
@@ -501,6 +509,7 @@ class DoudizhuArenaEnvironment:
         self._last_move = None
         self._latest_actions = [[] for _ in self._player_ids]
         self._hand_cards_with_suit = []
+        self._public_cards_with_suit = []
         self._initial_hands = []
         self._landlord_id = None
         self._replay_path = None
@@ -563,6 +572,7 @@ class DoudizhuArenaEnvironment:
             "rule_profile": self._rule_profile,
             "public_state": public_state,
             "private_state": private_state,
+            "ui_state": ui_state,
             "chat_log": list(self._chat_log),
             "chat_mode": self._chat_mode,
             "last_move": self._last_move,
@@ -595,6 +605,9 @@ class DoudizhuArenaEnvironment:
     def get_last_frame(self) -> dict[str, Any] | str:
         """Returns the latest rendered frame payload for websocket display."""
 
+        chat_updated = self._drain_chat_queue()
+        if chat_updated:
+            self._refresh_last_frame()
         if self._last_frame is None:
             self._refresh_last_frame()
         if isinstance(self._last_frame, dict):
@@ -603,9 +616,9 @@ class DoudizhuArenaEnvironment:
             return {}
         return self._last_frame
 
-    def _drain_chat_queue(self, *, record: bool = True) -> None:
+    def _drain_chat_queue(self, *, record: bool = True) -> bool:
         if self._chat_queue is None:
-            return
+            return False
         added = False
         while True:
             try:
@@ -621,6 +634,7 @@ class DoudizhuArenaEnvironment:
                 added = True
         if added and self._replay_live:
             self._save_replay()
+        return added
 
     def _parse_chat_payload(self, payload: Any) -> Optional[Tuple[str, str]]:
         if payload is None:
@@ -670,6 +684,7 @@ class DoudizhuArenaEnvironment:
 
         if self._final_result is not None:
             return self._final_result
+        self._drain_chat_queue()
 
         player_id = action.player
         if player_id != self.get_active_player():
@@ -771,8 +786,10 @@ class DoudizhuArenaEnvironment:
             self._illegal_counts[player_id] += 1
         self._illegal_move_count += 1
         if self._max_illegal < 0:
+            self._refresh_last_frame()
             return None
         if self._illegal_counts.get(player_id, 0) <= self._max_illegal:
+            self._refresh_last_frame()
             return None
 
         if self._illegal_on_fail == "draw":
@@ -796,35 +813,14 @@ class DoudizhuArenaEnvironment:
             line_length=None,
             replay_path=replay_path,
         )
+        self._refresh_last_frame()
         return self._final_result
-
-    def _resolve_player_index(self, player_id: str) -> int:
-        if player_id not in self._player_index_map:
-            raise KeyError(f"Unknown player id: {player_id}")
-        return int(self._player_index_map[player_id])
 
     def _resolve_illegal_winner(self, offender_id: str) -> Optional[str]:
         for player_id in self._player_ids:
             if player_id != offender_id:
                 return player_id
         return None
-
-    def _safe_payoffs(self) -> list[float]:
-        try:
-            if self._core.is_terminal():
-                return self._core.get_payoffs()
-        except Exception:
-            pass
-        return [0.0 for _ in self._player_ids]
-
-    def _resolve_winner(self, payoffs: Sequence[float]) -> Optional[str]:
-        if not payoffs:
-            return None
-        max_payoff = max(payoffs)
-        if max_payoff <= 0:
-            return None
-        winner_index = list(payoffs).index(max_payoff)
-        return self._player_id_map.get(winner_index)
 
     def _save_replay(self) -> Optional[str]:
         try:
@@ -901,6 +897,7 @@ class DoudizhuArenaEnvironment:
 
     def _snapshot_board(self) -> str:
         try:
+            self._drain_chat_queue()
             self._refresh_perfect_information()
             raw_obs = self._core.get_observation(0)
             legal_action_ids = self._core.get_legal_actions(0)
@@ -969,6 +966,7 @@ class DoudizhuArenaEnvironment:
     def _build_frame_payload(self) -> dict[str, Any]:
         """Builds one frame payload from the active-player snapshot."""
 
+        self._drain_chat_queue()
         # STEP 1: Resolve active player and legal actions.
         active_player = self.get_active_player()
         player_index = self._resolve_player_index(active_player)
@@ -1060,6 +1058,8 @@ class DoudizhuArenaEnvironment:
 
     def _refresh_perfect_information(self) -> dict[str, Any]:
         perfect = self._core.get_perfect_information()
+        public_cards = self._core.get_public_cards()
+        self._public_cards_with_suit = self._parse_public_cards_with_suit(public_cards)
         if not isinstance(perfect, dict):
             return {}
         hand_cards = self._parse_hand_cards_with_suit(perfect.get("hand_cards_with_suit", []))
@@ -1080,6 +1080,16 @@ class DoudizhuArenaEnvironment:
                 except TypeError:
                     cards = [str(entry)]
             parsed.append(cards)
+        return parsed
+
+    def _parse_public_cards_with_suit(self, public_cards: Sequence[Any] | None) -> list[str]:
+        if public_cards is None:
+            return []
+        parsed: list[str] = []
+        for item in list(public_cards):
+            card = str(item).strip()
+            if card:
+                parsed.append(card)
         return parsed
 
     def _build_ui_state(
@@ -1110,6 +1120,7 @@ class DoudizhuArenaEnvironment:
             "roles": roles,
             "seat_order": seat_order,
             "hands": hand_cards,
+            "seen_cards": list(self._public_cards_with_suit),
             "latest_actions": latest_actions,
             "active_player_id": self.get_active_player(),
             "landlord_id": self._landlord_id or "unknown",

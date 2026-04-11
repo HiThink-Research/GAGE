@@ -7,6 +7,7 @@ import type {
 } from "../../gateway/types";
 import { useState } from "react";
 import { ActionIntentFlow } from "../../app/ActionIntentFlow";
+import { isRecord, readString } from "../../lib/sceneReaders";
 
 export const SHARED_SIDE_PANEL_TABS = ["Control", "Players", "Events", "Chat", "Trace"] as const;
 export type SharedSidePanelTab = (typeof SHARED_SIDE_PANEL_TABS)[number];
@@ -50,14 +51,6 @@ interface ObserverOption {
   value: string;
   label: string;
   observer: ObserverRef;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
 function readScenePanels(scene?: VisualScene): ScenePanelData {
@@ -282,6 +275,7 @@ export function SharedSidePanel({
   const observerOptions = readObserverOptions(session, scene);
   const selectedObserverValue = readSelectedObserverValue(session);
   const activeTab = controlledActiveTab ?? uncontrolledActiveTab;
+  const showsInternalTabSwitches = controlledActiveTab === undefined;
 
   const setActiveTab = (tab: SharedSidePanelTab) => {
     if (controlledActiveTab === undefined) {
@@ -313,21 +307,23 @@ export function SharedSidePanel({
 
   return (
     <section className="side-panel" aria-label="Shared session context">
-      <div role="tablist" aria-label="Shared side panel sections">
-        {SHARED_SIDE_PANEL_TABS.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab}
-            onClick={() => {
-              setActiveTab(tab);
-            }}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
+      {showsInternalTabSwitches ? (
+        <div role="tablist" aria-label="Shared side panel sections">
+          {SHARED_SIDE_PANEL_TABS.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab}
+              onClick={() => {
+                setActiveTab(tab);
+              }}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {activeTab === "Control" ? (
         <article className="side-panel__card side-panel__card--control">

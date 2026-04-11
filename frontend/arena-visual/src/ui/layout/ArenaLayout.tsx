@@ -33,8 +33,10 @@ export function ArenaLayout({
   return (
     <section className={className} aria-label="Arena workspace theater">
       <div className="arena-layout__controls">{controls}</div>
-      <div className="arena-layout__theater">
-        <div className="arena-layout__stage">{stage}</div>
+      <div className="arena-layout__workspace">
+        <div className="arena-layout__theater">
+          <div className="arena-layout__stage">{stage}</div>
+        </div>
         {utilityRail ? (
           <nav className="arena-layout__utility-rail" aria-label="Session utility rail">
             {utilityRail}

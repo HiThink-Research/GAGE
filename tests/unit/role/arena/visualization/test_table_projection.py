@@ -122,6 +122,66 @@ def test_doudizhu_table_projection_masks_non_observer_private_hands() -> None:
     )
 
 
+def test_doudizhu_table_projection_prefers_suitful_seen_cards_from_ui_state() -> None:
+    scene = assemble_visual_scene(
+        visual_session=VisualSession(
+            session_id="doudizhu-suitful-center",
+            game_id="doudizhu",
+            plugin_id=DOUDIZHU_VISUALIZATION_SPEC.plugin_id,
+            observer=ObserverRef(observer_id="player_0", observer_kind="player"),
+        ),
+        event=TimelineEvent(
+            seq=11,
+            ts_ms=1011,
+            type="snapshot",
+            label="snapshot",
+        ),
+        snapshot_body={
+            "active_player_id": "player_0",
+            "observer_player_id": "player_0",
+            "player_ids": ["player_0", "player_1", "player_2"],
+            "player_names": {
+                "player_0": "Player 0",
+                "player_1": "Player 1",
+                "player_2": "Player 2",
+            },
+            "public_state": {
+                "landlord_id": "player_0",
+                "num_cards_left": {"player_0": 17, "player_1": 17, "player_2": 17},
+                "played_cards": [],
+                "seen_cards": ["7", "7", "Q"],
+                "trace": [],
+            },
+            "private_state": {
+                "self_id": "player_0",
+                "current_hand": ["7", "Q"],
+            },
+            "ui_state": {
+                "roles": {
+                    "player_0": "landlord",
+                    "player_1": "peasant",
+                    "player_2": "peasant",
+                },
+                "seat_order": {
+                    "bottom": "player_0",
+                    "left": "player_1",
+                    "right": "player_2",
+                },
+                "hands": [["S7", "HQ"], ["C3"], ["D4"]],
+                "seen_cards": ["S7", "H7", "DQ"],
+                "latest_actions": [[], [], []],
+            },
+        },
+        visualization_spec=DOUDIZHU_VISUALIZATION_SPEC,
+    )
+
+    assert scene.body["table"]["center"] == {
+        "label": "Seen cards",
+        "cards": ["S7", "H7", "DQ"],
+        "history": [],
+    }
+
+
 def test_doudizhu_table_projection_keeps_spectator_status_distinct_from_private_view() -> None:
     scene = assemble_visual_scene(
         visual_session=VisualSession(

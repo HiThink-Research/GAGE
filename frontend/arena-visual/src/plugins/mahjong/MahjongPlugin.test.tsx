@@ -19,6 +19,27 @@ describe("MahjongPlugin", () => {
     expect(css).toMatch(/\.mahjong-discards\s*\{[^}]*grid-area:\s*center/s);
     expect(css).toMatch(/\.mahjong-seat--bottom\s*\{[^}]*grid-area:\s*bottom/s);
     expect(css).not.toMatch(/\.mahjong-seat\s*\{[^}]*position:\s*absolute/s);
+    expect(css).toMatch(/\.mahjong-tile\.is-rotated\s*\{/);
+    expect(css).toMatch(/\.mahjong-seat--bottom\s+\.mahjong-seat__bubble\s*\{/);
+    expect(css).toMatch(/\.mahjong-seat--top\s+\.mahjong-seat__bubble\s*\{/);
+    expect(css).toMatch(/\.mahjong-seat--left\s+\.mahjong-seat__bubble\s*\{/);
+    expect(css).toMatch(/\.mahjong-seat--right\s+\.mahjong-seat__bubble\s*\{/);
+  });
+
+  it("keeps terminal discard-heavy layouts compact and scroll-safe in fullscreen", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/plugins/mahjong/mahjong.css"), "utf-8");
+
+    expect(css).toMatch(/--mahjong-tile-width:\s*clamp\(1\.65rem/s);
+    expect(css).toMatch(/\.mahjong-discards\s*\{[^}]*max-height:\s*clamp\(/s);
+    expect(css).toMatch(/\.mahjong-discards\s*\{[^}]*overflow-y:\s*auto/s);
+    expect(css).toMatch(/\.mahjong-discards__pool\s*\{[^}]*repeat\(auto-fit/s);
+    expect(css).toMatch(/\.mahjong-discards\s+\.mahjong-tile\.is-compact\s*\{/s);
+    expect(css).toMatch(
+      /\.session-stage--fullscreen\s+\.mahjong-stage,\s*\.session-stage:fullscreen\s+\.mahjong-stage\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) auto/s,
+    );
+    expect(css).toMatch(
+      /\.session-stage--fullscreen\s+\.mahjong-stage__table,\s*\.session-stage:fullscreen\s+\.mahjong-stage__table\s*\{[^}]*min-height:\s*0/s,
+    );
   });
 
   it("renders a discard pool, parses meld notes, and keeps spectator hands hidden", () => {
@@ -207,6 +228,199 @@ describe("MahjongPlugin", () => {
       playerId: "east",
       actionText: "B1",
     });
+  });
+
+  it("renders left and right concealed hands as full vertical stacks", () => {
+    render(
+      <MahjongPlugin
+        session={{
+          sessionId: "mahjong-sample",
+          gameId: "mahjong",
+          pluginId: "arena.visualization.mahjong.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 2021,
+            cursorEventSeq: 21,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "east",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "east",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={mahjongRichScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(
+      screen
+        .getByTestId("mahjong-seat-right-hand")
+        .querySelectorAll(".mahjong-hand__rack > .mahjong-tile"),
+    ).toHaveLength(13);
+    expect(
+      screen
+        .getByTestId("mahjong-seat-left-hand")
+        .querySelectorAll(".mahjong-hand__rack > .mahjong-tile"),
+    ).toHaveLength(13);
+    expect(
+      screen
+        .getByTestId("mahjong-seat-top-hand")
+        .querySelectorAll(".mahjong-hand__rack > .mahjong-tile"),
+    ).toHaveLength(13);
+    expect(
+      screen.getByTestId("mahjong-seat-right-hand").querySelector(".mahjong-hand__rack--vertical"),
+    ).not.toBeNull();
+    expect(
+      screen.getByTestId("mahjong-seat-left-hand").querySelector(".mahjong-hand__rack--vertical"),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByTestId("mahjong-seat-right-hand")
+        .querySelectorAll(".mahjong-hand__rack > .mahjong-tile.is-rotated"),
+    ).toHaveLength(13);
+    expect(
+      screen
+        .getByTestId("mahjong-seat-left-hand")
+        .querySelectorAll(".mahjong-hand__rack > .mahjong-tile.is-rotated"),
+    ).toHaveLength(13);
+  });
+
+  it("anchors chat bubbles per rendered seat instead of using a single inline placement", () => {
+    const bubbleScene = structuredClone(mahjongRichScene) as VisualScene;
+    const bubbleBody = bubbleScene.body as Record<string, any>;
+
+    bubbleBody.panels = {
+      ...(bubbleBody.panels as Record<string, any>),
+      chatLog: [
+        { playerId: "east", text: "east chat" },
+        { playerId: "south", text: "south chat" },
+        { playerId: "west", text: "west chat" },
+        { playerId: "north", text: "north chat" },
+      ],
+    };
+
+    render(
+      <MahjongPlugin
+        session={{
+          sessionId: "mahjong-bubbles",
+          gameId: "mahjong",
+          pluginId: "arena.visualization.mahjong.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 2022,
+            cursorEventSeq: 22,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "east",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "east",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={bubbleScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByTestId("mahjong-seat-bottom-bubble")).toHaveClass("mahjong-seat__bubble--bottom");
+    expect(screen.getByTestId("mahjong-seat-right-bubble")).toHaveClass("mahjong-seat__bubble--right");
+    expect(screen.getByTestId("mahjong-seat-top-bubble")).toHaveClass("mahjong-seat__bubble--top");
+    expect(screen.getByTestId("mahjong-seat-left-bubble")).toHaveClass("mahjong-seat__bubble--left");
+  });
+
+  it("prefers the session observer when replay payload carries another private view", () => {
+    const replayScene = structuredClone(mahjongRichScene) as VisualScene;
+    const replayBody = replayScene.body as Record<string, any>;
+    const replayTable = replayBody.table as Record<string, any>;
+    const replaySeats = replayTable.seats as Array<Record<string, any>>;
+
+    replayBody.status = {
+      ...(replayBody.status as Record<string, any>),
+      activePlayerId: "south",
+      observerPlayerId: null,
+      privateViewPlayerId: "south",
+    };
+    replaySeats.forEach((seat) => {
+      seat.isObserver = false;
+      if (seat.playerId === "east") {
+        seat.hand = {
+          isVisible: false,
+          cards: [],
+          maskedCount: 13,
+        };
+      }
+    });
+
+    render(
+      <MahjongPlugin
+        session={{
+          sessionId: "mahjong-replay",
+          gameId: "mahjong",
+          pluginId: "arena.visualization.mahjong.table_v1",
+          lifecycle: "closed",
+          playback: {
+            mode: "paused",
+            cursorTs: 2060,
+            cursorEventSeq: 6,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "east",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "completed",
+            acceptsHumanIntent: false,
+            activeActorId: "south",
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {},
+        }}
+        scene={replayScene}
+        submitAction={vi.fn()}
+        submitInput={vi.fn()}
+        mediaSubscribe={() => () => {}}
+        isFallback={false}
+      />,
+    );
+
+    expect(screen.getByTestId("mahjong-stage-status")).toHaveTextContent("Viewing East");
+    expect(screen.getByTestId("mahjong-stage-status")).not.toHaveTextContent("Viewing South");
+    expect(screen.getByLabelText("Mahjong seat east")).toHaveAttribute(
+      "data-testid",
+      "mahjong-seat-bottom",
+    );
   });
 
   it("renders a result banner when the scene carries terminal hand semantics", () => {

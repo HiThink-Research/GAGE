@@ -6,6 +6,12 @@ import {
   type CSSProperties,
 } from "react";
 import type { VisualScene, VisualSession } from "../../gateway/types";
+import {
+  isRecord,
+  readNumber,
+  readOptionalNumber,
+  readString,
+} from "../../lib/sceneReaders";
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
 import type { ActionIntent } from "../sdk/input";
@@ -66,22 +72,13 @@ interface FrameSurfaceProps {
   mediaSubscribe: ArenaMediaSubscriber;
   keyboardControls?: FrameKeyboardControls;
   presentation?: "default" | "immersive";
+  showStatusLine?: boolean;
+  showViewText?: boolean;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-function readNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function readNullableNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+interface ScenePrimaryMediaRef {
+  transport?: string;
+  url?: string | null;
 }
 
 function readViewport(value: unknown): FrameViewport | null {
@@ -138,7 +135,7 @@ export function readFrameScene(scene?: VisualScene): FrameSceneData | null {
       step: readNumber(status.step),
       moveCount: readNumber(status.moveCount),
       lastMove: readString(status.lastMove),
-      reward: readNullableNumber(status.reward),
+      reward: readOptionalNumber(status.reward),
     },
     viewText: isRecord(view) ? readString(view.text) : null,
     overlays: readOverlays(scene),
@@ -231,6 +228,23 @@ function resolveCanvasClassName(fit: string): string {
   return fit === "cover"
     ? "frame-surface__canvas frame-surface__canvas--cover"
     : "frame-surface__canvas frame-surface__canvas--contain";
+}
+
+function isAbsoluteMediaUrl(url: string): boolean {
+  return /^(https?:\/\/|data:|blob:)/i.test(url);
+}
+
+function resolveDirectFrameImageSrc(ref: ScenePrimaryMediaRef | null | undefined): string | null {
+  if (!ref) {
+    return null;
+  }
+  if (ref.transport === "low_latency_channel" || ref.transport === "binary_stream") {
+    return null;
+  }
+  if (typeof ref.url !== "string" || ref.url.trim() === "") {
+    return null;
+  }
+  return isAbsoluteMediaUrl(ref.url) ? ref.url : null;
 }
 
 export function fitViewportWithinBounds(
@@ -399,6 +413,8 @@ export function FrameSurface({
   mediaSubscribe,
   keyboardControls,
   presentation = "default",
+  showStatusLine = true,
+  showViewText = true,
 }: FrameSurfaceProps) {
   const rootRef = useRef<HTMLElement | null>(null);
   const isImmersive = presentation === "immersive";
@@ -409,7 +425,8 @@ export function FrameSurface({
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
   const keyboardInputSequenceRef = useRef(0);
-  const primaryMediaId = scene?.media?.primary?.mediaId;
+  const primaryMediaRef = scene?.media?.primary;
+  const primaryMediaId = primaryMediaRef?.mediaId;
   const mediaState = useMediaSource({
     sessionId: session.sessionId,
     mediaId: primaryMediaId ?? "",
@@ -624,8 +641,16 @@ export function FrameSurface({
   const actorLabel = formatFrameActorLabel(session, resolvedActorId);
   const imageClassName = resolveImageClassName(frameScene.frame.fit);
   const canvasClassName = resolveCanvasClassName(frameScene.frame.fit);
-  const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
-  const lowLatencyStreamUrl = resolveLowLatencyStreamUrl(mediaState?.ref?.url, mediaState?.ref?.transport);
+  const directImageSrc = resolveDirectFrameImageSrc(primaryMediaRef);
+  const imageSrc =
+    directImageSrc ??
+    (typeof mediaState?.src === "string"
+      ? mediaState.src
+      : null);
+  const lowLatencyStreamUrl = resolveLowLatencyStreamUrl(
+    mediaState?.ref?.url ?? primaryMediaRef?.url,
+    mediaState?.ref?.transport ?? primaryMediaRef?.transport,
+  );
   const viewportStyle = resolveViewportStyle(
     effectiveViewport,
     presentation,
@@ -635,7 +660,6 @@ export function FrameSurface({
   const immersiveImageStyle = isImmersive
     ? resolveImmersiveImageStyle(frameScene.frame.fit)
     : undefined;
-  const showImmersiveStatsPanel = isImmersive && frameScene.overlays.length > 0;
 
   return (
     <section
@@ -717,45 +741,18 @@ export function FrameSurface({
         ) : (
           <div className="frame-surface__fallback">Loading frame...</div>
         )}
-
-        {!isImmersive && frameScene.overlays.length > 0 ? (
-          <div className="frame-surface__overlay-strip">
-            {frameScene.overlays.map((overlay) => (
-              <div
-                className="frame-surface__overlay-badge"
-                key={`${overlay.kind}:${overlay.label}:${overlay.value}`}
-              >
-                <span>{overlay.label}</span>
-                <strong>{overlay.value}</strong>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
-
-      {showImmersiveStatsPanel ? (
-        <div
-          className="frame-surface__immersive-stats"
-          data-testid="frame-surface-immersive-stats"
-        >
-          {frameScene.overlays.map((overlay) => (
-            <div
-              className="frame-surface__immersive-stat"
-              key={`${overlay.kind}:${overlay.label}:${overlay.value}`}
-            >
-              <span>{overlay.label}</span>
-              <strong>{overlay.value}</strong>
-            </div>
-          ))}
-        </div>
-      ) : null}
 
       {!isImmersive ? (
         <>
-          <p className="frame-surface__status-line" data-testid="frame-status-line">
-            {formatStatusLine(frameScene)}
-          </p>
-          {frameScene.viewText ? <p className="frame-surface__view-text">{frameScene.viewText}</p> : null}
+          {showStatusLine ? (
+            <p className="frame-surface__status-line" data-testid="frame-status-line">
+              {formatStatusLine(frameScene)}
+            </p>
+          ) : null}
+          {showViewText && frameScene.viewText ? (
+            <p className="frame-surface__view-text">{frameScene.viewText}</p>
+          ) : null}
           {keyboardControls ? (
             <p className="frame-surface__keyboard-hint" data-testid="frame-keyboard-hint">
               {keyboardControls.hint}

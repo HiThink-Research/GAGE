@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from gage_eval.game_kits.aec_env_game.pettingzoo.action_codec import (
     DiscreteActionCodec,
@@ -72,6 +72,20 @@ class FakeRgbFrame:
 class FakeRgbAecEnv(FakeAecEnv):
     def observe(self, agent: str) -> Dict[str, Any]:
         return {"observation": FakeRgbFrame(), "agent": agent, "step": self._step_count}
+
+
+class ScalarLikeReward:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __float__(self) -> float:
+        return float(self.value)
+
+    def item(self) -> float:
+        return float(self.value)
+
+    def __str__(self) -> str:
+        return str(self.value)
 
 
 def test_pettingzoo_env_basic_loop():
@@ -174,3 +188,29 @@ def test_pettingzoo_env_observation_includes_inline_image_when_rgb_obs_available
     assert observation.view is not None
     assert observation.view["image"]["data_url"] == "data:image/png;base64,Zm9v"
     assert observation.view["image"]["shape"] == [2, 2, 3]
+
+
+def test_pettingzoo_env_normalizes_scalar_like_reward_to_python_float():
+    env = FakeAecEnv(max_steps=3, action_n=3)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+    )
+    active_agent = env.agent_selection
+    env.rewards[active_agent] = ScalarLikeReward(1.5)
+
+    active_player = adapter.get_active_player()
+    observation = adapter.observe(active_player)
+    frame = adapter.get_last_frame()
+
+    assert observation.metadata["reward"] == 1.5
+    assert isinstance(observation.metadata["reward"], float)
+    assert frame["reward"] == 1.5
+    assert isinstance(frame["reward"], float)
+
+    adapter.apply(ArenaAction(player=active_player, move="1", raw="1"))
+    result = adapter.build_result(result="completed", reason="manual")
+
+    assert result.move_log[0]["reward"] == 1.5
+    assert isinstance(result.move_log[0]["reward"], float)

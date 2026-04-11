@@ -69,6 +69,49 @@ describe("SharedSidePanel", () => {
     expect(screen.getByRole("tab", { name: "Trace" })).toBeInTheDocument();
   });
 
+  it("omits duplicate tab switches when the active panel is controlled by the parent layout", () => {
+    render(
+      <SharedSidePanel
+        activeTab="Players"
+        session={{
+          sessionId: "doudizhu-sample",
+          gameId: "doudizhu",
+          pluginId: "arena.visualization.doudizhu.table_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "paused",
+            cursorTs: 1007,
+            cursorEventSeq: 7,
+            speed: 1,
+            canSeek: true,
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player",
+          },
+          scheduling: {
+            family: "turn",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0",
+          },
+          capabilities: {
+            observerModes: ["global", "player"],
+          },
+          summary: {},
+          timeline: {},
+        }}
+        scene={doudizhuScene as VisualScene}
+      />,
+    );
+
+    expect(screen.queryByRole("tablist", { name: "Shared side panel sections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Control" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Players" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Players" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/observer view/i)).toBeInTheDocument();
+  });
+
   it("renders control panel metadata when the Control tab is active", () => {
     render(
       <SharedSidePanel

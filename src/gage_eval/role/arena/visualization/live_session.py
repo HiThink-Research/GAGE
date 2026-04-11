@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import io
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -43,6 +44,8 @@ _SUPPORTED_LIVE_SCENE_SCHEMES = {
 _BINARY_MEDIA_PREFIX = "live-binary:"
 _LOW_LATENCY_MEDIA_PREFIX = "live-channel-"
 _LOW_LATENCY_SCENE_KINDS = {"frame", "rts"}
+_LIVE_REVISION_FRAME_SHIFT = 32
+_LIVE_REVISION_POLL_INTERVAL_S = 0.1
 
 
 class ArenaVisualLiveSessionSource(Protocol):
@@ -134,6 +137,7 @@ class RecorderLiveSessionSource:
     live_scene_scheme: str = "http_pull"
     finish_gate: ArenaVisualFinishGate | None = None
     live_frame_supplier: Callable[[], object | None] | None = None
+    observer_live_frame_supplier: Callable[[ObserverRef | None], object | None] | None = None
     stop_callback: Callable[[], object | None] | None = None
     restart_callback: Callable[[], object | None] | None = None
     _cache_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
@@ -185,17 +189,46 @@ class RecorderLiveSessionSource:
 
     def current_live_revision(self) -> int:
         current_revision = getattr(self.recorder, "current_live_revision", None)
-        if callable(current_revision):
-            return int(current_revision())
-        return 0
+        recorder_revision = int(current_revision()) if callable(current_revision) else 0
+        frame_version = self._current_stream_frame_version() or 0
+        return _compose_live_revision(recorder_revision=recorder_revision, frame_version=frame_version)
 
     def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int:
-        wait_for_revision = getattr(self.recorder, "wait_for_live_revision", None)
-        if callable(wait_for_revision):
-            return int(wait_for_revision(after_revision=after_revision, timeout_s=timeout_s))
-        if timeout_s not in (None, 0):
-            time.sleep(max(0.0, float(timeout_s)))
-        return self.current_live_revision()
+        target_revision = int(after_revision)
+        recorder_wait_for_revision = getattr(self.recorder, "wait_for_live_revision", None)
+        if (
+            self.live_frame_supplier is None
+            and self.observer_live_frame_supplier is None
+            and callable(recorder_wait_for_revision)
+        ):
+            current_revision = self.current_live_revision()
+            if current_revision > target_revision:
+                return current_revision
+            recorder_wait_for_revision(
+                after_revision=_recorder_revision_from_live_revision(target_revision),
+                timeout_s=timeout_s,
+            )
+            return self.current_live_revision()
+
+        deadline = None if timeout_s is None else time.monotonic() + max(0.0, float(timeout_s))
+        while True:
+            current_revision = self.current_live_revision()
+            if current_revision > target_revision:
+                return current_revision
+            if deadline is not None:
+                remaining_s = deadline - time.monotonic()
+                if remaining_s <= 0.0:
+                    return current_revision
+                wait_timeout_s = min(_LIVE_REVISION_POLL_INTERVAL_S, remaining_s)
+            else:
+                wait_timeout_s = _LIVE_REVISION_POLL_INTERVAL_S
+            if callable(recorder_wait_for_revision):
+                recorder_wait_for_revision(
+                    after_revision=_recorder_revision_from_live_revision(current_revision),
+                    timeout_s=wait_timeout_s,
+                )
+                continue
+            time.sleep(wait_timeout_s)
 
     def page_timeline(self, *, after_seq: int | None = None, limit: int = 50) -> TimelinePage:
         if limit <= 0:
@@ -349,7 +382,7 @@ class RecorderLiveSessionSource:
         try:
             return int(version)
         except (TypeError, ValueError):
-            return id(payload)
+            return _hash_live_frame_payload_version(payload)
 
     def _load_cached_stream_frame(self, media_id: str) -> tuple[bytes, str | None] | None:
         frame_version = self._current_stream_frame_version()
@@ -385,6 +418,19 @@ class RecorderLiveSessionSource:
         event = _lookup_event(state.timeline_events, seq=seq)
         if event is None:
             return None
+        live_frame_payload = self._load_live_frame_payload_for_tail_seq(
+            state=state,
+            seq=seq,
+            observer=observer,
+        )
+        if live_frame_payload is not None:
+            event = replace(
+                event,
+                payload=_overlay_event_payload_with_live_frame(
+                    event_payload=event.payload,
+                    frame_payload=live_frame_payload,
+                ),
+            )
 
         visual_session = _override_observer(state.visual_session, observer=observer)
         snapshot_anchor = _select_snapshot_anchor(state.snapshot_payloads, seq=seq)
@@ -445,6 +491,32 @@ class RecorderLiveSessionSource:
                 stream_id=stream_id,
             )
         return replace(scene, media=VisualSceneMedia(primary=primary, auxiliary=auxiliary))
+
+    def _load_live_frame_payload_for_tail_seq(
+        self,
+        *,
+        state,
+        seq: int,
+        observer: ObserverRef | None = None,
+    ) -> Mapping[str, object] | None:
+        if self.live_frame_supplier is None and self.observer_live_frame_supplier is None:
+            return None
+        timeline_events = getattr(state, "timeline_events", ())
+        if not timeline_events:
+            return None
+        tail_seq = int(timeline_events[-1].seq)
+        if int(seq) != tail_seq:
+            return None
+        try:
+            if self.observer_live_frame_supplier is not None:
+                payload = self.observer_live_frame_supplier(observer)
+            else:
+                payload = self.live_frame_supplier()
+        except Exception:
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        return dict(payload)
 
     def _adapt_media_ref(
         self,
@@ -580,8 +652,26 @@ class RecorderLiveSessionSource:
             return None
         stream_id = _read_live_frame_stream_id(payload)
         if self._build_low_latency_media_id(stream_id) != media_id:
-            return None
+            if _read_declared_live_frame_stream_id(payload) is not None:
+                return None
+            spec_stream_id = self._resolve_spec_default_stream_id()
+            if (
+                spec_stream_id is None
+                or self._build_low_latency_media_id(spec_stream_id) != media_id
+            ):
+                return None
         return payload
+
+    def _resolve_spec_default_stream_id(self) -> str | None:
+        if self.visualization_spec is None:
+            return None
+        rules = getattr(self.visualization_spec, "scene_projection_rules", None)
+        if not isinstance(rules, Mapping):
+            return None
+        value = rules.get("default_stream_id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
 
     def _resolve_live_ref_from_payload(self, payload: Mapping[str, object]) -> MediaSourceRef | None:
         media_payload = payload.get("media")
@@ -715,6 +805,218 @@ def _override_observer(
     return replace(visual_session, observer=observer)
 
 
+def _compose_live_revision(*, recorder_revision: int, frame_version: int) -> int:
+    return (max(0, int(recorder_revision)) << _LIVE_REVISION_FRAME_SHIFT) | max(0, int(frame_version))
+
+
+def _recorder_revision_from_live_revision(live_revision: int) -> int:
+    return max(0, int(live_revision)) >> _LIVE_REVISION_FRAME_SHIFT
+
+
+def _hash_live_frame_payload_version(payload: Mapping[str, object]) -> int:
+    digest = hashlib.sha1(
+        repr(_normalize_live_frame_payload_version_value(payload)).encode("utf-8")
+    ).hexdigest()[:12]
+    return int(digest, 16)
+
+
+def _normalize_live_frame_payload_version_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        items: list[tuple[str, object]] = []
+        for key in sorted(value.keys(), key=lambda item: str(item)):
+            normalized_key = str(key)
+            if normalized_key in {"_live_frame_version", "_live_frame_ts_ms", "timestamp_ms"}:
+                continue
+            items.append(
+                (
+                    normalized_key,
+                    _normalize_live_frame_payload_version_value(value[key]),
+                )
+            )
+        return tuple(items)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return tuple(_normalize_live_frame_payload_version_value(item) for item in value)
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return ("bytes", len(value))
+    return f"<{type(value).__name__}>"
+
+
+def _overlay_event_payload_with_live_frame(
+    *,
+    event_payload: object,
+    frame_payload: Mapping[str, object],
+) -> dict[str, object]:
+    merged_payload = dict(event_payload) if isinstance(event_payload, Mapping) else {}
+    observation = dict(merged_payload.get("observation")) if isinstance(merged_payload.get("observation"), Mapping) else {}
+
+    for key in (
+        "public_state",
+        "private_state",
+        "ui_state",
+        "player_ids",
+        "player_names",
+        "chat_log",
+        "viewport",
+        "board_text",
+        "last_move",
+    ):
+        value = frame_payload.get(key)
+        if value is not None:
+            observation[key] = value
+
+    active_player = _string_or_none(
+        frame_payload.get("active_player_id")
+        or frame_payload.get("actor")
+        or frame_payload.get("active_player")
+        or observation.get("active_player")
+    )
+    if active_player is not None:
+        observation["active_player"] = active_player
+
+    move_count = _coerce_int(frame_payload.get("move_count"))
+    if move_count is not None:
+        observation["move_count"] = move_count
+
+    legal_actions = frame_payload.get("legal_actions")
+    if isinstance(legal_actions, Mapping):
+        observation["legal_actions"] = dict(legal_actions)
+    else:
+        legal_moves = _coerce_string_sequence(frame_payload.get("legal_moves"))
+        if legal_moves:
+            observation["legal_moves"] = legal_moves
+            observation["legal_actions"] = {"items": legal_moves}
+
+    metadata = dict(observation.get("metadata")) if isinstance(observation.get("metadata"), Mapping) else {}
+    frame_metadata = frame_payload.get("metadata")
+    if isinstance(frame_metadata, Mapping):
+        metadata.update(dict(frame_metadata))
+    stream_id = _string_or_none(frame_payload.get("stream_id")) or _string_or_none(metadata.get("stream_id"))
+    if stream_id is not None:
+        merged_payload["stream_id"] = stream_id
+        metadata["stream_id"] = stream_id
+    if active_player is not None:
+        metadata.setdefault("player_id", active_player)
+    if observation.get("last_move") is not None:
+        metadata.setdefault("last_move", observation["last_move"])
+    if metadata:
+        observation["metadata"] = metadata
+
+    context = dict(observation.get("context")) if isinstance(observation.get("context"), Mapping) else {}
+    tick = _coerce_int(frame_payload.get("tick"))
+    if tick is not None:
+        context["tick"] = tick
+    if move_count is not None:
+        context["step"] = move_count
+    else:
+        step = _coerce_int(frame_payload.get("step"))
+        if step is not None:
+            context["step"] = step
+    if context:
+        observation["context"] = context
+
+    view = dict(observation.get("view")) if isinstance(observation.get("view"), Mapping) else {}
+    frame_view = frame_payload.get("view")
+    if isinstance(frame_view, Mapping):
+        view.update(dict(frame_view))
+    board_text = _string_or_none(observation.get("board_text"))
+    if board_text is not None:
+        view.setdefault("text", board_text)
+    if view:
+        observation["view"] = view
+
+    live_media = _resolve_live_frame_media_payload(frame_payload)
+    if live_media is not None:
+        merged_payload["media"] = live_media
+
+    merged_payload["observation"] = observation
+    return merged_payload
+
+
+def _resolve_live_frame_media_payload(frame_payload: Mapping[str, object]) -> dict[str, object] | None:
+    media_payload = frame_payload.get("media")
+    if isinstance(media_payload, Mapping):
+        primary_payload = media_payload.get("primary")
+        if isinstance(primary_payload, Mapping):
+            return dict(media_payload)
+
+    view_payload = frame_payload.get("view")
+    if isinstance(view_payload, Mapping):
+        image_payload = view_payload.get("image")
+        if isinstance(image_payload, Mapping):
+            data_url = _string_or_none(
+                image_payload.get("data_url")
+                or image_payload.get("dataUrl")
+                or image_payload.get("url")
+            )
+            if data_url is not None and data_url.startswith("data:"):
+                mime_type = (
+                    _string_or_none(image_payload.get("mimeType"))
+                    or _infer_data_url_mime_type(data_url)
+                    or "image/png"
+                )
+                return {
+                    "primary": _build_inline_media_ref(
+                        data_url,
+                        mime_type=mime_type,
+                    ).to_dict(),
+                }
+
+    rgb_payload = _load_rgb_frame_payload(frame_payload)
+    if rgb_payload is not None:
+        content, mime_type = rgb_payload
+        normalized_mime_type = _string_or_none(mime_type) or "image/jpeg"
+        data_url = f"data:{normalized_mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+        return {
+            "primary": _build_inline_media_ref(
+                data_url,
+                mime_type=normalized_mime_type,
+            ).to_dict(),
+        }
+
+    return None
+
+
+def _build_inline_media_ref(data_url: str, *, mime_type: str | None = None) -> MediaSourceRef:
+    normalized_mime_type = _string_or_none(mime_type) or _infer_data_url_mime_type(data_url) or "image/png"
+    digest = hashlib.sha1(data_url.encode("utf-8")).hexdigest()[:16]
+    return MediaSourceRef(
+        media_id=f"inline-media-{digest}",
+        transport="http_pull",
+        mime_type=normalized_mime_type,
+        url=data_url,
+    )
+
+
+def _infer_data_url_mime_type(data_url: str) -> str | None:
+    prefix = "data:"
+    if not data_url.startswith(prefix):
+        return None
+    mime_section = data_url[len(prefix) :].split(";", 1)[0].strip()
+    return mime_section or None
+
+
+def _coerce_int(value: object | None) -> int | None:
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_string_sequence(value: object | None) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [str(item) for item in value]
+
+
+def _string_or_none(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _normalize_run_id(run_id: str | None) -> str | None:
     if run_id is None:
         return None
@@ -737,6 +1039,13 @@ def _read_scene_stream_id(scene: VisualScene) -> str | None:
 
 
 def _read_live_frame_stream_id(payload: Mapping[str, object]) -> str:
+    declared_stream_id = _read_declared_live_frame_stream_id(payload)
+    if declared_stream_id is not None:
+        return declared_stream_id
+    return "main"
+
+
+def _read_declared_live_frame_stream_id(payload: Mapping[str, object]) -> str | None:
     stream_id = payload.get("stream_id")
     if isinstance(stream_id, str) and stream_id.strip():
         return stream_id.strip()
@@ -745,7 +1054,7 @@ def _read_live_frame_stream_id(payload: Mapping[str, object]) -> str:
         nested_stream_id = metadata.get("stream_id")
         if isinstance(nested_stream_id, str) and nested_stream_id.strip():
             return nested_stream_id.strip()
-    return "main"
+    return None
 
 
 def _parse_binary_media_id(media_id: str) -> tuple[int, str] | None:

@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from queue import Empty
-from threading import Lock
+from threading import Event, Lock
 import time
 from typing import Any
 
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
+from gage_eval.role.arena.core.errors import PlayerStopRequested
 from gage_eval.role.arena.core.players import BaseBoundPlayer, PlayerBindingSpec
 from gage_eval.role.arena.human_input_protocol import extract_action_text, parse_action_payload
 from gage_eval.role.arena.player_drivers.base import PlayerDriver
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
+
+_INTERRUPTIBLE_QUEUE_POLL_INTERVAL_S = 0.05
 
 
 class LocalHumanBoundPlayer(BaseBoundPlayer):
@@ -43,8 +46,11 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         self._async_deadline_ms: int | None = None
         self._async_ready_action: ArenaAction | None = None
         self._async_pending_payload: dict[str, Any] = {}
+        self._stop_requested = Event()
 
     def next_action(self, observation: ArenaObservation) -> ArenaAction:
+        if self._stop_requested.is_set():
+            raise PlayerStopRequested(f"Human player '{self.player_id}' stop requested")
         if self._scheduler_owned_realtime:
             action = self.poll_scheduler_owned_action(observation)
             if action is not None:
@@ -61,12 +67,46 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             return None
         return self._build_action_from_payload(observation, payload)
 
+    def drain_scheduler_owned_actions(
+        self,
+        observation: ArenaObservation,
+        *,
+        max_items: int = 1,
+    ) -> list[ArenaAction]:
+        if not self._scheduler_owned_realtime or max_items <= 0:
+            return []
+        if self._uses_continuous_state:
+            payload = self._read_scheduler_owned_payload()
+            if not payload:
+                return []
+            return [self._build_action_from_payload(observation, payload)]
+
+        queue = self._action_queue
+        if queue is None:
+            return []
+        get_nowait = getattr(queue, "get_nowait", None)
+        if not callable(get_nowait):
+            return []
+
+        drained_actions: list[ArenaAction] = []
+        while len(drained_actions) < max_items:
+            try:
+                queued = get_nowait()
+            except Empty:
+                break
+            drained_actions.append(
+                self._build_action_from_payload(observation, parse_action_payload(queued))
+            )
+        return drained_actions
+
     def start_thinking(
         self,
         observation: ArenaObservation,
         *,
         deadline_ms: int | None = None,
     ) -> bool:
+        if self._stop_requested.is_set():
+            return False
         if self._action_queue is None:
             return False
         resolved_deadline_ms = _coerce_optional_int(deadline_ms)
@@ -82,6 +122,9 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         return True
 
     def has_action(self) -> bool:
+        if self._stop_requested.is_set():
+            self._clear_async_state()
+            return False
         with self._async_lock:
             ready_action = self._async_ready_action
             observation = self._async_observation
@@ -136,13 +179,9 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             timeout_s = None
             if self._timeout_ms is not None:
                 timeout_s = max(0.0, float(self._timeout_ms) / 1000.0)
-            get = getattr(queue, "get", None)
-            if callable(get):
-                try:
-                    queued = get(timeout=timeout_s) if timeout_s is not None else get()
-                except Empty:
-                    return {}
-                return parse_action_payload(queued)
+            return self._read_interruptible_payload(queue, timeout_s=timeout_s)
+        if self._stop_requested.is_set():
+            raise PlayerStopRequested(f"Human player '{self.player_id}' stop requested")
         return parse_action_payload(input(self._format_prompt(observation)))
 
     def _read_scheduler_owned_payload(self) -> dict[str, Any]:
@@ -321,8 +360,16 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             "Enter exactly one legal move: "
         )
 
+    def request_stop(self) -> None:
+        self._stop_requested.set()
+        self._clear_async_state()
+
     def reset_runtime_state(self) -> None:
+        self._stop_requested.clear()
         self._last_continuous_payload = {}
+        self._clear_async_state()
+
+    def _clear_async_state(self) -> None:
         with self._async_lock:
             self._async_inflight = False
             self._async_observation = None
@@ -330,6 +377,36 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             self._async_deadline_ms = None
             self._async_ready_action = None
             self._async_pending_payload = {}
+
+    def _read_interruptible_payload(
+        self,
+        queue: Any,
+        *,
+        timeout_s: float | None,
+    ) -> dict[str, Any]:
+        get = getattr(queue, "get", None)
+        if not callable(get):
+            return {}
+
+        deadline_monotonic = None if timeout_s is None else time.monotonic() + max(0.0, float(timeout_s))
+        while True:
+            if self._stop_requested.is_set():
+                raise PlayerStopRequested(f"Human player '{self.player_id}' stop requested")
+
+            wait_timeout = _INTERRUPTIBLE_QUEUE_POLL_INTERVAL_S
+            if deadline_monotonic is not None:
+                remaining_s = deadline_monotonic - time.monotonic()
+                if remaining_s <= 0:
+                    return {}
+                wait_timeout = min(wait_timeout, remaining_s)
+
+            try:
+                queued = get(timeout=wait_timeout)
+            except Empty:
+                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                    return {}
+                continue
+            return parse_action_payload(queued)
 
 
 class LocalHumanInputDriver(PlayerDriver):

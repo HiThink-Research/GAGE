@@ -247,13 +247,24 @@ export function createArenaSessionStore(
     const requestVersion = sessionRequestVersion;
     const refreshToken = ++sessionRefreshToken;
     const requestContext = state.sessionRequest;
+    const sceneSeq = state.currentSceneSeq;
     const pendingRefresh = (async () => {
       try {
-        const session = await client.loadSession({
-          sessionId: requestContext.sessionId,
-          runId: requestContext.runId,
-          observer: requestContext.observer,
-        });
+        const [session, scene] = await Promise.all([
+          client.loadSession({
+            sessionId: requestContext.sessionId,
+            runId: requestContext.runId,
+            observer: requestContext.observer,
+          }),
+          sceneSeq === undefined
+            ? Promise.resolve(undefined)
+            : client.loadScene({
+                sessionId: requestContext.sessionId,
+                runId: requestContext.runId,
+                seq: sceneSeq,
+                observer: requestContext.observer,
+              }),
+        ]);
         if (
           requestVersion !== sessionRequestVersion ||
           state.sessionRequest?.sessionId !== requestContext.sessionId ||
@@ -270,6 +281,8 @@ export function createArenaSessionStore(
             observer: session.observer,
           },
           session,
+          scene: scene ?? previous.scene,
+          sceneStatus: sceneSeq === undefined ? previous.sceneStatus : "ready",
           currentSceneSeq: resolveSceneCursorForSession(previous, session),
           error: undefined,
         }));
@@ -897,6 +910,13 @@ export function createArenaSessionStore(
         ...previous,
         latestActionReceipt: receipt,
       }));
+      if (["accepted", "committed"].includes(receipt.state)) {
+        if (shouldRefreshAcceptedActionInBackground(state)) {
+          void refreshSession().catch(() => {});
+        } else {
+          await refreshSession().catch(() => {});
+        }
+      }
       return receipt;
     } catch (caughtError) {
       if (

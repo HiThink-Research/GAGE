@@ -64,7 +64,7 @@ const richScene: VisualScene = {
       ],
       center: {
         label: "Seen cards",
-        cards: ["3", "4", "5"],
+        cards: ["S3", "H4", "D5"],
         history: ["player_0: H5", "player_1: C9", "player_2: D10"],
       },
     },

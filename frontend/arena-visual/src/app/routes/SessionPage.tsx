@@ -1,4 +1,12 @@
-import { startTransition, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { usePlaybackControls } from "../hooks/usePlaybackControls";
@@ -16,6 +24,11 @@ import {
   type ArenaMediaResolver,
 } from "../../gateway/media";
 import type { ActionIntentReceipt, PlaybackMode } from "../../gateway/types";
+import {
+  isRecord,
+  readOptionalNumber,
+  readTrimmedString,
+} from "../../lib/sceneReaders";
 import { resolveArenaPlugin } from "../../plugins/registry";
 import { useInputBridge } from "../../plugins/sdk/useInputBridge";
 import { GlobalControlBar } from "../../ui/controls/GlobalControlBar";
@@ -32,7 +45,6 @@ const LIVE_TIMELINE_POLL_MS = 150;
 const LIVE_LOW_LATENCY_TIMELINE_POLL_MS = 500;
 const POST_LIVE_AUTO_FINISH_MS = 15000;
 const REPLAY_TICK_BASE_MS = 800;
-const WIDE_STAGE_GAMES = new Set(["mahjong", "doudizhu"]);
 const DEFAULT_SIDE_PANEL_TAB: SharedSidePanelTab = "Players";
 const SIDE_PANEL_TABS: Array<{
   tab: SharedSidePanelTab;
@@ -59,6 +71,85 @@ function isStageFullscreenTarget(stageElement: HTMLElement | null): boolean {
 
 function isAcceptedReceipt(receipt: ActionIntentReceipt | undefined): boolean {
   return receipt !== undefined && ["accepted", "committed"].includes(receipt.state);
+}
+
+function shallowEqualRecord<T extends Record<string, unknown>>(left: T, right: T): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  const leftKeys = Object.keys(left) as Array<keyof T>;
+  const rightKeys = Object.keys(right) as Array<keyof T>;
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => Object.is(left[key], right[key]));
+}
+
+function formatOutcomeLabel(value: string): string {
+  return value
+    .split(/[_\-\s]+/)
+    .filter((part) => part !== "")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+interface StageResultBanner {
+  eyebrow: string;
+  title: string;
+  details: string[];
+}
+
+function readStageResultBanner(
+  session: ReturnType<ArenaSessionStore["getSnapshot"]>["session"],
+): StageResultBanner | null {
+  const summary = session?.summary;
+  if (!isRecord(summary)) {
+    return null;
+  }
+
+  const rawResult = isRecord(summary.result) ? summary.result : summary;
+  const winner =
+    readTrimmedString(rawResult.winner) ??
+    readTrimmedString(rawResult.winner_player_id) ??
+    readTrimmedString(rawResult.winnerPlayerId);
+  const resultValue = readTrimmedString(rawResult.result)?.toLowerCase() ?? null;
+  const reason =
+    readTrimmedString(rawResult.reason) ??
+    readTrimmedString(rawResult.termination_reason) ??
+    readTrimmedString(rawResult.terminationReason);
+  const moveCount = readOptionalNumber(rawResult.move_count) ?? readOptionalNumber(rawResult.moveCount);
+
+  let title: string | null = null;
+  if (winner && (resultValue === "win" || resultValue === null)) {
+    title = `${winner} wins`;
+  } else if (winner && resultValue) {
+    title = `${winner} ${formatOutcomeLabel(resultValue)}`;
+  } else if (resultValue === "draw") {
+    title = "Draw";
+  } else if (resultValue) {
+    title = formatOutcomeLabel(resultValue);
+  } else if (
+    session?.scheduling.phase === "completed" ||
+    session?.lifecycle === "live_ended" ||
+    session?.lifecycle === "closed"
+  ) {
+    title = "Match complete";
+  }
+
+  if (!title) {
+    return null;
+  }
+
+  const details = [
+    reason ? formatOutcomeLabel(reason) : null,
+    moveCount && moveCount > 0 ? `${moveCount} ${moveCount === 1 ? "move" : "moves"}` : null,
+  ].filter((entry): entry is string => entry !== null);
+
+  return {
+    eyebrow: "Match complete",
+    title,
+    details,
+  };
 }
 
 function readGatewayBaseUrl(): string {
@@ -108,20 +199,20 @@ export function SessionPage() {
   );
   const [store] = useState(() => createArenaSessionStore(client));
   const [mediaResolver] = useState(() => createArenaMediaResolver(client));
-  const sessionGameId = useArenaStoreSelector(
+  const sessionOverview = useArenaStoreSelector(
     store,
-    (snapshot) => snapshot.session?.gameId ?? snapshot.scene?.gameId ?? "",
+    (snapshot) => ({
+      session: snapshot.session,
+      scene: snapshot.scene,
+      currentSceneSeq: snapshot.currentSceneSeq,
+      timeline: snapshot.timeline,
+    }),
+    shallowEqualRecord,
   );
-  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
-  const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
+  const { session, scene, currentSceneSeq, timeline } = sessionOverview;
   const sessionPlugin =
     session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined;
-  const currentSceneSeq = useArenaStoreSelector(
-    store,
-    (snapshot) => snapshot.currentSceneSeq,
-  );
-  const timeline = useArenaStoreSelector(store, (snapshot) => snapshot.timeline);
-  const arenaLayoutMode = WIDE_STAGE_GAMES.has(sessionGameId) ? "wide-stage" : "default";
+  const arenaLayoutMode = sessionPlugin?.manifest.layoutMode ?? "default";
   const compactLiveWorkspace = shouldCompactLiveWorkspace(session, scene);
   const playbackMode = session?.playback.mode ?? "live_tail";
   const [timelineExpanded, setTimelineExpanded] = useState(playbackMode !== "live_tail");
@@ -144,11 +235,14 @@ export function SessionPage() {
     setControlsExpanded(false);
   }, [sessionId]);
 
-  const eventCounts = {
-    total: timeline.events.length,
-    warn: timeline.events.filter((event) => event.severity === "warn").length,
-    critical: timeline.events.filter((event) => event.severity === "critical").length,
-  };
+  const eventCounts = useMemo(
+    () => ({
+      total: timeline.events.length,
+      warn: timeline.events.filter((event) => event.severity === "warn").length,
+      critical: timeline.events.filter((event) => event.severity === "critical").length,
+    }),
+    [timeline.events],
+  );
 
   const handleSidePanelToggle = (tab: SharedSidePanelTab) => {
     startTransition(() => {
@@ -472,34 +566,40 @@ function SessionRuntimeEffects({
   runIdParam?: string;
   store: ArenaSessionStore;
 }) {
-  const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
-  const sceneStatus = useArenaStoreSelector(store, (snapshot) => snapshot.sceneStatus);
-  const currentSceneSeq = useArenaStoreSelector(store, (snapshot) => snapshot.currentSceneSeq);
-  const sceneSeq = useArenaStoreSelector(store, (snapshot) => snapshot.scene?.seq);
-  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
-  const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
-  const playbackMode = useArenaStoreSelector(
+  const runtimeState = useArenaStoreSelector(
     store,
-    (snapshot) => snapshot.session?.playback.mode ?? "live_tail",
+    (snapshot) => ({
+      status: snapshot.status,
+      sceneStatus: snapshot.sceneStatus,
+      currentSceneSeq: snapshot.currentSceneSeq,
+      sceneSeq: snapshot.scene?.seq,
+      session: snapshot.session,
+      scene: snapshot.scene,
+      playbackMode: snapshot.session?.playback.mode ?? "live_tail",
+      observerId:
+        snapshot.sessionRequest?.observer?.observerId ?? snapshot.session?.observer.observerId ?? "",
+      observerKind:
+        snapshot.sessionRequest?.observer?.observerKind ??
+        snapshot.session?.observer.observerKind ??
+        "spectator",
+      supportsLiveUpdateStream: snapshot.session?.capabilities.supportsLiveUpdateStream === true,
+      playbackSpeed: snapshot.session?.playback.speed ?? 1,
+    }),
+    shallowEqualRecord,
   );
-  const observerId = useArenaStoreSelector(
-    store,
-    (snapshot) =>
-      snapshot.sessionRequest?.observer?.observerId ?? snapshot.session?.observer.observerId ?? "",
-  );
-  const observerKind = useArenaStoreSelector(
-    store,
-    (snapshot) =>
-      snapshot.sessionRequest?.observer?.observerKind ?? snapshot.session?.observer.observerKind ?? "spectator",
-  );
-  const supportsLiveUpdateStream = useArenaStoreSelector(
-    store,
-    (snapshot) => snapshot.session?.capabilities.supportsLiveUpdateStream === true,
-  );
-  const playbackSpeed = useArenaStoreSelector(
-    store,
-    (snapshot) => snapshot.session?.playback.speed ?? 1,
-  );
+  const {
+    status,
+    sceneStatus,
+    currentSceneSeq,
+    sceneSeq,
+    session,
+    scene,
+    playbackMode,
+    observerId,
+    observerKind,
+    supportsLiveUpdateStream,
+    playbackSpeed,
+  } = runtimeState;
 
   useEffect(() => {
     if (!sessionId) {
@@ -514,12 +614,13 @@ function SessionRuntimeEffects({
       status !== "ready" ||
       sceneStatus === "loading" ||
       currentSceneSeq === undefined ||
-      sceneSeq === currentSceneSeq ||
-      canReuseLowLatencyLiveScene(session, scene)
+      sceneSeq === currentSceneSeq
     ) {
       return;
     }
 
+    // Low-latency frame transport can keep the same media ref alive, but the
+    // scene metadata still has to advance so tick/lastMove overlays stay fresh.
     void store.loadScene({ seq: currentSceneSeq }).catch(() => {});
   }, [currentSceneSeq, scene, sceneSeq, sceneStatus, session, status, store]);
 
@@ -643,13 +744,17 @@ function SessionRuntimeEffects({
 }
 
 function SessionControls({ store }: { store: ArenaSessionStore }) {
-  const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
-  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
-  const currentSceneSeq = useArenaStoreSelector(
+  const controlState = useArenaStoreSelector(
     store,
-    (snapshot) => snapshot.currentSceneSeq,
+    (snapshot) => ({
+      status: snapshot.status,
+      session: snapshot.session,
+      currentSceneSeq: snapshot.currentSceneSeq,
+      timelineEvents: snapshot.timeline.events,
+    }),
+    shallowEqualRecord,
   );
-  const timelineEvents = useArenaStoreSelector(store, (snapshot) => snapshot.timeline.events);
+  const { status, session, currentSceneSeq, timelineEvents } = controlState;
   const playbackControls = usePlaybackControls(store);
   const [manualFinishRequired, setManualFinishRequired] = useState(false);
   const [autoFinishStartedAtMs, setAutoFinishStartedAtMs] = useState<number | null>(null);
@@ -890,20 +995,30 @@ function SessionStage({
   pluginDefinition?: ReturnType<typeof resolveArenaPlugin>;
 }) {
   const stageRef = useRef<HTMLElement | null>(null);
-  const status = useArenaStoreSelector(store, (snapshot) => snapshot.status);
-  const error = useArenaStoreSelector(store, (snapshot) => snapshot.error);
-  const sessionRequest = useArenaStoreSelector(store, (snapshot) => snapshot.sessionRequest);
-  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
-  const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
-  const sceneStatus = useArenaStoreSelector(store, (snapshot) => snapshot.sceneStatus);
-  const currentSceneSeq = useArenaStoreSelector(
+  const stageState = useArenaStoreSelector(
     store,
-    (snapshot) => snapshot.currentSceneSeq,
+    (snapshot) => ({
+      status: snapshot.status,
+      error: snapshot.error,
+      sessionRequest: snapshot.sessionRequest,
+      session: snapshot.session,
+      scene: snapshot.scene,
+      sceneStatus: snapshot.sceneStatus,
+      currentSceneSeq: snapshot.currentSceneSeq,
+      latestActionReceipt: snapshot.latestActionReceipt,
+    }),
+    shallowEqualRecord,
   );
-  const latestActionReceipt = useArenaStoreSelector(
-    store,
-    (snapshot) => snapshot.latestActionReceipt,
-  );
+  const {
+    status,
+    error,
+    sessionRequest,
+    session,
+    scene,
+    sceneStatus,
+    currentSceneSeq,
+    latestActionReceipt,
+  } = stageState;
   const plugin =
     pluginDefinition ?? (session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined);
   const inputBridge = useInputBridge({
@@ -911,17 +1026,20 @@ function SessionStage({
     submitAction: store.submitAction,
     interpreter: plugin?.inputInterpreter,
   });
-  const mediaSubscribe = (
-    request: Parameters<ArenaMediaResolver["subscribe"]>[0],
-    listener: Parameters<ArenaMediaResolver["subscribe"]>[1],
-  ) =>
-    mediaResolver.subscribe(
-      {
-        ...request,
-        runId: request.runId ?? sessionRequest?.runId,
-      },
-      listener,
-    );
+  const mediaSubscribe = useCallback(
+    (
+      request: Parameters<ArenaMediaResolver["subscribe"]>[0],
+      listener: Parameters<ArenaMediaResolver["subscribe"]>[1],
+    ) =>
+      mediaResolver.subscribe(
+        {
+          ...request,
+          runId: request.runId ?? sessionRequest?.runId,
+        },
+        listener,
+      ),
+    [mediaResolver, sessionRequest?.runId],
+  );
   const PluginView = plugin?.render;
   const playbackMode = session?.playback.mode ?? "live_tail";
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1036,6 +1154,7 @@ function SessionStage({
   const transitionLabel = showHardSceneTransition
     ? "Loading replay scene..."
     : "Syncing scene...";
+  const resultBanner = readStageResultBanner(session);
   const isImmersivePlugin =
     session?.pluginId === "arena.visualization.retro_platformer.frame_v1";
   const submitPluginInput = useRealtimeInputSocketPath
@@ -1092,6 +1211,26 @@ function SessionStage({
               <span className="session-stage__hud-pill">{scene?.kind ?? "scene"}</span>
             </div>
           </>
+        ) : null}
+        {resultBanner ? (
+          <div className="session-stage__hud session-stage__hud--bottom-left" role="status" aria-live="polite">
+            <div
+              className="session-stage__telemetry-card session-stage__result-banner"
+              data-testid="session-stage-result-banner"
+            >
+              <span>{resultBanner.eyebrow}</span>
+              <strong>{resultBanner.title}</strong>
+              {resultBanner.details.length > 0 ? (
+                <div className="session-stage__result-details">
+                  {resultBanner.details.map((detail) => (
+                    <span key={detail} className="session-stage__cue-pill">
+                      {detail}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
         ) : null}
         <div className="session-stage__surface">
           <button
@@ -1150,8 +1289,15 @@ function SessionStage({
 }
 
 function SessionTimeline({ store }: { store: ArenaSessionStore }) {
-  const timeline = useArenaStoreSelector(store, (snapshot) => snapshot.timeline);
-  const currentSceneSeq = useArenaStoreSelector(store, (snapshot) => snapshot.currentSceneSeq);
+  const timelineState = useArenaStoreSelector(
+    store,
+    (snapshot) => ({
+      timeline: snapshot.timeline,
+      currentSceneSeq: snapshot.currentSceneSeq,
+    }),
+    shallowEqualRecord,
+  );
+  const { timeline, currentSceneSeq } = timelineState;
   const playbackControls = usePlaybackControls(store);
 
   return (
@@ -1189,12 +1335,16 @@ function SessionTimelineDrawer({
   };
   onToggle: () => void;
 }) {
-  const timeline = useArenaStoreSelector(store, (snapshot) => snapshot.timeline);
-  const currentSceneSeq = useArenaStoreSelector(
+  const timelineDrawerState = useArenaStoreSelector(
     store,
-    (snapshot) => snapshot.currentSceneSeq,
+    (snapshot) => ({
+      timeline: snapshot.timeline,
+      currentSceneSeq: snapshot.currentSceneSeq,
+      timelineStatus: snapshot.timeline.status,
+    }),
+    shallowEqualRecord,
   );
-  const timelineStatus = useArenaStoreSelector(store, (snapshot) => snapshot.timeline.status);
+  const { timeline, currentSceneSeq, timelineStatus } = timelineDrawerState;
   const playbackControls = usePlaybackControls(store);
   const previewEvents = timeline.events.slice(-3).reverse();
 
@@ -1268,17 +1418,18 @@ function SessionSidePanelRegion({
   onActiveTabChange: (tab: SharedSidePanelTab) => void;
   onClose: () => void;
 }) {
-  const session = useArenaStoreSelector(store, (snapshot) => snapshot.session);
-  const scene = useArenaStoreSelector(store, (snapshot) => snapshot.scene);
-  const currentSceneSeq = useArenaStoreSelector(
+  const sidePanelState = useArenaStoreSelector(
     store,
-    (snapshot) => snapshot.currentSceneSeq,
+    (snapshot) => ({
+      session: snapshot.session,
+      scene: snapshot.scene,
+      currentSceneSeq: snapshot.currentSceneSeq,
+      latestActionReceipt: snapshot.latestActionReceipt,
+      error: snapshot.error,
+    }),
+    shallowEqualRecord,
   );
-  const latestActionReceipt = useArenaStoreSelector(
-    store,
-    (snapshot) => snapshot.latestActionReceipt,
-  );
-  const error = useArenaStoreSelector(store, (snapshot) => snapshot.error);
+  const { session, scene, currentSceneSeq, latestActionReceipt, error } = sidePanelState;
   const pluginDefinition =
     session !== undefined ? resolveArenaPlugin(session.pluginId) : undefined;
   const playbackMode = session?.playback.mode ?? "live_tail";

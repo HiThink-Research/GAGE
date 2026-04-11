@@ -337,7 +337,8 @@ def _enrich_result_for_output(
     structured_final_board = _parse_structured_final_board(payload.get("final_board"))
     if structured_final_board is not None:
         payload["final_board_structured"] = structured_final_board
-    return payload
+        return payload
+    return with_trace
 
 
 class ArenaOutputWriter:

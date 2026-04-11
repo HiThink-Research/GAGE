@@ -175,12 +175,12 @@ describe("App", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /live tail/i }));
-    fireEvent.click(screen.getByRole("button", { name: /open players panel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^players$/i }));
     fireEvent.change(screen.getByLabelText(/observer view/i), {
       target: { value: "global" },
     });
     fireEvent.click(screen.getByTestId("board-cell-B1"));
-    fireEvent.click(screen.getByRole("button", { name: /open chat panel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^chat$/i }));
     fireEvent.change(screen.getByLabelText(/chat message/i), {
       target: { value: "hello from app" },
     });

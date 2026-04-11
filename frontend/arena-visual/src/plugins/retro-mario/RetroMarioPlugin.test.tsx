@@ -244,7 +244,7 @@ describe("RetroMarioPlugin", () => {
     }
   });
 
-  it("renders Mario in immersive mode with a compact stats HUD instead of large info overlays or action chips", async () => {
+  it("renders Mario in immersive mode without drawing stats overlays inside the frame viewport", async () => {
     render(
       <RetroMarioPlugin
         session={{
@@ -305,12 +305,9 @@ describe("RetroMarioPlugin", () => {
       height: "100%",
       maxHeight: "none",
     });
-    expect(screen.getByTestId("frame-surface-immersive-stats")).toBeInTheDocument();
+    expect(screen.queryByTestId("frame-surface-immersive-stats")).not.toBeInTheDocument();
     expect(screen.queryByTestId("frame-surface-immersive-info")).not.toBeInTheDocument();
     expect(screen.queryByText("Retro Mario Frame")).not.toBeInTheDocument();
-    expect(screen.getByText("Tick")).toBeInTheDocument();
-    expect(screen.getByText("23")).toBeInTheDocument();
-    expect(screen.getByText("Last move")).toBeInTheDocument();
     expect(screen.queryByTestId("frame-status-line")).not.toBeInTheDocument();
     expect(screen.queryByTestId("frame-keyboard-hint")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /right \+ jump/i })).not.toBeInTheDocument();

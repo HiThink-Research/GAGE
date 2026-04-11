@@ -44,6 +44,7 @@ const KNOWN_PLUGIN_META = [
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
   },
   {
@@ -54,6 +55,7 @@ const KNOWN_PLUGIN_META = [
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
   },
   {

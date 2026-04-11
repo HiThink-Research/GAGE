@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 
 import {
   DoudizhuCardVisual,
@@ -23,6 +23,7 @@ export function DoudizhuActionComposer({
 }: DoudizhuActionComposerProps) {
   const [selectedIndexes, setSelectedIndexes] = useState<number[]>([]);
   const [showFallbackActions, setShowFallbackActions] = useState(false);
+  const handCardsKey = useMemo(() => handCards.join("\u0001"), [handCards]);
 
   useEffect(() => {
     if (!canSubmitActions) {
@@ -30,8 +31,9 @@ export function DoudizhuActionComposer({
       setShowFallbackActions(false);
       return;
     }
-    setSelectedIndexes((current) => current.filter((index) => index < handCards.length));
-  }, [canSubmitActions, handCards.length]);
+    setSelectedIndexes([]);
+    setShowFallbackActions(false);
+  }, [canSubmitActions, handCardsKey]);
 
   const selectedCards = useMemo(
     () => selectedIndexes.map((index) => handCards[index]).filter((card): card is string => typeof card === "string"),
@@ -48,11 +50,22 @@ export function DoudizhuActionComposer({
     [actionTexts],
   );
 
-  const toggleCard = (index: number) => {
+  const toggleCard = useCallback((index: number) => {
     setSelectedIndexes((current) =>
       current.includes(index) ? current.filter((value) => value !== index) : current.concat(index),
     );
-  };
+  }, []);
+  const handleCardClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    const rawIndex = event.currentTarget.dataset.cardIndex;
+    if (rawIndex === undefined) {
+      return;
+    }
+    const index = Number.parseInt(rawIndex, 10);
+    if (!Number.isInteger(index)) {
+      return;
+    }
+    toggleCard(index);
+  }, [toggleCard]);
 
   return (
     <div className="doudizhu-composer">
@@ -64,13 +77,8 @@ export function DoudizhuActionComposer({
             selected={selectedIndexes.includes(index)}
             disabled={!canSubmitActions}
             ariaLabel={`Select card ${resolveDoudizhuCardLabel(card)}`}
-            onClick={
-              canSubmitActions
-                ? () => {
-                    toggleCard(index);
-                  }
-                : undefined
-            }
+            cardIndex={index}
+            onClick={canSubmitActions ? handleCardClick : undefined}
           />
         ))}
       </div>

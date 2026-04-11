@@ -6,6 +6,7 @@ import threading
 import time
 from queue import Queue
 from types import SimpleNamespace
+from typing import Mapping
 
 import pytest
 
@@ -39,7 +40,7 @@ from gage_eval.role.arena.support.workflow import GameSupportWorkflow
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.core.players import PlayerBindingSpec
-from gage_eval.role.arena.visualization.contracts import ControlCommand
+from gage_eval.role.arena.visualization.contracts import ControlCommand, ObserverRef
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
     DuelMap01Environment,
@@ -1680,6 +1681,228 @@ def test_game_session_arena_visual_finish_stops_a_live_run_before_finalize(
     assert result.result == "terminated"
     assert result.reason == "user_finish"
     assert time.monotonic() - started_at < 0.5
+
+
+def test_realtime_visual_snapshot_observation_merges_structured_state_from_last_frame() -> None:
+    class FakeEnvironment:
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "active_player_id": "player_0",
+                "board_text": "Board text",
+                "legal_moves": ["pass", "H3"],
+                "public_state": {
+                    "seen_cards": ["S6", "HJ", "D2"],
+                    "num_cards_left": {"player_0": 17},
+                },
+                "private_state": {
+                    "self_id": "player_0",
+                    "current_hand": ["H3", "S4", "D5"],
+                },
+                "ui_state": {
+                    "hands": [["H3", "S4", "D5"], [], []],
+                    "seen_cards": ["S6", "HJ", "D2"],
+                },
+            }
+
+    observation = _build_visual_snapshot_observation(
+        environment=FakeEnvironment(),
+        fallback_observation=None,
+        tick=3,
+        step=4,
+        include_inline_frame_image=False,
+    )
+
+    assert isinstance(observation, dict)
+    assert observation["public_state"]["seen_cards"] == ["S6", "HJ", "D2"]
+    assert observation["private_state"]["current_hand"] == ["H3", "S4", "D5"]
+    assert observation["ui_state"]["hands"][0] == ["H3", "S4", "D5"]
+    assert observation["legal_actions"] == {"items": ["pass", "H3"]}
+
+
+def test_game_session_live_frame_payload_refreshes_version_only_when_content_changes() -> None:
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self.chat_log: list[dict[str, str]] = []
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {
+                "active_player_id": "player_0",
+                "board_text": "Board text",
+                "public_state": {"seen_cards": ["S6", "HJ", "D2"]},
+                "private_state": {"self_id": "player_0", "current_hand": ["H3", "S4", "D5"]},
+                "ui_state": {
+                    "hands": [["H3", "S4", "D5"], [], []],
+                    "seen_cards": ["S6", "HJ", "D2"],
+                    "chat_log": list(self.chat_log),
+                },
+                "chat_log": list(self.chat_log),
+                "timestamp_ms": int(time.time() * 1000),
+            }
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="doudizhu", env="classic_3p_real"),
+        environment=FakeEnvironment(),
+    )
+
+    first_payload = session.get_live_frame_payload()
+    second_payload = session.get_live_frame_payload()
+
+    assert first_payload is not None
+    assert second_payload is not None
+    assert first_payload["_live_frame_version"] == second_payload["_live_frame_version"]
+
+    session.environment.chat_log = [{"player_id": "player_0", "text": "bubble now"}]
+    third_payload = session.get_live_frame_payload()
+
+    assert third_payload is not None
+    assert third_payload["_live_frame_version"] == first_payload["_live_frame_version"] + 1
+    assert third_payload["chat_log"] == [{"player_id": "player_0", "text": "bubble now"}]
+
+
+def test_game_session_observer_live_frame_payload_serializes_environment_observe_state() -> None:
+    class FakeEnvironment:
+        def __init__(self) -> None:
+            self.current_observer = "player_0"
+            self.player_one_observed = threading.Event()
+            self.player_two_observed = threading.Event()
+
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> dict[str, object]:
+            self.current_observer = player_id
+            if player_id == "player_1":
+                self.player_one_observed.set()
+                self.player_two_observed.wait(timeout=0.2)
+            elif player_id == "player_2":
+                self.player_one_observed.wait(timeout=0.2)
+                self.player_two_observed.set()
+            return {"observer": player_id}
+
+        def get_last_frame(self) -> dict[str, object]:
+            return {"observer": self.current_observer}
+
+    session = GameSession(
+        sample=ArenaSample(game_kit="pettingzoo", env="space_invaders"),
+        environment=FakeEnvironment(),
+    )
+    results: dict[str, Mapping[str, object] | None] = {}
+
+    def load_for(player_id: str) -> None:
+        results[player_id] = session.get_live_frame_payload_for_observer(
+            ObserverRef(observer_id=player_id, observer_kind="player")
+        )
+
+    threads = [
+        threading.Thread(target=load_for, args=("player_1",), daemon=True),
+        threading.Thread(target=load_for, args=("player_2",), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=1.0)
+
+    assert results["player_1"] is not None
+    assert results["player_2"] is not None
+    assert results["player_1"]["observer"] == "player_1"
+    assert results["player_2"]["observer"] == "player_2"
+
+
+def test_game_session_request_stop_interrupts_blocking_turn_based_human_input() -> None:
+    class FakeEnvironment:
+        def get_active_player(self) -> str:
+            return "player_0"
+
+        def observe(self, player_id: str) -> ArenaObservation:
+            return ArenaObservation(
+                board_text=f"board:{player_id}",
+                legal_moves=("pass", "play"),
+                active_player="player_0",
+            )
+
+        def is_terminal(self) -> bool:
+            return False
+
+        def build_result(self, *, result: str, reason: str | None):
+            return GameResult(
+                winner=None,
+                result=result,
+                reason=reason,
+                move_count=0,
+                illegal_move_count=0,
+                final_board="board",
+                move_log=[],
+            )
+
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": Queue(),
+                "input_semantics": "queued_command",
+            },
+        )
+    )
+    session = GameSession(
+        sample=ArenaSample(game_kit="doudizhu", env="classic_3p"),
+        environment=FakeEnvironment(),
+        player_specs=(player,),
+    )
+    observation = session.observe()
+    action_holder: dict[str, object] = {}
+
+    def _decide() -> None:
+        action_holder["action"] = session.decide_current_player(observation)
+
+    decide_thread = threading.Thread(target=_decide, daemon=True)
+    decide_thread.start()
+    time.sleep(0.05)
+
+    session.request_stop()
+    decide_thread.join(timeout=0.5)
+
+    assert decide_thread.is_alive() is False
+    assert action_holder["action"] is None
+    assert session.should_stop() is True
+
+
+def test_turn_scheduler_breaks_cleanly_when_stop_requested_during_decision() -> None:
+    class FakeSession:
+        def __init__(self) -> None:
+            self._stop_requested = False
+            self.observe_calls = 0
+            self.advance_calls = 0
+
+        def should_stop(self) -> bool:
+            return self._stop_requested
+
+        def observe(self) -> dict[str, str]:
+            self.observe_calls += 1
+            return {"phase": "waiting"}
+
+        def decide_current_player(self, observation) -> None:
+            assert observation == {"phase": "waiting"}
+            self._stop_requested = True
+            return None
+
+        def apply(self, action) -> None:
+            raise AssertionError(f"apply() should not receive interrupted action: {action!r}")
+
+        def advance(self) -> None:
+            self.advance_calls += 1
+
+    session = FakeSession()
+
+    TurnScheduler(binding_id="turn/default").run(session)
+
+    assert session.observe_calls == 1
+    assert session.advance_calls == 0
 
 
 def test_realtime_visual_snapshot_observation_preserves_frame_viewport() -> None:

@@ -19,6 +19,12 @@ from gage_eval.game_kits.board_game.gomoku.visualization import (
 from gage_eval.game_kits.board_game.tictactoe.visualization import (
     VISUALIZATION_SPEC as TICTACTOE_VISUALIZATION_SPEC,
 )
+from gage_eval.game_kits.phase_card_game.doudizhu.visualization import (
+    VISUALIZATION_SPEC as DOUDIZHU_VISUALIZATION_SPEC,
+)
+from gage_eval.game_kits.phase_card_game.mahjong.visualization import (
+    VISUALIZATION_SPEC as MAHJONG_VISUALIZATION_SPEC,
+)
 from gage_eval.game_kits.real_time_game.vizdoom.visualization import (
     VISUALIZATION_SPEC as VIZDOOM_VISUALIZATION_SPEC,
 )
@@ -27,6 +33,12 @@ from gage_eval.game_kits.board_game.gomoku.environment import GomokuArenaEnviron
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
 from gage_eval.role.arena.visualization.contracts import ActionIntentReceipt
+from gage_eval.role.arena.visualization.contracts import ObserverRef
+from gage_eval.role.arena.visualization.contracts import PlaybackState
+from gage_eval.role.arena.visualization.contracts import SchedulingState
+from gage_eval.role.arena.visualization.contracts import VisualSession
+from gage_eval.role.arena.visualization.gateway_service import TimelinePage
+from gage_eval.role.arena.visualization import http_server as http_server_module
 from gage_eval.role.arena.visualization.http_server import (
     ArenaVisualHTTPServer,
     ArenaVisualRequestHandler,
@@ -459,6 +471,19 @@ def _build_repeated_live_visual_recorder(
             anchor=True,
         )
     return recorder
+
+
+def _encode_rgb_frame_data_url(frame) -> str:
+    pil_image = __import__("PIL.Image", fromlist=["Image"])
+    image = pil_image.fromarray(frame)
+    if image.mode not in {"RGB", "RGBA", "L"}:
+        image = image.convert("RGB")
+    elif image.mode in {"RGBA", "L"}:
+        image = image.convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=85, optimize=True)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
 
 
 def _persist_runtime_style_board_session(
@@ -949,6 +974,172 @@ def test_arena_visual_http_server_streams_live_session_updates(tmp_path: Path) -
         server.stop()
 
 
+def test_arena_visual_http_server_skips_session_reload_when_live_revision_is_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(http_server_module, "_LIVE_UPDATE_STREAM_WAIT_TIMEOUT_S", 0.01)
+
+    class StableRevisionLiveSource:
+        session_id = "sample-stable-revision"
+        run_id = "run-live"
+
+        def __init__(self) -> None:
+            self.load_session_calls = 0
+            self.timeline_calls = 0
+
+        def load_session(self, *, observer: ObserverRef | None = None) -> VisualSession:
+            self.load_session_calls += 1
+            return VisualSession(
+                session_id=self.session_id,
+                game_id="pettingzoo",
+                plugin_id="arena.visualization.pettingzoo.frame_v1",
+                lifecycle="live_running",
+                playback=PlaybackState(mode="live_tail", cursor_event_seq=0),
+                observer=observer or ObserverRef(observer_kind="spectator"),
+                scheduling=SchedulingState(family="real_time_tick", phase="recording"),
+                capabilities={"supportsLiveUpdateStream": True},
+                timeline={"eventCount": 0},
+            )
+
+        def load_live_header(self) -> dict[str, object]:
+            return {"lifecycle": "live_running", "cursorEventSeq": 0, "tailSeq": 0}
+
+        def current_live_revision(self) -> int:
+            return 1
+
+        def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int:
+            return 1
+
+        def page_timeline(self, *, after_seq: int | None = None, limit: int = 50) -> TimelinePage:
+            self.timeline_calls += 1
+            return TimelinePage(
+                events=(),
+                after_seq=after_seq,
+                next_after_seq=after_seq,
+                limit=limit,
+                has_more=False,
+            )
+
+        def load_scene(self, *, seq: int, observer: ObserverRef | None = None):
+            return None
+
+        def lookup_marker(self, marker: str) -> tuple[int, ...]:
+            return ()
+
+        def lookup_media(self, media_id: str):
+            return None
+
+        def load_media_content(self, media_id: str):
+            return None
+
+        def load_stream_frame(self, media_id: str):
+            return None
+
+        def apply_control_command(self, command) -> int:
+            return 0
+
+    live_source = StableRevisionLiveSource()
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(live_source)
+    server.start()
+    try:
+        host, port = server.server_address
+        request = Request(
+            f"http://{host}:{port}/arena_visual/sessions/sample-stable-revision/events?run_id=run-live",
+            headers={"Accept": "text/event-stream"},
+            method="GET",
+        )
+        with urlopen(request, timeout=3) as response:  # noqa: S310 - local test endpoint
+            lines: list[str] = []
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                line = response.readline().decode("utf-8")
+                if not line:
+                    break
+                lines.append(line)
+                if line == ": keepalive\n":
+                    break
+
+        assert "event: delta\n" in lines
+        assert ": keepalive\n" in lines
+        assert live_source.load_session_calls == 1
+    finally:
+        server.stop()
+
+
+def test_arena_visual_http_server_streams_session_delta_without_timeline_page(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(http_server_module, "_LIVE_UPDATE_STREAM_WAIT_TIMEOUT_S", 0.01)
+
+    class SessionOnlyLiveSource:
+        session_id = "sample-session-only"
+        run_id = "run-live"
+
+        def load_session(self, *, observer: ObserverRef | None = None) -> VisualSession:
+            return VisualSession(
+                session_id=self.session_id,
+                game_id="pettingzoo",
+                plugin_id="arena.visualization.pettingzoo.frame_v1",
+                lifecycle="closed",
+                playback=PlaybackState(mode="live_tail", cursor_event_seq=0),
+                observer=observer or ObserverRef(observer_kind="spectator"),
+                scheduling=SchedulingState(family="real_time_tick", phase="recording"),
+                capabilities={"supportsLiveUpdateStream": True},
+                timeline={"eventCount": 0},
+            )
+
+        def load_live_header(self) -> dict[str, object]:
+            return {"lifecycle": "closed", "cursorEventSeq": 0, "tailSeq": 0}
+
+        def current_live_revision(self) -> int:
+            return 1
+
+        def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int:
+            return after_revision
+
+        def page_timeline(self, *, after_seq: int | None = None, limit: int = 50) -> TimelinePage | None:
+            return None
+
+        def load_scene(self, *, seq: int, observer: ObserverRef | None = None):
+            return None
+
+        def lookup_marker(self, marker: str) -> tuple[int, ...]:
+            return ()
+
+        def lookup_media(self, media_id: str):
+            return None
+
+        def load_media_content(self, media_id: str):
+            return None
+
+        def load_stream_frame(self, media_id: str):
+            return None
+
+        def apply_control_command(self, command) -> int:
+            return 0
+
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.register_live_session(SessionOnlyLiveSource())
+    server.start()
+    try:
+        host, port = server.server_address
+        request = Request(
+            f"http://{host}:{port}/arena_visual/sessions/sample-session-only/events?run_id=run-live",
+            headers={"Accept": "text/event-stream"},
+            method="GET",
+        )
+        with urlopen(request, timeout=3) as response:  # noqa: S310 - local test endpoint
+            payload = response.read().decode("utf-8")
+
+        assert "event: delta\n" in payload
+        assert '"timeline": null' in payload
+    finally:
+        server.stop()
+
+
 def test_arena_visual_http_server_applies_replay_control_to_registered_live_session(
     tmp_path: Path,
 ) -> None:
@@ -1247,6 +1438,302 @@ def test_low_latency_live_source_prefers_latest_environment_frame_supplier() -> 
     assert live_source.load_stream_frame(scene.media.primary.media_id) == (b"bar", "image/png")
 
 
+def test_http_pull_live_source_prefers_current_rgb_frame_over_snapshot_anchor() -> None:
+    numpy = pytest.importorskip("numpy")
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.pettingzoo.frame_v1",
+        game_id="pettingzoo",
+        scheduling_family="real_time_tick",
+        session_id="sample-http-pull-live",
+    )
+    snapshot_url = f"data:image/png;base64,{base64.b64encode(_SMALL_PNG_BYTES).decode('ascii')}"
+    recorder.record_snapshot(
+        ts_ms=4101,
+        step=1,
+        tick=1,
+        snapshot={
+            "step": 1,
+            "tick": 1,
+            "observation": {
+                "activePlayerId": "pilot_alpha",
+                "board_text": "snapshot frame",
+                "view": {
+                    "text": "snapshot frame",
+                    "image": {
+                        "data_url": snapshot_url,
+                    },
+                },
+                "metadata": {"stream_id": "main"},
+            },
+        },
+        label="snapshot_frame",
+        anchor=True,
+    )
+
+    live_rgb = numpy.zeros((4, 4, 3), dtype=numpy.uint8)
+    live_rgb[:, :, 0] = 180
+    live_rgb[:, :, 1] = 32
+    expected_live_url = _encode_rgb_frame_data_url(live_rgb)
+    live_frame_payload = {"_rgb": live_rgb, "_live_frame_version": 1}
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-http-pull-live",
+        live_scene_scheme="http_pull",
+        live_frame_supplier=lambda: live_frame_payload,
+    )
+
+    scene = live_source.load_scene(seq=1)
+
+    assert scene is not None
+    assert scene.media is not None
+    assert scene.media.primary is not None
+    assert scene.media.primary.transport == "http_pull"
+    assert scene.media.primary.url == expected_live_url
+    assert (
+        scene.body["snapshot"]["observation"]["view"]["image"]["data_url"]
+        == snapshot_url
+    )
+
+
+def test_live_table_scene_overlays_latest_tail_frame_chat_log() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=DOUDIZHU_VISUALIZATION_SPEC.plugin_id,
+        game_id="doudizhu",
+        scheduling_family="turn",
+        session_id="doudizhu-live-tail",
+    )
+    recorder.record_decision_window_open(
+        ts_ms=2001,
+        step=0,
+        tick=0,
+        player_id="player_0",
+        observation={
+            "board_text": "board",
+            "public_state": {
+                "landlord_id": "player_0",
+                "num_cards_left": {"player_0": 20, "player_1": 17, "player_2": 17},
+                "played_cards": [
+                    {"player_id": "player_0", "cards": []},
+                    {"player_id": "player_1", "cards": []},
+                    {"player_id": "player_2", "cards": []},
+                ],
+                "seen_cards": ["3", "J", "A"],
+                "trace": [],
+            },
+            "private_state": {"self_id": "player_0", "current_hand": ["3", "4"]},
+            "ui_state": {
+                "roles": {
+                    "player_0": "landlord",
+                    "player_1": "peasant",
+                    "player_2": "peasant",
+                },
+                "seat_order": {
+                    "bottom": "player_0",
+                    "left": "player_1",
+                    "right": "player_2",
+                },
+                "hands": [["C3", "D4"], [], []],
+                "seen_cards": ["D3", "HJ", "SA"],
+                "latest_actions": [[], [], []],
+                "move_history": [],
+                "chat_log": [],
+            },
+            "chat_log": [],
+            "player_ids": ["player_0", "player_1", "player_2"],
+            "player_names": {
+                "player_0": "player_0",
+                "player_1": "player_1",
+                "player_2": "player_2",
+            },
+            "legal_actions": {"items": ["pass", "3"]},
+        },
+    )
+    latest_frame_payload = {
+        "_live_frame_version": 2,
+        "active_player_id": "player_0",
+        "player_ids": ["player_0", "player_1", "player_2"],
+        "player_names": {
+            "player_0": "player_0",
+            "player_1": "player_1",
+            "player_2": "player_2",
+        },
+        "public_state": {
+            "landlord_id": "player_0",
+            "num_cards_left": {"player_0": 20, "player_1": 17, "player_2": 17},
+            "played_cards": [
+                {"player_id": "player_0", "cards": []},
+                {"player_id": "player_1", "cards": []},
+                {"player_id": "player_2", "cards": []},
+            ],
+            "seen_cards": ["3", "J", "A"],
+            "trace": [],
+        },
+        "private_state": {"self_id": "player_0", "current_hand": ["3", "4"]},
+        "ui_state": {
+            "roles": {
+                "player_0": "landlord",
+                "player_1": "peasant",
+                "player_2": "peasant",
+            },
+            "seat_order": {
+                "bottom": "player_0",
+                "left": "player_1",
+                "right": "player_2",
+            },
+            "hands": [["C3", "ST", "BJ"], [], []],
+            "seen_cards": ["D3", "HJ", "SA"],
+            "latest_actions": [[], [], []],
+            "move_history": [],
+            "chat_log": [{"player_id": "player_0", "text": "bubble now"}],
+        },
+        "chat_log": [{"player_id": "player_0", "text": "bubble now"}],
+        "legal_moves": ["pass", "3"],
+        "move_count": 0,
+        "last_move": None,
+    }
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-doudizhu-live",
+        visualization_spec=DOUDIZHU_VISUALIZATION_SPEC,
+        live_frame_supplier=lambda: latest_frame_payload,
+    )
+
+    scene = live_source.load_scene(
+        seq=1,
+        observer=ObserverRef(observer_id="player_0", observer_kind="player"),
+    )
+
+    assert scene is not None
+    assert scene.kind == "table"
+    assert scene.body["panels"]["chatLog"] == [{"playerId": "player_0", "text": "bubble now"}]
+    bottom_seat = next(
+        seat for seat in scene.body["table"]["seats"] if seat["playerId"] == "player_0"
+    )
+    assert bottom_seat["hand"]["cards"] == ["C3", "ST", "BJ"]
+
+
+def test_live_table_scene_uses_observer_specific_mahjong_frame_for_player_view() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id=MAHJONG_VISUALIZATION_SPEC.plugin_id,
+        game_id="mahjong",
+        scheduling_family="turn",
+        session_id="mahjong-live-tail",
+    )
+    recorder.record_snapshot(
+        ts_ms=3001,
+        step=0,
+        tick=0,
+        snapshot={"public_state": {"discards": []}},
+        label="snapshot",
+        anchor=True,
+    )
+
+    south_frame_payload = {
+        "_live_frame_version": 4,
+        "active_player_id": "south",
+        "observer_player_id": "south",
+        "player_ids": ["east", "south", "west", "north"],
+        "player_names": {
+            "east": "East",
+            "south": "South",
+            "west": "West",
+            "north": "North",
+        },
+        "public_state": {
+            "discards": ["B1"],
+            "melds": {},
+            "num_cards_left": {
+                "east": 13,
+                "south": 14,
+                "west": 13,
+                "north": 13,
+            },
+        },
+        "private_state": {
+            "self_id": "south",
+            "hand": ["C1", "C2", "C3", "C4"],
+            "draw_tile": "C4",
+        },
+        "legal_moves": ["C1"],
+        "move_count": 1,
+        "last_move": "B1",
+    }
+    east_frame_payload = {
+        **south_frame_payload,
+        "observer_player_id": "east",
+        "private_state": {
+            "self_id": "east",
+            "hand": ["B2", "B3", "B4", "Red"],
+            "draw_tile": None,
+        },
+        "legal_moves": ["Pass", "Pong"],
+    }
+    observer_calls: list[tuple[str, str]] = []
+
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-mahjong-live",
+        visualization_spec=MAHJONG_VISUALIZATION_SPEC,
+        live_frame_supplier=lambda: south_frame_payload,
+        observer_live_frame_supplier=lambda observer: (
+            observer_calls.append((observer.observer_kind, observer.observer_id)),
+            east_frame_payload,
+        )[1],
+    )
+
+    scene = live_source.load_scene(
+        seq=1,
+        observer=ObserverRef(observer_id="east", observer_kind="player"),
+    )
+
+    assert scene is not None
+    assert observer_calls == [("player", "east")]
+    assert scene.body["status"]["activePlayerId"] == "south"
+    assert scene.body["status"]["observerPlayerId"] == "east"
+    assert scene.body["status"]["privateViewPlayerId"] == "east"
+    east_seat = next(seat for seat in scene.body["table"]["seats"] if seat["playerId"] == "east")
+    south_seat = next(seat for seat in scene.body["table"]["seats"] if seat["playerId"] == "south")
+    assert east_seat["isObserver"] is True
+    assert east_seat["hand"]["isVisible"] is True
+    assert east_seat["hand"]["cards"] == ["B2", "B3", "B4", "Red"]
+    assert south_seat["hand"]["isVisible"] is False
+
+
+def test_live_source_wait_for_revision_detects_latest_frame_version_updates() -> None:
+    recorder = _build_low_latency_frame_visual_recorder()
+    payload = {"_live_frame_version": 1, "stream_id": "pov"}
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live-frame-revision",
+        live_scene_scheme="low_latency_channel",
+        live_frame_supplier=lambda: payload,
+    )
+
+    first_revision = live_source.current_live_revision()
+    payload["_live_frame_version"] = 2
+
+    assert live_source.wait_for_live_revision(after_revision=first_revision, timeout_s=0.2) > first_revision
+
+
+def test_live_source_wait_for_revision_uses_recorder_condition_without_sleep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _build_live_visual_recorder(session_id="sample-wait-condition")
+    live_source = RecorderLiveSessionSource(
+        recorder=recorder,
+        run_id="run-live-wait-condition",
+    )
+    revision = live_source.current_live_revision()
+
+    def fail_sleep(_: float) -> None:
+        raise AssertionError("wait_for_live_revision should use the recorder condition")
+
+    monkeypatch.setattr(live_session_module.time, "sleep", fail_sleep)
+
+    assert live_source.wait_for_live_revision(after_revision=revision, timeout_s=0.001) == revision
+
+
 def test_low_latency_live_source_synthesizes_stream_media_without_inline_snapshot_image() -> None:
     recorder = ArenaVisualSessionRecorder(
         plugin_id="arena.visualization.retro.frame_v1",
@@ -1538,6 +2025,54 @@ def test_arena_visual_http_server_serves_frontend_shell_and_assets(tmp_path: Pat
         )
     finally:
         server.stop()
+
+
+def test_arena_visual_request_handler_suppresses_routine_browser_poll_logs(monkeypatch) -> None:
+    debug_calls: list[str] = []
+    handler = object.__new__(ArenaVisualRequestHandler)
+    handler.command = "GET"
+    handler.path = "/arena_visual/sessions/sample-live/timeline?after_seq=1&limit=50&run_id=run-live"
+
+    monkeypatch.setattr(
+        "gage_eval.role.arena.visualization.http_server.logger.debug",
+        lambda message, payload: debug_calls.append(message.format(payload)),
+    )
+
+    ArenaVisualRequestHandler.log_message(handler, '"%s" %s %s', "GET /arena_visual/sessions/sample-live/timeline HTTP/1.1", "200", "-")
+
+    assert debug_calls == []
+
+
+def test_arena_visual_request_handler_suppresses_stale_browser_poll_404_logs(monkeypatch) -> None:
+    debug_calls: list[str] = []
+    handler = object.__new__(ArenaVisualRequestHandler)
+    handler.command = "GET"
+    handler.path = "/arena_visual/sessions/sample-live?run_id=run-live"
+
+    monkeypatch.setattr(
+        "gage_eval.role.arena.visualization.http_server.logger.debug",
+        lambda message, payload: debug_calls.append(message.format(payload)),
+    )
+
+    ArenaVisualRequestHandler.log_message(handler, '"%s" %s %s', "GET /arena_visual/sessions/sample-live HTTP/1.1", "404", "-")
+
+    assert debug_calls == []
+
+
+def test_arena_visual_request_handler_keeps_server_error_access_logs(monkeypatch) -> None:
+    debug_calls: list[str] = []
+    handler = object.__new__(ArenaVisualRequestHandler)
+    handler.command = "GET"
+    handler.path = "/arena_visual/sessions/sample-live?run_id=run-live"
+
+    monkeypatch.setattr(
+        "gage_eval.role.arena.visualization.http_server.logger.debug",
+        lambda message, payload: debug_calls.append(message.format(payload)),
+    )
+
+    ArenaVisualRequestHandler.log_message(handler, '"%s" %s %s', "GET /arena_visual/sessions/sample-live HTTP/1.1", "500", "-")
+
+    assert debug_calls == ['ArenaVisualServer "GET /arena_visual/sessions/sample-live HTTP/1.1" 500 -']
 
 
 def test_arena_visual_http_server_reports_action_submitter_not_configured(tmp_path: Path) -> None:

@@ -527,6 +527,7 @@ class PettingZooAecArenaEnvironment:
 
     def _capture_last(self) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
         obs, reward, termination, truncation, info = self._env.last()
+        reward = _coerce_reward(reward)
         transition = {
             "observation": obs,
             "reward": reward,
@@ -858,3 +859,18 @@ class PettingZooAecArenaEnvironment:
             if candidate != player:
                 return candidate
         return None
+
+
+def _coerce_reward(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        item = getattr(value, "item", None)
+        if callable(item):
+            try:
+                return float(item())
+            except (TypeError, ValueError):
+                pass
+    return 0.0

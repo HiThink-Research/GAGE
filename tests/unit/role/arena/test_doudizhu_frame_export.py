@@ -48,6 +48,9 @@ class _StubCore:
     def get_perfect_information(self) -> dict[str, Any]:
         return {"hand_cards_with_suit": [["S3"], ["H4"], ["D5"]]}
 
+    def get_public_cards(self) -> Sequence[str]:
+        return ["S7", "H7", "DQ"]
+
     def encode_action(self, action_text: str) -> int:
         normalized = str(action_text).strip().lower()
         if normalized == "pass":
@@ -107,6 +110,7 @@ def test_doudizhu_arena_exposes_get_last_frame(monkeypatch) -> None:
     latest_frame = env.get_last_frame()
     assert latest_frame["observer_player_id"] == "player_0"
     assert "board_text" in latest_frame
+    assert latest_frame["ui_state"]["seen_cards"] == ["S7", "H7", "DQ"]
 
 
 def test_doudizhu_renderers_package_does_not_expose_legacy_renderer() -> None:
