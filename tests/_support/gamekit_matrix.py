@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -12,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HEADLESS_NO_HUMAN = "headless_no_human"
 VISUAL_NO_HUMAN = "visual_no_human"
 HUMAN_VISUAL = "human_visual"
+LIVE_LLM_SMOKE_ENV = "GAGE_RUN_LIVE_LLM_TESTS"
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,7 @@ PLUGIN_IDS_BY_GAME_KIT = {
 }
 
 
-LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
+_BASE_LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
     GameKitConfigCase(
         "config/custom/doudizhu/doudizhu_dummy_gamekit.yaml",
         HEADLESS_NO_HUMAN,
@@ -319,6 +321,175 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
     ),
 )
 
+
+_OPENAI_LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
+    GameKitConfigCase(
+        "config/custom/doudizhu/doudizhu_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "doudizhu",
+        "classic_3p",
+    ),
+    GameKitConfigCase(
+        "config/custom/gomoku/gomoku_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "gomoku",
+        "gomoku_standard",
+    ),
+    GameKitConfigCase(
+        "config/custom/mahjong/mahjong_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "mahjong",
+        "riichi_4p",
+    ),
+    GameKitConfigCase(
+        "config/custom/pettingzoo/space_invaders_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "pettingzoo",
+        "space_invaders",
+    ),
+    GameKitConfigCase(
+        "config/custom/retro_mario/retro_mario_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "retro_platformer",
+        "retro_mario",
+    ),
+    GameKitConfigCase(
+        "config/custom/tictactoe/tictactoe_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "tictactoe",
+        "tictactoe_standard",
+    ),
+    GameKitConfigCase(
+        "config/custom/vizdoom/vizdoom_llm_headless_openai_gamekit.yaml",
+        HEADLESS_NO_HUMAN,
+        "vizdoom",
+        "duel_map01",
+    ),
+    GameKitConfigCase(
+        "config/custom/doudizhu/doudizhu_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "doudizhu",
+        "classic_3p",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["doudizhu"],
+    ),
+    GameKitConfigCase(
+        "config/custom/gomoku/gomoku_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "gomoku",
+        "gomoku_standard",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["gomoku"],
+    ),
+    GameKitConfigCase(
+        "config/custom/mahjong/mahjong_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "mahjong",
+        "riichi_4p",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["mahjong"],
+    ),
+    GameKitConfigCase(
+        "config/custom/pettingzoo/space_invaders_double_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "pettingzoo",
+        "space_invaders",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/pettingzoo/space_invaders_double_llm_visual_low_latency_channel_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "pettingzoo",
+        "space_invaders",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
+        live_scene_scheme="low_latency_channel",
+    ),
+    GameKitConfigCase(
+        "config/custom/pettingzoo/space_invaders_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "pettingzoo",
+        "space_invaders",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/retro_mario/retro_mario_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "retro_platformer",
+        "retro_mario",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["retro_platformer"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/tictactoe/tictactoe_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "tictactoe",
+        "tictactoe_standard",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["tictactoe"],
+    ),
+    GameKitConfigCase(
+        "config/custom/vizdoom/vizdoom_llm_visual_openai_gamekit.yaml",
+        VISUAL_NO_HUMAN,
+        "vizdoom",
+        "duel_map01",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["vizdoom"],
+        live_scene_scheme="http_pull",
+    ),
+    GameKitConfigCase(
+        "config/custom/doudizhu/doudizhu_human_visual_acceptance_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "doudizhu",
+        "classic_3p_real",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["doudizhu"],
+    ),
+    GameKitConfigCase(
+        "config/custom/doudizhu/doudizhu_human_visual_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "doudizhu",
+        "classic_3p_real",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["doudizhu"],
+    ),
+    GameKitConfigCase(
+        "config/custom/gomoku/gomoku_human_visual_15x15_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "gomoku",
+        "gomoku_standard",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["gomoku"],
+    ),
+    GameKitConfigCase(
+        "config/custom/gomoku/gomoku_human_visual_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "gomoku",
+        "gomoku_standard",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["gomoku"],
+    ),
+    GameKitConfigCase(
+        "config/custom/mahjong/mahjong_human_visual_acceptance_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "mahjong",
+        "riichi_4p_real",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["mahjong"],
+    ),
+    GameKitConfigCase(
+        "config/custom/mahjong/mahjong_human_visual_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "mahjong",
+        "riichi_4p_real",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["mahjong"],
+    ),
+    GameKitConfigCase(
+        "config/custom/tictactoe/tictactoe_human_visual_openai_gamekit.yaml",
+        HUMAN_VISUAL,
+        "tictactoe",
+        "tictactoe_standard",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["tictactoe"],
+    ),
+)
+
+
+LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
+    *_BASE_LIVE_GAMEKIT_CONFIG_CASES,
+    *_OPENAI_LIVE_GAMEKIT_CONFIG_CASES,
+)
+
 REPLAY_ONLY_CONFIGS = (
     "config/custom/oneclick/replay_dummy/doudizhu_dummy_replay.yaml",
     "config/custom/oneclick/replay_dummy/gomoku_dummy_replay.yaml",
@@ -358,6 +529,33 @@ def load_primary_adapter_params(case_or_relpath: GameKitConfigCase | str) -> dic
     if not isinstance(params, dict):
         raise TypeError(f"Primary adapter params for {case_or_relpath} must be a mapping")
     return params
+
+
+def case_uses_llm_player(case_or_relpath: GameKitConfigCase | str) -> bool:
+    players = load_primary_adapter_params(case_or_relpath).get("players", ())
+    return any(
+        player.get("player_kind") == "llm"
+        for player in players
+        if isinstance(player, dict)
+    )
+
+
+def live_llm_smoke_enabled() -> bool:
+    value = os.environ.get(LIVE_LLM_SMOKE_ENV, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def iter_runtime_smoke_cases(
+    *,
+    category: str | None = None,
+    include_live_llm: bool | None = None,
+) -> tuple[GameKitConfigCase, ...]:
+    cases = iter_live_cases(category=category)
+    if include_live_llm is None:
+        include_live_llm = live_llm_smoke_enabled()
+    if include_live_llm:
+        return cases
+    return tuple(case for case in cases if not case_uses_llm_player(case))
 
 
 def discover_live_gamekit_configs() -> tuple[str, ...]:

@@ -3,14 +3,14 @@ from __future__ import annotations
 import pytest
 
 from gage_eval.tools.gamekit_acceptance import verify_visual_gamekit_config
-from tests._support.gamekit_matrix import VISUAL_NO_HUMAN, iter_live_cases
+from tests._support.gamekit_matrix import VISUAL_NO_HUMAN, iter_runtime_smoke_cases
 
 
 @pytest.mark.io
 @pytest.mark.network
 @pytest.mark.parametrize(
     "case",
-    iter_live_cases(category=VISUAL_NO_HUMAN),
+    iter_runtime_smoke_cases(category=VISUAL_NO_HUMAN),
     ids=lambda case: case.relpath,
 )
 def test_visual_gamekit_configs_launch_browser_and_render_live_scenes(case, tmp_path) -> None:

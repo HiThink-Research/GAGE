@@ -22,9 +22,9 @@ from tests._support.gamekit_matrix import (
 
 @pytest.mark.fast
 def test_live_gamekit_config_inventory_matches_frozen_matrix() -> None:
-    assert len(LIVE_CASES_BY_CATEGORY[HEADLESS_NO_HUMAN]) == 19
-    assert len(LIVE_CASES_BY_CATEGORY[VISUAL_NO_HUMAN]) == 21
-    assert len(LIVE_CASES_BY_CATEGORY[HUMAN_VISUAL]) == 11
+    assert len(LIVE_CASES_BY_CATEGORY[HEADLESS_NO_HUMAN]) == 21
+    assert len(LIVE_CASES_BY_CATEGORY[VISUAL_NO_HUMAN]) == 25
+    assert len(LIVE_CASES_BY_CATEGORY[HUMAN_VISUAL]) == 17
 
     assert discover_live_gamekit_configs() == expected_live_gamekit_config_paths()
     assert discover_replay_only_configs() == REPLAY_ONLY_CONFIGS

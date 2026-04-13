@@ -8,14 +8,47 @@ from gage_eval.tools.gamekit_acceptance import run_gamekit_config
 from tests._support.gamekit_matrix import (
     HEADLESS_NO_HUMAN,
     VISUAL_NO_HUMAN,
-    iter_live_cases,
+    case_uses_llm_player,
+    iter_runtime_smoke_cases,
 )
 
 
-NON_HUMAN_CASES = (
-    *iter_live_cases(category=HEADLESS_NO_HUMAN),
-    *iter_live_cases(category=VISUAL_NO_HUMAN),
-)
+def _non_human_runtime_cases(*, include_live_llm: bool | None = None):
+    return (
+        *iter_runtime_smoke_cases(
+            category=HEADLESS_NO_HUMAN,
+            include_live_llm=include_live_llm,
+        ),
+        *iter_runtime_smoke_cases(
+            category=VISUAL_NO_HUMAN,
+            include_live_llm=include_live_llm,
+        ),
+    )
+
+
+NON_HUMAN_CASES = _non_human_runtime_cases()
+
+
+@pytest.mark.fast
+def test_default_non_human_runtime_matrix_excludes_live_llm_configs() -> None:
+    llm_cases = [
+        case.relpath
+        for case in _non_human_runtime_cases(include_live_llm=False)
+        if case_uses_llm_player(case)
+    ]
+
+    assert llm_cases == []
+
+
+@pytest.mark.fast
+def test_live_llm_runtime_matrix_requires_explicit_opt_in() -> None:
+    llm_cases = [
+        case.relpath
+        for case in _non_human_runtime_cases(include_live_llm=True)
+        if case_uses_llm_player(case)
+    ]
+
+    assert llm_cases
 
 
 @pytest.mark.io

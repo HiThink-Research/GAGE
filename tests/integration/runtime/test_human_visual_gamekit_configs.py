@@ -241,7 +241,7 @@ def test_pettingzoo_human_visual_config_routes_human_input_to_pilot_0() -> None:
     assert visualizer["enabled"] is True
     assert visualizer["launch_browser"] is True
     assert visualizer["mode"] == "arena_visual"
-    assert visualizer["live_scene_scheme"] == "low_latency_channel"
+    assert visualizer["live_scene_scheme"] == "http_pull"
     assert visualizer["linger_after_finish_s"] == 15.0
     assert [player["seat"] for player in players] == ["pilot_0", "pilot_1"]
     assert [player["player_id"] for player in players] == ["pilot_0", "pilot_1"]
