@@ -9,8 +9,8 @@
 
 本地文件不再放进 `repo/`：
 
-- 本地环境变量文件放到工作区根目录外侧的 `env/`，例如 `/Users/shuo/code/GAGE/env/scripts/run.env`。
-- 运行产物放到工作区根目录外侧的 `runs/`，例如 `/Users/shuo/code/GAGE/runs/`。
+- 本地环境变量文件默认从 `${GAGE_WORKSPACE_ROOT}/env/scripts/run.env` 或 `${GAGE_WORKSPACE_ROOT}/env/localenv` 读取。
+- 运行产物默认写到 `${GAGE_RUNS_DIR}`；未设置时使用 `${GAGE_WORKSPACE_ROOT}/runs/`。
 - `repo/` 内不再承载 `.env`、generated config、运行日志这类不提交内容。
 
 如果文档需要引用运行命令，只使用 `scripts/run/**` 下的 canonical 路径。

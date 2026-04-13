@@ -74,36 +74,35 @@ class RuntimeAssetPlanner:
         adapter_id: str,
         collector: "_PlanCollector",
     ) -> None:
-        env_cfg = dict(params.get("environment") or {})
-        parser_cfg = dict(params.get("parser") or {})
-        visualizer_cfg = dict(params.get("visualizer") or {})
-        renderer_cfg = dict(visualizer_cfg.get("renderer") or {})
-
+        collector.add(
+            "game_kits",
+            params.get("game_kit"),
+            source=f"arena:{adapter_id}.game_kit",
+        )
         collector.add(
             "arena_impls",
-            env_cfg.get("impl") or env_cfg.get("implementation"),
+            _resolve_runtime_ref_name(params.get("environment")),
             source=f"arena:{adapter_id}.environment",
         )
         collector.add(
-            "arena_game_providers",
-            env_cfg.get("provider"),
-            source=f"arena:{adapter_id}.environment.provider",
-        )
-        collector.add(
             "parser_impls",
-            parser_cfg.get("impl") or parser_cfg.get("implementation") or "grid_parser_v1",
+            _resolve_runtime_ref_name(params.get("parser")),
             source=f"arena:{adapter_id}.parser",
         )
-        if not visualizer_cfg.get("enabled"):
-            return
+        visualizer = params.get("visualizer")
         collector.add(
             "renderer_impls",
-            renderer_cfg.get("impl") or renderer_cfg.get("implementation"),
-            source=f"arena:{adapter_id}.renderer",
+            _resolve_runtime_ref_name(_mapping_value(visualizer, "renderer")),
+            source=f"arena:{adapter_id}.visualizer.renderer",
         )
-        collector.add_eager_kind("arena_game_providers")
-        if not (renderer_cfg.get("impl") or renderer_cfg.get("implementation")):
-            collector.add_eager_kind("renderer_impls")
+        collector.add(
+            "visualization_specs",
+            (
+                _resolve_runtime_ref_name(_mapping_value(visualizer, "visualization_spec"))
+                or _resolve_runtime_ref_name(_mapping_value(visualizer, "game_display"))
+            ),
+            source=f"arena:{adapter_id}.visualizer.display",
+        )
 
     def _collect_prompt_requests(self, config: "PipelineConfig", collector: "_PlanCollector") -> None:
         for spec in config.prompts:
@@ -208,6 +207,25 @@ def _resolve_dataset_hub_name(loader: str | None, hub: str | None, params: dict[
         return hub_name
     if loader_name not in {"hf_hub", "modelscope"}:
         return "inline"
+    return None
+
+
+def _mapping_value(payload: Any, key: str) -> Any:
+    if isinstance(payload, dict):
+        return payload.get(key)
+    return None
+
+
+def _resolve_runtime_ref_name(value: Any) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if not isinstance(value, dict):
+        return None
+    for key in ("impl", "binding_id", "scheduler_binding", "id", "name", "spec_id"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
     return None
 
 

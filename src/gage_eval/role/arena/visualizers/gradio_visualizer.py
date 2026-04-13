@@ -52,7 +52,6 @@ class GradioVisualizer:
         allow_status_html: bool = False,
         demo_mode: bool = False,
         title: Optional[str] = None,
-        registry_lookup: Any = None,
     ) -> None:
         """Initialize the visualizer settings.
 
@@ -83,8 +82,6 @@ class GradioVisualizer:
         self._renderer_impl = str(renderer_impl or "gomoku_board_v1")
         self._renderer_params = dict(renderer_params or {})
         self._coord_scheme = str(coord_scheme or "A1")
-        self._registry_lookup = registry_lookup or registry
-        self._has_explicit_registry_lookup = registry_lookup is not None
         self._renderer: BoardRenderer = self._build_renderer(self._board_size, self._coord_scheme)
         self._status_text = ""
         self._renderer_css = self._renderer.get_css() if hasattr(self._renderer, "get_css") else ""
@@ -174,31 +171,11 @@ class GradioVisualizer:
                 self._status_text = "Run finished"
 
     def _build_renderer(self, board_size: int, coord_scheme: str) -> BoardRenderer:
-        lookup = self._registry_lookup
         try:
-            renderer_cls = lookup.get("renderer_impls", self._renderer_impl)
-        except KeyError as exc:
-            if self._has_explicit_registry_lookup:
-                raise
-            report = import_arena_asset_module(
-                "renderer_impls",
-                self._renderer_impl,
-                registry_lookup=lookup,
-                source="gradio_visualizer",
-            )
-            if report.ok:
-                renderer_cls = lookup.get("renderer_impls", self._renderer_impl)
-            else:
-                detail = "; ".join(
-                    f"{issue.code}: {issue.detail}" for issue in report.issues[:2]
-                )
-                if len(report.issues) > 2:
-                    detail = f"{detail}; +{len(report.issues) - 2} more"
-                if not detail:
-                    detail = "manifest import did not register the requested asset"
-                raise KeyError(
-                    f"Unknown registry asset 'renderer_impls:{self._renderer_impl}' ({detail})"
-                ) from exc
+            renderer_cls = registry.get("renderer_impls", self._renderer_impl)
+        except KeyError:
+            import_arena_asset_module("renderer_impls", self._renderer_impl)
+            renderer_cls = registry.get("renderer_impls", self._renderer_impl)
         params = dict(self._renderer_params)
         try:
             return renderer_cls(board_size=board_size, coord_scheme=coord_scheme, **params)

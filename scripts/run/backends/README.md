@@ -8,8 +8,8 @@
 ## 运行前准备
 - 安装依赖：`bash scripts/run/prepare_env.sh`
 - 在工作区根目录外配置本地环境变量文件：
-  - `/Users/shuo/code/GAGE/env/scripts/run.env`
-  - 或 `/Users/shuo/code/GAGE/env/localenv`
+  - `${GAGE_WORKSPACE_ROOT}/env/scripts/run.env`
+  - 或 `${GAGE_WORKSPACE_ROOT}/env/localenv`
 - 不再在 `repo/` 内放 `.env`、generated config 或运行结果。
 
 ## 常用入口
@@ -28,8 +28,8 @@
 ## 配置约定
 - 模型列表统一命名为 `models.yaml` / `models.example.yaml`。
 - 模板统一按用途命名，例如 `template.demo_echo.yaml`、`template.piqa.yaml`、`mmmu.template.yaml`。
-- 自动渲染的配置默认落到 `/Users/shuo/code/GAGE/env/scripts/generated/`。
-- 运行结果默认落到 `/Users/shuo/code/GAGE/runs/`。
+- 自动渲染的配置默认落到 `${GAGE_WORKSPACE_ROOT}/env/scripts/generated/`，可用 `GAGE_SCRIPT_STATE_DIR` 覆盖。
+- 运行结果默认落到 `${GAGE_WORKSPACE_ROOT}/runs/`，可用 `GAGE_RUNS_DIR` 覆盖。
 
 ## 凭据
 - `HF_API_TOKEN` / `HUGGINGFACEHUB_API_TOKEN`：`multi_provider_http` 与 HF endpoint 使用。

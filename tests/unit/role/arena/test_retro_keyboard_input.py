@@ -1,6 +1,6 @@
 import pytest
 
-from gage_eval.role.arena.games.retro.keyboard_input import (
+from gage_eval.game_kits.real_time_game.retro_platformer.keyboard_input import (
     KeyState,
     build_default_key_map,
     resolve_macro_move_from_action_state,

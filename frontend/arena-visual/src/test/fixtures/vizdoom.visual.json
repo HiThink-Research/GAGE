@@ -1,0 +1,58 @@
+{
+  "sceneId": "vizdoom-sample:seq:17",
+  "gameId": "vizdoom",
+  "pluginId": "arena.visualization.vizdoom.frame_v1",
+  "kind": "frame",
+  "tsMs": 3017,
+  "seq": 17,
+  "phase": "replay",
+  "activePlayerId": "p0",
+  "legalActions": [
+    { "id": "0", "label": "No-op", "text": "No-op" },
+    { "id": "1", "label": "Fire", "text": "Fire" },
+    { "id": "2", "label": "Turn Left", "text": "Turn Left" },
+    { "id": "3", "label": "Turn Right", "text": "Turn Right" },
+    { "id": "4", "label": "Move Forward", "text": "Move Forward" }
+  ],
+  "summary": {
+    "eventType": "snapshot",
+    "eventLabel": "snapshot",
+    "streamId": "pov",
+    "frameTitle": "ViZDoom Frame"
+  },
+  "body": {
+    "frame": {
+      "title": "ViZDoom Frame",
+      "subtitle": "Stream pov",
+      "altText": "ViZDoom frame",
+      "streamId": "pov",
+      "fit": "cover",
+      "viewport": { "width": 320, "height": 180 }
+    },
+    "status": {
+      "activePlayerId": "p0",
+      "observerPlayerId": "p0",
+      "tick": 17,
+      "step": 17,
+      "moveCount": 17,
+      "lastMove": "fire",
+      "reward": 0.75
+    },
+    "view": {
+      "text": "Tick 17. Legal actions: 0, 1, 2, 3, 4"
+    }
+  },
+  "media": {
+    "primary": {
+      "mediaId": "vizdoom-frame-17",
+      "transport": "artifact_ref",
+      "mimeType": "image/png",
+      "url": "frames/vizdoom-frame-17.png"
+    }
+  },
+  "overlays": [
+    { "kind": "badge", "label": "Tick", "value": "17" },
+    { "kind": "badge", "label": "Reward", "value": "0.75" },
+    { "kind": "badge", "label": "Stream", "value": "pov" }
+  ]
+}

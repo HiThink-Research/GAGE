@@ -16,9 +16,7 @@ def test_runtime_asset_planner_collects_arena_defaults_and_eager_kinds() -> None
                     "adapter_id": "arena",
                     "role_type": "arena",
                     "params": {
-                        "environment": {"impl": "tictactoe_v1"},
-                        "parser": {},
-                        "visualizer": {"enabled": True},
+                        "game_kit": "gomoku",
                     },
                 }
             ],
@@ -30,17 +28,12 @@ def test_runtime_asset_planner_collects_arena_defaults_and_eager_kinds() -> None
     plan = RuntimeAssetPlanner().build_plan(config)
 
     assert tuple(request.name for request in plan.requests_for_kind("roles")) == ("arena",)
-    assert tuple(request.name for request in plan.requests_for_kind("arena_impls")) == ("tictactoe_v1",)
-    assert tuple(request.name for request in plan.requests_for_kind("parser_impls")) == ("grid_parser_v1",)
+    assert tuple(request.name for request in plan.requests_for_kind("game_kits")) == ("gomoku",)
     assert tuple(request.name for request in plan.requests_for_kind("pipeline_steps")) == ("arena",)
     assert tuple(request.name for request in plan.requests_for_kind("summary_generators")) == ("arena_summary",)
-    assert plan.requests_for_kind("renderer_impls") == ()
-    assert set(plan.eager_kinds) >= {
-        "pipeline_steps",
-        "summary_generators",
-        "arena_game_providers",
-        "renderer_impls",
-    }
+    assert plan.requests_for_kind("arena_impls") == ()
+    assert plan.requests_for_kind("parser_impls") == ()
+    assert set(plan.eager_kinds) >= {"pipeline_steps", "summary_generators"}
 
 
 @pytest.mark.fast

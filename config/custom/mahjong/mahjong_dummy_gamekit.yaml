@@ -1,0 +1,44 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: mahjong_gamekit
+  description: >
+    Minimal GameArena 麻将 phase-card template backed by a deterministic
+    stub core so acceptance does not depend on rlcard being installed.
+
+datasets:
+  - dataset_id: mahjong_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Mahjong_GameKit.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: mahjong_gamekit_arena
+
+role_adapters:
+  - adapter_id: mahjong_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: mahjong
+      env: riichi_4p
+      players:
+        - seat: east
+          player_id: east
+          player_kind: dummy
+          actions: ["B1", "Red"]
+        - seat: south
+          player_id: south
+          player_kind: dummy
+          actions: ["C1"]
+        - seat: west
+          player_id: west
+          player_kind: dummy
+          actions: ["D1"]
+        - seat: north
+          player_id: north
+          player_kind: dummy
+          actions: ["East"]

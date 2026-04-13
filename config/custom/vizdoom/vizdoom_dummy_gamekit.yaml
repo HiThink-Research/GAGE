@@ -1,0 +1,39 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: vizdoom_gamekit
+  description: >
+    Minimal GameArena ViZDoom template wired through the realtime runtime
+    path. The default config uses a deterministic dummy backend for stable
+    acceptance coverage.
+
+datasets:
+  - dataset_id: vizdoom_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_ViZDoom_Demo.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: vizdoom_gamekit_arena
+
+role_adapters:
+  - adapter_id: vizdoom_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: vizdoom
+      env: duel_map01
+      runtime_overrides:
+        backend_mode: dummy
+      players:
+        - seat: p0
+          player_id: doom_alpha
+          player_kind: dummy
+          actions: ["1", "2", "1"]
+        - seat: p1
+          player_id: doom_beta
+          player_kind: dummy
+          actions: ["3", "2", "3"]

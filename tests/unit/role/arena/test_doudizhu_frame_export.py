@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Sequence
 
-from gage_eval.role.arena.games.doudizhu import env as doudizhu_env_module
-from gage_eval.role.arena.games.doudizhu.env import DoudizhuArenaEnvironment
+import pytest
+
+from gage_eval.game_kits.phase_card_game.doudizhu import (
+    environment as doudizhu_env_module,
+    renderers as doudizhu_renderers,
+)
+from gage_eval.game_kits.phase_card_game.doudizhu.environment import (
+    DoudizhuArenaEnvironment,
+)
+from gage_eval.registry import registry
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+_LEGACY_RENDERER_CLASS = "".join(("Doudizhu", "Show", "down", "Renderer"))
+_LEGACY_RENDERER_IMPL = "_".join(("doudizhu", "".join(("show", "down")), "v1"))
+_LEGACY_RENDERER_SUBSTRING = "".join(("show", "down"))
+_LEGACY_VIEWER_NAME = "-".join(("rlcard", "".join(("show", "down"))))
+
+
+def _read_text(relpath: str) -> str:
+    return (REPO_ROOT / relpath).read_text(encoding="utf-8")
 
 
 class _StubCore:
@@ -27,6 +47,9 @@ class _StubCore:
 
     def get_perfect_information(self) -> dict[str, Any]:
         return {"hand_cards_with_suit": [["S3"], ["H4"], ["D5"]]}
+
+    def get_public_cards(self) -> Sequence[str]:
+        return ["S7", "H7", "DQ"]
 
     def encode_action(self, action_text: str) -> int:
         normalized = str(action_text).strip().lower()
@@ -87,3 +110,27 @@ def test_doudizhu_arena_exposes_get_last_frame(monkeypatch) -> None:
     latest_frame = env.get_last_frame()
     assert latest_frame["observer_player_id"] == "player_0"
     assert "board_text" in latest_frame
+    assert latest_frame["ui_state"]["seen_cards"] == ["S7", "H7", "DQ"]
+
+
+def test_doudizhu_renderers_package_does_not_expose_legacy_renderer() -> None:
+    assert _LEGACY_RENDERER_CLASS not in doudizhu_renderers.__all__
+    assert not hasattr(doudizhu_renderers, _LEGACY_RENDERER_CLASS)
+    with pytest.raises(KeyError):
+        registry.get("renderer_impls", _LEGACY_RENDERER_IMPL)
+    with pytest.raises(KeyError):
+        registry.get("parser_impls", "doudizhu_arena_parser_v1")
+
+
+def test_doudizhu_run_scripts_do_not_default_to_legacy_viewer() -> None:
+    run_sh = _read_text("scripts/run/arenas/doudizhu/run.sh")
+    human_vs_ai = _read_text("scripts/run/arenas/doudizhu/run_human_vs_ai_legacy.sh")
+
+    assert 'MODE="${MODE:-llm_visual}"' in run_sh
+    assert _LEGACY_RENDERER_SUBSTRING not in run_sh
+    assert _LEGACY_VIEWER_NAME not in human_vs_ai
+    assert _LEGACY_RENDERER_SUBSTRING not in human_vs_ai
+    assert "--mode human_visual" in human_vs_ai
+    assert "scripts/run/arenas/doudizhu/run.sh" in human_vs_ai
+    assert "VITE_ARENA_GATEWAY_BASE_URL" not in human_vs_ai
+    assert "/sessions/" not in human_vs_ai

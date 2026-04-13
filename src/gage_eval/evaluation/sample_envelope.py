@@ -107,17 +107,41 @@ def append_arena_contract(
     if "message" not in arena_entry:
         message_source = dict(model_output) if isinstance(model_output, Mapping) else arena_entry
         arena_entry["message"] = _build_message(message_source)
+    contract_header = _resolve_arena_contract_mapping(arena_entry, model_output, "header")
+    if contract_header is not None:
+        _merge_arena_header_contract(sample, contract_header)
+    contract_sample = _resolve_arena_contract_mapping(arena_entry, model_output, "sample")
+    if contract_sample is not None:
+        _merge_arena_runtime_metadata(
+            sample,
+            contract_sample=contract_sample,
+            contract_header=contract_header,
+        )
 
     # STEP 2: Normalize trace/footer payloads under the frozen keys.
     fallback_ts_ms = int(time.time() * 1000)
-    raw_trace = arena_entry.get("arena_trace")
-    if raw_trace is None and isinstance(model_output, Mapping):
-        raw_trace = model_output.get("arena_trace")
+    raw_trace = _resolve_arena_trace_payload(arena_entry, model_output)
     trace_steps = _normalize_arena_trace_steps(raw_trace, fallback_timestamp_ms=fallback_ts_ms)
     arena_entry["arena_trace"] = trace_steps
+    if _has_arena_contract_field(arena_entry, model_output, "trace"):
+        arena_entry["trace"] = copy.deepcopy(trace_steps)
 
-    footer = _build_arena_footer(arena_entry, trace_steps, end_time_ms=end_time_ms)
+    footer = _build_arena_footer(
+        arena_entry,
+        trace_steps,
+        end_time_ms=end_time_ms,
+        contract_footer=_resolve_arena_contract_mapping(arena_entry, model_output, "footer"),
+    )
     arena_entry["game_arena"] = footer
+    if _has_arena_contract_field(arena_entry, model_output, "footer"):
+        arena_entry["footer"] = copy.deepcopy(footer)
+
+    artifacts = _build_arena_artifacts(
+        arena_entry,
+        contract_artifacts=_resolve_arena_contract_mapping(arena_entry, model_output, "artifacts"),
+    )
+    if artifacts is not None:
+        arena_entry["artifacts"] = artifacts
 
     # STEP 3: Remove duplicate semantics from the arena root payload.
     for key in _ARENA_RESULT_DUPLICATE_FIELDS:
@@ -184,16 +208,41 @@ def _build_arena_footer(
     trace_steps: Sequence[Mapping[str, Any]],
     *,
     end_time_ms: Optional[int] = None,
+    contract_footer: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
+    footer_source = contract_footer if isinstance(contract_footer, Mapping) else {}
     if end_time_ms is None:
         end_time_ms = int(time.time() * 1000)
+    end_time_ms = _coerce_int(footer_source.get("end_time_ms"), end_time_ms)
 
-    total_steps = _coerce_int(output.get("move_count"), len(trace_steps))
-    winner = _coerce_optional_str(output.get("winner"))
-    termination_reason = str(output.get("reason") or "unknown")
-    ranks = _coerce_sequence_list(output.get("ranks"))
-    final_scores = _coerce_float_map(output.get("final_scores"))
-    episode_returns = _coerce_float_map(output.get("episode_returns"))
+    result = _resolve_arena_result_payload(output)
+    total_steps = _coerce_int(
+        footer_source.get("total_steps", footer_source.get("move_count")),
+        _coerce_int(result.get("move_count"), len(trace_steps)),
+    )
+    winner = (
+        _coerce_optional_str(footer_source.get("winner_player_id"))
+        or _coerce_optional_str(footer_source.get("winner"))
+        or _coerce_optional_str(result.get("winner"))
+    )
+    termination_reason = str(
+        footer_source.get("termination_reason")
+        or footer_source.get("reason")
+        or result.get("reason")
+        or result.get("result")
+        or "unknown"
+    )
+    ranks = _coerce_sequence_list(footer_source.get("ranks"))
+    if ranks is None:
+        ranks = _coerce_sequence_list(result.get("ranks"))
+    final_scores = _coerce_float_map(footer_source.get("final_scores"))
+    if final_scores is None:
+        final_scores = _coerce_float_map(result.get("final_scores"))
+    if final_scores is None:
+        final_scores = _coerce_float_map(result.get("scores"))
+    episode_returns = _coerce_float_map(footer_source.get("episode_returns"))
+    if episode_returns is None:
+        episode_returns = _coerce_float_map(result.get("episode_returns"))
     if episode_returns is None:
         episode_returns = _derive_episode_returns(trace_steps)
     footer = ArenaFooter(
@@ -206,6 +255,13 @@ def _build_arena_footer(
         episode_returns=episode_returns,
     )
     return footer.to_dict()
+
+
+def _resolve_arena_result_payload(output: Mapping[str, Any]) -> Mapping[str, Any]:
+    result = output.get("result")
+    if isinstance(result, Mapping):
+        return result
+    return output
 
 
 def _build_arena_header(
@@ -233,6 +289,135 @@ def _build_arena_header(
         start_time_ms=_coerce_int(header_source.get("start_time_ms"), start_time_ms),
     )
     return header.to_dict()
+
+
+def _merge_arena_header_contract(
+    sample: Dict[str, Any],
+    contract_header: Mapping[str, Any],
+) -> None:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        sample["metadata"] = metadata
+
+    existing_header = metadata.get("game_arena")
+    if isinstance(existing_header, Mapping):
+        start_time_ms = _coerce_int(
+            existing_header.get("start_time_ms"),
+            int(time.time() * 1000),
+        )
+    else:
+        start_time_ms = int(time.time() * 1000)
+
+    player_ids = contract_header.get("player_ids")
+    if (
+        "player_ids" not in metadata
+        and isinstance(player_ids, Sequence)
+        and not isinstance(player_ids, (str, bytes))
+    ):
+        metadata["player_ids"] = [str(player_id) for player_id in player_ids if player_id not in (None, "")]
+
+    canonical_header = _build_arena_header(metadata, start_time_ms=start_time_ms)
+
+    engine_id = contract_header.get("engine_id")
+    if engine_id in (None, "") and canonical_header.get("engine_id") in (None, "", "unknown_engine"):
+        engine_id = contract_header.get("env") or contract_header.get("game_kit")
+    if engine_id not in (None, "") and canonical_header.get("engine_id") in (None, "", "unknown_engine"):
+        canonical_header["engine_id"] = str(engine_id)
+
+    mode = contract_header.get("mode")
+    if mode not in (None, "") and canonical_header.get("mode") in (None, ""):
+        canonical_header["mode"] = str(mode)
+
+    seed = contract_header.get("seed")
+    if seed not in (None, "") and canonical_header.get("seed") in (None, ""):
+        canonical_header["seed"] = _coerce_int(seed, 0)
+
+    for key in ("game_kit", "env", "scheduler"):
+        value = contract_header.get(key)
+        if value not in (None, ""):
+            canonical_header[key] = str(value)
+
+    metadata["game_arena"] = canonical_header
+
+
+def _merge_arena_runtime_metadata(
+    sample: Dict[str, Any],
+    *,
+    contract_sample: Mapping[str, Any],
+    contract_header: Optional[Mapping[str, Any]] = None,
+) -> None:
+    metadata = sample.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        sample["metadata"] = metadata
+
+    runtime_overrides = contract_sample.get("runtime_overrides")
+    if isinstance(runtime_overrides, Mapping):
+        for key, value in runtime_overrides.items():
+            if value is None:
+                continue
+            metadata[str(key)] = copy.deepcopy(value)
+
+    runtime_player_ids, runtime_player_names = _extract_runtime_player_metadata(contract_sample)
+    if not runtime_player_ids and isinstance(contract_header, Mapping):
+        header_player_ids = contract_header.get("player_ids")
+        if isinstance(header_player_ids, Sequence) and not isinstance(header_player_ids, (str, bytes)):
+            runtime_player_ids = [
+                str(player_id)
+                for player_id in header_player_ids
+                if player_id not in (None, "")
+            ]
+
+    if runtime_player_ids:
+        metadata["player_ids"] = runtime_player_ids
+        if runtime_player_names:
+            metadata["player_names"] = runtime_player_names
+        elif "player_names" in metadata:
+            metadata["player_names"] = {
+                player_id: str(existing_name)
+                for player_id in runtime_player_ids
+                if (existing_name := (
+                    metadata.get("player_names", {}).get(player_id)
+                    if isinstance(metadata.get("player_names"), Mapping)
+                    else None
+                )) not in (None, "")
+            } or {player_id: player_id for player_id in runtime_player_ids}
+        current_start_player = metadata.get("start_player_id")
+        if current_start_player not in runtime_player_ids:
+            metadata["start_player_id"] = runtime_player_ids[0]
+
+
+def _extract_runtime_player_metadata(
+    contract_sample: Mapping[str, Any],
+) -> tuple[list[str], dict[str, str]]:
+    players = contract_sample.get("players")
+    if not isinstance(players, Sequence) or isinstance(players, (str, bytes)):
+        return [], {}
+
+    runtime_player_ids: list[str] = []
+    runtime_player_names: dict[str, str] = {}
+    for player in players:
+        if not isinstance(player, Mapping):
+            continue
+        player_id = (
+            player.get("player_id")
+            or player.get("id")
+            or player.get("name")
+            or player.get("seat")
+        )
+        if player_id in (None, ""):
+            continue
+        normalized_player_id = str(player_id)
+        runtime_player_ids.append(normalized_player_id)
+        player_name = (
+            player.get("player_name")
+            or player.get("display_name")
+            or player.get("name")
+            or normalized_player_id
+        )
+        runtime_player_names[normalized_player_id] = str(player_name)
+    return runtime_player_ids, runtime_player_names
 
 
 def _normalize_arena_players(
@@ -430,6 +615,11 @@ def resolve_arena_trace(
     fallback_timestamp_ms = int(time.time() * 1000)
 
     if isinstance(model_output, Mapping):
+        if "trace" in model_output:
+            return _normalize_arena_trace_steps(
+                model_output.get("trace"),
+                fallback_timestamp_ms=fallback_timestamp_ms,
+            )
         if "arena_trace" in model_output:
             return _normalize_arena_trace_steps(
                 model_output.get("arena_trace"),
@@ -814,7 +1004,12 @@ def _resolve_arena_entry_index(
 
 
 def _looks_like_arena_output(entry: Mapping[str, Any]) -> bool:
-    arena_markers = (
+    if str(entry.get("output_kind") or "").strip().lower() == "arena":
+        return True
+    if str(entry.get("domain") or "").strip().lower() == "arena":
+        return True
+
+    legacy_markers = (
         "arena_trace",
         "game_arena",
         "move_count",
@@ -823,7 +1018,117 @@ def _looks_like_arena_output(entry: Mapping[str, Any]) -> bool:
         "replay_path",
         "game_log",
     )
-    return any(marker in entry for marker in arena_markers)
+    if any(marker in entry for marker in legacy_markers):
+        return True
+
+    footer = entry.get("footer")
+    trace = entry.get("trace")
+    sample_payload = entry.get("sample")
+    return _looks_like_arena_footer_contract(footer) and (
+        _looks_like_arena_trace_contract(trace)
+        or _looks_like_arena_sample_contract(sample_payload)
+    )
+
+
+def _looks_like_arena_footer_contract(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return any(
+        key in value
+        for key in (
+            "winner_player_id",
+            "termination_reason",
+            "total_steps",
+            "winner",
+            "reason",
+            "move_count",
+        )
+    )
+
+
+def _looks_like_arena_trace_contract(value: Any) -> bool:
+    trace_source = value
+    if isinstance(trace_source, Mapping):
+        trace_source = trace_source.get("steps")
+    if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
+        return False
+    for item in trace_source:
+        if not isinstance(item, Mapping):
+            continue
+        if "player_id" in item or "step_index" in item or "trace_state" in item:
+            return True
+    return False
+
+
+def _looks_like_arena_sample_contract(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    game_kit = value.get("game_kit")
+    return isinstance(game_kit, str) and bool(game_kit.strip())
+
+
+def _resolve_arena_trace_payload(
+    output: Mapping[str, Any],
+    model_output: Optional[Mapping[str, Any]],
+) -> Any:
+    contract_trace = _resolve_arena_contract_field(output, model_output, "trace")
+    if contract_trace is not None:
+        return contract_trace
+    return _resolve_arena_contract_field(output, model_output, "arena_trace")
+
+
+def _build_arena_artifacts(
+    output: Mapping[str, Any],
+    *,
+    contract_artifacts: Optional[Mapping[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    artifacts = dict(contract_artifacts) if isinstance(contract_artifacts, Mapping) else {}
+    replay_ref = artifacts.get("replay_ref")
+    if replay_ref in (None, ""):
+        replay_ref = output.get("replay_path")
+    if replay_ref in (None, ""):
+        replay_ref = _resolve_arena_result_payload(output).get("replay_path")
+    if replay_ref not in (None, ""):
+        artifacts["replay_ref"] = str(replay_ref)
+    replay_v1_ref = output.get("replay_v1_path")
+    if replay_v1_ref not in (None, "") and artifacts.get("replay_v1_ref") in (None, ""):
+        artifacts["replay_v1_ref"] = str(replay_v1_ref)
+    game_log_ref = output.get("game_log_path")
+    if game_log_ref not in (None, "") and artifacts.get("game_log_ref") in (None, ""):
+        artifacts["game_log_ref"] = str(game_log_ref)
+    return artifacts or None
+
+
+def _resolve_arena_contract_mapping(
+    output: Mapping[str, Any],
+    model_output: Optional[Mapping[str, Any]],
+    field: str,
+) -> Optional[Mapping[str, Any]]:
+    value = _resolve_arena_contract_field(output, model_output, field)
+    if isinstance(value, Mapping):
+        return value
+    return None
+
+
+def _has_arena_contract_field(
+    output: Mapping[str, Any],
+    model_output: Optional[Mapping[str, Any]],
+    field: str,
+) -> bool:
+    return _resolve_arena_contract_field(output, model_output, field) is not None
+
+
+def _resolve_arena_contract_field(
+    output: Mapping[str, Any],
+    model_output: Optional[Mapping[str, Any]],
+    field: str,
+) -> Any:
+    value = output.get(field)
+    if value is not None:
+        return value
+    if isinstance(model_output, Mapping):
+        return model_output.get(field)
+    return None
 
 
 def _reindex_predict_result(predict_result: Sequence[Any]) -> None:

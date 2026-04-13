@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from gage_eval.role.arena.games.pettingzoo.env import PettingZooAecArenaEnvironment
+from gage_eval.game_kits.aec_env_game.pettingzoo.environment import (
+    PettingZooAecArenaEnvironment,
+)
 from gage_eval.role.arena.types import ArenaAction
 
 

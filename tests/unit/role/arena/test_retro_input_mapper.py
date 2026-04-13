@@ -1,4 +1,4 @@
-from gage_eval.role.arena.games.retro.retro_input_mapper import (
+from gage_eval.game_kits.real_time_game.retro_platformer.input_mapper import (
     RetroInputMapper,
     _coerce_bool,
     _normalize_key,

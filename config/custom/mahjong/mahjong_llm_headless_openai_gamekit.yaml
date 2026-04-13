@@ -1,0 +1,60 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: mahjong_llm_headless_openai_gamekit
+  description: >
+    GameArena Mahjong manual smoke config that binds one LLM player through
+    the headless GameKit PlayerDriver runtime and keeps the other seats deterministic.
+
+datasets:
+  - dataset_id: mahjong_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Mahjong_GameKit.jsonl
+      streaming: false
+
+backends:
+  - backend_id: openai_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: ${OPENAI_API_BASE:-https://api.openai.com/v1}
+      api_key: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      model: ${GAGE_GAME_ARENA_LLM_MODEL:-gpt-5.4}
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: mahjong_llm_headless_gamekit_arena
+
+role_adapters:
+  - adapter_id: mahjong_llm_headless_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: mahjong
+      env: riichi_4p
+      players:
+        - seat: east
+          player_id: east
+          player_kind: llm
+          backend_id: openai_litellm_backend
+        - seat: south
+          player_id: south
+          player_kind: dummy
+          actions: ["C1"]
+        - seat: west
+          player_id: west
+          player_kind: dummy
+          actions: ["D1"]
+        - seat: north
+          player_id: north
+          player_kind: dummy
+          actions: ["East"]

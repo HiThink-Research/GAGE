@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import threading
 import time
+from queue import Queue
 from typing import Any
 
 from gage_eval.role.arena.runtime_services import ArenaRuntimeServiceHub
+from gage_eval.role.arena.visualization.contracts import ControlCommand
 
 
 class _StubVisualizer:
@@ -27,6 +29,7 @@ class _StubVisualizer:
 class _StubActionServer:
     def __init__(self) -> None:
         self.action_queue = object()
+        self.chat_queue: Queue[dict[str, str]] = Queue()
         self.register_calls: list[tuple[str, Any]] = []
         self.unregister_calls: list[str] = []
         self.stopped = False
@@ -39,6 +42,12 @@ class _StubActionServer:
 
     def stop(self) -> None:
         self.stopped = True
+
+
+class _StubControlActionServer(_StubActionServer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.control_queue: Queue[dict[str, object]] = Queue()
 
 
 class _StubWsHub:
@@ -55,6 +64,27 @@ class _StubWsHub:
 
     def stop(self) -> None:
         self.stopped = True
+
+
+class _StubLiveControlSource:
+    def __init__(self, related_event_seq: int = 0) -> None:
+        self.related_event_seq = int(related_event_seq)
+        self.commands: list[ControlCommand] = []
+
+    def apply_control_command(self, command: ControlCommand) -> int:
+        self.commands.append(command)
+        return self.related_event_seq
+
+
+class _StubLiveVisualizer(_StubVisualizer):
+    def __init__(self, live_source: _StubLiveControlSource | None = None) -> None:
+        super().__init__()
+        self.live_source = live_source
+        self.resolve_calls: list[tuple[str, str | None]] = []
+
+    def resolve_live_session(self, session_id: str, *, run_id: str | None = None) -> Any:
+        self.resolve_calls.append((session_id, run_id))
+        return self.live_source
 
 
 def test_runtime_service_hub_initializes_each_shared_service_once() -> None:
@@ -142,3 +172,54 @@ def test_runtime_service_hub_routes_bindings_and_shutdown() -> None:
     assert ws_hub.stopped is True
     assert hub.registered_displays() == set()
 
+
+def test_runtime_service_hub_submits_chat_and_control_messages_with_control_sink() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    action_server = hub.ensure_action_server(_StubControlActionServer)
+
+    chat_receipt = hub.submit_chat_message(
+        "session-1",
+        None,
+        {"playerId": "p0", "text": "hi"},
+    )
+    control_receipt = hub.submit_control_command(
+        "session-1",
+        None,
+        {"commandType": "pause"},
+    )
+
+    assert chat_receipt.state == "accepted"
+    assert control_receipt.state == "accepted"
+    assert action_server.control_queue.get_nowait() == {"commandType": "pause"}
+
+
+def test_runtime_service_hub_routes_live_playback_control_to_visualizer() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    live_source = _StubLiveControlSource(related_event_seq=5)
+    visualizer = hub.ensure_visualizer(lambda: _StubLiveVisualizer(live_source))
+
+    control_receipt = hub.submit_control_command(
+        "session-1",
+        "run-live",
+        {"commandType": "replay"},
+    )
+
+    assert control_receipt.state == "accepted"
+    assert control_receipt.reason == "playback_applied"
+    assert control_receipt.related_event_seq == 5
+    assert visualizer.resolve_calls == [("session-1", "run-live")]
+    assert live_source.commands == [ControlCommand(command_type="replay")]
+
+
+def test_runtime_service_hub_rejects_control_command_when_control_sink_missing() -> None:
+    hub = ArenaRuntimeServiceHub(adapter_id="arena")
+    hub.ensure_action_server(_StubActionServer)
+
+    control_receipt = hub.submit_control_command(
+        "session-1",
+        None,
+        {"commandType": "pause"},
+    )
+
+    assert control_receipt.state == "rejected"
+    assert control_receipt.reason == "control_queue_not_available"

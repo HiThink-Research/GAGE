@@ -2,225 +2,202 @@
 
 中文 | [English](game_arena.md)
 
-Game Arena 是 GAGE 中基于 `arena` 角色构建的统一游戏对战运行框架，覆盖五子棋、井字棋、ViZDoom、PettingZoo、Retro Mario、斗地主、麻将等多类对战场景，支持环境驱动、动作解析、回放记录和人机交互。
+Game Arena 是 GAGE 的统一游戏评测运行时。当前主线实现围绕 GameKit 配置、`ArenaRoleAdapter`、结构化 arena 输出和统一 `arena_visual` 浏览器控制面展开。
 
-当前主实现位于：
+本文档用于说明整体运行时。浏览器操作细节见 [Arena Visual 浏览器控制面](game_arena_topics/game_arena_visual_control_zh.md)。
 
-- `src/gage_eval/role/adapters/arena.py`
-- `src/gage_eval/evaluation/task_planner.py`
-- `src/gage_eval/evaluation/sample_envelope.py`
+## 1. 当前运行时形态
 
-## 1. 当前定位
+Game Arena 配置和其他 GAGE 任务一样走标准 Pipeline：
 
-当前 Arena 更适合被理解为一层统一的“游戏运行时”：
-
-- 对上，它仍然是标准 Pipeline 中的一个步骤，由 `TaskPlanner.execute_arena()` 调用。
-- 对内，它负责拼装环境、调度器、玩家、解析器、人类输入、可视化与回放写出。
-- 对下，它会把对局结果规范化写回样本，供 `judge`、`auto_eval`、回放工具和后处理继续消费。
-
-当前实现覆盖的游戏类型包括以下几类：
-
-| 类型 | `environment.impl` 示例 | 特点 |
-| --- | --- | --- |
-| 棋盘类 | `gomoku_local_v1`、`tictactoe_v1` | 坐标落子、Gradio 棋盘渲染 |
-| FPS / 帧驱动类 | `vizdoom_env_v1` | tick/record 调度、图像帧、websocketRGB |
-| AEC 离散动作类 | `pettingzoo_aec_v1` | 离散动作解析、轮转 agent、回放 |
-| Retro 游戏类 | `retro_env_v1` | 持久运行时、动作映射、录像与回放 |
-| 牌类 / 麻将类 | `doudizhu_rlcard_v1`、`doudizhu_arena_v1`、`mahjong_rlcard_v1` | formatter/parser/renderer 组合、结构化结果输出 |
-
-### 1.1 按游戏看当前接入形态
-
-- 五子棋：当前仍然是最典型的棋盘式 Arena，用 `gomoku_local_v1 + gomoku_v1 + gomoku_board_v1` 组成完整的人机或模型对战闭环，适合说明坐标解析、Gradio 棋盘交互和基础 `turn` 调度。
-- 井字棋：结构和五子棋一致，但配置更轻，常作为最小可运行示例，用于验证 `arena` 角色、`visualizer` 和 `human` 玩家链路是否工作正常。
-- ViZDoom：当前属于帧驱动 / 动作离散化环境，核心围绕 `vizdoom_env_v1 + vizdoom_parser_v1`、tick 或 record 调度、图像帧采集、websocketRGB 显示与回放展开。
-- PettingZoo：当前使用 `pettingzoo_aec_v1 + discrete_action_parser_v1` 这一类组合接入 AEC 环境，重点在离散动作、轮转 agent、图像流展示和回放。当前文档与截图示例使用的是 PettingZoo Atari 的 `space_invaders`。
-- Retro Mario：当前通过 `retro_env_v1` 接入 stable-retro 运行时，重点在持续运行环境、动作映射、录像与 websocketRGB/回放链路。
-- 斗地主 / 麻将：这两类更适合围绕 RLCard 环境、formatter/parser/renderer、结构化结果和前端回放来理解。
-
-## 2. Pipeline 中的位置
-
-Arena 不是独立于 Pipeline 的旁路模块，而是 `TaskPlanner` 中一个标准执行阶段：
+![GameArena 运行时核心设计](../assets/game-arena-runtime-core-design-20260413.png)
 
 ```mermaid
 flowchart LR
-  A["Sample"] --> B["TaskPlanner.execute_arena()"]
-  B --> C["ensure_arena_header()"]
-  C --> D["ArenaRoleAdapter.execute()"]
-  D --> E["GameResult / arena_trace / replay"]
-  E --> F["append_arena_contract()"]
-  F --> G["sample.predict_result[0]"]
-  G --> H["judge / auto_eval / replay tools"]
+  A["PipelineConfig"] --> B["TaskPlanner"]
+  B --> C["ArenaRoleAdapter"]
+  C --> D["GameKit runtime"]
+  C --> E["PlayerDriver / backend / human"]
+  C --> F["Scheduler"]
+  C --> G["arena_visual gateway"]
+  D --> H["GameResult"]
+  F --> H
+  G --> I["browser session + replay artifacts"]
+  H --> J["sample.predict_result[0].arena_trace"]
+  H --> K["sample.predict_result[0].game_arena"]
 ```
 
-这里最关键的不是“输出一段自由文本”，而是产出一份可继续流转的结构化对局结果。
+棋盘、牌桌、帧画面游戏都写出同一份视觉 session 契约：
 
-## 3. 运行时结构
-
-当前 `ArenaRoleAdapter` 在一次对局里会动态组装下面这些部件：
-
-```mermaid
-flowchart TD
-  CFG["role_adapters[].params"] --> ADP["ArenaRoleAdapter"]
-  ADP --> ENV["Environment<br/>arena_impls"]
-  ADP --> SCH["Scheduler<br/>turn / tick / record / simultaneous / multi_timeline"]
-  ADP --> PAR["Parser<br/>parser_impls"]
-  ADP --> PLY["Players<br/>backend / agent / human"]
-  ADP --> VIZ["Gradio Visualizer<br/>可选"]
-  ADP --> HUM["Action Server / Queue<br/>可选"]
-  ADP --> WSRGB["websocketRGB Hub<br/>可选"]
-  ADP --> REC["ReplaySchemaWriter / FrameCaptureRecorder<br/>可选"]
-
-  ENV --> OBS["ArenaObservation"]
-  OBS --> PLY
-  PLY --> SCH
-  SCH --> ENV
-  ENV --> RES["GameResult + arena_trace"]
-  RES --> REC
-  RES --> OUT["predict_result[0] / run artifacts"]
-  HUM --> PLY
-  WSRGB --> HUM
+```text
+runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/
 ```
 
-理解当前结构时，有两个点最关键：
+浏览器路由是 `/sessions/<sample_id>?run_id=<run_id>`。运行时数据由 Python gateway 通过 `/arena_visual/sessions/...` 提供，并由仓库内预构建的 `frontend/arena-visual/dist` 渲染；普通用户不需要准备 Node/npm 环境。
 
-- `Context Provider` 仍然存在，但它已经不是 Arena 主文档里最核心的运行时部件；当前主轴是 `environment + scheduler + players + parser + replay`。
-- `RuleEngine` 在很多游戏里已经内嵌到具体环境实现内部，未必总是以独立层的形式出现。
+## 2. 当前 GameKit 家族
 
-## 4. 当前更关键的配置面
-
-如果从实际配置文件看，Arena 现在更应该按下面这几个块来理解：
-
-| 配置块 | 作用 | 常见字段 |
+| 家族 | 当前配置 | 视觉形态 |
 | --- | --- | --- |
-| `environment` | 选择游戏环境与运行模式 | `impl`、`env_id`、`display_mode`、`replay` |
-| `scheduler` | 决定对局推进方式 | `type`、`tick_ms`、`max_turns`、`max_ticks` |
-| `parser` | 把模型输出解析成动作 | `impl`、`action_labels`、`coord_scheme` |
-| `players` | 定义参与者类型 | `type=backend/agent/human`、`ref`、`timeout_ms` |
-| `visualizer` | 启用 Gradio 观察或交互界面 | `enabled`、`renderer.impl`、`wait_for_finish` |
-| `human_input` | 打开输入队列、Action Server 和 ws_rgb hub | `enabled`、`port`、`ws_port` |
+| 五子棋 | `config/custom/gomoku/*_gamekit.yaml` | Board scene |
+| 井字棋 | `config/custom/tictactoe/*_gamekit.yaml` | Board scene |
+| 斗地主 | `config/custom/doudizhu/*_gamekit.yaml` | Table scene |
+| 麻将 | `config/custom/mahjong/*_gamekit.yaml` | Table scene |
+| PettingZoo Space Invaders | `config/custom/pettingzoo/space_invaders_*_gamekit.yaml` | Frame scene |
+| Retro Mario | `config/custom/retro_mario/*_gamekit.yaml` | Frame scene |
+| ViZDoom | `config/custom/vizdoom/*_gamekit.yaml` | Frame scene |
 
-当前支持的调度器也已经不止旧文档中的 `turn` / `tick` 两种：
+LLM 配置现在分两类。已有本地配置保留给内部/本地测试使用；新的 `*_openai_gamekit.yaml` 配置是面向用户的 API 路径，并从环境变量读取凭据：
 
-- `turn`：典型轮到谁谁行动，适合五子棋、井字棋。
-- `tick`：按固定节拍轮询，适合实时或准实时场景。
-- `record`：按录制节拍推进并写出可回放轨迹。
-- `simultaneous`：多玩家同帧动作。
-- `multi_timeline`：多时间线 / 多 lane 推进。
+```bash
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+# 可选：默认模型为 gpt-5.4。
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+# 可选：本地或托管的 OpenAI-compatible endpoint。
+export OPENAI_API_BASE="https://api.openai.com/v1"
+```
 
-## 5. 结构化输出契约
+开源本地模型可以通过 OpenAI-compatible API 暴露，然后设置 `OPENAI_API_BASE` 和 `GAGE_GAME_ARENA_LLM_MODEL`。不需要改 YAML 里的 backend。
 
-Arena 结束后，结果会被写回样本，而不是只停留在控制台日志里。
+闭源 OpenAI API 用例：
 
-### 5.1 样本头信息
+```bash
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+unset OPENAI_API_BASE
+```
 
-`ensure_arena_header()` 会在 `sample.metadata.game_arena` 下写入一份头信息，核心字段包括：
+开源 OpenAI-compatible 服务用例：
 
-- `engine_id`
-- `seed`
-- `mode`
-- `players`
-- `start_time_ms`
+```bash
+export OPENAI_API_BASE="http://127.0.0.1:<PORT>/v1"
+export OPENAI_API_KEY="<LOCAL_SERVICE_API_KEY_OR_DUMMY_VALUE>"
+export GAGE_GAME_ARENA_LLM_MODEL="<LOCAL_MODEL_NAME>"
+```
 
-### 5.2 样本结果
+## 3. 配置面
 
-`append_arena_contract()` 会把 Arena 结果规范化到：
+GameKit 配置主要围绕 `role_adapters[].params` 组织：
 
-- `sample.predict_result[0].arena_trace`
-- `sample.predict_result[0].game_arena`
+| 配置块 | 作用 |
+| --- | --- |
+| `game_kit` / `env` | 选择游戏家族和具体环境预设。 |
+| `runtime_overrides` | 调整棋盘大小、实时节拍、合法动作、帧采集、回放或 backend mode。 |
+| `players` | 把每个 seat 绑定到 `dummy`、`llm` 或 `human`。 |
+| `human_input` | 启用浏览器动作提交和 live 输入队列。 |
+| `visualizer` | 启用 `arena_visual`，设置浏览器端口、自动打开行为和媒体传输方式。 |
 
-其中：
+常见 visualizer 片段：
 
-- `arena_trace` 记录逐步动作轨迹、时间戳、合法性、超时信息等。
-- `game_arena` 记录终局摘要，例如 `winner_player_id`、`termination_reason`、`total_steps`、`final_scores`、`episode_returns`。
+```yaml
+visualizer:
+  enabled: true
+  mode: arena_visual
+  launch_browser: true
+  live_scene_scheme: http_pull
+  linger_after_finish_s: 15.0
+```
 
-### 5.3 运行产物
+帧驱动游戏在配置明确启用时，也可以使用 `binary_stream` 或 `low_latency_channel`。
 
-除了样本内字段，Arena 还可能写出：
+## 4. 启动入口
 
-- `replay_path` / `replay_v1_path`
-- `game_log` 或 `game_log_path`
-- `replay.json`、`events.jsonl`
-- 帧截图目录（开启 frame capture 时）
+标准脚本位于 `scripts/run/arenas/`。
 
-因此现在的 Arena 文档，必须同时覆盖“调度逻辑”和“产物契约”，只讲棋盘 UI 已经不够了。
+```bash
+# PettingZoo Space Invaders OpenAI LLM 可视化运行
+bash scripts/run/arenas/pettingzoo/run.sh --mode llm_visual_openai
 
-## 6. 交互方式与可视化
+# Retro Mario 纯人工实时浏览器控制
+bash scripts/run/arenas/retro_mario/run.sh --mode human_visual
 
-当前 Arena 至少有两类主要交互路径：
+# ViZDoom OpenAI LLM 可视化运行
+bash scripts/run/arenas/vizdoom/run.sh --mode llm_visual_openai
 
-### 6.1 Gradio 棋盘式交互
+# 斗地主 OpenAI LLM 可视化运行
+bash scripts/run/arenas/doudizhu/run.sh --mode llm_visual_openai
 
-适合五子棋、井字棋这类有明确棋盘 renderer 的游戏：
+# 麻将 OpenAI LLM 可视化运行
+bash scripts/run/arenas/mahjong/run.sh --mode llm_visual_openai
+```
 
-- 通过 `visualizer.enabled: true` 启用。
-- 通过 `renderer_impls` 渲染 HTML/CSS 棋盘。
-- 当存在 `human` 玩家时，会进入交互模式。
+可视化运行会在运行目录下写出可回放的 `arena_visual_session/v1` 产物。浏览器播放控制通过 Arena Visual session 页面读取这些产物。
 
-### 6.2 websocketRGB 图像流交互
+## 5. 选择 Topic
 
-适合 ViZDoom、PettingZoo、Retro Mario 这类更偏帧驱动或图像观察的环境。
+Topic 文档按任务场景组织：
 
-代码层面仍然主要使用 `ws_rgb` 命名，但文档中也常把它称为 `websocketRGB`。这两者在当前仓库里指向的是同一套运行时能力：
+| 需求 | 入口 |
+| --- | --- |
+| 最小棋盘冒烟和人类坐标输入 | [井字棋指南](game_arena_topics/game_arena_tictactoe_zh.md) |
+| 更大棋盘坐标、胜利线输出和 15x15 浏览器运行 | [五子棋指南](game_arena_topics/game_arena_gomoku_zh.md) |
+| 三人牌桌、合法动作文本和 chat 元数据 | [斗地主指南](game_arena_topics/game_arena_doudizhu_zh.md) |
+| 四人牌桌和更长的人工验收运行 | [麻将指南](game_arena_topics/game_arena_mahjong_zh.md) |
+| Atari AEC 帧、ROM 检查和 low-latency 媒体传输 | [PettingZoo Atari 指南](game_arena_topics/game_arena_pettingzoo_atari_zh.md) |
+| stable-retro ROM import 和 macro 键盘动作 | [Retro Mario 指南](game_arena_topics/game_arena_retro_mario_zh.md) |
+| ViZDoom 渲染、POV telemetry 和离散动作 id | [ViZDoom 指南](game_arena_topics/game_arena_vizdoom_zh.md) |
+| 共享浏览器控制、session API、输入路由和回放产物 | [Arena Visual 浏览器控制面](game_arena_topics/game_arena_visual_control_zh.md) |
 
-- 环境提供图像帧，例如 `get_last_frame()`。
-- `ArenaRoleAdapter` 在 `display_mode=websocket/ws` 时注册显示端。
-- 人类输入通过 Action Queue / ws_rgb viewer 回流到 `HumanPlayer`。
-- 回放工具可以基于样本产物重建 ws_rgb 显示。
-- viewer 当前有 `in_progress / game_ended / process_ended` 三态：进入 `in_progress` 表示对局仍在进行；进入 `game_ended` 表示对局已结束但仍可 replay；进入 `process_ended` 表示已确认退出，页面即将断开。
+## 6. 输出契约
+
+Arena 会把结构化结果写回样本：
+
+- `sample.predict_result[0].arena_trace`：逐步动作、合法性、时间戳、重试、调度事实和运行时元数据。
+- `sample.predict_result[0].game_arena`：终局摘要，例如 winner、reason、total steps、scores、episode returns。
+- `artifacts.visual_session_ref`：启用可视化时指向 `arena_visual_session/v1/manifest.json`。
+
+典型运行产物：
+
+```text
+runs/<run_id>/
+  summary.json
+  samples.jsonl
+  replays/<sample_id>/arena_visual_session/v1/
+    manifest.json
+    timeline.jsonl
+    scenes/
+    media/
+```
+
+![GameArena 视觉数据契约](../assets/game-arena-visual-contracts-design-20260413.png)
 
 ## 7. 视觉示例
 
-### 7.1 五子棋
+### 五子棋
 
-五子棋体现了典型的棋盘式交互形态，适合作为理解 `renderer_impls`、落子坐标解析和 Human vs LLM 流程的基础示例。
+![五子棋画面](../assets/arena-visual-gomoku-stage-20260409.png)
 
-![五子棋棋盘](../assets/gomoku.png)
+### 井字棋
 
-### 7.2 井字棋
+![井字棋画面](../assets/arena-visual-tictactoe-stage-20260409.png)
 
-井字棋是更轻量的棋盘示例，通常用于快速验证 Arena 主链路和交互式 UI 是否正常。
+### 斗地主
 
-![井字棋棋盘](../assets/tictactoe.png)
+![斗地主画面](../assets/arena-visual-doudizhu-stage-20260409.png)
 
-### 7.3 ViZDoom
+### 麻将
 
-ViZDoom 在这里体现的是一个带图像观察、动作映射、调度和回放的完整环境接入。
+![麻将画面](../assets/arena-visual-mahjong-stage-20260409.png)
 
-![ViZDoom 运行界面](../assets/vizdoom.png)
+### PettingZoo Space Invaders
 
-相关专题文档：
+![Space Invaders 画面](../assets/arena-visual-space-invaders-stage-20260409.png)
 
-- [ViZDoom 指南](game_arena_topics/game_arena_vizdoom_zh.md)
-- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
+### Retro Mario
 
-### 7.4 PettingZoo：Space Invaders
+![Retro Mario 画面](../assets/arena-visual-retro-mario-stage-20260409.png)
 
-这里展示的是 PettingZoo Atari 系列中的 `space_invaders`。当前这类接入主打离散动作环境、图像流展示和回放链路，特别适合 Atari 一类多 agent 或轮转 agent 场景。
+### ViZDoom
 
-![PettingZoo Atari Space Invaders 运行界面](../assets/pettingzoo-space-invaders.png)
+![ViZDoom 画面](../assets/arena-visual-vizdoom-stage-20260409.png)
 
-相关专题文档：
+## 8. 相关文档
 
- - [PettingZoo Atari 指南](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
-- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
-
-### 7.5 Retro Mario
-
-这里展示的是当前 stable-retro Mario 接入形态。它和 ViZDoom、PettingZoo 一样，更偏向运行时驱动、动作映射、图像观察和回放，而不是传统棋盘式渲染。
-
-![Retro Mario 运行界面](../assets/mario.png)
-
-相关专题文档：
-
+- [Arena Visual 浏览器控制面](game_arena_topics/game_arena_visual_control_zh.md)
+- [五子棋指南](game_arena_topics/game_arena_gomoku_zh.md)
+- [井字棋指南](game_arena_topics/game_arena_tictactoe_zh.md)
+- [斗地主指南](game_arena_topics/game_arena_doudizhu_zh.md)
+- [麻将指南](game_arena_topics/game_arena_mahjong_zh.md)
+- [PettingZoo Atari 指南](game_arena_topics/game_arena_pettingzoo_atari_zh.md)
 - [Retro Mario 指南](game_arena_topics/game_arena_retro_mario_zh.md)
-- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
-
-## 8. 专题入口
-
-现有专题文档更适合由主文档统一跳转：
-
-- [ViZDoom](game_arena_topics/game_arena_vizdoom_zh.md)
-- [Retro Mario](game_arena_topics/game_arena_retro_mario_zh.md)
-- [PettingZoo](game_arena_topics/pettingzoo_atari_run_commands_zh.md)
-- [斗地主 Showdown](game_arena_topics/doudizhu_showdown_zh.md)
-- [websocketRGB 运行时与回放指南](game_arena_topics/websocketRGB_runtime_replay_guide_zh.md)
+- [ViZDoom 指南](game_arena_topics/game_arena_vizdoom_zh.md)

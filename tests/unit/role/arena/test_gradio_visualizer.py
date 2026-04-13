@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from typing import Optional, Sequence
-from uuid import uuid4
 
 import pytest
 
-from gage_eval.registry import registry
 from gage_eval.role.arena.visualizers.gradio_visualizer import GradioVisualizer
 
 
@@ -93,45 +91,3 @@ def test_gradio_visualizer_bounds_output_history_and_keeps_monotonic_sequence(
     assert "[001]" not in visualizer._output_history_text  # noqa: SLF001
     assert "[002]" in visualizer._output_history_text  # noqa: SLF001
     assert "[003]" in visualizer._output_history_text  # noqa: SLF001
-
-
-def test_gradio_visualizer_uses_explicit_registry_lookup_for_renderer_resolution() -> None:
-    impl_name = f"test_renderer_{uuid4().hex}"
-    clone = registry.clone()
-
-    class _RegistryRenderer:
-        def __init__(self, board_size: int, coord_scheme: str = "A1") -> None:
-            self.board_size = board_size
-            self.coord_scheme = coord_scheme
-
-        def update(
-            self,
-            board_text: str,
-            *,
-            last_move: Optional[str] = None,
-            winning_line: Optional[Sequence[str]] = None,
-        ) -> None:
-            _ = board_text, last_move, winning_line
-
-        def render_html(self, *, interactive: bool = False) -> str:
-            _ = interactive
-            return "<div>ok</div>"
-
-        def raw_text(self) -> str:
-            return "ok"
-
-        def resize(self, board_size: int) -> None:
-            self.board_size = board_size
-
-        def set_coord_scheme(self, coord_scheme: str) -> None:
-            self.coord_scheme = coord_scheme
-
-        def get_css(self) -> str:
-            return ""
-
-    clone.register("renderer_impls", impl_name, _RegistryRenderer, desc="test renderer")
-    view = clone.freeze(view_id=f"renderer-view-{uuid4().hex}")
-
-    visualizer = GradioVisualizer(renderer_impl=impl_name, registry_lookup=view)
-
-    assert isinstance(visualizer._renderer, _RegistryRenderer)  # noqa: SLF001

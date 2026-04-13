@@ -38,5 +38,8 @@ def test_manifest_sync_payloads_cover_known_assets() -> None:
 
     assert ("roles", "dut_model") in core_names
     assert ("arena_impls", "gomoku_local_v1") in arena_names
+    assert ("visualization_specs", "arena/visualization/gomoku_board_v1") in arena_names
+    assert ("visualization_specs", "arena/visualization/doudizhu_table_v1") in arena_names
+    assert ("visualization_specs", "arena/visualization/vizdoom_frame_v1") in arena_names
     assert ("metrics", "global_piqa_accuracy_local") in metric_names
     assert ("prompts", "dut/general@v1") in override_names

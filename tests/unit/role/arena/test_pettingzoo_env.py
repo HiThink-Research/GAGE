@@ -1,6 +1,11 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from gage_eval.role.arena.games.pettingzoo.env import PettingZooAecArenaEnvironment
+from gage_eval.game_kits.aec_env_game.pettingzoo.action_codec import (
+    DiscreteActionCodec,
+)
+from gage_eval.game_kits.aec_env_game.pettingzoo.environment import (
+    PettingZooAecArenaEnvironment,
+)
 from gage_eval.role.arena.types import ArenaAction
 
 
@@ -54,6 +59,33 @@ class FakeAecEnv:
                 self.terminations[agent_id] = True
         idx = self.agents.index(agent)
         self.agent_selection = self.agents[(idx + 1) % len(self.agents)]
+
+
+class FakeRgbFrame:
+    shape = (2, 2, 3)
+    dtype = "uint8"
+
+    def tobytes(self) -> bytes:
+        return bytes([0, 64, 128, 255]) * 3
+
+
+class FakeRgbAecEnv(FakeAecEnv):
+    def observe(self, agent: str) -> Dict[str, Any]:
+        return {"observation": FakeRgbFrame(), "agent": agent, "step": self._step_count}
+
+
+class ScalarLikeReward:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __float__(self) -> float:
+        return float(self.value)
+
+    def item(self) -> float:
+        return float(self.value)
+
+    def __str__(self) -> str:
+        return str(self.value)
 
 
 def test_pettingzoo_env_basic_loop():
@@ -118,3 +150,67 @@ def test_pettingzoo_env_disable_action_meanings_uses_numeric_moves():
     assert observation.legal_moves[:3] == ["0", "1", "2"]
     assert "NOOP" not in observation.legal_moves
     assert observation.prompt is not None
+
+
+def test_pettingzoo_env_uses_gamekit_owned_discrete_action_codec():
+    env = FakeAecEnv(max_steps=2, action_n=4)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        env_id="pettingzoo.atari.space_invaders_v2",
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+        use_action_meanings=False,
+    )
+
+    assert isinstance(adapter._codec, DiscreteActionCodec)
+    assert adapter._codec.__class__.__module__ == (
+        "gage_eval.game_kits.aec_env_game.pettingzoo.action_codec"
+    )
+
+
+def test_pettingzoo_env_observation_includes_inline_image_when_rgb_obs_available(monkeypatch):
+    env = FakeRgbAecEnv(max_steps=2, action_n=6)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        env_id="pettingzoo.atari.space_invaders_v2",
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_build_image_data_url",
+        lambda frame: "data:image/png;base64,Zm9v",
+    )
+
+    adapter.reset()
+    observation = adapter.observe(adapter.get_active_player())
+
+    assert observation.view is not None
+    assert observation.view["image"]["data_url"] == "data:image/png;base64,Zm9v"
+    assert observation.view["image"]["shape"] == [2, 2, 3]
+
+
+def test_pettingzoo_env_normalizes_scalar_like_reward_to_python_float():
+    env = FakeAecEnv(max_steps=3, action_n=3)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+    )
+    active_agent = env.agent_selection
+    env.rewards[active_agent] = ScalarLikeReward(1.5)
+
+    active_player = adapter.get_active_player()
+    observation = adapter.observe(active_player)
+    frame = adapter.get_last_frame()
+
+    assert observation.metadata["reward"] == 1.5
+    assert isinstance(observation.metadata["reward"], float)
+    assert frame["reward"] == 1.5
+    assert isinstance(frame["reward"], float)
+
+    adapter.apply(ArenaAction(player=active_player, move="1", raw="1"))
+    result = adapter.build_result(result="completed", reason="manual")
+
+    assert result.move_log[0]["reward"] == 1.5
+    assert isinstance(result.move_log[0]["reward"], float)

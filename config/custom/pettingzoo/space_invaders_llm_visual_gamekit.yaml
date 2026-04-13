@@ -1,0 +1,63 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: space_invaders_llm_visual_gamekit
+  description: >
+    GameArena Space Invaders manual smoke config that binds one LLM player
+    through the visualization-ready GameKit PlayerDriver runtime and keeps the opponent deterministic.
+
+datasets:
+  - dataset_id: space_invaders_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/pettingzoo_atari_demo.jsonl
+      streaming: false
+
+backends:
+  - backend_id: local_qwen35_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: http://127.0.0.1:1234/v1
+      api_key: lmstudio
+      model: qwen/qwen3.5-9b
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: space_invaders_llm_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: space_invaders_llm_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: pettingzoo
+      env: space_invaders
+      runtime_overrides:
+        backend_mode: real
+        include_raw_obs: true
+        use_action_meanings: true
+      visualizer:
+        enabled: true
+        title: GAGE Space Invaders Arena Visual
+        launch_browser: true
+        mode: arena_visual
+        live_scene_scheme: http_pull
+        linger_after_finish_s: 15.0
+      players:
+        - seat: pilot_0
+          player_id: pilot_0
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend
+        - seat: pilot_1
+          player_id: pilot_1
+          player_kind: dummy
+          actions: ["LEFT", "NOOP"]

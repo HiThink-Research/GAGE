@@ -1,0 +1,40 @@
+:root {
+  color-scheme: light;
+  --font-family:
+    "IBM Plex Sans",
+    "Avenir Next",
+    "Segoe UI",
+    sans-serif;
+  font-family: var(--font-family);
+  line-height: 1.5;
+  font-weight: 400;
+
+  --color-bg: #edf1ea;
+  --color-bg-accent: #dbe3d2;
+  --color-surface: rgba(255, 255, 255, 0.82);
+  --color-surface-strong: #ffffff;
+  --color-border: rgba(35, 49, 41, 0.12);
+  --color-text: #223129;
+  --color-text-muted: #526157;
+  --color-accent: #2e5a45;
+  --color-accent-soft: #dce9de;
+  --color-shadow: rgba(34, 49, 41, 0.12);
+
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 28px;
+
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  --shadow-soft: 0 16px 40px var(--color-shadow);
+  --shadow-panel: 0 12px 24px rgba(34, 49, 41, 0.08);
+
+  --content-width: 1100px;
+  --content-width-session: 1600px;
+}

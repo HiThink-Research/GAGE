@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.registry import registry
-from gage_eval.role.arena.games.gomoku.env import DEFAULT_PLAYER_IDS, GomokuLocalCore
+from gage_eval.game_kits.board_game.gomoku.environment import DEFAULT_PLAYER_IDS, GomokuLocalCore
 from gage_eval.role.judge.base import JudgeImplementation
 
 

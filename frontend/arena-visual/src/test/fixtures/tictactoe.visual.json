@@ -1,0 +1,47 @@
+{
+  "sceneId": "tictactoe:seq:3",
+  "gameId": "tictactoe",
+  "pluginId": "arena.visualization.tictactoe.board_v1",
+  "kind": "board",
+  "tsMs": 1003,
+  "seq": 3,
+  "phase": "replay",
+  "activePlayerId": "player_1",
+  "legalActions": [
+    { "id": "1,2", "label": "1,2", "coord": "1,2", "row": 0, "col": 1 },
+    { "id": "1,3", "label": "1,3", "coord": "1,3", "row": 0, "col": 2 },
+    { "id": "3,1", "label": "3,1", "coord": "3,1", "row": 2, "col": 0 }
+  ],
+  "summary": {
+    "boardSize": 3,
+    "coordScheme": "ROW_COL"
+  },
+  "body": {
+    "board": {
+      "size": 3,
+      "coordScheme": "ROW_COL",
+      "cells": [
+        { "coord": "1,1", "row": 0, "col": 0, "occupant": "X", "playerId": "player_0", "playerName": "Alpha", "isLastMove": false, "isWinningCell": true, "isLegalAction": false },
+        { "coord": "1,2", "row": 0, "col": 1, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": true },
+        { "coord": "1,3", "row": 0, "col": 2, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": true },
+        { "coord": "2,1", "row": 1, "col": 0, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false },
+        { "coord": "2,2", "row": 1, "col": 1, "occupant": "O", "playerId": "player_1", "playerName": "Beta", "isLastMove": true, "isWinningCell": true, "isLegalAction": false },
+        { "coord": "2,3", "row": 1, "col": 2, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false },
+        { "coord": "3,1", "row": 2, "col": 0, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": true },
+        { "coord": "3,2", "row": 2, "col": 1, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false },
+        { "coord": "3,3", "row": 2, "col": 2, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": true, "isLegalAction": false }
+      ]
+    },
+    "players": [
+      { "playerId": "player_0", "playerName": "Alpha", "token": "X" },
+      { "playerId": "player_1", "playerName": "Beta", "token": "O" }
+    ],
+    "status": {
+      "activePlayerId": "player_1",
+      "observerPlayerId": "player_0",
+      "moveCount": 2,
+      "lastMove": "2,2",
+      "winningLine": ["1,1", "2,2", "3,3"]
+    }
+  }
+}

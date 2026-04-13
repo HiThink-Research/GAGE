@@ -23,6 +23,6 @@
    - `bash scripts/run/backends/providers/hf_inference_endpoint/run_matrix.sh`
 
 ## 说明
-- 默认生成配置写到 `/Users/shuo/code/GAGE/env/scripts/generated/providers/hf_inference_endpoint/`。
-- 默认运行结果写到 `/Users/shuo/code/GAGE/runs/`。
+- 默认生成配置写到 `${GAGE_WORKSPACE_ROOT}/env/scripts/generated/providers/hf_inference_endpoint/`，可用 `GAGE_SCRIPT_STATE_DIR` 覆盖。
+- 默认运行结果写到 `${GAGE_WORKSPACE_ROOT}/runs/`，可用 `GAGE_RUNS_DIR` 覆盖。
 - 真实调用会产生费用，执行前确认 token 和 endpoint 权限。

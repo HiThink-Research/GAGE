@@ -1,0 +1,1 @@
+{"schema_version":"gage.v1","id":"mahjong_match_0001","task_type":"agent","messages":[{"role":"system","content":[{"type":"text","text":"GameArena scripted Mahjong sample."}]}],"references":[],"choices":[],"data_tag":{"opening":"empty"},"eval_config":{"max_turns":5,"retry_illegal":1}}

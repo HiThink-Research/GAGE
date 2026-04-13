@@ -192,11 +192,11 @@ def load_config(path: Path) -> dict:
     return _expand_env(data)
 
 
-_ENV_PATTERN = re.compile(r"^\$\{([^}:]+)(?::-(.*))?\}$")
+_ENV_PATTERN = re.compile(r"^\$\{([^}:]+)(?:(:-|:\?)(.*))?\}$")
 
 
 def _expand_env(value):
-    """Recursively expand ${VAR:-default} in YAML configs and cast simple numbers."""
+    """Recursively expand ${VAR:-default} and ${VAR:?message} in YAML configs."""
 
     if isinstance(value, dict):
         return {k: _expand_env(v) for k, v in value.items()}
@@ -206,8 +206,11 @@ def _expand_env(value):
         match = _ENV_PATTERN.match(value.strip())
         if not match:
             return value
-        var, default = match.group(1), match.group(2)
-        resolved = os.getenv(var, default if default is not None else "")
+        var, operator, operand = match.group(1), match.group(2), match.group(3)
+        if operator == ":?" and not os.getenv(var):
+            message = operand or f"environment variable {var} is required"
+            raise ValueError(message)
+        resolved = os.getenv(var, operand if operator == ":-" and operand is not None else "")
         # NOTE: Attempt to cast pure numeric strings to int/float to avoid type
         # errors in downstream comparisons (for example: max_samples).
         if isinstance(resolved, str) and resolved.strip():
@@ -1047,13 +1050,39 @@ def _apply_cli_max_samples_override(payload: dict, max_samples: int) -> None:
             hub_params["limit"] = max_samples
 
 
-def _validate_config_wiring(config: PipelineConfig) -> list[str]:
+def _validate_config_wiring(
+    config: PipelineConfig,
+    *,
+    registry=None,
+    run_id: str = "validate",
+) -> list[str]:
     """Validate config references without loading data or running the pipeline."""
 
+    from gage_eval.registry import registry as global_asset_registry
+
+    runtime_registry_context = None
+    asset_registry = global_asset_registry
+    if registry is not None:
+        try:
+            runtime_registry_context = registry.prepare_runtime_registry_context(
+                config,
+                run_id=run_id,
+            )
+            asset_registry = runtime_registry_context.view
+        except Exception as exc:
+            return [f"Registry discovery failed: {exc}"]
+
+    try:
+        return _validate_config_wiring_with_registry(config, asset_registry)
+    finally:
+        if runtime_registry_context is not None:
+            runtime_registry_context.close()
+
+
+def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry) -> list[str]:
     import importlib
 
     from gage_eval.metrics.registry import MetricRegistry
-    from gage_eval.registry import registry as asset_registry
 
     errors: list[str] = []
     dataset_ids = {spec.dataset_id for spec in config.datasets}
@@ -1104,7 +1133,7 @@ def _validate_config_wiring(config: PipelineConfig) -> list[str]:
         if spec.prompt_id and spec.prompt_id not in prompt_ids:
             errors.append(f"RoleAdapter '{spec.adapter_id}' references missing prompt_id '{spec.prompt_id}'")
 
-    metric_registry = MetricRegistry()
+    metric_registry = MetricRegistry(registry_view=asset_registry)
     for spec in config.metrics:
         try:
             metric_registry.build_metric(spec)
@@ -1225,7 +1254,11 @@ def main() -> None:
     registry = build_default_registry()
 
     if args.max_samples == 0:
-        errors = _validate_config_wiring(config)
+        errors = _validate_config_wiring(
+            config,
+            registry=registry,
+            run_id=args.run_id or f"validate-{int(time.time() * 1000)}",
+        )
         if errors:
             for err in errors:
                 print(f"[gage-eval][validate] {err}", file=sys.stderr)

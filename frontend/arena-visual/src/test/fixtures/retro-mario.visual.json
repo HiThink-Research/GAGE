@@ -1,0 +1,56 @@
+{
+  "sceneId": "retro-sample:seq:23",
+  "gameId": "retro_platformer",
+  "pluginId": "arena.visualization.retro_platformer.frame_v1",
+  "kind": "frame",
+  "tsMs": 4023,
+  "seq": 23,
+  "phase": "replay",
+  "activePlayerId": "player_0",
+  "legalActions": [
+    { "id": "noop", "label": "No-op", "text": "No-op" },
+    { "id": "right", "label": "Move Right", "text": "Move Right", "hold_ticks": 6 },
+    { "id": "right_jump", "label": "Right + Jump", "text": "Right + Jump", "hold_ticks": 6 }
+  ],
+  "summary": {
+    "eventType": "snapshot",
+    "eventLabel": "snapshot",
+    "streamId": "main",
+    "frameTitle": "Retro Mario Frame"
+  },
+  "body": {
+    "frame": {
+      "title": "Retro Mario Frame",
+      "subtitle": "Tick 23",
+      "altText": "Retro Mario frame",
+      "streamId": "main",
+      "fit": "contain",
+      "viewport": { "width": 256, "height": 224 }
+    },
+    "status": {
+      "activePlayerId": "player_0",
+      "observerPlayerId": "player_0",
+      "tick": 23,
+      "step": 5,
+      "moveCount": 5,
+      "lastMove": "right_jump",
+      "reward": 2
+    },
+    "view": {
+      "text": "Mario x03 · coins 17"
+    }
+  },
+  "media": {
+    "primary": {
+      "mediaId": "retro-frame-23",
+      "transport": "artifact_ref",
+      "mimeType": "image/png",
+      "url": "frames/retro-frame-23.png"
+    }
+  },
+  "overlays": [
+    { "kind": "badge", "label": "Tick", "value": "23" },
+    { "kind": "badge", "label": "Reward", "value": "2.0" },
+    { "kind": "badge", "label": "Last move", "value": "right_jump" }
+  ]
+}

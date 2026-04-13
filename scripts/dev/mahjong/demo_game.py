@@ -10,7 +10,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.append(str(SRC_ROOT))
 
-from gage_eval.role.arena.games.mahjong.env import MahjongArena
+from gage_eval.game_kits.phase_card_game.mahjong.environment import MahjongArena
 
 class MahjongAgent:
     """

@@ -1,0 +1,35 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: retro_mario_gamekit
+  description: >
+    Minimal GameArena retro Mario template wired through the realtime runtime
+    path. The default config uses a deterministic dummy backend for stable
+    acceptance coverage.
+
+datasets:
+  - dataset_id: retro_mario_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Retro_Mario.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: retro_mario_gamekit_arena
+
+role_adapters:
+  - adapter_id: retro_mario_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: retro_platformer
+      env: retro_mario
+      runtime_overrides:
+        backend_mode: dummy
+      players:
+        - seat: player_0
+          player_id: mario
+          player_kind: dummy
+          actions: ["right_run", "right_run_jump", "right", "jump"]

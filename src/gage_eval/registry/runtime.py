@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Protocol, Sequence, TYPE_CHECKING
 from uuid import uuid4
 import weakref
 
-from gage_eval.registry.bootstrap_importer import BootstrapImporter, DiscoveryReport
+from gage_eval.registry.bootstrap_importer import (
+    BootstrapImporter,
+    DiscoveryImport,
+    DiscoveryIssue,
+    DiscoveryReport,
+)
 
 from gage_eval.registry.entry import RegistryEntry
 
@@ -276,9 +282,25 @@ class RegistryBootstrapCoordinator:
         }
 
         with self._registry.route_to(working):
-            report = DiscoveryReport()
+            preload_imports: list[DiscoveryImport] = []
+            preload_issues: list[DiscoveryIssue] = []
+            for kind, packages in package_map.items():
+                for package in packages:
+                    issue = _preload_runtime_package(
+                        kind=kind,
+                        package=package,
+                        registry_target=working,
+                        imports=preload_imports,
+                    )
+                    if issue is not None:
+                        preload_issues.append(issue)
+            report = DiscoveryReport(imported=tuple(preload_imports), issues=tuple(preload_issues))
             if discovery_plan is not None:
-                report = self._importer_factory().execute(discovery_plan, registry=working)
+                discovery_report = self._importer_factory().execute(discovery_plan, registry=working)
+                report = DiscoveryReport(
+                    imported=report.imported + discovery_report.imported,
+                    issues=report.issues + discovery_report.issues,
+                )
                 if report.issues and resolved_policy.is_strict:
                     raise RegistryDiscoveryError(
                         (
@@ -325,3 +347,53 @@ class RegistryBootstrapCoordinator:
 
         lease = RegistryViewLease(view, _release)
         return RuntimeRegistryContext(view=view, lease=lease, discovery_report=report)
+
+
+def _preload_runtime_package(
+    *,
+    kind: str,
+    package: str,
+    registry_target: "RegistryManager",
+    imports: list[DiscoveryImport],
+) -> DiscoveryIssue | None:
+    try:
+        module = importlib.import_module(package)
+    except Exception as exc:
+        return DiscoveryIssue(
+            code="package_import_failed",
+            kind=kind,
+            name=package,
+            detail=str(exc),
+            source="required_packages",
+            module=package,
+            load_phase="runtime_preload",
+        )
+
+    imports.append(
+        DiscoveryImport(
+            kind=kind,
+            name=package,
+            module=package,
+            source="required_packages",
+            load_phase="runtime_preload",
+        )
+    )
+
+    register_runtime_assets = getattr(module, "register_runtime_assets", None)
+    if not callable(register_runtime_assets):
+        return None
+
+    try:
+        register_runtime_assets(registry_target=registry_target)
+    except Exception as exc:
+        return DiscoveryIssue(
+            code="runtime_asset_registration_failed",
+            kind=kind,
+            name=package,
+            detail=str(exc),
+            source="required_packages",
+            module=package,
+            load_phase="runtime_preload",
+        )
+
+    return None

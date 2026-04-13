@@ -43,3 +43,31 @@ def test_pipeline_config_parses_agent_sections():
     assert config.sandbox_profiles[0].sandbox_id == "demo"
     assert config.mcp_clients[0].mcp_client_id == "mcp1"
     assert config.role_adapters[0].agent_backend_id == "agent_main"
+
+
+@pytest.mark.fast
+def test_pipeline_config_preserves_arena_v2_adapter_params() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [{"dataset_id": "arena_ds", "loader": "dummy"}],
+            "role_adapters": [
+                {
+                    "adapter_id": "arena_main",
+                    "role_type": "arena",
+                    "params": {
+                        "game_kit": "gomoku",
+                        "env": "gomoku_standard",
+                        "scheduler": {"binding_id": "turn/default"},
+                        "runtime_overrides": {"board_size": 9},
+                    },
+                }
+            ],
+            "custom": {"steps": [{"step": "arena", "adapter_id": "arena_main"}]},
+        }
+    )
+
+    params = config.role_adapters[0].params
+    assert params["game_kit"] == "gomoku"
+    assert params["env"] == "gomoku_standard"
+    assert params["scheduler"] == {"binding_id": "turn/default"}
+    assert params["runtime_overrides"] == {"board_size": 9}
