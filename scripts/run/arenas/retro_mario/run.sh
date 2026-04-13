@@ -4,125 +4,196 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/scripts/run/common/env.sh"
-MODE="${MODE:-dummy_ws}"
+
+MODE="${MODE:-llm_visual}"
 CONFIG="${CONFIG:-}"
 RUN_ID="${RUN_ID:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(gage_default_runs_dir)}"
-RETRO_WS_RGB_PORT="${RETRO_WS_RGB_PORT:-5800}"
+MAX_SAMPLES="${MAX_SAMPLES:-}"
+EXTRA_RUN_ARGS=()
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/run/arenas/retro_mario/run.sh [options]
+  bash scripts/run/arenas/retro_mario/run.sh [options] [-- run.py options]
 
 Options:
-  --mode <mode>         dummy_ws | openai_ws | human_ws | dummy_headless | openai_headless
-                        Default: dummy_ws
+  --mode <mode>         dummy | llm_headless | llm_visual | human_visual |
+                        llm_headless_openai | llm_visual_openai
+                        Default: llm_visual
   --config <path>       Explicit config path. Overrides --mode mapping.
   --run-id <run_id>     Run id. Default is auto-generated from mode/timestamp.
-  --output-dir <dir>    Output directory. Default: runs
-  --python-bin <path>   Python interpreter path
-  -h, --help            Show this help
+  --output-dir <dir>    Output directory. Default: GAGE_RUNS_DIR or workspace runs.
+  --max-samples <n>     Forwarded to run.py.
+  --python-bin <path>   Python interpreter path. Default: PYTHON_BIN or detected Python.
+  -h, --help            Show this help.
 
 Examples:
-  bash scripts/run/arenas/retro_mario/run.sh
-  bash scripts/run/arenas/retro_mario/run.sh --mode openai_ws
-  bash scripts/run/arenas/retro_mario/run.sh --mode human_ws
+  bash scripts/run/arenas/retro_mario/run.sh --mode llm_visual --max-samples 1
+  OPENAI_API_KEY=sk-... bash scripts/run/arenas/retro_mario/run.sh --mode llm_visual_openai --max-samples 1
+  bash scripts/run/arenas/retro_mario/run.sh --mode human_visual
+  bash scripts/run/arenas/retro_mario/run.sh --mode dummy
 EOF
+}
+
+require_value() {
+  local flag="$1"
+  local value="${2:-}"
+  if [[ -z "${value}" || "${value}" == --* ]]; then
+    echo "[retro_mario][error] ${flag} requires a value." >&2
+    usage >&2
+    exit 1
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)
+      require_value "$1" "${2:-}"
       MODE="${2:-}"
       shift 2
       ;;
+    --mode=*)
+      VALUE="${1#*=}"
+      require_value "--mode" "${VALUE}"
+      MODE="${VALUE}"
+      shift
+      ;;
     --config)
+      require_value "$1" "${2:-}"
       CONFIG="${2:-}"
       shift 2
       ;;
+    --config=*)
+      VALUE="${1#*=}"
+      require_value "--config" "${VALUE}"
+      CONFIG="${VALUE}"
+      shift
+      ;;
     --run-id)
+      require_value "$1" "${2:-}"
       RUN_ID="${2:-}"
       shift 2
       ;;
+    --run-id=*)
+      VALUE="${1#*=}"
+      require_value "--run-id" "${VALUE}"
+      RUN_ID="${VALUE}"
+      shift
+      ;;
     --output-dir)
+      require_value "$1" "${2:-}"
       OUTPUT_DIR="${2:-}"
       shift 2
       ;;
+    --output-dir=*)
+      VALUE="${1#*=}"
+      require_value "--output-dir" "${VALUE}"
+      OUTPUT_DIR="${VALUE}"
+      shift
+      ;;
+    --max-samples)
+      require_value "$1" "${2:-}"
+      MAX_SAMPLES="${2:-}"
+      shift 2
+      ;;
+    --max-samples=*)
+      VALUE="${1#*=}"
+      require_value "--max-samples" "${VALUE}"
+      MAX_SAMPLES="${VALUE}"
+      shift
+      ;;
     --python-bin)
+      require_value "$1" "${2:-}"
       PYTHON_BIN="${2:-}"
       shift 2
+      ;;
+    --python-bin=*)
+      VALUE="${1#*=}"
+      require_value "--python-bin" "${VALUE}"
+      PYTHON_BIN="${VALUE}"
+      shift
+      ;;
+    --)
+      shift
+      while [[ $# -gt 0 ]]; do
+        EXTRA_RUN_ARGS+=("$1")
+        shift
+      done
       ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      echo "[retro_mario][error] Unknown argument: $1" >&2
-      usage
-      exit 1
+      EXTRA_RUN_ARGS+=("$1")
+      shift
       ;;
   esac
 done
 
-if [[ -n "${PYTHON_BIN:-}" ]]; then
-  PYTHON_EXEC="${PYTHON_BIN}"
-else
-  PYTHON_EXEC="$(gage_default_python)"
-fi
+config_path() {
+  local path="$1"
+  if [[ "${path}" == /* ]]; then
+    printf '%s\n' "${path}"
+  else
+    printf '%s\n' "${ROOT}/${path}"
+  fi
+}
 
 resolve_config() {
   if [[ -n "${CONFIG}" ]]; then
-    printf '%s\n' "${CONFIG}"
+    config_path "${CONFIG}"
     return 0
   fi
 
   case "${MODE}" in
-    dummy_ws)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml"
+    dummy|dummy_headless|headless)
+      config_path "config/custom/retro_mario/retro_mario_dummy_gamekit.yaml"
       ;;
-    openai_ws)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml"
+    llm|llm_headless)
+      config_path "config/custom/retro_mario/retro_mario_llm_headless_gamekit.yaml"
       ;;
-    human_ws)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_phase1_human_ws.yaml"
+    openai|llm_openai|llm_headless_openai|openai_headless)
+      config_path "config/custom/retro_mario/retro_mario_llm_headless_openai_gamekit.yaml"
       ;;
-    dummy_headless)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_phase1_dummy_headless_auto_eval.yaml"
+    llm_visual|visual)
+      config_path "config/custom/retro_mario/retro_mario_llm_visual_gamekit.yaml"
       ;;
-    openai_headless)
-      printf '%s\n' "${ROOT}/config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml"
+    llm_visual_openai|openai_visual)
+      config_path "config/custom/retro_mario/retro_mario_llm_visual_openai_gamekit.yaml"
+      ;;
+    human|human_visual)
+      config_path "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml"
       ;;
     *)
       echo "[retro_mario][error] Unsupported mode: ${MODE}" >&2
+      usage >&2
       exit 1
       ;;
   esac
 }
 
+PYTHON_EXEC="${PYTHON_BIN:-$(gage_default_python)}"
 CFG="$(resolve_config)"
 if [[ ! -f "${CFG}" ]]; then
   echo "[retro_mario][error] Config not found: ${CFG}" >&2
   exit 1
 fi
 
-case "${MODE}" in
-  openai_ws|openai_headless)
-    if [[ -z "${OPENAI_API_KEY:-}" && -n "${LITELLM_API_KEY:-}" ]]; then
-      export OPENAI_API_KEY="${LITELLM_API_KEY}"
-    fi
-    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-      echo "[retro_mario][error] OPENAI_API_KEY or LITELLM_API_KEY is required for ${MODE}." >&2
-      exit 1
-    fi
-    ;;
-esac
-
 if [[ -z "${RUN_ID}" ]]; then
   RUN_ID="retro_mario_${MODE}_$(date +%Y%m%d_%H%M%S)"
 fi
 
 mkdir -p "${OUTPUT_DIR}"
+
+RUN_ARGS=(--config "${CFG}" --output-dir "${OUTPUT_DIR}" --run-id "${RUN_ID}")
+if [[ -n "${MAX_SAMPLES}" ]]; then
+  RUN_ARGS+=(--max-samples "${MAX_SAMPLES}")
+fi
+if (( ${#EXTRA_RUN_ARGS[@]} > 0 )); then
+  RUN_ARGS+=("${EXTRA_RUN_ARGS[@]}")
+fi
 
 cat <<MSG
 [retro_mario] Python: ${PYTHON_EXEC}
@@ -131,30 +202,5 @@ cat <<MSG
 [retro_mario] Output: ${OUTPUT_DIR}
 [retro_mario] Run ID: ${RUN_ID}
 MSG
-
-case "${MODE}" in
-  dummy_ws|openai_ws)
-    cat <<MSG
-[retro_mario] Viewer: http://127.0.0.1:${RETRO_WS_RGB_PORT}/ws_rgb/viewer
-MSG
-    ;;
-  human_ws)
-    cat <<'MSG'
-[retro_mario] Viewer: http://127.0.0.1:5800/ws_rgb/viewer
-[retro_mario] Input queue: http://127.0.0.1:8001
-[retro_mario] Browser keys:
-  Movement -> W/A/S/D or arrow keys
-  Jump -> J, Space, Z, C
-  Run -> K, X
-  Select -> L, Shift
-  Start -> Enter
-MSG
-    ;;
-esac
-
 PYTHONPATH="${ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-RETRO_WS_RGB_PORT="${RETRO_WS_RGB_PORT}" \
-"${PYTHON_EXEC}" "${ROOT}/run.py" \
-  --config "${CFG}" \
-  --output-dir "${OUTPUT_DIR}" \
-  --run-id "${RUN_ID}"
+"${PYTHON_EXEC}" "${ROOT}/run.py" "${RUN_ARGS[@]}"

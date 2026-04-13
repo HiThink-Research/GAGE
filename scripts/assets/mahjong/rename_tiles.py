@@ -2,7 +2,7 @@
 import os
 import shutil
 
-TARGET_DIR = "frontend/rlcard-showdown/src/assets/mahjong"
+TARGET_DIR = "frontend/arena-visual/src/plugins/mahjong/assets/tiles"
 
 # Map stored files (Man1.svg) to our codes (C1.svg)
 mapping = {}

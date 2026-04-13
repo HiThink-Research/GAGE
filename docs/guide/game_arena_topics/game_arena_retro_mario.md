@@ -1,252 +1,139 @@
-# Game Arena Retro Mario Guide
+# Retro Mario Game Arena Guide
 
 English | [中文](game_arena_retro_mario_zh.md)
 
-This is the canonical Game Arena guide for the stable-retro Mario demos in this repository. It unifies setup, script-based startup, replay, and parameter locations.
+Retro Mario uses the GameKit realtime retro-platformer runtime and the Arena Visual frame scene. It covers macro actions, low-latency browser input, stable-retro integration, and OpenAI visual LLM runs.
 
-## 1. Overview
+## 1. Canonical Files
 
-Retro Mario now has a shared script entry for the common demo paths:
+| Use | File |
+| --- | --- |
+| Dummy headless smoke | `config/custom/retro_mario/retro_mario_dummy_gamekit.yaml` |
+| Human visual | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` |
+| Local test LLM headless | `config/custom/retro_mario/retro_mario_llm_headless_gamekit.yaml` |
+| Local test LLM visual | `config/custom/retro_mario/retro_mario_llm_visual_gamekit.yaml` |
+| OpenAI LLM headless | `config/custom/retro_mario/retro_mario_llm_headless_openai_gamekit.yaml` |
+| OpenAI LLM visual | `config/custom/retro_mario/retro_mario_llm_visual_openai_gamekit.yaml` |
 
-- Dummy + websocketRGB smoke test
-- OpenAI + websocketRGB live view
-- Human + websocketRGB control
-- Dummy or OpenAI headless runs
+## 2. Prerequisites
 
-The actual runtime behavior still comes from the YAML config, but startup and replay are now standardized through scripts under `scripts/run/arenas/retro_mario/`.
-
-## 2. Canonical Files
-
-| Type | Path | Purpose |
-| --- | --- | --- |
-| Standard startup script | `scripts/run/arenas/retro_mario/run.sh` | Main entry for common Mario startup modes |
-| Replay script | `scripts/run/arenas/retro_mario/replay.sh` | Replay one finished run by `run_id` |
-| Dummy websocketRGB config | `config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml` | Fastest live-view smoke test |
-| Human websocketRGB config | `config/custom/retro_mario/retro_mario_phase1_human_ws.yaml` | Human-controlled Mario session |
-| OpenAI websocketRGB config | `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml` | API-backed live-view demo |
-| OpenAI headless config | `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml` | API-backed headless demo |
-| Dummy headless config | `config/custom/retro_mario/retro_mario_phase1_dummy_headless_auto_eval.yaml` | Offline smoke test without viewer |
-| Dataset | `config/custom/retro_mario/retro_mario_phase1.jsonl` | Default sample input |
-| Environment implementation | `src/gage_eval/role/arena/games/retro/retro_env.py` | Runtime behavior and replay writing |
-| Parser | `src/gage_eval/role/arena/parsers/retro_action_parser.py` | Parse `{"move": "...", "hold_ticks": ...}` actions |
-
-## 3. Prerequisites
-
-Install `stable-retro` and import the ROM before running any Mario config.
+The real Retro path depends on `stable-retro`, which is listed in `requirements.txt`. Import the required ROM with `python -m retro.import <rom_save_path>` before running real backend modes. Dummy mode and `--max-samples 0` config checks do not require a ROM.
 
 ```bash
-python -m pip install stable-retro
-python -m retro.import "<rom_save_path>"
+pip install -r requirements.txt
+
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+# Optional: defaults to gpt-5.4.
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+# Optional: OpenAI-compatible service override.
+export OPENAI_API_BASE="https://api.openai.com/v1"
 ```
 
-Current game id used by the configs:
+For the official OpenAI API, keep the default endpoint or leave `OPENAI_API_BASE` unset. For an open-source model served through an OpenAI-compatible API, set `OPENAI_API_BASE` and `GAGE_GAME_ARENA_LLM_MODEL`; no YAML backend edit is required.
+
+Normal runs do not require Node/npm. Node/npm is only needed when developing or rebuilding `frontend/arena-visual`; see [Arena Visual Browser Control](game_arena_visual_control.md#2-backend-and-frontend-assets).
+
+## 3. Quick Runs
+
+Run commands from the repository root after activating the project Python environment.
+
+```bash
+bash scripts/run/arenas/retro_mario/run.sh --mode dummy --max-samples 1
+```
+
+```bash
+OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>" bash scripts/run/arenas/retro_mario/run.sh --mode llm_visual_openai --max-samples 1
+```
+
+```bash
+bash scripts/run/arenas/retro_mario/run.sh --mode human_visual --max-samples 1
+```
+
+Use `--max-samples 0` with any OpenAI config to validate config loading without executing a sample.
+
+## 4. Mode and Config Mapping
+
+The `scripts/run/arenas/retro_mario/run.sh` script selects Python from `--python-bin`, then `PYTHON_BIN`, then the active virtualenv/conda env, then `python`/`python3`. It prints the resolved Python, mode, config, output directory, and run id before calling `run.py`.
+
+| Entry | Config | Use |
+| --- | --- | --- |
+| `dummy` | `config/custom/retro_mario/retro_mario_dummy_gamekit.yaml` | Headless dummy smoke. |
+| `llm_headless` | `config/custom/retro_mario/retro_mario_llm_headless_gamekit.yaml` | Local test LLM without browser. |
+| `llm_visual` | `config/custom/retro_mario/retro_mario_llm_visual_gamekit.yaml` | Local test LLM with browser. |
+| `llm_headless_openai` | `config/custom/retro_mario/retro_mario_llm_headless_openai_gamekit.yaml` | OpenAI LLM without browser. |
+| `llm_visual_openai` | `config/custom/retro_mario/retro_mario_llm_visual_openai_gamekit.yaml` | OpenAI LLM with browser. |
+| `human_visual` | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` | Human realtime browser input. |
+
+`--config <path>` always overrides the script mode mapping when a script is available.
+
+## 5. Browser Control
+
+Visual configs use `visualizer.mode: arena_visual`. The browser opens a session URL shaped like:
 
 ```text
-SuperMarioBros3-Nes-v0
+http://127.0.0.1:<visual_port>/sessions/<sample_id>?run_id=<run_id>
 ```
 
-For OpenAI configs, set the key before running:
+For the shared command deck, transport controls, utility rail, timeline, and replay states, see [Arena Visual Browser Control](game_arena_visual_control.md).
 
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-```
+![Retro Mario Arena Visual stage](../../assets/arena-visual-retro-mario-stage-20260409.png)
 
-Optional model override:
+## 6. Human Input
 
-```bash
-export RETRO_OPENAI_MODEL="gpt-4o-mini"
-```
+Realtime keyboard state maps to macro moves. Use arrows or WASD for movement, Space/J/Z/C for jump, X/K for run, Enter for start, and Shift/L for select. Direct payloads can also submit `move` values such as `noop`, `right`, `right_jump`, `right_run`, or `right_run_jump`; `hold_ticks` can be included for duration-sensitive actions.
 
-## 4. Startup Paths
+## 7. Output and Replay Artifacts
 
-### 4.1 Recommended smoke test: dummy + websocketRGB
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode dummy_ws \
-  --run-id "retro_mario_dummy_ws_$(date +%Y%m%d_%H%M%S)"
-```
-
-Default live-view URL:
-
-```text
-http://127.0.0.1:5800/ws_rgb/viewer
-```
-
-What the startup script does:
-
-1. Picks a Python executable.
-2. Resolves the YAML config from `--mode`, unless `--config` is provided.
-3. Validates the config path.
-4. Checks API-key requirements for OpenAI modes.
-5. Runs `python run.py --config ...`.
-6. Prints the viewer URL or input endpoint hints for websocket modes.
-
-Supported startup modes in `scripts/run/arenas/retro_mario/run.sh`:
-
-- `dummy_ws`
-- `openai_ws`
-- `human_ws`
-- `dummy_headless`
-- `openai_headless`
-
-Useful startup options:
-
-- `--mode`: Startup mode from the list above
-- `--config`: Explicit YAML path; overrides the built-in mode mapping
-- `--run-id`: Output run id under `runs/`
-- `--output-dir`: Output directory, default `runs`
-- `--python-bin`: Explicit Python interpreter path
-
-Useful environment variables:
-
-- `RETRO_WS_RGB_PORT`: Preferred websocketRGB port for websocket modes
-- `OPENAI_API_KEY`: Required for `openai_ws` and `openai_headless`
-- `LITELLM_API_KEY`: Accepted fallback for OpenAI modes
-- `RETRO_OPENAI_MODEL`: Optional model override if your config reads it
-
-### 4.2 OpenAI + websocketRGB
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode openai_ws \
-  --run-id "retro_mario_openai_ws_$(date +%Y%m%d_%H%M%S)"
-```
-
-Where to change the model/API for this command:
-
-- API key: export `OPENAI_API_KEY` before launch. `scripts/run/arenas/retro_mario/run.sh` also accepts `LITELLM_API_KEY` and copies it into `OPENAI_API_KEY`.
-- `openai_ws` reads `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml`. `openai_headless` reads `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml`.
-- Hosted OpenAI-compatible API: edit `backends[0].config.base_url` to switch the endpoint. Edit `backends[0].config.model`, or set `RETRO_OPENAI_MODEL`, to switch the deployed model name.
-- Local OpenAI-compatible service: point `backends[0].config.base_url` to the local server and set `backends[0].config.model` to the served model id. These configs currently set `require_api_key: true`, so keep `OPENAI_API_KEY` non-empty or change that flag if your local service does not require auth.
-
-### 4.3 Human + websocketRGB
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode human_ws \
-  --run-id "retro_mario_human_ws_$(date +%Y%m%d_%H%M%S)"
-```
-
-Current human input defaults:
-
-- Viewer URL: `http://127.0.0.1:5800/ws_rgb/viewer`
-- Queue input endpoint: `human_input.host: 0.0.0.0`, `human_input.port: 8001`
-- Input FPS: `human_input.fps: 30`
-
-Default browser key aliases come from the retro input mapper:
-
-- Movement: `W/A/S/D` or arrow keys
-- Jump: `J`, `Space`, `Z`, or `C`
-- Run: `K` or `X`
-- Select: `L` or `Shift`
-- Start: `Enter`
-
-Viewer interaction notes:
-
-- Entering `in_progress` means the current match is still active and input is still accepted.
-- Entering `game_ended` means the current match has finished and replay is now available. A normal match end or `Terminate Game` both lead here.
-- Entering `process_ended` means shutdown has been confirmed and the viewer will disconnect soon.
-- `Start Replay`, `Step`, and `Replay Seek` are only available in `game_ended`. After review, click `End Process`.
-
-### 4.4 Headless runs
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode dummy_headless \
-  --run-id "retro_mario_dummy_headless_$(date +%Y%m%d_%H%M%S)"
-```
-
-Use the headless configs when you want an offline verification path without websocketRGB.
-
-For OpenAI headless:
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode openai_headless \
-  --run-id "retro_mario_openai_headless_$(date +%Y%m%d_%H%M%S)"
-```
-
-### 4.5 Explicit config override
-
-Use `--config` if you want the script wrapper but need a custom YAML path:
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --config config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml \
-  --run-id "retro_mario_custom_$(date +%Y%m%d_%H%M%S)"
-```
-
-## 5. Execution Order
-
-Retro Mario startup in the current repository is:
-
-1. Install `stable-retro`.
-2. Import the ROM with `python -m retro.import`.
-3. Choose a standard `--mode` or a custom `--config`.
-4. Set API keys only for the OpenAI modes.
-5. Run `scripts/run/arenas/retro_mario/run.sh`.
-6. For websocket modes, open `ws_rgb/viewer` during the run; after the match ends, replay in the viewer first and then confirm `End Process`. For stored artifacts, start `scripts/run/arenas/retro_mario/replay.sh <run_id>`.
-
-## 6. Key Parameters and Where to Change Them
-
-| Item | Where to change | Meaning |
-| --- | --- | --- |
-| API key | Shell env: `OPENAI_API_KEY` or `LITELLM_API_KEY` | Required by OpenAI startup modes; the script accepts either |
-| Startup mode | `scripts/run/arenas/retro_mario/run.sh --mode` | Select `dummy_ws`, `openai_ws`, `human_ws`, `dummy_headless`, or `openai_headless` |
-| Custom config | `scripts/run/arenas/retro_mario/run.sh --config` | Bypass the built-in mode mapping |
-| Model endpoint | `backends[].config.base_url` in the selected `retro_mario_openai_*.yaml` | Switch between hosted and local OpenAI-compatible endpoints |
-| Model name | `RETRO_OPENAI_MODEL` or `backends[].config.model` | Select the OpenAI model |
-| API-key enforcement | `backends[].config.require_api_key` | Keep it `true` for hosted APIs; disable only for trusted local gateways |
-| Live-view port | `human_input.ws_port` or env `RETRO_WS_RGB_PORT` | websocketRGB bind port for websocket configs; the script passes the env through |
-| Display mode | `environment.display_mode` | `websocket` for live view, `headless` for offline runs |
-| Legal moves | `environment.legal_moves` | Action space exposed to the player |
-| Hold duration | `environment.action_schema.hold_ticks_*` and `parser.hold_ticks_*` | Clamp and default hold duration for macro moves |
-| Tick pacing | `scheduler.tick_ms` | Main scheduler interval in milliseconds |
-| Human input FPS | `human_input.fps` | Browser input sampling cadence in human mode |
-| Replay mode | `environment.replay.mode` | `action`, `frame`, or `both` replay content |
-| Replay frame capture | `environment.replay.frame_capture.*` | Frame stride, image format, and frame cap |
-| Replay playback FPS | Env `FPS` for `scripts/run/arenas/retro_mario/replay.sh` | Replay speed in the post-run viewer |
-| Replay host/port | Env `HOST` and `PORT` for `scripts/run/arenas/retro_mario/replay.sh` | Replay server bind address |
-| Replay frame cap | Env `MAX_FRAMES` for `scripts/run/arenas/retro_mario/replay.sh` | Stop replay after a fixed number of frames |
-
-Notes:
-
-- Mario actions are JSON objects such as `{"move":"right_run_jump","hold_ticks":6}`.
-- The parser defaults `hold_ticks` when the value is omitted and clamps it into the configured range.
-- `display_mode: websocket` is treated as headless runtime plus websocketRGB streaming by the arena adapter.
-
-## 7. Outputs and Replay
-
-Run artifacts are written under:
+Visual runs write both evaluation output and replayable Arena Visual artifacts:
 
 ```text
 runs/<run_id>/
+  summary.json
+  samples.jsonl
+  replays/<sample_id>/
+    replay.json
+    events.jsonl
+    arena_visual_session/v1/
+      manifest.json
+      timeline.jsonl
+      scenes/
+      media/
 ```
 
-Replay can be started from one sample artifact:
+`sample.predict_result[0].arena_trace` contains per-step actions, legality, timing, retries, and scheduler metadata. `sample.predict_result[0].game_arena` contains the terminal footer. When visualization is enabled, `artifacts.visual_session_ref` points at the `arena_visual_session/v1/manifest.json` sidecar. Finished runs replay from the same Arena Visual session artifacts.
 
-```bash
-bash scripts/run/arenas/retro_mario/replay.sh <run_id>
-```
+## 8. Runtime Contracts
 
-Useful replay environment variables:
+The shared runtime contract is documented in [Arena Visual Browser Control](game_arena_visual_control.md#3-runtime-contracts). For this game, check these fields first:
 
-- `PYTHON_BIN`: Python executable used by the replay script
-- `HOST`: Bind host, default `127.0.0.1`
-- `PORT`: Bind port, default `5800`
-- `FPS`: Playback FPS, default `12`
-- `MAX_FRAMES`: Frame cap, default `0` for unlimited
-- `AUTO_OPEN`: Set `1` to auto-open the browser viewer
+- `ArenaObservation.view` carries frame media and compact text telemetry.
+- `legal_actions.items` contains stable macro moves from `runtime_overrides.legal_moves` or environment defaults.
+- `ArenaAction.raw` may include JSON with `move` and `hold_ticks`.
+- `GameResult` summarizes tick/move count, illegal count, final board text, and reward-oriented metadata when available.
 
-Replay URL:
+The built-in LLM player receives the sample messages plus one user turn derived from the current `ArenaObservation`: active player, view text, legal moves, and the instruction to return exactly one legal move. A returned move is wrapped as `ArenaAction` and applied by the GameKit environment.
 
-```text
-http://127.0.0.1:5800/ws_rgb/viewer
-```
+## 9. Common Parameters
 
-Before launching replay, confirm the sample JSON has a replay payload such as `replay_path`.
+| Adjustment | Where |
+| --- | --- |
+| Backend mode | `runtime_overrides.backend_mode` |
+| Frame stride | `runtime_overrides.frame_stride` |
+| Turn budget | `runtime_overrides.max_turns` / `stub_max_ticks` |
+| Observation image | `runtime_overrides.obs_image` |
+| Legal macro moves | `runtime_overrides.legal_moves` |
+| Live scene transport | `visualizer.live_scene_scheme` |
+
+## 10. Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| OpenAI config fails before runtime starts | Export `OPENAI_API_KEY` before using any `*_openai_gamekit.yaml` config. |
+| Wrong model is used | Set `GAGE_GAME_ARENA_LLM_MODEL` before launch, or unset it to use the documented default. |
+| Dependency import fails | Run `pip install -r requirements.txt` in the same Python environment used by `run.py` or the arena script. |
+| ROM or desktop/render error appears | This game-specific note is listed below; make sure you are not using a frame-game config when running a board or table game. |
+| Browser stays loading | Check the printed session URL, `visualizer.port`, and `runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/manifest.json`. |
+| Port is already in use | Change `visualizer.port` in the config or pass a different `--run-id`/output directory to avoid stale session confusion. |
+| Human input is ignored | Confirm `human_input.enabled: true`, the browser URL includes the current `run_id`, and the active actor is the human player. |
+| LLM returns an illegal action | Use the legal move list in the browser or trace panel; the built-in LLM driver falls back according to the player fallback policy when configured. |
+| ROM or render error | Install `stable-retro`, import the ROM with `python -m retro.import <rom_save_path>`, and use a desktop-compatible render environment for human visual runs. |

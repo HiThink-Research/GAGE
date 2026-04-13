@@ -62,8 +62,25 @@ describe("DoudizhuPlugin", () => {
     expect(css).toMatch(/\.doudizhu-stage__table::before\s*\{/);
     expect(css).toMatch(/\.doudizhu-stage__table::before\s*\{[^}]*clip-path:\s*polygon/s);
     expect(css).toMatch(/\.doudizhu-stage__table::before\s*\{[^}]*transform:\s*translateX\(-50%\)/s);
+    expect(css).toMatch(/\.doudizhu-stage__table::before\s*\{[^}]*top:\s*clamp\(/s);
     expect(css).toMatch(/\.doudizhu-stage__table::before\s*\{[^}]*height:\s*clamp\(/s);
+    expect(css).not.toMatch(/\.doudizhu-stage__table::before\s*\{[^}]*bottom:/s);
     expect(css).not.toMatch(/\.doudizhu-stage__table\s*\{[^}]*url\("\.\/assets\/gameboard\.png"\)/s);
+  });
+
+  it("reserves bottom hand control space so human action buttons do not move the table felt", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/plugins/doudizhu/doudizhu.css"), "utf-8");
+
+    expect(css).toMatch(/--doudizhu-bottom-hand-min-height:/);
+    expect(css).toMatch(
+      /--doudizhu-composer-toolbar-reserve:\s*calc\(var\(--doudizhu-action-row-min-height\)\s*\+\s*6rem\)/,
+    );
+    expect(css).toMatch(
+      /\.doudizhu-seat--bottom\s+\.doudizhu-seat__hand\s*\{[^}]*min-height:\s*var\(--doudizhu-bottom-hand-min-height\)/s,
+    );
+    expect(css).toMatch(
+      /\.doudizhu-seat--bottom\s+\.doudizhu-seat__hand\s*\{[^}]*align-content:\s*start/s,
+    );
   });
 
   it("loads doudizhu portraits from arena-visual-owned assets instead of rlcard-showdown", () => {

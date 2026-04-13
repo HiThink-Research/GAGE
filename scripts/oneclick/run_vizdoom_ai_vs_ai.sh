@@ -2,4 +2,5 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-exec bash "${ROOT}/scripts/run/arenas/vizdoom/run.sh" --mode ai-vs-ai "$@"
+echo "[compat] scripts/oneclick wrappers are deprecated; use scripts/run entrypoints instead." >&2
+exec bash "${ROOT}/scripts/run/arenas/vizdoom/run.sh" --mode llm_visual "$@"

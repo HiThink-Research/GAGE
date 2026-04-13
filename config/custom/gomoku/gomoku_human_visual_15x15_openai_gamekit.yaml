@@ -1,0 +1,70 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: gomoku_human_visual_15x15_openai_gamekit
+  description: >
+    GameArena Gomoku standard-board human-vs-LLM manual config for the
+    arena_visual web app. The human player acts first on a standard 15x15
+    board while the opponent is driven by the OpenAI API backend through
+    the visualization-ready GameKit PlayerDriver runtime.
+
+datasets:
+  - dataset_id: gomoku_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Gomoku.jsonl
+      streaming: false
+
+backends:
+  - backend_id: openai_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: ${OPENAI_API_BASE:-https://api.openai.com/v1}
+      api_key: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      model: ${GAGE_GAME_ARENA_LLM_MODEL:-gpt-5.4}
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: gomoku_human_visual_15x15_gamekit_arena
+
+role_adapters:
+  - adapter_id: gomoku_human_visual_15x15_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: gomoku
+      env: gomoku_standard
+      runtime_overrides:
+        board_size: 15
+        win_len: 5
+        max_turns: 225
+        coord_scheme: A1
+        obs_image: true
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE Gomoku Board
+        launch_browser: true
+        mode: arena_visual
+        port: 5805
+        linger_after_finish_s: 15.0
+      players:
+        - seat: black
+          player_id: Black
+          player_kind: human
+        - seat: white
+          player_id: White
+          player_kind: llm
+          backend_id: openai_litellm_backend

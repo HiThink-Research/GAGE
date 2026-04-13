@@ -119,10 +119,13 @@ def test_mahjong_run_scripts_do_not_default_to_legacy_viewer() -> None:
     human_vs_dummy = _read_text("scripts/run/arenas/mahjong/run_human_vs_dummy_legacy.sh")
     real_ai = _read_text("scripts/run/arenas/mahjong/run_real_ai_legacy.sh")
 
-    assert 'MODE="${MODE:-human-vs-ai}"' in run_sh
+    assert 'MODE="${MODE:-llm_visual}"' in run_sh
     assert _LEGACY_RENDERER_SUBSTRING not in run_sh
-    for script in (human_vs_ai, human_vs_dummy, real_ai):
+    expected_modes = ("human_visual", "human_acceptance", "llm_visual")
+    for script, expected_mode in zip((human_vs_ai, human_vs_dummy, real_ai), expected_modes):
         assert _LEGACY_VIEWER_NAME not in script
-        assert "frontend/arena-visual" in script
-        assert "VITE_ARENA_GATEWAY_BASE_URL" in script
-        assert "/sessions/" in script
+        assert _LEGACY_RENDERER_SUBSTRING not in script
+        assert f"--mode {expected_mode}" in script
+        assert "scripts/run/arenas/mahjong/run.sh" in script
+        assert "VITE_ARENA_GATEWAY_BASE_URL" not in script
+        assert "/sessions/" not in script

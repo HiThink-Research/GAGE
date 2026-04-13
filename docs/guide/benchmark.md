@@ -1,5 +1,6 @@
-# GAGE LLM Evaluation Framework: Benchmark Guide
-This document provides execution commands and detailed descriptions for the supported benchmarks in the `GAGE` framework.
+# gage-eval Benchmark Guide
+
+This document provides execution commands and detailed descriptions for benchmark configs that exist in the current `gage-eval-main/` repository.
 
 ## Common Evaluation Chain
 ```mermaid
@@ -9,7 +10,7 @@ flowchart LR
 
 ## Usage Overview
 
-All benchmarks are executed via the core entry point `GAGE/run.py`.
+Run commands assume you are in the `gage-eval-main/` repository root and use the core entry point `run.py`.
 
 * **`--config`**: Path to the YAML configuration defining the model, prompts, and dataset parameters.
 * **`--output-dir`**: Where logs and results are stored.
@@ -35,7 +36,7 @@ If you need a full evaluation, adjust `max_samples`/`limit`.
 ## Config
 
 ### BizFinBench v2
-BizFinBench.v2 is the secend release of BizFinBench. It is built entirely on real-world user queries from 
+BizFinBench.v2 is the secend release of BizFinBench. It is built entirely on real-world user queries from
 Chinese and U.S. equity markets. It bridges the gap between academic evaluation and actual financial operations.
 
 **Authentic & Real-Time:** 100% derived from real financial platform queries, integrating online assessment capabilities.
@@ -44,8 +45,8 @@ Chinese and U.S. equity markets. It bridges the gap between academic evaluation 
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/biz_fin_bench_v2/bizfinbench_v2.yaml \
+python run.py \
+  --config config/custom/biz_fin_bench_v2/bizfinbench_v2.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id bizfinbench_v2
 ```
@@ -55,8 +56,8 @@ OpenAI MRCR (Multi-round co-reference resolution) is a long context dataset for 
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/mrcr/openai_mrcr.yaml \
+python run.py \
+  --config config/custom/mrcr/openai_mrcr.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id mrcr
 ```
@@ -76,15 +77,15 @@ local foods, customs, traditions, or other culturally-specific elements.
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/global_piqa/global_piqa_chat.yaml \
+python run.py \
+  --config config/custom/global_piqa/global_piqa_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id global_piqa
-```  
+```
 
 ### LiveCodeBench
 
-**LiveCodeBench** provides a "live" updating framework for the holistic evaluation of LLMs on coding tasks. By continuously integrating new problems from competitive programming platforms, it effectively mitigates data contamination. 
+**LiveCodeBench** provides a "live" updating framework for the holistic evaluation of LLMs on coding tasks. By continuously integrating new problems from competitive programming platforms, it effectively mitigates data contamination.
 
 #### Key Evaluation Dimensions:
 
@@ -95,8 +96,8 @@ python GAGE/run.py \
 #### Execution Command
 
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/live_code_bench/live_code_bench_test.yaml \
+python run.py \
+  --config config/custom/live_code_bench/live_code_bench_test.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id live_code_bench_test
 ```
@@ -118,8 +119,8 @@ To illustrate the difficulty: experts answering questions outside their primary 
 #### Execution Command
 
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/gpqa_diamond/async_chat.yaml \
+python run.py \
+  --config config/custom/gpqa_diamond/async_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id gpqa_diamond
 
@@ -137,8 +138,8 @@ MathVista is a consolidated Mathematical reasoning benchmark within Visual conte
 #### Execution Command
 
 ```bash
-python GAGE_dev/run.py \
-  --config GAGE_dev/config/custom/mathvista/chat.yaml \
+python run.py \
+  --config config/custom/mathvista/chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id mathvista_chat
 
@@ -159,8 +160,8 @@ This dataset contains problems from the American Invitational Mathematics Examin
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/aime24/aime2024_chat.yaml \
+python run.py \
+  --config config/custom/aime24/aime2024_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id aime2024
 ```
@@ -170,8 +171,8 @@ American Invitational Mathematics Examination (AIME) 2025
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/aime25/aime2025_chat.yaml \
+python run.py \
+  --config config/custom/aime25/aime2025_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id aime2025
 ```
@@ -182,8 +183,8 @@ MMLU-Pro dataset is a more robust and challenging massive multi-task understandi
 #### Execution Command
 
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/mmlu_pro/mmlu_pro_chat.yaml \
+python run.py \
+  --config config/custom/mmlu_pro/mmlu_pro_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id mmlu_pro_chat
 
@@ -200,8 +201,8 @@ Humanity's Last Exam (HLE) is a multi-modal benchmark at the frontier of human k
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/hle/hle_chat.yaml \
+python run.py \
+  --config config/custom/hle/hle_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id hle
 ```
@@ -210,8 +211,8 @@ python GAGE/run.py \
 This dataset contains a subset of 500 problems from the MATH benchmark that OpenAI created in their Let's Verify Step by Step paper.
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/math500/chat.yaml \
+python run.py \
+  --config config/custom/math500/chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id math500
 ```
@@ -220,8 +221,8 @@ python GAGE/run.py \
 MME is a comprehensive evaluation benchmark for Multimodal Large Language Models (MLLMs).
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/mme/chat.yaml \
+python run.py \
+  --config config/custom/mme/chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id mme
 ```
@@ -229,14 +230,14 @@ python GAGE/run.py \
 
 ### MMAU-Pro
 
-MMAU-Pro is a comprehensive benchmark designed to evaluate **audio intelligence in multimodal models**.  
+MMAU-Pro is a comprehensive benchmark designed to evaluate **audio intelligence in multimodal models**.
 It covers speech, environmental sounds, music and their combinations, spanning **49 distinct perceptual and reasoning skills** such as acoustic source characterization, acoustic scene reasoning, temporal and quantitative reasoning, and procedural reasoning ([dataset card](https://huggingface.co/datasets/gamma-lab-umd/MMAU-Pro)).
 
 The dataset contains **5,305 expert-annotated audio–question–answer triplets**, with audio clips collected from diverse real-world scenarios (including long-form and multi-audio cases).
 
 #### 1. Pre-Execution
 
-Before running the evaluation, prepare a local JSONL version of the test split and the corresponding audio files.  
+Before running the evaluation, prepare a local JSONL version of the test split and the corresponding audio files.
 Each JSONL record should follow the same field schema as the Hugging Face dataset (e.g. `id`, `audio_path`, `question`, `answer`, `choices`, `length_type`, `perceptual_skills`, `reasoning_skills`, `category`, `transcription`, etc.).
 
 #### 2. Execution Command
@@ -244,8 +245,8 @@ Each JSONL record should follow the same field schema as the Hugging Face datase
 Use the following command to initiate the benchmark process:
 
 ```bash
-python GAGE_dev/run.py \
-  --config GAGE_dev/config/custom/mmau_pro/mmau_pro_audio.yaml \
+python run.py \
+  --config config/custom/mmau_pro/mmau_pro_audio.yaml \
   --output-dir ./gage_runs_mmau_pro/final_test \
   --run-id mmau_pro
 ```
@@ -265,8 +266,8 @@ ARC-AGI-2 contains 1,000 public training tasks and 120 public evaluation tasks.
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/arcagi2/arcagi2_vllm_async_chat.yaml \
+python run.py \
+  --config config/custom/arcagi2/arcagi2_vllm_async_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id mme
 ```
@@ -276,8 +277,8 @@ CharXiv: Charting Gaps in Realistic Chart Understanding in Multimodal LLMs, whic
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/charxiv/charxiv_vllm_async_chat.yaml \
+python run.py \
+  --config config/custom/charxiv/charxiv_vllm_async_chat.yaml \
   --output-dir ./gage_runs_charxiv_reasoning/final_test \
   --run-id charxiv_reasoning
 ```
@@ -287,8 +288,8 @@ ScreenSpot-Pro is an advanced benchmark specifically designed to evaluate GUI Gr
 
 #### Execution Command
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/screen_spot/screenspot_pro_vllm_async_chat.yaml \
+python run.py \
+  --config config/custom/screen_spot/screenspot_pro_vllm_async_chat.yaml \
   --output-dir ./gage_runs_screenspot_pro/final_test \
   --run-id screenspot_pro
 ```
@@ -298,8 +299,8 @@ A 1,000-prompt factuality benchmark from Google DeepMind and Google Research, de
 
 #### Execution Command
 ```bash
-python GAGE_dev/run.py \
-  --config GAGE_dev/config/custom/simpleqa_verified/simpleqa_verified_vllm_async_chat.yaml \
+python run.py \
+  --config config/custom/simpleqa_verified/simpleqa_verified_vllm_async_chat.yaml \
   --output-dir ./gage_simpleqa-verified/simpleqa-verified \
   --run-id simpleqa-verified
 ```
@@ -319,8 +320,8 @@ Before running the evaluation, download the dataset from Hugging Face:
 Use the following command to initiate the benchmark process:
 
 ```bash
-python GAGE/run.py \
-  --config GAGE/config/custom/mmsu/mmsu_audio.yaml \
+python run.py \
+  --config config/custom/mmsu/mmsu_audio.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id mmsu
 

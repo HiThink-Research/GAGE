@@ -6,54 +6,37 @@
 
 [English](README.md) · **中文**
 
-<div align="center">
-
 📧 **负责人邮箱:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
 
-</div>
-
-[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Agent 模块](docs/guide/agent_evaluation_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
+[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Arena Visual 控制面](docs/guide/game_arena_topics/game_arena_visual_control_zh.md) · [Agent 模块](docs/guide/agent_evaluation_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
 
 </div>
 
 ---
 
-**GAGE** 是面向大语言模型、多模态（全模态、机器人）模型、音频模型与扩散模型的统一可扩展评测框架。它是一套高性能评测引擎，强调极致执行效率、可扩展性与灵活性，为 AI 模型评测、Agent 基准与 Game Arena 对战评测提供统一底座。
+**GAGE** 是面向大语言模型、多模态模型、音频模型、扩散模型、Agent 与游戏环境的统一可扩展评测框架。它用同一套评测引擎组织数据集、模型后端、指标、Arena 运行时、结构化输出和可回放产物。
 
-## 🎮 Game Arena 
+## Game Arena 展示
 
-<table width="100%">
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/assets/mahjong.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/spacegame.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-  </tr>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/assets/7CF87CFF-5C51-4209-8936-E406A5657381.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/assets/F448C1D6-7E55-4A40-8A6B-169C421AEC15.gif" style="height: 240px; width: auto; max-width: 100%;">
-    </td>
-  </tr>
-</table>
+<p align="center"><img src="docs/assets/gamearena-gomoku-20260413.gif" width="33.3333%" alt="五子棋 GameArena 演示"><!--
+--><img src="docs/assets/gamearena-doudizhu-20260413.gif" width="33.3333%" alt="斗地主 GameArena 演示"><!--
+--><img src="docs/assets/gamearena-mahjong-20260413.gif" width="33.3333%" alt="麻将 GameArena 演示"></p>
 
-## ✨ 为什么选择 GAGE？
+<p align="center">
+  <img src="docs/assets/space-invaders-game.gif" width="33.3333%" alt="Space Invaders demo">
+  <img src="docs/assets/mario-game.gif" width="33.3333%" alt="Mario demo">
+  <img src="docs/assets/vizdoom-game.gif" width="32%" alt="VizDoom demo">
+</p>
 
-- 🚀 **极速评测引擎**：以性能为先，充分利用 GPU 与 CPU 资源，从单机测试到百万样本、多集群评测都能平滑扩展。
+## 为什么选择 GAGE？
 
-- 🔗 **一体化评测接口**：以最少粘合代码评测任意数据集 × 任意模型。统一抽象数据集、模型、指标与运行时，快速接入新基准或新后端。
+- **快速评测引擎**：本地冒烟、模型对战和较大批量 Benchmark 都使用同一条 Pipeline。
+- **统一评测接口**：数据集、后端、角色适配器、指标和输出契约通过配置组合，减少每个任务的粘合代码。
+- **Game 与 Agent 沙箱**：Game Arena、AppWorld、SWE-bench 风格任务、GUI 交互和工具增强任务共享同一套运行与产物模型。
+- **可回放 GameKit 运行时**：五子棋、井字棋、斗地主、麻将、PettingZoo Space Invaders、Retro Mario、ViZDoom 都会写出结构化 arena trace 和 `arena_visual` session。
+- **运行可观测性**：运行产物包含 `summary.json`、样本输出、日志与视觉产物，便于事后排查。
 
-- 🔌 **可扩展沙箱（Game 与 Agent）**：原生支持游戏评测、Agent 环境、GUI 交互沙箱与工具增强任务。全部能力运行在同一评测引擎中，统一评测 LLM、多模态模型与 Agent。
-
-- 🧩 **继承式扩展**：通过继承与覆写扩展已有基准，新增数据集、指标或评测逻辑无需修改核心框架或重写样板代码。
-
-- 📡 **企业级可观测性**：不止日志，提供运行阶段的实时指标与可视化能力，便于监控评测并快速定位性能瓶颈与失败原因。
-
-## 🧭 设计概览
+## 设计概览
 
 > 核心设计理念：Everything is a Step, Everything is configurable.
 
@@ -67,24 +50,27 @@
 
 ### GameArena 设计
 
-![GameArena 设计](docs/assets/game-arena.png)
+![GameArena 运行时核心设计](docs/assets/game-arena-runtime-core-design-20260413.png)
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 环境准备
 
 ```bash
+# 如果你在 mono-repo 根目录：
+cd gage-eval-main
+
 # 推荐使用 Python 3.10+
-# 如果你在 mono-repo 根目录，请先执行：cd gage-eval-main
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. 运行第一个 Demo
+Game Arena LLM 配置推荐使用 `*_openai_gamekit.yaml` 变体，并 export `OPENAI_API_KEY`。模型默认 `gpt-5.4`；如需覆盖模型，设置 `GAGE_GAME_ARENA_LLM_MODEL`；如需使用 OpenAI-compatible endpoint，设置 `OPENAI_API_BASE`。
+
+### 2. 运行基础 Demo
 
 ```bash
-# 运行 Echo 演示（无需 GPU，使用 Dummy Backend）
 python run.py \
   --config config/run_configs/demo_echo_run_1.yaml \
   --output-dir runs \
@@ -97,30 +83,34 @@ python run.py \
 
 ```text
 runs/<run_id>/
-  events.jsonl  # 详细事件日志
-  samples.jsonl # 包含输入输出的样本
-  summary.json  # 最终评分摘要
+  events.jsonl
+  samples.jsonl
+  summary.json
+  samples/
+    <task_id>/
+      <sample_id>.json
 ```
 
-## 📖 进阶配置
+## 进阶配置
 
 | 场景 | 配置文件示例 | 说明 |
 | :--- | :--- | :--- |
-| **Game Arena** | `config/custom/doudizhu/doudizhu_human_vs_llm.yaml` | 斗地主 Human vs LLM 对战 |
-| **Agent 评测** | `config/custom/appworld/appworld_official_jsonl.yaml` | 使用 Appworld 沙箱环境 |
-| **代码能力** | `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml` | SWE-bench (需 Docker 环境，实验性) |
-| **文本测评** | `config/custom/aime24/aime2024_chat.yaml` | 相关: AIME 2024, AIME 2025, GPQA, Math500 |
-| **多模态** | `config/custom/mathvista/chat.yaml` | 相关: MME, HLE, MathVista |
-| **LLM 裁判** | `config/custom/examples/single_task_local_judge_qwen.yaml` | 使用本地 LLM 进行打分 |
+| **GameArena人机对战** | `config/custom/doudizhu/doudizhu_human_visual_gamekit.yaml` | 浏览器控制斗地主，与 LLM 玩家对战 |
+| **GameArena纯人工控制** | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` | 浏览器控制实时 Retro Mario session |
+| **Agent 评测** | `config/custom/appworld/appworld_official_jsonl.yaml` | AppWorld 沙箱评测 |
+| **代码能力** | `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml` | SWE-bench 风格冒烟；需要 Docker |
+| **文本测评** | `config/custom/aime24/aime2024_chat.yaml` | AIME、GPQA、Math500 等文本 Benchmark |
+| **多模态** | `config/custom/mathvista/chat.yaml` | MathVista 等多模态 Benchmark |
+| **LLM 裁判** | `config/custom/examples/single_task_local_judge_qwen.yaml` | 本地 LLM 裁判示例 |
 
-## 🗺️ 近期计划
+## 近期计划
 
-- 🤖 **Agent 评测能力**：完善工具调用轨迹、过程对齐与安全检查，形成可复用的 Agent 评测模板。
-- 🎮 **GameArena 游戏扩展**：补充更多对战类型、规则配置与可视化能力，形成可扩展的游戏评测矩阵。
-- 🛠️ **Gage-Client 工程化**：打造独立的客户端工具，优化配置管理、失败样本定位及 Benchmark 接入脚手架。
-- 🌐 **多机分布式推理**：引入 `RoleType Controller` 架构，支持超大规模评测任务的任务分片与负载均衡。
-- 🚀 **Benchmark 矩阵扩展**：持续丰富各领域评测集，提供开箱即用的标准配置、指标解释与排障指引。
+- **Agent 评测能力**：完善轨迹评分和安全检查。
+- **Game Arena 扩展**：扩充 GameKit 游戏目录，并保持浏览器控制、回放和输出契约一致。
+- **Gage-Client 工程化**：优化配置管理、失败样本定位和 Benchmark 接入脚手架。
+- **多机分布式推理**：支持超大规模评测任务的任务分片与负载均衡。
+- **Benchmark 矩阵扩展**：持续补充评测配置、指标解释与排障指引。
 
-## ⚠️ 状态
+## 状态
 
 当前处于内部验证期：API、配置与文档可能随实现快速迭代。

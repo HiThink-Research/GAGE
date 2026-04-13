@@ -172,7 +172,7 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "pettingzoo",
         "space_invaders",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
-        live_scene_scheme="low_latency_channel",
+        live_scene_scheme="http_pull",
     ),
     GameKitConfigCase(
         "config/custom/pettingzoo/space_invaders_double_llm_visual_low_latency_channel_gamekit.yaml",
@@ -180,7 +180,7 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "pettingzoo",
         "space_invaders",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
-        live_scene_scheme="http_pull",
+        live_scene_scheme="low_latency_channel",
     ),
     GameKitConfigCase(
         "config/custom/pettingzoo/space_invaders_dummy_visual_binary_stream_gamekit.yaml",

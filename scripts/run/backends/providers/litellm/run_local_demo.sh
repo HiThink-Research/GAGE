@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 一键启动五个 LiteLLM Mock（OpenAI/Anthropic/Google/Grok/Kimi），
-# 将请求转发到本地 OpenAI 兼容模型，并复用模板矩阵生成 PIQA demo。
+# Start five LiteLLM mock providers and forward requests to an OpenAI-compatible
+# chat endpoint, then run the PIQA template matrix.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
 # shellcheck disable=SC1091
@@ -12,8 +12,9 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-$(gage_default_runs_dir)/piqa_litellm_local}"
 PIQA_SAMPLES="${PIQA_LITELLM_MAX_SAMPLES:-1}"
 MODEL_MATRIX="${SCRIPT_DIR}/models.mock.yaml"
 LITELLM_API_KEY="${LITELLM_API_KEY:-mock-key}"
-QWEN_BASE="${QWEN_BASE:-http://127.0.0.1:1234/v1}"  # 本地 qwen OpenAI 兼容服务，用作统一底座
-QWEN_MODEL="${QWEN_MODEL:-qwen2.5-0.5b-instruct-mlx}"
+OPENAI_COMPATIBLE_BASE="${OPENAI_API_BASE:-https://api.openai.com/v1}"
+OPENAI_COMPATIBLE_API_KEY="${OPENAI_API_KEY:-${LITELLM_API_KEY}}"
+OPENAI_COMPATIBLE_MODEL="${OPENAI_MODEL:-gpt-5.4}"
 
 MOCK_OAI_PORT="${MOCK_OAI_PORT:-18080}"
 MOCK_ANTH_PORT="${MOCK_ANTH_PORT:-18081}"
@@ -33,7 +34,7 @@ trap cleanup EXIT
 
 start_mock() {
   local script=$1 port=$2
-  PORT="${port}" MOCK_TARGET="${QWEN_BASE}" MOCK_API_KEY="${LITELLM_API_KEY}" MOCK_MODEL="${QWEN_MODEL}" LITELLM_API_KEY="${LITELLM_API_KEY}" python "${SCRIPT_DIR}/${script}" >/dev/null 2>&1 &
+  PORT="${port}" MOCK_TARGET="${OPENAI_COMPATIBLE_BASE}" MOCK_API_KEY="${OPENAI_COMPATIBLE_API_KEY}" MOCK_MODEL="${OPENAI_COMPATIBLE_MODEL}" LITELLM_API_KEY="${LITELLM_API_KEY}" python "${SCRIPT_DIR}/${script}" >/dev/null 2>&1 &
   PIDS+=($!)
   echo "[piqa-litellm] start ${script} on ${port}, pid=${PIDS[-1]}"
 }

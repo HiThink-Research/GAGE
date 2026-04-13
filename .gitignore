@@ -199,6 +199,7 @@ demo_hf_backend.py
 
 # VS Code
 .vscode/
+.obsidian/
 
 /runs/
 node_modules/

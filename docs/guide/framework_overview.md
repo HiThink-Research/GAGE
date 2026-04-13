@@ -23,7 +23,7 @@ gage-eval is an extensible evaluation framework for large language models. It is
 - Multimodal evaluation: VQA, DocVQA, reasoning (MMMU, DocVQA, MathVista)
 - LLM-as-judge: score model outputs with a judge model
 - SWE-bench Pro: offline judging with context injection and Docker
-- Game Arena: turn-based board games for Human vs LLM and LLM vs LLM
+- Game Arena: GameKit board, table, and frame-game evaluation with Arena Visual browser control
 
 ### 1.2 Key features
 
@@ -35,8 +35,8 @@ gage-eval is an extensible evaluation framework for large language models. It is
 | High-throughput concurrency | Bounded-buffer SampleLoop with backpressure (`prefetch_factor/max_inflight`) | `src/gage_eval/evaluation/sample_loop.py` |
 | Unified artifacts | `events.jsonl`, `samples.jsonl`, `summary.json` | `src/gage_eval/observability/trace.py`, `src/gage_eval/evaluation/cache.py`, `src/gage_eval/pipeline/steps/report.py` |
 | SWE-bench dock | `context_provider` + `judge_extend` for reproducible offline judging | `src/gage_eval/role/adapters/context_provider.py`, `src/gage_eval/role/adapters/judge_extend.py` |
-| Agent evaluation | DUTAgent + Toolchain + Sandbox execution for tool-using agents | `src/gage_eval/role/adapters/dut_agent.py`, `src/gage_eval/role/adapters/toolchain.py`, `src/gage_eval/sandbox/` |
-| Game Arena | Turn-based game evaluation with human interaction | `src/gage_eval/role/arena/`, `src/gage_eval/role/adapters/arena.py` |
+| Agent evaluation | DUTAgent + Toolchain + Sandbox execution for tool-using agents | `src/gage_eval/role/adapters/dut_agent.py`, `src/gage_eval/role/toolchain/`, `src/gage_eval/sandbox/` |
+| Game Arena | GameKit game evaluation with structured arena output and Arena Visual browser control | `src/gage_eval/role/arena/`, `src/gage_eval/role/adapters/arena.py` |
 
 ### 1.3 End-to-end flow
 
@@ -67,7 +67,7 @@ Common step and role combinations:
 
 A basic evaluation includes only **inference and metrics** (`inference -> auto_eval`). `preprocess` and `report` are fixed stages.
 
-Example config: `gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`
+Example config: `config/custom/global_piqa/global_piqa_chat.yaml`
 
 ```mermaid
 flowchart LR
@@ -97,7 +97,7 @@ Execution highlights:
 
 LLM judge evaluation adds a judge step: `inference -> judge -> auto_eval`.
 
-Example config: `gage-eval-main/config/custom/examples/single_task_local_judge_qwen.yaml`
+Example config: `config/custom/examples/single_task_local_judge_qwen.yaml`
 
 ```mermaid
 flowchart LR
@@ -128,7 +128,7 @@ Execution highlights:
 
 SWE-bench is a representative static evaluation: `support -> inference -> judge -> auto_eval`.
 
-Example config: `gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`
+Example config: `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`
 
 ```mermaid
 flowchart LR
@@ -159,9 +159,9 @@ Execution highlights:
 
 #### 1.4.4 Game Arena example
 
-Game Arena runs turn-based matches via `support -> arena -> auto_eval`, with Human vs LLM or LLM vs LLM.
+Game Arena runs GameKit matches through the first-class `arena` step and can attach the unified `arena_visual` browser control page for live or replay viewing.
 
-Example config: `gage-eval-main/config/custom/gomoku/gomoku_human_vs_llm.yaml`
+Example config: `config/custom/gomoku/gomoku_llm_visual_gamekit.yaml`
 
 ```mermaid
 flowchart LR
@@ -174,9 +174,9 @@ flowchart LR
   Pre[Preprocess]:::fixed --> Sup[Support]:::step --> Arena[Arena]:::step --> AE[AutoEval]:::step --> Rep[Report]:::fixed
 
   Sup -. adapter_id .-> Ctx[Role ContextProvider]:::role --> CImpl[context_impls]:::impl
-  Arena -. adapter_id .-> ARole[Role Arena]:::role --> Env[Environment]:::impl
-  Env --> Ply[Players]:::impl
-  Env --> Viz[Visualizer]:::impl
+  Arena -. adapter_id .-> ARole[Role Arena]:::role --> GameKit[GameKit runtime]:::impl
+  Arena --> Ply[Players]:::impl
+  Arena --> Viz[Arena Visual]:::impl
 
   AE --> Cache[EvalCache]:::impl
   Cache --> Rep
@@ -188,14 +188,14 @@ flowchart LR
 Execution highlights:
 
 - `support`: inject game rules and the initial board via `context_provider`
-- `arena`: run the game loop across environment, players, and parser; push UI updates when enabled; output to `model_output` and `predict_result`
+- `arena`: run the GameKit loop across runtime, players, scheduler, and parser; write `arena_trace`, `game_arena`, and visual session artifacts when enabled
 - `auto_eval`: compute metrics from `model_output` and write cache
 
 #### 1.4.5 Agent evaluation example
 
 Agent evaluation runs `support -> inference -> judge -> auto_eval`, where `dut_agent` executes AgentLoop, Toolchain injects tools, and Sandbox isolates side effects.
 
-Example config: `gage-eval-main/config/custom/appworld/appworld_official_jsonl.yaml`
+Example config: `config/custom/appworld/appworld_official_jsonl.yaml`
 
 ```mermaid
 flowchart LR
@@ -234,7 +234,7 @@ From the mono-repo root:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r gage-eval-main/requirements.txt
+pip install -r requirements.txt
 ```
 
 > Path note: example commands assume you run from the repo root.
@@ -244,8 +244,8 @@ pip install -r gage-eval-main/requirements.txt
 This demo uses the dummy backend and does not require a real model.
 
 ```bash
-python gage-eval-main/run.py \
-  --config gage-eval-main/config/run_configs/demo_echo_run_1.yaml \
+python run.py \
+  --config config/run_configs/demo_echo_run_1.yaml \
   --output-dir runs \
   --run-id demo_echo
 ```
@@ -274,7 +274,7 @@ Artifact sources:
 ### 2.5 Python SDK example
 
 ```bash
-PYTHONPATH=gage-eval-main/src python - <<'PY'
+PYTHONPATH=src python - <<'PY'
 from pathlib import Path
 import yaml
 
@@ -285,7 +285,7 @@ from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
-payload = yaml.safe_load(Path("gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml").read_text(encoding="utf-8"))
+payload = yaml.safe_load(Path("config/custom/global_piqa/global_piqa_chat.yaml").read_text(encoding="utf-8"))
 config = PipelineConfig.from_dict(payload)
 
 registry = build_default_registry()
@@ -408,7 +408,7 @@ When `tasks` is not empty:
 - Tasks run sequentially, sharing the same `run_id` and `RoleManager`
 - `summary.json` records the `tasks` list
 
-Config example (from `gage-eval-main/config/custom/examples/multi_task_openai_http_demo.yaml`):
+Config example (from `config/custom/examples/multi_task_openai_http_demo.yaml`):
 
 ```yaml
 metrics:
@@ -568,15 +568,17 @@ Game Arena is implemented as a first-class `arena` step, sharing the same Sample
 Key wiring points:
 
 - **RoleAdapter**: `role_type: arena` in `role_adapters`, implemented by `src/gage_eval/role/adapters/arena.py`.
-- **Runtime objects**: environment, parser, players, scheduler, and visualizer are resolved via registries under `src/gage_eval/role/arena/`.
-- **Outputs**: the arena loop writes to `model_output` and `predict_result`, then `auto_eval` computes metrics (e.g., win rate, illegal move rate).
+- **Runtime objects**: GameKit runtime, parser, players, scheduler, and `arena_visual` are resolved under `src/gage_eval/role/arena/`.
+- **Outputs**: the arena loop writes `arena_trace`, `game_arena`, and `artifacts.visual_session_ref`; `auto_eval` can aggregate arena metrics.
 
 Common configs to start with:
 
-- `config/custom/gomoku/gomoku_human_vs_llm.yaml`
-- `config/custom/tictactoe/tictactoe_human_vs_llm.yaml`
+- `config/custom/gomoku/gomoku_llm_visual_gamekit.yaml`
+- `config/custom/tictactoe/tictactoe_llm_visual_gamekit.yaml`
+- `config/custom/doudizhu/doudizhu_llm_visual_gamekit.yaml`
+- `config/custom/pettingzoo/space_invaders_llm_visual_gamekit.yaml`
 
-For the full spec and UI wiring, see `docs/guide/game_arena.md`.
+For the full spec and browser control wiring, see `docs/guide/game_arena.md` and `docs/guide/game_arena_topics/game_arena_visual_control.md`.
 
 ## 4. Config details
 
@@ -644,7 +646,7 @@ flowchart TD
 
 #### 4.2.1 HuggingFace Hub
 
-Example: `gage-eval-main/config/custom/mmmu/mmmu_qwen_vl.yaml`
+Example: `config/custom/mmmu/mmmu_qwen_vl.yaml`
 
 Key fields:
 
@@ -656,7 +658,7 @@ Key fields:
 
 #### 4.2.2 Local JSONL
 
-Example: `gage-eval-main/config/custom/docvqa/docvqa_qwen_vl.yaml`
+Example: `config/custom/docvqa/docvqa_qwen_vl.yaml`
 
 Key fields:
 
@@ -724,16 +726,17 @@ Example:
 
 ```yaml
 backends:
-  - backend_id: qwen3_openai_http
+  - backend_id: openai_compatible_chat
     type: openai_http
     config:
-      base_url: http://127.0.0.1:1234/v1
-      model: qwen3
+      base_url: ${OPENAI_API_BASE:-https://api.openai.com/v1}
+      api_key: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      model: ${OPENAI_MODEL:-gpt-5.4}
 
 role_adapters:
   - adapter_id: dut_text
     role_type: dut_model
-    backend_id: qwen3_openai_http
+    backend_id: openai_compatible_chat
     prompt_id: multi_choice_infer_prompt
     capabilities: [chat_completion]
 ```
@@ -836,7 +839,7 @@ metrics:
 
 #### 4.7.1 `run.py` CLI params
 
-Common flags (`python gage-eval-main/run.py --help`):
+Common flags (`python run.py --help`):
 
 | Flag | Purpose |
 | --- | --- |
@@ -866,9 +869,9 @@ Common flags (`python gage-eval-main/run.py --help`):
 
 BuiltinTemplate solidifies a stable PipelineConfig template:
 
-- `gage-eval-main/config/builtin_templates/<name>/vN.yaml`
+- `config/builtin_templates/<name>/vN.yaml`
 
-Example: `gage-eval-main/config/builtin_templates/demo_echo/v1.yaml`
+Example: `config/builtin_templates/demo_echo/v1.yaml`
 
 ```yaml
 kind: BuiltinTemplate
@@ -891,7 +894,7 @@ RunConfig provides runtime overrides on top of a template:
 - `base_task: builtin/<name>` references a BuiltinTemplate
 - `runtime` overrides datasets, backends, tasks
 
-Example: `gage-eval-main/config/run_configs/demo_echo_run_1.yaml`
+Example: `config/run_configs/demo_echo_run_1.yaml`
 
 Entry modes:
 
@@ -903,8 +906,8 @@ Entry modes:
 distill: generate a BuiltinTemplate from PipelineConfig:
 
 ```bash
-python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml \
+python run.py \
+  --config config/custom/global_piqa/global_piqa_chat.yaml \
   --distill \
   --builtin-name global_piqa_chat
 ```
@@ -912,8 +915,8 @@ python gage-eval-main/run.py \
 init: generate RunConfig or PipelineConfig from a BuiltinTemplate:
 
 ```bash
-python gage-eval-main/run.py --init demo_echo --init-mode run-config
-python gage-eval-main/run.py --init demo_echo --init-mode pipeline-config
+python run.py --init demo_echo --init-mode run-config
+python run.py --init demo_echo --init-mode pipeline-config
 ```
 
 ## 5. Best practices
@@ -922,15 +925,15 @@ Scenario navigation table (run from repo root):
 
 | Scenario | Level | Highlights | Config | Typical steps | Key roles |
 | --- | --- | --- | --- | --- | --- |
-| Minimal smoke | Starter | RunConfig compile, dummy backend | [`gage-eval-main/config/run_configs/demo_echo_run_1.yaml`](../../config/run_configs/demo_echo_run_1.yaml) | `inference -> auto_eval` | `dut_model` |
-| Text multiple-choice | Starter | structured choices, auto metrics | [`gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`](../../config/custom/global_piqa/global_piqa_chat.yaml) | `inference -> auto_eval` | `dut_model` |
-| GPQA | Advanced | expert MCQ, few-shot | [`gage-eval-main/config/custom/gpqa_diamond/async_chat.yaml`](../../config/custom/gpqa_diamond/async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
-| LLM judge | Advanced | post-inference judge | [`gage-eval-main/config/custom/examples/single_task_local_judge_qwen.yaml`](../../config/custom/examples/single_task_local_judge_qwen.yaml) | `inference -> judge -> auto_eval` | `dut_model`, `judge_model` |
-| Multi-task | Advanced | TaskOrchestrator, overrides | [`gage-eval-main/config/custom/examples/multi_task_openai_http_demo.yaml`](../../config/custom/examples/multi_task_openai_http_demo.yaml) | per-task | `dut_model` |
-| DocVQA | Advanced | doc_to_visual, image_url | [`gage-eval-main/config/custom/docvqa/docvqa_qwen_vl.yaml`](../../config/custom/docvqa/docvqa_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
-| MathVista | Advanced | multimodal, answer extraction | [`gage-eval-main/config/custom/mathvista/chat.yaml`](../../config/custom/mathvista/chat.yaml) | `inference -> auto_eval` | `dut_model` |
-| MMMU | Advanced | HF Hub, multimodal preprocess | [`gage-eval-main/config/custom/mmmu/mmmu_qwen_vl.yaml`](../../config/custom/mmmu/mmmu_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
-| SWE-bench Pro | Expert | context_provider, judge_extend, Docker | [`gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro/swebench_pro_smoke_agent.yaml) | `support -> inference -> judge -> auto_eval` | `context_provider`, `dut_model`, `judge_extend` |
+| Minimal smoke | Starter | RunConfig compile, dummy backend | [`config/run_configs/demo_echo_run_1.yaml`](../../config/run_configs/demo_echo_run_1.yaml) | `inference -> auto_eval` | `dut_model` |
+| Text multiple-choice | Starter | structured choices, auto metrics | [`config/custom/global_piqa/global_piqa_chat.yaml`](../../config/custom/global_piqa/global_piqa_chat.yaml) | `inference -> auto_eval` | `dut_model` |
+| GPQA | Advanced | expert MCQ, few-shot | [`config/custom/gpqa_diamond/async_chat.yaml`](../../config/custom/gpqa_diamond/async_chat.yaml) | `inference -> auto_eval` | `dut_model` |
+| LLM judge | Advanced | post-inference judge | [`config/custom/examples/single_task_local_judge_qwen.yaml`](../../config/custom/examples/single_task_local_judge_qwen.yaml) | `inference -> judge -> auto_eval` | `dut_model`, `judge_model` |
+| Multi-task | Advanced | TaskOrchestrator, overrides | [`config/custom/examples/multi_task_openai_http_demo.yaml`](../../config/custom/examples/multi_task_openai_http_demo.yaml) | per-task | `dut_model` |
+| DocVQA | Advanced | doc_to_visual, image_url | [`config/custom/docvqa/docvqa_qwen_vl.yaml`](../../config/custom/docvqa/docvqa_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
+| MathVista | Advanced | multimodal, answer extraction | [`config/custom/mathvista/chat.yaml`](../../config/custom/mathvista/chat.yaml) | `inference -> auto_eval` | `dut_model` |
+| MMMU | Advanced | HF Hub, multimodal preprocess | [`config/custom/mmmu/mmmu_qwen_vl.yaml`](../../config/custom/mmmu/mmmu_qwen_vl.yaml) | `inference -> auto_eval` | `dut_model` |
+| SWE-bench Pro | Expert | context_provider, judge_extend, Docker | [`config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro/swebench_pro_smoke_agent.yaml) | `support -> inference -> judge -> auto_eval` | `context_provider`, `dut_model`, `judge_extend` |
 
 ### 5.1 Step and Role patterns
 
@@ -945,13 +948,13 @@ Scenario navigation table (run from repo root):
 
 #### 5.2.1 Global PIQA multiple-choice
 
-Config: `gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml`
+Config: `config/custom/global_piqa/global_piqa_chat.yaml`
 
 Run:
 
 ```bash
-python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml \
+python run.py \
+  --config config/custom/global_piqa/global_piqa_chat.yaml \
   --output-dir runs \
   --run-id piqa_smoke \
   --max-samples 50
@@ -959,7 +962,7 @@ python gage-eval-main/run.py \
 
 #### 5.2.2 Multi-task example
 
-Config: `gage-eval-main/config/custom/examples/multi_task_openai_http_demo.yaml`
+Config: `config/custom/examples/multi_task_openai_http_demo.yaml`
 
 Notes:
 
@@ -970,7 +973,7 @@ Notes:
 
 #### 5.3.1 DocVQA
 
-Config: `gage-eval-main/config/custom/docvqa/docvqa_qwen_vl.yaml`
+Config: `config/custom/docvqa/docvqa_qwen_vl.yaml`
 
 Notes:
 
@@ -979,7 +982,7 @@ Notes:
 
 #### 5.3.2 MMMU
 
-Config: `gage-eval-main/config/custom/mmmu/mmmu_qwen_vl.yaml`
+Config: `config/custom/mmmu/mmmu_qwen_vl.yaml`
 
 Notes:
 
@@ -997,7 +1000,7 @@ SWE-bench is a representative step and role composition:
 
 #### 5.4.1 Dock config notes
 
-Config: `gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`
+Config: `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`
 
 Key snippet:
 
@@ -1028,7 +1031,7 @@ role_adapters:
     params:
       implementation: swebench_docker
       implementation_params:
-        scripts_dir: gage-eval-main/third_party/swebench_pro/run_scripts
+        scripts_dir: third_party/swebench_pro/run_scripts
         block_network: true
         test_timeout_s: 900
 ```
@@ -1036,8 +1039,8 @@ role_adapters:
 #### 5.4.2 Run command
 
 ```bash
-python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/swebench_pro/swebench_pro_smoke_agent.yaml \
+python run.py \
+  --config config/custom/swebench_pro/swebench_pro_smoke_agent.yaml \
   --output-dir runs \
   --run-id swebench_smoke \
   --concurrency 1
@@ -1181,12 +1184,12 @@ metrics:
 Generate a registry manifest:
 
 ```bash
-python gage-eval-main/scripts/build_registry_manifest.py --out gage-eval-main/registry_manifest.yaml
+python scripts/build_registry_manifest.py --out registry_manifest.yaml
 ```
 
 ### 6.2 Add a new Metric
 
-1) Implement a `SimpleMetric` under `gage-eval-main/src/gage_eval/metrics/`
+1) Implement a `SimpleMetric` under `src/gage_eval/metrics/`
 2) Register via `@registry.asset("metrics", ...)`
 3) Reference by `metrics[].implementation` in YAML
 
@@ -1272,12 +1275,12 @@ Common workflow (from repo root):
 
 ```bash
 # 1) Validate the new config
-PYTHONPATH=gage-eval-main/src python -m gage_eval.tools.config_checker \
-  --config gage-eval-main/config/custom/<topic>/<config>.yaml
+PYTHONPATH=src python -m gage_eval.tools.config_checker \
+  --config config/custom/<topic>/<config>.yaml
 
 # 2) Smoke-run a few samples
-PYTHONPATH=gage-eval-main/src python gage-eval-main/run.py \
-  --config gage-eval-main/config/custom/<topic>/<config>.yaml \
+PYTHONPATH=src python run.py \
+  --config config/custom/<topic>/<config>.yaml \
   --max-samples 5
 ```
 
@@ -1287,10 +1290,10 @@ Before these commands, inspect a few raw records from the target dataset and add
 
 - Config validation:
   ```bash
-  PYTHONPATH=gage-eval-main/src python -m gage_eval.tools.config_checker \
-    --config gage-eval-main/config/custom/global_piqa/global_piqa_chat.yaml
+  PYTHONPATH=src python -m gage_eval.tools.config_checker \
+    --config config/custom/global_piqa/global_piqa_chat.yaml
   ```
-- See `gage-eval-main/TESTING.md` for test guidance.
+- See `TESTING.md` for test guidance.
 
 ## 8. Roadmap
 
