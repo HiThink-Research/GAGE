@@ -33,7 +33,7 @@ Board, table, and frame games all write the same visual session contract under:
 runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/
 ```
 
-The browser route is `/sessions/<sample_id>?run_id=<run_id>`. Runtime data is served by the Python gateway under `/arena_visual/sessions/...` and rendered by `frontend/arena-visual`.
+The browser route is `/sessions/<sample_id>?run_id=<run_id>`. Runtime data is served by the Python gateway under `/arena_visual/sessions/...` and rendered by the prebuilt `frontend/arena-visual/dist` checked into this repository; regular users do not need a Node/npm environment.
 
 ## 2. Supported GameKit Families
 

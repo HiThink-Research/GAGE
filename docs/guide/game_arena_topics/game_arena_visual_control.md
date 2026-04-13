@@ -33,18 +33,29 @@ The `run_id` query parameter disambiguates duplicate sample ids across different
 
 ## 2. Backend and Frontend Assets
 
-Normal GameKit runs start the Python Arena Visual gateway from the `visualizer` block in YAML. The gateway serves the browser route and the `/arena_visual/sessions/...` JSON, action, timeline, event, chat, control, and media APIs.
+Normal GameKit runs start the Python Arena Visual gateway from the `visualizer` block in YAML. The gateway serves the browser route and the `/arena_visual/sessions/...` JSON, action, timeline, event, chat, control, and media APIs. The repository includes the prebuilt `frontend/arena-visual/dist`, and the Python gateway reads the browser page from that directory. Regular users only need the Python runtime, a browser, and the API key, ROM, or desktop rendering support required by the selected game; they do not need Node/npm and do not need to start a separate frontend dev server.
 
-The browser page is the React app under `frontend/arena-visual`. You only need Node/npm when developing or rebuilding that frontend:
+The browser page is provided by the React app under `frontend/arena-visual`. You only need frontend project tooling when developing, testing, rebuilding that app, or when `frontend/arena-visual/dist/index.html` is missing. Use the current Node.js LTS line and the committed `package-lock.json` for reproducible installs:
 
 ```bash
 cd frontend/arena-visual
-npm install
-npm run build
+npm ci
 npm test
+npm run build
 ```
 
-Published GameKit configs do not require a separate Node process for ordinary runs. When using the Vite dev server, keep `VITE_ARENA_GATEWAY_BASE_URL` pointed at the Python gateway printed by the run.
+When debugging through the Vite dev server, start a visual GameKit run first, then point `VITE_ARENA_GATEWAY_BASE_URL` at the Python gateway printed by that run:
+
+```bash
+cd frontend/arena-visual
+VITE_ARENA_GATEWAY_BASE_URL=http://127.0.0.1:<visual_port> npm run dev
+```
+
+Open the local URL printed by Vite. `<visual_port>` is the Python Arena Visual gateway port, not the Vite port. Common environment checks:
+
+- If `npm ci` fails, confirm Node/npm are available; remove an incomplete `node_modules` directory before retrying.
+- If the Vite page opens but has no session data, confirm `VITE_ARENA_GATEWAY_BASE_URL` points at the active Python gateway.
+- If the ordinary GameKit page is blank or stuck loading, first confirm `frontend/arena-visual/dist/index.html` exists, then inspect the Python gateway logs and browser console; rebuild the frontend only when `dist` is missing or after changing `frontend/arena-visual`.
 
 ## 3. Runtime Contracts
 

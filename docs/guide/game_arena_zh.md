@@ -33,7 +33,7 @@ flowchart LR
 runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/
 ```
 
-浏览器路由是 `/sessions/<sample_id>?run_id=<run_id>`。运行时数据由 Python gateway 通过 `/arena_visual/sessions/...` 提供，并由 `frontend/arena-visual` 渲染。
+浏览器路由是 `/sessions/<sample_id>?run_id=<run_id>`。运行时数据由 Python gateway 通过 `/arena_visual/sessions/...` 提供，并由仓库内预构建的 `frontend/arena-visual/dist` 渲染；普通用户不需要准备 Node/npm 环境。
 
 ## 2. 当前 GameKit 家族
 

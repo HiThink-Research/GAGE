@@ -33,18 +33,29 @@ http://127.0.0.1:<visual_port>/sessions/<sample_id>?run_id=<run_id>
 
 ## 2. 后端与前端资源
 
-普通 GameKit 运行会根据 YAML 里的 `visualizer` 配置启动 Python Arena Visual gateway。gateway 同时提供浏览器路由，以及 `/arena_visual/sessions/...` 下的 JSON、action、timeline、event、chat、control 和 media API。
+普通 GameKit 运行会根据 YAML 里的 `visualizer` 配置启动 Python Arena Visual gateway。gateway 同时提供浏览器路由，以及 `/arena_visual/sessions/...` 下的 JSON、action、timeline、event、chat、control 和 media API。仓库已包含预构建的 `frontend/arena-visual/dist`，Python gateway 会从这里读取浏览器页面。普通用户只需要准备 Python 运行环境、浏览器，以及对应游戏需要的 API key、ROM 或桌面渲染能力；不需要安装 Node/npm，也不需要单独启动前端 dev server。
 
-浏览器页面是 `frontend/arena-visual` 下的 React 应用。只有开发或重建这个前端时才需要 Node/npm：
+浏览器页面由 `frontend/arena-visual` 下的 React 应用提供。只有开发、测试、重建这个前端，或发现 `frontend/arena-visual/dist/index.html` 缺失时，才需要前端项目环境。推荐使用当前 Node.js LTS 和仓库自带的 `package-lock.json` 做可复现安装：
 
 ```bash
 cd frontend/arena-visual
-npm install
-npm run build
+npm ci
 npm test
+npm run build
 ```
 
-正式 GameKit 配置的普通运行不需要单独启动 Node 进程。如果使用 Vite dev server，请把 `VITE_ARENA_GATEWAY_BASE_URL` 指向运行时打印的 Python gateway。
+如果要用 Vite dev server 调试前端，请先启动一个可视化 GameKit 运行，再把 `VITE_ARENA_GATEWAY_BASE_URL` 指向运行时打印的 Python gateway：
+
+```bash
+cd frontend/arena-visual
+VITE_ARENA_GATEWAY_BASE_URL=http://127.0.0.1:<visual_port> npm run dev
+```
+
+此时打开 Vite 输出的本地 URL。`<visual_port>` 是 Python Arena Visual gateway 的端口，不是 Vite 端口。常见环境问题：
+
+- `npm ci` 失败：确认 Node/npm 可用；如果 `node_modules` 是中断安装留下的，删除后重试。
+- Vite 页面能打开但没有 session 数据：确认 `VITE_ARENA_GATEWAY_BASE_URL` 指向当前正在运行的 Python gateway。
+- 普通 GameKit 页面空白或加载失败：优先确认 `frontend/arena-visual/dist/index.html` 存在，再查看 Python gateway 日志和浏览器控制台；只有在 `dist` 缺失或修改过 `frontend/arena-visual` 后，才需要重新执行前端 build。
 
 ## 3. 运行契约
 

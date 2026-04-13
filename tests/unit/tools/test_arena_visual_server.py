@@ -53,6 +53,33 @@ _SMALL_PNG_BYTES = base64.b64decode(
 )
 
 
+@pytest.mark.fast
+def test_default_arena_visual_frontend_dist_is_shipped() -> None:
+    app_dir = http_server_module._default_app_dir()
+
+    assert app_dir.is_dir()
+    assert (app_dir / "index.html").is_file()
+    assert (app_dir / "assets").is_dir()
+    assert any((app_dir / "assets").glob("index-*.js"))
+    assert any((app_dir / "assets").glob("index-*.css"))
+
+
+def test_arena_visual_http_server_serves_shipped_frontend_by_default(tmp_path: Path) -> None:
+    server = ArenaVisualHTTPServer(host="127.0.0.1", port=0, base_dir=tmp_path)
+    server.start()
+    try:
+        host, port = server.server_address
+        root_html = _get_bytes(f"http://{host}:{port}/").decode("utf-8")
+        session_html = _get_bytes(
+            f"http://{host}:{port}/sessions/sample-1?run_id=run-9"
+        ).decode("utf-8")
+
+        assert "<title>Arena Visual</title>" in root_html
+        assert "<title>Arena Visual</title>" in session_html
+    finally:
+        server.stop()
+
+
 def _build_valid_png_bytes() -> bytes:
     pil_image = __import__("PIL.Image", fromlist=["Image"])
     buffer = io.BytesIO()
