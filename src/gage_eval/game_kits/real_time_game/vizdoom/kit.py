@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from gage_eval.game_kits.contracts import EnvSpec, GameKit
+from gage_eval.game_kits.real_time_game.vizdoom.environment import (
+    ViZDoomArenaEnvironment,
+)
+from gage_eval.game_kits.real_time_game.vizdoom.envs.duel_map01 import (
+    build_duel_map01_environment,
+)
+from gage_eval.game_kits.real_time_game.vizdoom.visualization import (
+    VISUALIZATION_SPEC_ID,
+)
+from gage_eval.registry import registry
+
+
+@registry.asset(
+    "game_kits",
+    "vizdoom",
+    desc="GameArena ViZDoom realtime kit",
+    tags=("gamekit", "real_time_game", "vizdoom"),
+)
+def build_vizdoom_game_kit() -> GameKit:
+    return GameKit(
+        kit_id="vizdoom",
+        family="real_time_game",
+        scheduler_binding="real_time_tick/default",
+        observation_workflow="noop_observation_v1",
+        visualization_spec=VISUALIZATION_SPEC_ID,
+        parser=(
+            "gage_eval.game_kits.real_time_game.vizdoom.parser.VizDoomParser"
+        ),
+        input_mapper=(
+            "gage_eval.game_kits.real_time_game.vizdoom.input_mapper.ViZDoomInputMapper"
+        ),
+        env_catalog=(
+            EnvSpec(
+                env_id="duel_map01",
+                kit_id="vizdoom",
+                resource_spec={"env_id": "duel_map01", "family": "vizdoom"},
+                parser=(
+                    "gage_eval.game_kits.real_time_game.vizdoom.parser.VizDoomParser"
+                ),
+                input_mapper=(
+                    "gage_eval.game_kits.real_time_game.vizdoom.input_mapper.ViZDoomInputMapper"
+                ),
+                defaults={
+                    "env_factory": build_duel_map01_environment,
+                    "backend_mode": "real",
+                    "stub_max_rounds": 3,
+                    "max_steps": 12,
+                    "capture_pov": True,
+                    "obs_image": True,
+                    "obs_image_history_len": 1,
+                    "show_pov": False,
+                    "show_automap": False,
+                    "allow_partial_actions": False,
+                    "replay_in_env": True,
+                },
+            ),
+        ),
+        default_env="duel_map01",
+        seat_spec={"seats": ("p0", "p1")},
+        defaults={
+            "backend_mode": "real",
+            "stub_max_rounds": 3,
+            "max_steps": 12,
+            "capture_pov": True,
+            "obs_image": True,
+            "obs_image_history_len": 1,
+            "show_pov": False,
+            "show_automap": False,
+            "allow_partial_actions": False,
+            "replay_in_env": True,
+            "parser": (
+                "gage_eval.game_kits.real_time_game.vizdoom.parser.VizDoomParser"
+            ),
+            "input_mapper": (
+                "gage_eval.game_kits.real_time_game.vizdoom.input_mapper.ViZDoomInputMapper"
+            ),
+        },
+    )
+
+
+__all__ = [
+    "ViZDoomArenaEnvironment",
+    "build_duel_map01_environment",
+    "build_vizdoom_game_kit",
+]

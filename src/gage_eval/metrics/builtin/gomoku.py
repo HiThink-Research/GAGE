@@ -7,7 +7,7 @@ from typing import Any
 from gage_eval.metrics.base import MetricContext, SimpleMetric
 from gage_eval.metrics.utils import extract_field
 from gage_eval.registry import registry
-from gage_eval.role.arena.games.gomoku.env import DEFAULT_PLAYER_IDS
+from gage_eval.game_kits.board_game.gomoku.environment import DEFAULT_PLAYER_IDS
 
 
 @registry.asset(

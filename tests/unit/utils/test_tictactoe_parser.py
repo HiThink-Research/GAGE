@@ -1,4 +1,4 @@
-from gage_eval.role.arena.parsers.gomoku_parser import GridParser
+from gage_eval.game_kits.board_game.tictactoe.parser import GridParser
 
 
 def test_tictactoe_parser_row_col() -> None:

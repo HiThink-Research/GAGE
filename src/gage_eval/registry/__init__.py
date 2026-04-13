@@ -67,6 +67,19 @@ DEFAULT_KINDS: Dict[str, str] = {
     "pipeline_steps": "Pipeline 执行步骤",
 }
 
+DEFAULT_KINDS.update(
+    {
+        "game_kits": "GameKit definitions",
+        "scheduler_bindings": "Scheduler binding specs",
+        "support_workflows": "Game support workflow specs",
+        "support_units": "Support unit implementations",
+        "observation_workflows": "Observation workflow implementations",
+        "visualization_specs": "Game display and replay viewer specs",
+        "game_content_assets": "ROM/mod/map/content assets",
+        "player_drivers": "LLM/Human/Agent driver implementations",
+    }
+)
+
 for _kind, _desc in DEFAULT_KINDS.items():
     registry.declare_kind(_kind, desc=_desc)
 

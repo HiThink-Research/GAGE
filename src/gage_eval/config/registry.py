@@ -479,4 +479,12 @@ def _collect_runtime_registry_packages(config: PipelineConfig) -> Dict[str, Iter
         for spec in config.role_adapters
     ):
         packages["judge_impls"] = ("gage_eval.role.judge",)
+    if any(_may_require_gamearena_runtime_packages(spec) for spec in config.role_adapters):
+        packages["game_kits"] = ("gage_eval.game_kits.registry",)
+        packages["scheduler_bindings"] = ("gage_eval.role.arena.schedulers.specs",)
+        packages["support_workflows"] = ("gage_eval.role.arena.support.specs",)
     return packages
+
+
+def _may_require_gamearena_runtime_packages(spec: RoleAdapterSpec) -> bool:
+    return spec.role_type == "arena"

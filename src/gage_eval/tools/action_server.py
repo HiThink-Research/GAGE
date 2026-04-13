@@ -272,6 +272,15 @@ class ActionQueueServer:
                 return queue, None
         return self._queue, None
 
+    def submit_action_payload(self, payload: dict[str, Any]) -> Optional[str]:
+        """Route one normalized action payload into the matching queue."""
+
+        queue, error = self.resolve_action_queue(payload.get("sample_id"))
+        if queue is None:
+            return error or "action_queue_not_available"
+        queue.put(dump_action_payload(payload))
+        return None
+
     def has_action_routes(self) -> bool:
         """Return whether sample-scoped action routes are registered."""
 

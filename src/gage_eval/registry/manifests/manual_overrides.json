@@ -36,6 +36,42 @@
       "declared_in": "src/gage_eval/assets/prompts/catalog/__init__.py",
       "aliases": [],
       "optional": false
+    },
+    {
+      "kind": "player_drivers",
+      "name": "player_driver/dummy",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "player_drivers",
+      "name": "player_driver/human_local_input",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "player_drivers",
+      "name": "player_driver/llm_backend",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "player_drivers",
+      "name": "player_driver/agent_role_stub",
+      "module": "gage_eval.role.arena.support.specs",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/role/arena/support/specs.py",
+      "aliases": [],
+      "optional": false
     }
   ]
 }

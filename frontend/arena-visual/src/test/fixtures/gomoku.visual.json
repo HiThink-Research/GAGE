@@ -1,0 +1,47 @@
+{
+  "sceneId": "gomoku:seq:5",
+  "gameId": "gomoku",
+  "pluginId": "arena.visualization.gomoku.board_v1",
+  "kind": "board",
+  "tsMs": 1005,
+  "seq": 5,
+  "phase": "replay",
+  "activePlayerId": "White",
+  "legalActions": [
+    { "id": "B1", "label": "B1", "coord": "B1", "row": 0, "col": 1 },
+    { "id": "C1", "label": "C1", "coord": "C1", "row": 0, "col": 2 },
+    { "id": "A3", "label": "A3", "coord": "A3", "row": 2, "col": 0 }
+  ],
+  "summary": {
+    "boardSize": 3,
+    "coordScheme": "A1"
+  },
+  "body": {
+    "board": {
+      "size": 3,
+      "coordScheme": "A1",
+      "cells": [
+        { "coord": "A1", "row": 0, "col": 0, "occupant": "B", "playerId": "Black", "playerName": "Black", "isLastMove": false, "isWinningCell": true, "isLegalAction": false },
+        { "coord": "B1", "row": 0, "col": 1, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": true },
+        { "coord": "C1", "row": 0, "col": 2, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": true },
+        { "coord": "A2", "row": 1, "col": 0, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false },
+        { "coord": "B2", "row": 1, "col": 1, "occupant": "W", "playerId": "White", "playerName": "White", "isLastMove": true, "isWinningCell": true, "isLegalAction": false },
+        { "coord": "C2", "row": 1, "col": 2, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false },
+        { "coord": "A3", "row": 2, "col": 0, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": true },
+        { "coord": "B3", "row": 2, "col": 1, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false },
+        { "coord": "C3", "row": 2, "col": 2, "occupant": null, "playerId": null, "playerName": null, "isLastMove": false, "isWinningCell": false, "isLegalAction": false }
+      ]
+    },
+    "players": [
+      { "playerId": "Black", "playerName": "Black", "token": "B" },
+      { "playerId": "White", "playerName": "White", "token": "W" }
+    ],
+    "status": {
+      "activePlayerId": "White",
+      "observerPlayerId": "Black",
+      "moveCount": 2,
+      "lastMove": "B2",
+      "winningLine": ["A1", "B2"]
+    }
+  }
+}

@@ -223,6 +223,11 @@ class ReplaySchemaWriter:
         normalized_trace = _normalize_arena_trace_steps(arena_trace)
         if normalized_trace:
             payload["arena_trace"] = normalized_trace
+        visual_session_ref = extra_meta.get("visual_session_ref")
+        if visual_session_ref not in (None, ""):
+            payload["artifacts"] = {
+                "visual_session_ref": str(visual_session_ref),
+            }
         legacy_replay_path = payload["meta"].pop("legacy_replay_path", None)
         if legacy_replay_path:
             payload["files"] = {"legacy_replay_path": str(legacy_replay_path)}
@@ -257,6 +262,26 @@ def _normalize_arena_trace_steps(raw_trace: Any) -> list[dict[str, Any]]:
     if not isinstance(trace_source, Sequence) or isinstance(trace_source, (str, bytes)):
         return []
     return [dict(item) for item in trace_source if isinstance(item, Mapping)]
+
+
+def update_replay_manifest_visual_session_ref(*, replay_path: str | Path, visual_session_ref: str) -> bool:
+    path = Path(replay_path).expanduser()
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        artifacts = payload.setdefault("artifacts", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+            payload["artifacts"] = artifacts
+        artifacts["visual_session_ref"] = str(visual_session_ref)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _resolve_timestamp_ms(entry: Mapping[str, Any]) -> int:
@@ -335,8 +360,36 @@ def _extract_meta(entry: Mapping[str, Any]) -> dict[str, Any]:
         "coord",
         "raw",
     }
-    metadata = {str(key): value for key, value in entry.items() if key not in known_keys}
+    metadata = {
+        str(key): _normalize_replay_json_value(value)
+        for key, value in entry.items()
+        if key not in known_keys
+    }
     return metadata
+
+
+def _normalize_replay_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _normalize_replay_json_value(item())
+        except Exception:
+            pass
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        try:
+            return _normalize_replay_json_value(tolist())
+        except Exception:
+            pass
+    if isinstance(value, Mapping):
+        return {str(key): _normalize_replay_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_normalize_replay_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_replay_json_value(item) for item in value]
+    return value
 
 
 def _resolve_recording_mode(action_count: int, frame_count: int) -> str:

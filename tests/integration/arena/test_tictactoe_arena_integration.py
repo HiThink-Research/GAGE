@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from queue import Queue
+
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
@@ -12,7 +14,12 @@ class _StaticMoveAdapter(RoleAdapter):
         self._moves = list(moves)
         self._index = 0
 
+    def invoke(self, payload: dict, state: RoleAdapterState | None = None) -> dict:
+        del payload
+        return super().invoke({}, state or RoleAdapterState())
+
     async def ainvoke(self, payload: dict, state: RoleAdapterState) -> dict:
+        del payload, state
         if self._moves:
             if self._index < len(self._moves):
                 move = self._moves[self._index]
@@ -30,23 +37,24 @@ def _role_manager() -> RoleManager:
 
 def test_tictactoe_arena_backend_vs_backend_diagonal_win() -> None:
     rm = _role_manager()
-    rm.register_role_adapter("x_adapter", _StaticMoveAdapter("x_adapter", ["1,1", "2,2", "3,3"]))
-    rm.register_role_adapter("o_adapter", _StaticMoveAdapter("o_adapter", ["1,2", "1,3"]))
+    rm.register_backend("x_adapter", _StaticMoveAdapter("x_adapter", ["1,1", "2,2", "3,3"]))
+    rm.register_backend("o_adapter", _StaticMoveAdapter("o_adapter", ["1,2", "1,3"]))
 
     arena = ArenaRoleAdapter(
         adapter_id="arena",
-        environment={"impl": "tictactoe_v1", "board_size": 3, "coord_scheme": "ROW_COL"},
-        rules={"win_len": 3},
-        scheduler={"type": "turn", "max_turns": 9},
-        parser={"impl": "grid_parser_v1", "coord_scheme": "ROW_COL", "board_size": 3},
+        game_kit="tictactoe",
+        env="tictactoe_standard",
+        runtime_overrides={"coord_scheme": "ROW_COL", "scheduler": "turn/default"},
         visualizer={"enabled": False},
         players=[
-            {"name": "X", "type": "backend", "ref": "x_adapter"},
-            {"name": "O", "type": "backend", "ref": "o_adapter"},
+            {"seat": "x", "player_id": "X", "player_kind": "llm", "backend_id": "x_adapter"},
+            {"seat": "o", "player_id": "O", "player_kind": "llm", "backend_id": "o_adapter"},
         ],
     )
     sample = {
         "id": "tictactoe_001",
+        "game_kit": "tictactoe",
+        "env": "tictactoe_standard",
         "messages": [],
         "metadata": {
             "board_size": 3,
@@ -60,33 +68,39 @@ def test_tictactoe_arena_backend_vs_backend_diagonal_win() -> None:
     }
 
     output = arena.invoke({"sample": sample, "role_manager": rm}, RoleAdapterState())
+    result = output["result"]
 
-    assert output["winner"] == "X"
-    assert output["result"] == "win"
+    assert result["winner"] == "X"
+    assert result["result"] == "win"
 
 
 def test_tictactoe_arena_human_vs_backend_row_win() -> None:
     rm = _role_manager()
-    rm.register_role_adapter(
-        "human_adapter",
-        _StaticMoveAdapter("human_adapter", ["1,1", "1,2", "1,3"], "human"),
-    )
-    rm.register_role_adapter("bot_adapter", _StaticMoveAdapter("bot_adapter", ["2,1", "2,2"]))
+    rm.register_backend("bot_adapter", _StaticMoveAdapter("bot_adapter", ["2,1", "2,2"]))
+    human_actions: Queue[str] = Queue()
+    for move in ("1,1", "1,2", "1,3"):
+        human_actions.put(move)
 
     arena = ArenaRoleAdapter(
         adapter_id="arena",
-        environment={"impl": "tictactoe_v1", "board_size": 3, "coord_scheme": "ROW_COL"},
-        rules={"win_len": 3},
-        scheduler={"type": "turn", "max_turns": 9},
-        parser={"impl": "grid_parser_v1", "coord_scheme": "ROW_COL", "board_size": 3},
+        game_kit="tictactoe",
+        env="tictactoe_standard",
+        runtime_overrides={"coord_scheme": "ROW_COL", "scheduler": "turn/default"},
         visualizer={"enabled": False},
         players=[
-            {"name": "Human", "type": "human", "ref": "human_adapter"},
-            {"name": "Bot", "type": "backend", "ref": "bot_adapter"},
+            {
+                "seat": "x",
+                "player_id": "Human",
+                "player_kind": "human",
+                "driver_params": {"action_queue": human_actions},
+            },
+            {"seat": "o", "player_id": "Bot", "player_kind": "llm", "backend_id": "bot_adapter"},
         ],
     )
     sample = {
         "id": "tictactoe_002",
+        "game_kit": "tictactoe",
+        "env": "tictactoe_standard",
         "messages": [],
         "metadata": {
             "board_size": 3,
@@ -100,6 +114,7 @@ def test_tictactoe_arena_human_vs_backend_row_win() -> None:
     }
 
     output = arena.invoke({"sample": sample, "role_manager": rm}, RoleAdapterState())
+    result = output["result"]
 
-    assert output["winner"] == "Human"
-    assert output["result"] == "win"
+    assert result["winner"] == "Human"
+    assert result["result"] == "win"

@@ -1,0 +1,244 @@
+.gomoku-stage {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+}
+
+.gomoku-stage__board-wrap {
+  display: grid;
+  place-items: center;
+  width: min(100%, 46rem);
+  padding: 1.35rem;
+  border-radius: 1.9rem;
+  background:
+    radial-gradient(circle at top, rgba(255, 244, 217, 0.88), rgba(238, 219, 180, 0.62) 56%, rgba(212, 181, 122, 0.28)),
+    linear-gradient(180deg, rgba(255, 252, 246, 0.94), rgba(243, 236, 221, 0.88));
+  box-shadow:
+    inset 0 0 0 1px rgba(132, 92, 43, 0.1),
+    0 18px 34px rgba(89, 61, 24, 0.14);
+}
+
+.gomoku-board-frame {
+  width: min(100%, 38rem);
+  padding: 0.9rem 1rem;
+  border: 0.24rem solid #91622f;
+  border-radius: 1.6rem;
+  background:
+    linear-gradient(180deg, rgba(241, 199, 111, 0.98), rgba(220, 174, 91, 0.97)),
+    linear-gradient(135deg, rgba(255, 245, 213, 0.36), transparent);
+  box-shadow:
+    inset 0 0 0 1px rgba(117, 75, 29, 0.2),
+    0 18px 30px rgba(89, 58, 18, 0.2);
+}
+
+.gomoku-board__main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: stretch;
+}
+
+.gomoku-board__coords {
+  display: grid;
+  color: #613c0f;
+  font-family: "Georgia", "Times New Roman", serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.gomoku-board__coords--top,
+.gomoku-board__coords--bottom {
+  grid-template-columns: repeat(var(--gomoku-board-size, 15), minmax(0, 1fr));
+  margin: 0 1.45rem;
+  text-align: center;
+}
+
+.gomoku-board__coords--top {
+  margin-bottom: 0.5rem;
+}
+
+.gomoku-board__coords--bottom {
+  margin-top: 0.5rem;
+}
+
+.gomoku-board__coords--left,
+.gomoku-board__coords--right {
+  grid-template-rows: repeat(var(--gomoku-board-size, 15), minmax(0, 1fr));
+  min-height: min(72vw, 33rem);
+  text-align: center;
+}
+
+.gomoku-board__coord {
+  display: grid;
+  place-items: center;
+}
+
+.gomoku-board-surface {
+  --gomoku-grid-line: rgba(88, 55, 16, 0.88);
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--gomoku-board-size, 15), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--gomoku-board-size, 15), minmax(0, 1fr));
+  width: min(72vw, 33rem);
+  aspect-ratio: 1 / 1;
+  border-radius: 1.05rem;
+  background:
+    radial-gradient(circle at top left, rgba(255, 236, 188, 0.34), transparent 28%),
+    linear-gradient(180deg, rgba(241, 199, 111, 0.96), rgba(220, 174, 91, 0.97));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 249, 226, 0.4),
+    inset 0 0 0 1px rgba(124, 77, 23, 0.16),
+    0 16px 28px rgba(87, 58, 19, 0.18);
+  overflow: hidden;
+}
+
+.gomoku-board__winning-line {
+  position: absolute;
+  height: 0.34rem;
+  border-radius: 999px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, rgba(184, 52, 35, 0.16), rgba(184, 52, 35, 0.9), rgba(184, 52, 35, 0.16));
+  box-shadow: 0 0 0 1px rgba(255, 245, 233, 0.22);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.gomoku-board__intersection {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  cursor: default;
+  z-index: 2;
+}
+
+.gomoku-board__intersection::before,
+.gomoku-board__intersection::after {
+  content: "";
+  position: absolute;
+  background: var(--gomoku-grid-line);
+  pointer-events: none;
+}
+
+.gomoku-board__intersection::before {
+  top: 50%;
+  left: var(--gomoku-line-x-start);
+  width: calc(var(--gomoku-line-x-end) - var(--gomoku-line-x-start));
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.gomoku-board__intersection::after {
+  left: 50%;
+  top: var(--gomoku-line-y-start);
+  width: 1px;
+  height: calc(var(--gomoku-line-y-end) - var(--gomoku-line-y-start));
+  transform: translateX(-50%);
+}
+
+.gomoku-board__intersection.is-legal:not(:disabled) {
+  cursor: pointer;
+}
+
+.gomoku-board__intersection.is-legal:not(:disabled):hover::before,
+.gomoku-board__intersection.is-legal:not(:disabled):hover::after,
+.gomoku-board__intersection.is-legal:not(:disabled):focus-visible::before,
+.gomoku-board__intersection.is-legal:not(:disabled):focus-visible::after {
+  background: rgba(183, 74, 42, 0.92);
+}
+
+.gomoku-board__intersection.is-legal:not(:disabled):focus-visible {
+  outline: none;
+}
+
+.gomoku-board__intersection.is-legal:not(:disabled):hover .gomoku-board__star-point,
+.gomoku-board__intersection.is-legal:not(:disabled):focus-visible .gomoku-board__star-point {
+  background: rgba(183, 74, 42, 0.86);
+}
+
+.gomoku-board__intersection:disabled {
+  opacity: 1;
+}
+
+.gomoku-board__intersection.is-winning .gomoku-board__stone {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 0 0 0.2rem rgba(195, 87, 52, 0.22),
+    0 12px 20px rgba(54, 35, 11, 0.22);
+}
+
+.gomoku-board__stone {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 74%;
+  max-width: 1.85rem;
+  aspect-ratio: 1 / 1;
+  border-radius: 999px;
+  box-sizing: border-box;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 12px 20px rgba(54, 35, 11, 0.22);
+  font-size: 0;
+}
+
+.gomoku-board__stone--black {
+  background: radial-gradient(circle at 35% 32%, #717171 0%, #2b2b2b 45%, #070707 100%);
+}
+
+.gomoku-board__stone--white {
+  background: radial-gradient(circle at 35% 32%, #ffffff 0%, #efe5d2 48%, #cdbb9c 100%);
+  border: 1px solid rgba(136, 108, 63, 0.22);
+}
+
+.gomoku-board__last-move {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: #b83b24;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px rgba(255, 241, 230, 0.8);
+}
+
+.gomoku-board__star-point {
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: rgba(59, 35, 11, 0.84);
+  box-shadow: 0 0 0 1px rgba(255, 236, 203, 0.14);
+}
+
+@media (max-width: 720px) {
+  .gomoku-stage__board-wrap {
+    width: 100%;
+    padding: 0.9rem;
+  }
+
+  .gomoku-board-frame {
+    width: min(100%, 24rem);
+    padding: 0.65rem 0.75rem;
+  }
+
+  .gomoku-board__coords {
+    font-size: 0.64rem;
+  }
+
+  .gomoku-board__coords--left,
+  .gomoku-board__coords--right,
+  .gomoku-board-surface {
+    width: min(72vw, 20rem);
+    min-height: min(72vw, 20rem);
+  }
+
+  .gomoku-board__coords--top,
+  .gomoku-board__coords--bottom {
+    margin: 0 1rem;
+  }
+}

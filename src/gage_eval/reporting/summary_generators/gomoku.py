@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.sample_envelope import resolve_selected_predict_result
 from gage_eval.registry import registry
 from gage_eval.reporting.summary_generators import SummaryGenerator
 
@@ -100,21 +101,54 @@ def _build_gomoku_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
 
 
 def _is_gomoku_sample(sample: Dict[str, Any], model_output: Dict[str, Any], judge_output: Dict[str, Any]) -> bool:
-    dataset_id = sample.get("_dataset_id")
-    if isinstance(dataset_id, str) and "gomoku" in dataset_id.lower():
-        return True
+    for key in ("_dataset_id", "_gage_dataset_id"):
+        dataset_id = sample.get(key)
+        if isinstance(dataset_id, str) and "gomoku" in dataset_id.lower():
+            return True
 
     metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
-    if metadata.get("game") == "gomoku":
+    if _is_gomoku_marker(metadata.get("game")):
         return True
-    if metadata.get("board_size") and metadata.get("win_len") and metadata.get("coord_scheme"):
+    if _is_gomoku_marker(metadata.get("game_type")):
+        return True
+    game_arena = metadata.get("game_arena") if isinstance(metadata.get("game_arena"), dict) else {}
+    if _is_gomoku_marker(game_arena.get("game_kit")):
+        return True
+
+    arena_entry = resolve_selected_predict_result(sample, domain="arena")
+    if _payload_marks_gomoku(arena_entry):
         return True
 
     for payload in (judge_output, model_output):
-        if payload.get("game_log") or payload.get("move_count"):
+        if _payload_marks_gomoku(payload):
             return True
 
+    return _looks_like_legacy_gomoku_metadata(metadata)
+
+
+def _payload_marks_gomoku(payload: Dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    nested_sample = payload.get("sample")
+    if isinstance(nested_sample, dict) and _is_gomoku_marker(nested_sample.get("game_kit")):
+        return True
+    header = payload.get("header")
+    if isinstance(header, dict) and _is_gomoku_marker(header.get("game_kit")):
+        return True
     return False
+
+
+def _looks_like_legacy_gomoku_metadata(metadata: Dict[str, Any]) -> bool:
+    return bool(
+        metadata.get("board_size")
+        and metadata.get("win_len")
+        and metadata.get("coord_scheme")
+        and metadata.get("win_directions")
+    )
+
+
+def _is_gomoku_marker(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "gomoku"
 
 
 def _extract_player_ids(metadata: Dict[str, Any]) -> list[str]:

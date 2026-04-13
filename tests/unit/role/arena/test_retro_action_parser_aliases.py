@@ -1,4 +1,4 @@
-from gage_eval.role.arena.parsers.retro_action_parser import RetroActionParser
+from gage_eval.game_kits.real_time_game.retro_platformer.parser import RetroActionParser
 
 
 def test_retro_action_parser_accepts_key_combo_aliases():

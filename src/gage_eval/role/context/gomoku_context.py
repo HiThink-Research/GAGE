@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from gage_eval.registry import registry
-from gage_eval.role.arena.games.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
-from gage_eval.role.arena.games.gomoku.env import DEFAULT_PLAYER_IDS, GomokuLocalCore
+from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
+from gage_eval.game_kits.board_game.gomoku.environment import DEFAULT_PLAYER_IDS, GomokuLocalCore
 
 
 @registry.asset(

@@ -1,22 +1,5 @@
-"""Parsers for game moves and observations."""
+"""Legacy parser package for remaining arena-owned parsers."""
 
 from __future__ import annotations
 
-from gage_eval.role.arena.parsers.pettingzoo_actions import (
-    DiscreteActionParseResult,
-    DiscreteActionParser,
-)
-from gage_eval.role.arena.parsers.gomoku_parser import GomokuParseResult, GomokuParser
-from gage_eval.role.arena.parsers.doudizhu_parser import DoudizhuParseResult, DoudizhuParser
-from gage_eval.role.arena.parsers.vizdoom_parser import VizDoomParseResult, VizDoomParser
-
-__all__ = [
-    "DiscreteActionParseResult",
-    "DiscreteActionParser",
-    "DoudizhuParseResult",
-    "DoudizhuParser",
-    "GomokuParseResult",
-    "GomokuParser",
-    "VizDoomParseResult",
-    "VizDoomParser",
-]
+__all__: list[str] = []

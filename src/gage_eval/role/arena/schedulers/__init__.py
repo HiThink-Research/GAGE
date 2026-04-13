@@ -1,17 +1,17 @@
-"""Schedulers for arena game loops."""
+"""Scheduler abstractions and bindings for GameArena."""
 
 from __future__ import annotations
 
-from gage_eval.role.arena.schedulers.multi_timeline_scheduler import MultiTimelineScheduler
-from gage_eval.role.arena.schedulers.record_scheduler import RecordScheduler
-from gage_eval.role.arena.schedulers.simultaneous_scheduler import SimultaneousScheduler
-from gage_eval.role.arena.schedulers.tick_scheduler import TickScheduler
-from gage_eval.role.arena.schedulers.turn_scheduler import TurnScheduler
+from gage_eval.role.arena.schedulers.base import Scheduler
+from gage_eval.role.arena.schedulers.real_time_tick import RealTimeTickScheduler
+from gage_eval.role.arena.schedulers.record_cadence import RecordCadenceScheduler
+from gage_eval.role.arena.schedulers.registry import SchedulerRegistry
+from gage_eval.role.arena.schedulers.turn import TurnScheduler
 
 __all__ = [
+    "Scheduler",
+    "SchedulerRegistry",
     "TurnScheduler",
-    "TickScheduler",
-    "RecordScheduler",
-    "SimultaneousScheduler",
-    "MultiTimelineScheduler",
+    "RecordCadenceScheduler",
+    "RealTimeTickScheduler",
 ]

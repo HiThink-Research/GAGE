@@ -1,0 +1,88 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: retro_mario_human_visual_gamekit
+  description: >
+    GameArena Retro Mario human-play config for the arena_visual web app. The
+    runtime uses the real stable-retro backend and exposes the live frame scene
+    so the browser can drive Mario through human input events instead of a stub
+    player or LLM backend. This pure-human preset is tuned for continuous
+    realtime play instead of turn-by-turn intent submission.
+
+datasets:
+  - dataset_id: retro_mario_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Retro_Mario.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: retro_mario_human_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: retro_mario_human_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: retro_platformer
+      env: retro_mario
+      runtime_overrides:
+        backend_mode: real
+        default_state: Start
+        display_mode: headless
+        obs_image: false
+        frame_stride: 1
+        legal_moves:
+          - noop
+          - left
+          - right
+          - up
+          - down
+          - jump
+          - run
+          - left_jump
+          - right_jump
+          - left_run
+          - right_run
+          - left_run_jump
+          - right_run_jump
+          - start
+          - select
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 1
+          hold_ticks_default: 1
+        max_turns: 7200
+        runtime_binding_policy_config:
+          mode: scheduler_owned_human_realtime
+          activation_scope: pure_human_only
+          input_model: continuous_state
+          input_transport: realtime_ws
+          tick_interval_ms: 16
+          frame_output_hz: 60
+          artifact_sampling_mode: async_decimated_live
+          fallback_move: noop
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE Retro Mario Arena Visual
+        launch_browser: true
+        mode: arena_visual
+        port: 5808
+        live_scene_scheme: low_latency_channel
+        linger_after_finish_s: 15.0
+      players:
+        - seat: player_0
+          player_id: player_0
+          player_kind: human
+          driver_params:
+            input_semantics: continuous_state
+            stateful_actions: true
+            tick_interval_ms: 16
+            timeout_ms: 16
+            timeout_fallback_move: noop

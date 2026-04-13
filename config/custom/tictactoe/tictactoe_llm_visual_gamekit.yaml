@@ -1,0 +1,60 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: tictactoe_llm_visual_gamekit
+  description: >
+    GameArena Tic-Tac-Toe manual smoke config that binds one LLM player
+    through the visualization-ready GameKit PlayerDriver runtime and keeps the opponent deterministic.
+
+datasets:
+  - dataset_id: tictactoe_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_TicTacToe.jsonl
+      streaming: false
+
+backends:
+  - backend_id: local_qwen35_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: http://127.0.0.1:1234/v1
+      api_key: lmstudio
+      model: qwen/qwen3.5-9b
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 64
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: tictactoe_llm_visual_gamekit_arena
+
+role_adapters:
+  - adapter_id: tictactoe_llm_visual_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: tictactoe
+      env: tictactoe_standard
+      runtime_overrides:
+        coord_scheme: ROW_COL
+      visualizer:
+        enabled: true
+        title: GAGE Tic-Tac-Toe Board
+        launch_browser: true
+        mode: arena_visual
+        linger_after_finish_s: 15.0
+      players:
+        - seat: x
+          player_id: X
+          player_kind: llm
+          backend_id: local_qwen35_litellm_backend
+        - seat: o
+          player_id: O
+          player_kind: dummy
+          actions: ["1,2", "1,3"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from gage_eval.role.arena.games.gomoku.rules import GomokuRuleEngine
+from gage_eval.game_kits.board_game.gomoku.rules import GomokuRuleEngine
 
 
 def _empty_board(size: int) -> list[list[str]]:

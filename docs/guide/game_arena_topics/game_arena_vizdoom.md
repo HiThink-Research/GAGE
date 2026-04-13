@@ -1,253 +1,139 @@
-# Game Arena ViZDoom Guide
+# ViZDoom Game Arena Guide
 
 English | [中文](game_arena_vizdoom_zh.md)
 
-This is the canonical Game Arena guide for ViZDoom in this repository. It consolidates installation, unified startup entrypoints, replay, and parameter locations into one document.
+ViZDoom uses the GameKit realtime duel runtime and the Arena Visual frame scene. It covers discrete action ids, POV frames, telemetry, and desktop-aware human browser control.
 
-## 1. Overview
+## 1. Canonical Files
 
-ViZDoom currently provides two startup styles:
+| Use | File |
+| --- | --- |
+| Dummy headless smoke | `config/custom/vizdoom/vizdoom_dummy_gamekit.yaml` |
+| Human visual | `config/custom/vizdoom/vizdoom_human_visual_gamekit.yaml` |
+| Local test LLM headless | `config/custom/vizdoom/vizdoom_llm_headless_gamekit.yaml` |
+| Local test LLM visual | `config/custom/vizdoom/vizdoom_llm_visual_gamekit.yaml` |
+| OpenAI LLM headless | `config/custom/vizdoom/vizdoom_llm_headless_openai_gamekit.yaml` |
+| OpenAI LLM visual | `config/custom/vizdoom/vizdoom_llm_visual_openai_gamekit.yaml` |
 
-- websocketRGB-based human vs LLM interaction
-- Pygame-based local input or backend-only runs for the other paths
+## 2. Prerequisites
 
-The recommended validation flow is: dummy smoke test first, then the browser-based `human vs LLM` path.
-
-## 2. Canonical Files
-
-| Type | Path | Purpose |
-| --- | --- | --- |
-| websocketRGB helper | `scripts/run/arenas/vizdoom/viewer.sh` | Generic helper that waits for the websocketRGB viewer to become reachable |
-| Human vs LLM websocketRGB config | `config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` | Recommended browser-based human vs LLM example with tick scheduler |
-| Dummy websocketRGB config | `config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml` | Optional dummy-only websocket config for environment checks |
-| Human vs Dummy script | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-dummy` | Local pygame validation run |
-| Human Solo script | `scripts/run/arenas/vizdoom/run.sh --mode human-solo` | Human-only playground |
-| Human vs LLM script | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm` | Local human input against an LLM |
-| Human vs LLM record script | `scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm-record` | Record scheduler variant |
-| LLM vs LLM script | `scripts/run/arenas/vizdoom/run.sh --mode llm-vs-llm` | Two LLM players |
-| AI vs AI script | `scripts/run/arenas/vizdoom/run.sh --mode ai-vs-ai` | Alias path for the AI-vs-AI flow |
-| Agent vs LLM script | `scripts/run/arenas/vizdoom/run.sh --mode agent-vs-llm` | Human/agent incremental variant |
-| Replay script | `scripts/run/arenas/vizdoom/replay.sh` | Replay a finished run by `run_id` |
-| Websocket human config | `config/custom/vizdoom/vizdoom_human_vs_llm_record_ws_rgb.yaml` | Browser-based human input through websocketRGB |
-| Main config directory | `config/custom/vizdoom/*.yaml` | All ViZDoom run configs |
-
-## 3. Prerequisites
-
-Install project dependencies first:
+ViZDoom depends on `vizdoom` and `pygame`, both listed in `requirements.txt`. Visual and human paths need a desktop or compatible render/input environment; headless dummy smoke is the fastest environment check.
 
 ```bash
 pip install -r requirements.txt
+
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+# Optional: defaults to gpt-5.4.
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+# Optional: OpenAI-compatible service override.
+export OPENAI_API_BASE="https://api.openai.com/v1"
 ```
 
-Minimum verification:
+For the official OpenAI API, keep the default endpoint or leave `OPENAI_API_BASE` unset. For an open-source model served through an OpenAI-compatible API, set `OPENAI_API_BASE` and `GAGE_GAME_ARENA_LLM_MODEL`; no YAML backend edit is required.
+
+Normal runs do not require Node/npm. Node/npm is only needed when developing or rebuilding `frontend/arena-visual`; see [Arena Visual Browser Control](game_arena_visual_control.md#2-backend-and-frontend-assets).
+
+## 3. Quick Runs
+
+Run commands from the repository root after activating the project Python environment.
 
 ```bash
-python - <<'PY'
-import vizdoom
-import pygame
-print("vizdoom ok")
-print("pygame ok")
-PY
+bash scripts/run/arenas/vizdoom/run.sh --mode dummy --max-samples 1
 ```
-
-Notes:
-
-- Human modes that use the canonical run scripts require a desktop environment because input is captured by a local `pygame` window.
-- LLM-backed modes require `OPENAI_API_KEY` or `LITELLM_API_KEY`.
-
-## 4. Startup Paths
-
-### 4.1 Recommended smoke test: dummy + websocketRGB
 
 ```bash
-RUN_ID="vizdoom_human_vs_llm_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
-RUN_ID="vizdoom_dummy_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
-bash scripts/run/arenas/vizdoom/viewer.sh
+OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>" bash scripts/run/arenas/vizdoom/run.sh --mode llm_visual_openai --max-samples 1
 ```
-
-Use this first to validate ViZDoom, websocketRGB, and browser viewing before adding model-backed runs.
-
-What the websocketRGB helper does:
-
-1. Picks a Python executable.
-2. Validates the config path.
-3. Chooses a free `WS_RGB_PORT`.
-4. Starts `python run.py --config ...` in the background.
-5. Waits until `http://127.0.0.1:<port>/ws_rgb/viewer` is reachable.
-6. Prints the ready viewer URL and optionally auto-opens the browser.
-
-Useful variables for this example:
-
-- `PYTHON_BIN`: Python executable
-- `CFG`: Defaults to `config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml`
-- `RUN_ID`: Output run id under `runs/`
-- `OUTPUT_DIR`: Defaults to `runs`
-- `WS_RGB_HOST`: Defaults to `127.0.0.1`
-- `WS_RGB_PORT`: Defaults to `5800`
-
-If you want the local-window validation path instead, use:
 
 ```bash
-bash scripts/run/arenas/vizdoom/run.sh --mode human-vs-dummy
+bash scripts/run/arenas/vizdoom/run.sh --mode human_visual --max-samples 1
 ```
 
-Default local-script variables:
+Use `--max-samples 0` with any OpenAI config to validate config loading without executing a sample.
 
-- `PYTHON_BIN`: Python executable
-- `CFG`: Defaults to `config/custom/vizdoom/vizdoom_human_vs_dummy.yaml`
-- `RUN_ID`: Defaults to `vizdoom_human_vs_dummy_<timestamp>`
-- `OUTPUT_DIR`: Defaults to `runs/`
+## 4. Mode and Config Mapping
 
-Local key map printed by the pygame script:
+The `scripts/run/arenas/vizdoom/run.sh` script selects Python from `--python-bin`, then `PYTHON_BIN`, then the active virtualenv/conda env, then `python`/`python3`. It prints the resolved Python, mode, config, output directory, and run id before calling `run.py`.
 
-- `A` or `Left`: action `2`
-- `D` or `Right`: action `3`
-- `Space` or `J`: action `1`
+| Entry | Config | Use |
+| --- | --- | --- |
+| `dummy` | `config/custom/vizdoom/vizdoom_dummy_gamekit.yaml` | Headless dummy smoke. |
+| `llm_headless` | `config/custom/vizdoom/vizdoom_llm_headless_gamekit.yaml` | Local test LLM without browser. |
+| `llm_visual` | `config/custom/vizdoom/vizdoom_llm_visual_gamekit.yaml` | Local test LLM with browser. |
+| `llm_headless_openai` | `config/custom/vizdoom/vizdoom_llm_headless_openai_gamekit.yaml` | OpenAI LLM without browser. |
+| `llm_visual_openai` | `config/custom/vizdoom/vizdoom_llm_visual_openai_gamekit.yaml` | OpenAI LLM with browser. |
+| `human_visual` | `config/custom/vizdoom/vizdoom_human_visual_gamekit.yaml` | Human realtime browser input. |
 
-### 4.2 Recommended model example: human vs LLM with websocketRGB live view
+`--config <path>` always overrides the script mode mapping when a script is available.
 
-```bash
-OPENAI_API_KEY="<YOUR_KEY>" \
-VIZDOOM_P1_SCHEME_ID=S3_text_image_current \
-RUN_ID="vizdoom_human_vs_llm_ws_rgb_$(date +%Y%m%d_%H%M%S)" \
-CFG=config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml \
-bash scripts/run/arenas/vizdoom/viewer.sh
-```
+## 5. Browser Control
 
-This is the recommended documented example when you want a real browser-based `human vs LLM` session.
-
-Useful variables for this example:
-
-- `PYTHON_BIN`: Python executable
-- `CFG`: Use `config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` for the documented human-vs-LLM path
-- `VIZDOOM_P1_SCHEME_ID`: Selects the LLM strategy scheme, such as `S3_text_image_current`
-- `RUN_ID`: Output run id under `runs/`
-- `OUTPUT_DIR`: Defaults to `runs`
-- `WS_RGB_HOST`: Defaults to `127.0.0.1`
-- `WS_RGB_PORT`: Defaults to `5800`
-
-Where to change the model/API for this command:
-
-- API key: export `OPENAI_API_KEY` before launch. The wrapper also accepts `LITELLM_API_KEY` and copies it into `OPENAI_API_KEY`. Keep one of them non-empty even for a local OpenAI-compatible gateway, because the startup scripts check it before starting.
-- Recommended websocketRGB example: edit `config/custom/vizdoom/vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` under `backends[0].config`. Change `api_base` to switch the endpoint, keep `provider: openai` for OpenAI-compatible services, and change `model` or env `VIZDOOM_P1_MODEL` to switch the served model.
-- Other model commands use the same fields in their own YAMLs: `human-vs-llm` uses `config/custom/vizdoom/vizdoom_human_vs_llm.yaml`, `human-vs-llm-record` uses `config/custom/vizdoom/vizdoom_human_vs_llm_record.yaml`, and `llm-vs-llm` uses `config/custom/vizdoom/vizdoom_llm_vs_llm.yaml`.
-
-### 4.3 Human vs LLM
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-bash scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm
-```
-
-The script also accepts `LITELLM_API_KEY`. If only `LITELLM_API_KEY` is set, the script copies it into `OPENAI_API_KEY`.
-
-### 4.4 Record scheduler variant
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-bash scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm-record
-```
-
-### 4.5 LLM vs LLM
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-bash scripts/run/arenas/vizdoom/run.sh --mode llm-vs-llm
-```
-
-### 4.6 Optional websocket human input
-
-Use this when you want browser-based human input instead of the local `pygame` window:
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-PYTHONPATH=src python run.py \
-  --config config/custom/vizdoom/vizdoom_human_vs_llm_record_ws_rgb.yaml \
-  --output-dir runs \
-  --run-id vizdoom_human_vs_llm_record_ws
-```
-
-Default viewer URL for this websocket config:
+Visual configs use `visualizer.mode: arena_visual`. The browser opens a session URL shaped like:
 
 ```text
-http://127.0.0.1:5800/ws_rgb/viewer
+http://127.0.0.1:<visual_port>/sessions/<sample_id>?run_id=<run_id>
 ```
 
-Viewer interaction notes:
+For the shared command deck, transport controls, utility rail, timeline, and replay states, see [Arena Visual Browser Control](game_arena_visual_control.md).
 
-- Entering `in_progress` means the current match is still active and input is still accepted.
-- Entering `game_ended` means the current match has finished and replay is now available. A normal match end or `Terminate Game` both lead here.
-- Entering `process_ended` means shutdown has been confirmed and the viewer will disconnect soon.
-- `Start Replay`, `Step`, and `Replay Seek` are only available in `game_ended`. After review, click `End Process`.
+![ViZDoom Arena Visual stage](../../assets/arena-visual-vizdoom-stage-20260409.png)
 
-## 5. Execution Order
+## 6. Human Input
 
-The current ViZDoom startup sequence is:
+The frame plugin maps W/Up to forward, A/Left and D/Right to turn, and Space/Enter/J to fire when matching legal actions are available. Direct payloads can submit discrete action ids or legal action names through `action`, `move`, `selected_action`, `selected_move`, `value`, or `text`; `action_id`, `action_index`, `move_index`, or `index` can select from the legal action list.
 
-1. Install optional runtime dependencies such as `vizdoom` and `pygame`.
-2. Validate the environment with the dummy websocketRGB path first, then switch to `vizdoom_human_vs_llm_tick_ws_rgb_strategy.yaml` or another `scripts/run/arenas/vizdoom/run.sh --mode ...` path for model-backed runs.
-3. Set API keys when the selected mode includes an LLM backend.
-4. Start the run.
-5. For websocketRGB helper runs, wait for the printed viewer URL; for pygame modes, keep the local input window focused while playing.
-6. For websocketRGB viewer runs, replay directly in the page after the match ends, then confirm `End Process`. For stored artifacts, use `scripts/run/arenas/vizdoom/replay.sh`.
+## 7. Output and Replay Artifacts
 
-## 6. Key Parameters and Where to Change Them
-
-| Item | Where to change | Meaning |
-| --- | --- | --- |
-| API key | Shell env: `OPENAI_API_KEY` or `LITELLM_API_KEY` | Required by LLM-backed scripts |
-| Script config path | Script variable `CFG` | Swap the YAML used by the canonical runner |
-| Backend endpoint | `backends[].config.api_base` in the selected `config/custom/vizdoom/*.yaml` | Switch between hosted and local OpenAI-compatible endpoints |
-| Model name | `backends[].config.model` and env `VIZDOOM_P1_MODEL` in the strategy websocketRGB config | Select the LLM model |
-| Output location | Script variable `OUTPUT_DIR` | Base directory for run artifacts |
-| Scheduler pace | `scheduler.tick_ms` | Tick interval in milliseconds |
-| Record timeout | `scheduler.action_timeout_ms` | Human/LLM wait timeout in record mode |
-| Step budget | `environment.max_steps` | Maximum backend steps |
-| Action repeat | `environment.action_repeat` | Number of backend frames per action |
-| Runtime pacing | `environment.sleep_s` | Extra delay between backend ticks |
-| Local rendering | `environment.render_mode` | Window/display behavior |
-| POV and automap | `environment.show_pov`, `environment.show_automap` | Control visual channels |
-| Replay output dir | `environment.replay_output_dir` | Replay file output location |
-| Replay capture | `environment.replay.*` | Action/frame replay settings |
-| Replay playback FPS | `scripts/run/arenas/vizdoom/replay.sh` env `FPS` | Replay speed in the viewer |
-| Websocket ports | `human_input.host`, `human_input.port`, `human_input.ws_port` | Browser input and viewer ports in websocket configs |
-
-Frame-rate related notes:
-
-- For normal scripted runs, the main pacing knobs are `scheduler.tick_ms`, `environment.action_repeat`, and `environment.sleep_s`.
-- Replay playback speed is controlled separately by `scripts/run/arenas/vizdoom/replay.sh` through `FPS`.
-- If you explicitly enable `environment.config_path: src/gage_eval/role/arena/games/vizdoom/_vizdoom.ini`, engine-side FPS caps are in that INI file via `cl_capfps` and `vid_maxfps`.
-
-## 7. Outputs and Replay
-
-Run artifacts are written under:
+Visual runs write both evaluation output and replayable Arena Visual artifacts:
 
 ```text
 runs/<run_id>/
+  summary.json
+  samples.jsonl
+  replays/<sample_id>/
+    replay.json
+    events.jsonl
+    arena_visual_session/v1/
+      manifest.json
+      timeline.jsonl
+      scenes/
+      media/
 ```
 
-The environment configs also default replay files to:
+`sample.predict_result[0].arena_trace` contains per-step actions, legality, timing, retries, and scheduler metadata. `sample.predict_result[0].game_arena` contains the terminal footer. When visualization is enabled, `artifacts.visual_session_ref` points at the `arena_visual_session/v1/manifest.json` sidecar. Finished runs replay from the same Arena Visual session artifacts.
 
-```text
-runs/vizdoom_replays/
-```
+## 8. Runtime Contracts
 
-Replay command:
+The shared runtime contract is documented in [Arena Visual Browser Control](game_arena_visual_control.md#3-runtime-contracts). For this game, check these fields first:
 
-```bash
-bash scripts/run/arenas/vizdoom/replay.sh <run_id>
-```
+- `ArenaObservation.view` carries POV frame media and compact text telemetry.
+- `metadata` may include health, ammo, frag, position, reward, and step fields.
+- `legal_actions.items` is the discrete action list accepted by the parser.
+- `GameResult` summarizes the duel outcome, move count, illegal count, and final board text.
 
-Useful replay variables:
+The built-in LLM player receives the sample messages plus one user turn derived from the current `ArenaObservation`: active player, view text, legal moves, and the instruction to return exactly one legal move. A returned move is wrapped as `ArenaAction` and applied by the GameKit environment.
 
-- `PYTHON_BIN`: Python executable
-- `HOST`: Bind host, default `127.0.0.1`
-- `PORT`: Replay viewer port, default `5800`
-- `FPS`: Replay playback fps, default `8`
-- `MAX_FRAMES`: Optional replay frame cap
+## 9. Common Parameters
 
-Default replay URL:
+| Adjustment | Where |
+| --- | --- |
+| Backend mode | `runtime_overrides.backend_mode` |
+| Action repeat | `runtime_overrides.action_repeat` |
+| Frame stride | `runtime_overrides.frame_stride` |
+| POV capture | `runtime_overrides.capture_pov` / `show_pov` |
+| Step budget | `runtime_overrides.max_steps` / `stub_max_rounds` |
+| Live scene transport | `visualizer.live_scene_scheme` |
 
-```text
-http://127.0.0.1:5800/ws_rgb/viewer
-```
+## 10. Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| OpenAI config fails before runtime starts | Export `OPENAI_API_KEY` before using any `*_openai_gamekit.yaml` config. |
+| Wrong model is used | Set `GAGE_GAME_ARENA_LLM_MODEL` before launch, or unset it to use the documented default. |
+| Dependency import fails | Run `pip install -r requirements.txt` in the same Python environment used by `run.py` or the arena script. |
+| ROM or desktop/render error appears | This game-specific note is listed below; make sure you are not using a frame-game config when running a board or table game. |
+| Browser stays loading | Check the printed session URL, `visualizer.port`, and `runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/manifest.json`. |
+| Port is already in use | Change `visualizer.port` in the config or pass a different `--run-id`/output directory to avoid stale session confusion. |
+| Human input is ignored | Confirm `human_input.enabled: true`, the browser URL includes the current `run_id`, and the active actor is the human player. |
+| LLM returns an illegal action | Use the legal move list in the browser or trace panel; the built-in LLM driver falls back according to the player fallback policy when configured. |
+| ViZDoom or desktop/render error | Install `vizdoom` and `pygame`; for visual/human runs, use a desktop session or a compatible display/render setup. |

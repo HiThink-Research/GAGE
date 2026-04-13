@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gage_eval.role.arena.games.retro.replay import ReplaySchemaWriter
+from gage_eval.game_kits.real_time_game.retro_platformer.replay import ReplaySchemaWriter
 from gage_eval.role.arena.types import ArenaAction, GameResult
 
 
@@ -95,7 +95,7 @@ def test_replay_writer_finalize_writes_replay_json(tmp_path):
     replay_path = writer.finalize(result)
     assert replay_path is not None
 
-    replay_file = tmp_path / "retro_replay_sample_1.json"
+    replay_file = tmp_path / "sample_1" / "replay.json"
     payload = json.loads(replay_file.read_text(encoding="utf-8"))
     assert payload["meta"]["rom_path"] == "/roms/smb3.nes"
     assert payload["result"]["status"] == "draw"
@@ -173,4 +173,4 @@ def test_replay_writer_resolve_output_path_uses_env_run_id(monkeypatch: pytest.M
     )
 
     resolved = writer._resolve_replay_output_path()  # noqa: SLF001
-    assert resolved == tmp_path / "run_env" / "replays" / "retro_replay_sample_env.json"
+    assert resolved == tmp_path / "run_env" / "replays" / "sample_env" / "replay.json"

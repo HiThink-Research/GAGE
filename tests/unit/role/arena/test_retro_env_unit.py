@@ -2,9 +2,13 @@ import base64
 
 import pytest
 
-from gage_eval.role.arena.games.retro.action_codec import RetroActionCodec
-from gage_eval.role.arena.games.retro.retro_env import StableRetroArenaEnvironment
-from gage_eval.role.arena.games.retro import observation as retro_observation
+from gage_eval.game_kits.real_time_game.retro_platformer.action_codec import (
+    RetroActionCodec,
+)
+from gage_eval.game_kits.real_time_game.retro_platformer.environment import (
+    StableRetroArenaEnvironment,
+)
+from gage_eval.game_kits.real_time_game.retro_platformer import observation as retro_observation
 from gage_eval.role.arena.types import ArenaAction, GameResult
 
 

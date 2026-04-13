@@ -1,0 +1,39 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: space_invaders_gamekit
+  description: >
+    Minimal GameArena PettingZoo template. Supply samples that already
+    contain `game_kit`, `env`, and optional `runtime_overrides`; the arena
+    adapter defaults the dummy players below when the sample omits `players`.
+
+datasets:
+  - dataset_id: space_invaders_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/pettingzoo_atari_demo.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: space_invaders_gamekit_arena
+
+role_adapters:
+  - adapter_id: space_invaders_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: pettingzoo
+      env: space_invaders
+      runtime_overrides:
+        backend_mode: dummy
+      players:
+        - seat: pilot_0
+          player_id: pilot_alpha
+          player_kind: dummy
+          actions: ["FIRE", "RIGHT"]
+        - seat: pilot_1
+          player_id: pilot_beta
+          player_kind: dummy
+          actions: ["LEFT", "NOOP"]

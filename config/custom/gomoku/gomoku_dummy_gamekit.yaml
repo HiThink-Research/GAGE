@@ -1,0 +1,40 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: gomoku_gamekit
+  description: >
+    Minimal GameArena Gomoku template. Supply samples that already contain
+    `game_kit`, `env`, and optional `runtime_overrides`; the arena adapter
+    defaults the dummy players below when the sample omits `players`.
+
+datasets:
+  - dataset_id: gomoku_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Gomoku.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: gomoku_gamekit_arena
+
+role_adapters:
+  - adapter_id: gomoku_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: gomoku
+      env: gomoku_standard
+      runtime_overrides:
+        board_size: 3
+        win_len: 3
+      players:
+        - seat: black
+          player_id: Black
+          player_kind: dummy
+          actions: ["A1", "A2", "A3"]
+        - seat: white
+          player_id: White
+          player_kind: dummy
+          actions: ["B1", "B2"]

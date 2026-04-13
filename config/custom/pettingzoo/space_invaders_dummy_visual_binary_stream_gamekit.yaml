@@ -1,0 +1,48 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: space_invaders_dummy_visual_binary_stream_gamekit
+  description: >
+    GameArena Space Invaders manual smoke config that keeps both seats deterministic
+    while exercising the arena_visual web app over the binary_stream live scene path.
+
+datasets:
+  - dataset_id: space_invaders_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/pettingzoo_atari_demo.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: space_invaders_dummy_visual_binary_stream_gamekit_arena
+
+role_adapters:
+  - adapter_id: space_invaders_dummy_visual_binary_stream_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: pettingzoo
+      env: space_invaders
+      runtime_overrides:
+        backend_mode: real
+        include_raw_obs: true
+        use_action_meanings: true
+      visualizer:
+        enabled: true
+        title: GAGE Space Invaders Arena Visual
+        launch_browser: true
+        mode: arena_visual
+        port: 5805
+        live_scene_scheme: binary_stream
+        linger_after_finish_s: 15.0
+      players:
+        - seat: pilot_0
+          player_id: pilot_0
+          player_kind: dummy
+          actions: ["FIRE", "RIGHT"]
+        - seat: pilot_1
+          player_id: pilot_1
+          player_kind: dummy
+          actions: ["LEFT", "NOOP"]

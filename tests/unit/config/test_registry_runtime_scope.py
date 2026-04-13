@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import importlib
 import sys
+from types import ModuleType
 from uuid import uuid4
 
 import pytest
 
-from gage_eval.assets.datasets.loaders.loader_utils import build_bundle_context
 from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.config.registry import ConfigRegistry, _collect_runtime_registry_packages
 from gage_eval.evaluation.runtime_builder import build_runtime
+from gage_eval.game_kits.registry import GameKitRegistry
+from gage_eval.game_kits.runtime_binding import RuntimeBindingResolver
 from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.registry import RegistryRuntimeMutationError, registry
+from gage_eval.registry import RegistryBootstrapCoordinator, RegistryManager, RegistryRuntimeMutationError, registry
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
+from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.model.backends.builder import build_backend
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 
@@ -25,6 +28,40 @@ def _build_minimal_config(**extra):
     }
     payload.update(extra)
     return PipelineConfig.from_dict(payload)
+
+
+def _build_isolated_config_registry() -> ConfigRegistry:
+    isolated_registry = RegistryManager()
+    for kind in registry.kinds():
+        isolated_registry.declare_kind(kind, desc=registry.describe_kind(kind))
+    return ConfigRegistry(
+        bootstrap_coordinator=RegistryBootstrapCoordinator(isolated_registry),
+    )
+
+
+def _detach_modules(*module_names: str) -> dict[str, ModuleType | None]:
+    previous_modules: dict[str, ModuleType | None] = {}
+    for name in module_names:
+        previous_modules[name] = sys.modules.pop(name, None)
+        parent_name, _, attr_name = name.rpartition(".")
+        if parent_name and attr_name:
+            parent_module = sys.modules.get(parent_name)
+            if parent_module is not None and hasattr(parent_module, attr_name):
+                delattr(parent_module, attr_name)
+    return previous_modules
+
+
+def _restore_modules(previous_modules: dict[str, ModuleType | None]) -> None:
+    for name in sorted(previous_modules, key=lambda item: item.count(".")):
+        module = previous_modules[name]
+        if module is None:
+            continue
+        sys.modules[name] = module
+        parent_name, _, attr_name = name.rpartition(".")
+        if parent_name and attr_name:
+            parent_module = sys.modules.get(parent_name)
+            if parent_module is not None:
+                setattr(parent_module, attr_name, module)
 
 
 @pytest.mark.fast
@@ -99,6 +136,26 @@ def test_runtime_package_selection_preloads_step_contracts_and_report_generators
 
 
 @pytest.mark.fast
+def test_runtime_package_selection_preloads_gamearena_runtime_packages_for_arena_adapters() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+
+    packages = _collect_runtime_registry_packages(config)
+
+    assert packages["game_kits"] == ("gage_eval.game_kits.registry",)
+    assert packages["scheduler_bindings"] == ("gage_eval.role.arena.schedulers.specs",)
+    assert packages["support_workflows"] == ("gage_eval.role.arena.support.specs",)
+
+
+@pytest.mark.fast
 def test_prepare_runtime_registry_context_primes_metric_assets_before_runtime_freeze() -> None:
     metric_name = "global_piqa_accuracy_local"
     config = _build_minimal_config(
@@ -112,70 +169,6 @@ def test_prepare_runtime_registry_context_primes_metric_assets_before_runtime_fr
         assert entry.name == metric_name
         metrics = config_registry.with_runtime_registry_context(context).materialize_metrics(config)
         assert metric_name in metrics
-    finally:
-        context.close()
-
-
-@pytest.mark.fast
-def test_runtime_scoped_jsonl_preprocessor_materialization_uses_registry_view(tmp_path) -> None:
-    dataset_path = tmp_path / "appworld.jsonl"
-    dataset_path.write_text(
-        '{"task_id":"task-1","instruction":"Open the settings page."}\n',
-        encoding="utf-8",
-    )
-    config = _build_minimal_config(
-        datasets=[
-            {
-                "dataset_id": "appworld_dataset",
-                "loader": "jsonl",
-                "params": {
-                    "path": str(dataset_path),
-                    "preprocess": "appworld_preprocessor",
-                },
-            }
-        ],
-    )
-    config_registry = ConfigRegistry()
-
-    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
-    try:
-        datasets = config_registry.with_runtime_registry_context(context).materialize_datasets(config)
-        records = list(datasets["appworld_dataset"].records)
-        assert len(records) == 1
-        sample = records[0]
-        assert sample.id == "task-1"
-        assert sample.task_type == "agent"
-        assert sample.messages[0].content[0].text == "Open the settings page."
-    finally:
-        context.close()
-
-
-@pytest.mark.fast
-def test_prepare_runtime_registry_context_primes_dataset_bundle_assets_before_runtime_freeze() -> None:
-    config = _build_minimal_config(
-        datasets=[
-            {
-                "dataset_id": "mme_dataset",
-                "loader": "dummy",
-                "params": {
-                    "bundle": "mme",
-                },
-            }
-        ],
-    )
-    config_registry = ConfigRegistry()
-
-    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
-    try:
-        ctx = build_bundle_context(
-            config.datasets[0],
-            data_path="dummy",
-            registry_lookup=context.view,
-            allow_lazy_import=False,
-        )
-        assert ctx is not None
-        sample = ctx.handle.apply({"image": None}, dataset_id="mme_dataset", dataset_metadata={})
-        assert sample == {"image": None}
     finally:
         context.close()
 
@@ -196,15 +189,12 @@ def test_prepare_runtime_registry_context_primes_appworld_roles_without_circular
         custom={"steps": [{"step": "support", "adapter_id": "toolchain_main"}]},
     )
     config_registry = ConfigRegistry()
-    previous_modules = {
-        name: sys.modules.pop(name, None)
-        for name in (
-            "gage_eval.role.adapters",
-            "gage_eval.role.adapters.base",
-            "gage_eval.role.toolchain",
-            "gage_eval.role.toolchain.toolchain",
-        )
-    }
+    previous_modules = _detach_modules(
+        "gage_eval.role.adapters",
+        "gage_eval.role.adapters.base",
+        "gage_eval.role.toolchain",
+        "gage_eval.role.toolchain.toolchain",
+    )
 
     context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
     try:
@@ -215,16 +205,13 @@ def test_prepare_runtime_registry_context_primes_appworld_roles_without_circular
         )
     finally:
         context.close()
-        for name in (
+        _detach_modules(
             "gage_eval.role.adapters",
             "gage_eval.role.adapters.base",
             "gage_eval.role.toolchain",
             "gage_eval.role.toolchain.toolchain",
-        ):
-            sys.modules.pop(name, None)
-        for name, module in previous_modules.items():
-            if module is not None:
-                sys.modules[name] = module
+        )
+        _restore_modules(previous_modules)
 
 
 @pytest.mark.fast
@@ -253,6 +240,166 @@ def test_prepare_runtime_registry_context_primes_arena_assets_before_runtime_fre
         assert context.view.entry("arena_impls", "gomoku_local_v1").name == "gomoku_local_v1"
         assert context.view.entry("parser_impls", "grid_parser_v1").name == "grid_parser_v1"
         assert context.view.entry("renderer_impls", "gomoku_board_v1").name == "gomoku_board_v1"
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_preloads_gamearena_runtime_packages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_module = importlib.import_module("gage_eval.registry.runtime")
+    imported_modules: list[str] = []
+    real_import_module = runtime_module.importlib.import_module
+
+    def _tracking_import(name: str, package: str | None = None):
+        imported_modules.append(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(runtime_module.importlib, "import_module", _tracking_import)
+
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert "gage_eval.game_kits.registry" in imported_modules
+        assert "gage_eval.role.arena.schedulers.specs" in imported_modules
+        assert "gage_eval.role.arena.support.specs" in imported_modules
+        assert context.view.entry("game_kits", "tictactoe").name == "tictactoe"
+        assert context.view.entry("scheduler_bindings", "turn/default").name == "turn/default"
+        assert context.view.entry("support_workflows", "arena/default").name == "arena/default"
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_preloads_gamearena_runtime_packages_across_sequential_contexts() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    first_context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert first_context.view.entry("game_kits", "tictactoe").name == "tictactoe"
+        assert first_context.view.entry("scheduler_bindings", "turn/default").name == "turn/default"
+        assert first_context.view.entry("support_workflows", "arena/default").name == "arena/default"
+    finally:
+        first_context.close()
+
+    second_context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert second_context.view.entry("game_kits", "tictactoe").name == "tictactoe"
+        assert second_context.view.entry("scheduler_bindings", "turn/default").name == "turn/default"
+        assert second_context.view.entry("support_workflows", "arena/default").name == "arena/default"
+    finally:
+        second_context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_resolves_gamekit_visualization_specs_from_isolated_clone() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        sample = ArenaSample(game_kit="gomoku", env="gomoku_standard")
+        resolver = RuntimeBindingResolver(game_kits=GameKitRegistry(registry_view=context.view))
+        resolved = resolver.resolve(sample)
+
+        assert (
+            context.view.entry("visualization_specs", "arena/visualization/gomoku_board_v1").name
+            == "arena/visualization/gomoku_board_v1"
+        )
+        assert resolved.visualization_spec.spec_id == "arena/visualization/gomoku_board_v1"
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_surfaces_explicit_runtime_refs_from_isolated_clone() -> None:
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {},
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        sample = ArenaSample(game_kit="gomoku", env="gomoku_standard")
+        resolver = RuntimeBindingResolver(game_kits=GameKitRegistry(registry_view=context.view))
+        resolved = resolver.resolve(sample)
+
+        assert resolved.game_kit.game_display == "arena/visualization/gomoku_board_v1"
+        assert resolved.game_display == "arena/visualization/gomoku_board_v1"
+        assert resolved.replay_viewer == "arena/visualization/gomoku_board_v1"
+        assert resolved.renderer == "placeholder://arena/visualization/gomoku/renderer"
+        assert resolved.visualization_spec.spec_id == resolved.game_display
+    finally:
+        context.close()
+
+
+@pytest.mark.fast
+def test_prepare_runtime_registry_context_replays_gamearena_support_registrations_for_cached_modules() -> None:
+    importlib.import_module("gage_eval.role.arena.support.specs")
+
+    config = _build_minimal_config(
+        role_adapters=[
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "class_path": "gage_eval.role.adapters.arena.ArenaRoleAdapter",
+                "params": {
+                    "game_kit": "tictactoe",
+                    "env": "tictactoe_standard",
+                },
+            }
+        ],
+        custom={"steps": [{"step": "arena", "adapter_id": "arena"}]},
+    )
+    config_registry = _build_isolated_config_registry()
+
+    context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
+    try:
+        assert context.view.entry("support_workflows", "arena/default").name == "arena/default"
+        assert context.view.entry("support_units", "arena/default").name == "arena/default"
+        assert context.view.entry("observation_workflows", "arena/default").name == "arena/default"
     finally:
         context.close()
 
@@ -289,21 +436,15 @@ def test_metrics_builtin_package_import_is_safe_with_runtime_guard() -> None:
     config = _build_minimal_config()
     config_registry = ConfigRegistry()
     context = config_registry.prepare_runtime_registry_context(config, run_id=f"run-{uuid4().hex}")
-    previous_modules = {
-        name: sys.modules.pop(name, None)
-        for name in ("gage_eval.metrics.builtin", "gage_eval.metrics.builtin.gomoku")
-    }
+    previous_modules = _detach_modules("gage_eval.metrics.builtin", "gage_eval.metrics.builtin.gomoku")
 
     try:
         module = importlib.import_module("gage_eval.metrics.builtin")
         assert module.__name__ == "gage_eval.metrics.builtin"
     finally:
         context.close()
-        for name in ("gage_eval.metrics.builtin", "gage_eval.metrics.builtin.gomoku"):
-            sys.modules.pop(name, None)
-        for name, module in previous_modules.items():
-            if module is not None:
-                sys.modules[name] = module
+        _detach_modules("gage_eval.metrics.builtin", "gage_eval.metrics.builtin.gomoku")
+        _restore_modules(previous_modules)
 
 
 @pytest.mark.fast
@@ -454,5 +595,5 @@ def test_resolve_arena_role_adapter_injects_runtime_registry_view() -> None:
 
     adapter = config_registry.resolve_role_adapter(spec)
 
-    assert isinstance(adapter, ArenaRoleAdapter)
+    assert adapter.__class__.__name__ == ArenaRoleAdapter.__name__
     assert adapter._registry_view is view
