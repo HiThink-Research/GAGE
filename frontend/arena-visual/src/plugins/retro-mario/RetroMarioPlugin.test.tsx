@@ -523,7 +523,7 @@ describe("RetroMarioPlugin", () => {
         move: "right",
         hold_ticks: 3,
         metadata: expect.objectContaining({
-          input_seq: 1,
+          input_seq: 2,
           realtime_input: true
         })
       })
@@ -580,18 +580,18 @@ describe("RetroMarioPlugin", () => {
     await waitFor(() =>
       expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
     );
-    expect(submitInput).toHaveBeenCalledTimes(1);
+    expect(submitInput).toHaveBeenCalledTimes(2);
 
     fireEvent.keyDown(window, { key: " " });
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "player_0",
-        actionPayload: expect.objectContaining({
-          id: "right_jump",
-          move: "right_jump",
-          hold_ticks: 3,
-          metadata: expect.objectContaining({
-            input_seq: 2,
-            realtime_input: true
+      actionPayload: expect.objectContaining({
+        id: "right_jump",
+        move: "right_jump",
+        hold_ticks: 3,
+        metadata: expect.objectContaining({
+          input_seq: 3,
+          realtime_input: true
         })
       })
     });
@@ -604,7 +604,7 @@ describe("RetroMarioPlugin", () => {
           id: "right",
           move: "right",
           metadata: expect.objectContaining({
-            input_seq: 3,
+            input_seq: 4,
             realtime_input: true
           })
         })
@@ -619,7 +619,7 @@ describe("RetroMarioPlugin", () => {
           id: "noop",
           move: "noop",
           metadata: expect.objectContaining({
-            input_seq: 4,
+            input_seq: 5,
             realtime_input: true
           })
         })
@@ -678,15 +678,15 @@ describe("RetroMarioPlugin", () => {
     );
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    expect(submitInput).toHaveBeenCalledTimes(1);
-    expect(submitInput).toHaveBeenNthCalledWith(1, {
+    expect(submitInput).toHaveBeenCalledTimes(2);
+    expect(submitInput).toHaveBeenNthCalledWith(2, {
       playerId: "player_0",
       actionPayload: expect.objectContaining({
         id: "right",
         move: "right",
         hold_ticks: 3,
         metadata: expect.objectContaining({
-          input_seq: 1,
+          input_seq: 2,
           realtime_input: true
         })
       })
@@ -694,13 +694,95 @@ describe("RetroMarioPlugin", () => {
 
     fireEvent.keyDown(window, { key: " " });
 
-    expect(submitInput).toHaveBeenCalledTimes(2);
-    expect(submitInput).toHaveBeenNthCalledWith(2, {
+    expect(submitInput).toHaveBeenCalledTimes(3);
+    expect(submitInput).toHaveBeenNthCalledWith(3, {
       playerId: "player_0",
       actionPayload: expect.objectContaining({
         id: "right_jump",
         move: "right_jump",
         hold_ticks: 3,
+        metadata: expect.objectContaining({
+          input_seq: 3,
+          realtime_input: true
+        })
+      })
+    });
+  });
+
+  it("submits an initial noop and keeps empty keyboard heartbeat alive", async () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <RetroMarioPlugin
+        session={{
+          sessionId: "retro-sample",
+          gameId: "retro_platformer",
+          pluginId: "arena.visualization.retro_platformer.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 4023,
+            cursorEventSeq: 23,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={retroScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(submitInput).toHaveBeenCalledTimes(1));
+    expect(submitInput).toHaveBeenNthCalledWith(1, {
+      playerId: "player_0",
+      actionPayload: expect.objectContaining({
+        id: "noop",
+        move: "noop",
+        metadata: expect.objectContaining({
+          input_seq: 1,
+          realtime_input: true
+        })
+      })
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 90));
+    });
+
+    expect(submitInput).toHaveBeenCalledTimes(2);
+    expect(submitInput).toHaveBeenNthCalledWith(2, {
+      playerId: "player_0",
+      actionPayload: expect.objectContaining({
+        id: "noop",
+        move: "noop",
+        hold_ticks: 5,
         metadata: expect.objectContaining({
           input_seq: 2,
           realtime_input: true
@@ -762,14 +844,14 @@ describe("RetroMarioPlugin", () => {
     );
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    expect(submitInput).toHaveBeenNthCalledWith(1, {
+    expect(submitInput).toHaveBeenNthCalledWith(2, {
       playerId: "player_0",
       actionPayload: expect.objectContaining({
         id: "right",
         move: "right",
         hold_ticks: 3,
         metadata: expect.objectContaining({
-          input_seq: 1,
+          input_seq: 2,
           realtime_input: true
         })
       })
@@ -780,14 +862,14 @@ describe("RetroMarioPlugin", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 90));
     });
 
-    expect(submitInput).toHaveBeenNthCalledWith(2, {
+    expect(submitInput).toHaveBeenNthCalledWith(3, {
       playerId: "player_0",
       actionPayload: expect.objectContaining({
         id: "right",
         move: "right",
         hold_ticks: 5,
         metadata: expect.objectContaining({
-          input_seq: 2,
+          input_seq: 3,
           realtime_input: true
         })
       })
@@ -803,7 +885,7 @@ describe("RetroMarioPlugin", () => {
         move: "noop",
         hold_ticks: 11,
         metadata: expect.objectContaining({
-          input_seq: 3,
+          input_seq: 4,
           realtime_input: true
         })
       })
@@ -885,7 +967,7 @@ describe("RetroMarioPlugin", () => {
         move: "left",
         hold_ticks: 3,
         metadata: expect.objectContaining({
-          input_seq: 3,
+          input_seq: 4,
           realtime_input: true
         })
       })
@@ -949,12 +1031,12 @@ describe("RetroMarioPlugin", () => {
 
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "player_0",
-        actionPayload: expect.objectContaining({
-          id: "noop",
-          move: "noop",
-          metadata: expect.objectContaining({
-            input_seq: 2,
-            realtime_input: true
+      actionPayload: expect.objectContaining({
+        id: "noop",
+        move: "noop",
+        metadata: expect.objectContaining({
+          input_seq: 3,
+          realtime_input: true
         })
       })
     });

@@ -430,7 +430,7 @@ class ArenaVisualSessionRecorder:
             return ArenaVisualLiveState(
                 visual_session=self._build_visual_session_locked(include_snapshot_anchors=True),
                 timeline_events=tuple(self._events),
-                snapshot_payloads=tuple(copy.deepcopy(self._snapshot_payloads)),
+                snapshot_payloads=tuple(self._snapshot_payloads),
                 marker_index={key: tuple(value) for key, value in self._marker_index.items()},
             )
 

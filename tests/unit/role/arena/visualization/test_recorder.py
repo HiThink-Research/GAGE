@@ -70,6 +70,7 @@ def test_visual_session_recorder_persists_timeline_manifest_snapshot_and_markers
             replay_path=str(replay_path),
         ),
     )
+    recorder.update_runtime_metrics(tick_overshoot_ms=1.25, artifact_queue_depth=0)
 
     assert recorder.build_visual_session().lifecycle == "live_ended"
 
@@ -88,6 +89,8 @@ def test_visual_session_recorder_persists_timeline_manifest_snapshot_and_markers
     assert manifest["visualSession"]["gameId"] == "gomoku"
     assert manifest["visualSession"]["scheduling"]["family"] == "turn"
     assert manifest["visualSession"]["timeline"]["eventCount"] == 6
+    assert manifest["visualSession"]["runtimeMetrics"]["tick_overshoot_ms"] == 1.25
+    assert manifest["visualSession"]["summary"]["realtimeMetrics"]["tick_overshoot_ms"] == 1.25
 
     timeline_lines = artifacts.timeline_path.read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["type"] for line in timeline_lines] == [
@@ -185,6 +188,25 @@ def test_visual_session_recorder_drains_enqueued_snapshots_outside_tick_path() -
     live_state = recorder.export_live_state()
     assert [event.type for event in live_state.timeline_events] == ["snapshot"]
     assert live_state.snapshot_payloads[0]["snapshot"]["board_text"] == "queued-frame"
+
+
+def test_visual_session_recorder_export_live_state_returns_snapshot_references() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-state-refs",
+    )
+    recorder.record_snapshot(
+        ts_ms=1001,
+        step=1,
+        tick=1,
+        snapshot={"board_text": "live-frame", "nested": {"value": 1}},
+    )
+
+    live_state = recorder.export_live_state()
+
+    assert live_state.snapshot_payloads[0] is recorder._snapshot_payloads[0]  # noqa: SLF001
 
 
 def test_visual_session_recorder_can_drain_snapshots_in_background() -> None:

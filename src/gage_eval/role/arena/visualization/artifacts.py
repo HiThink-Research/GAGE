@@ -516,6 +516,13 @@ def build_visual_session_manifest(
         "indexRef": layout.relative_ref(layout.index_path),
         "manifestRef": layout.relative_ref(layout.manifest_path),
     }
+    session_summary = _visual_session_summary(
+        result=result,
+        event_count=len(timeline_events),
+        snapshot_count=len(snapshot_anchors),
+    )
+    if visual_session.runtime_metrics:
+        session_summary["realtimeMetrics"] = to_json_safe(visual_session.runtime_metrics)
     session_payload = VisualSession(
         session_id=visual_session.session_id,
         game_id=visual_session.game_id,
@@ -525,11 +532,8 @@ def build_visual_session_manifest(
         observer=visual_session.observer,
         scheduling=visual_session.scheduling,
         capabilities=visual_session.capabilities,
-        summary=_visual_session_summary(
-            result=result,
-            event_count=len(timeline_events),
-            snapshot_count=len(snapshot_anchors),
-        ),
+        summary=session_summary,
+        runtime_metrics=dict(visual_session.runtime_metrics),
         timeline=timeline_manifest,
     )
     manifest_payload = {

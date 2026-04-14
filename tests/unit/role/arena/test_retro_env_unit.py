@@ -315,6 +315,30 @@ def test_retro_env_apply_uses_action_schema_default_when_hold_ticks_omitted():
     assert env._move_log[0]["hold_ticks"] == 4  # noqa: SLF001
 
 
+def test_retro_env_tick_idle_advances_emulator_without_recording_decision():
+    frame = object()
+    retro_env = FakeRetroEnv(
+        reset_result=(frame, {}),
+        step_results=[
+            (frame, 0.1, False, False, {"tick": 1}),
+            (frame, 0.2, False, False, {"tick": 2}),
+            (frame, 0.3, False, False, {"tick": 3}),
+        ],
+    )
+    codec = RetroActionCodec(buttons=["LEFT", "RIGHT"])
+    env = _make_env_with_stubbed_runtime(retro_env=retro_env, codec=codec)
+    env.reset()
+
+    result = env.tick_idle(frames=3)
+
+    assert result is None
+    assert retro_env.step_payloads == [[0, 0], [0, 0], [0, 0]]
+    assert env._tick == 3  # noqa: SLF001
+    assert env._decision_count == 0  # noqa: SLF001
+    assert env._move_log == []  # noqa: SLF001
+    assert env._last_move is None  # noqa: SLF001
+
+
 def test_retro_env_apply_attaches_replay_path_when_writer_returns_one():
     class StubWriter:
         def __init__(self):
@@ -352,6 +376,30 @@ def test_retro_env_controls_payload_skips_unknown_moves():
     controls = env._build_controls_payload(["left", "unknown"])  # noqa: SLF001
     assert controls["move_aliases"]["left"]["keys_combo"] == "a"
     assert "unknown" not in controls["move_aliases"]
+
+
+def test_retro_env_controls_payload_is_memoized_for_static_legal_moves():
+    class CountingCodec:
+        def __init__(self) -> None:
+            self._codec = RetroActionCodec(buttons=["LEFT", "RIGHT"])
+            self.encode_calls = 0
+
+        def buttons(self):
+            return self._codec.buttons()
+
+        def encode(self, move):
+            self.encode_calls += 1
+            return self._codec.encode(move)
+
+    env = StableRetroArenaEnvironment(game="SuperMarioBros3-Nes-v0", display_mode="headless")
+    codec = CountingCodec()
+    env._action_codec = codec  # type: ignore[attr-defined]
+
+    first = env._build_controls_payload(["left", "right"])  # noqa: SLF001
+    second = env._build_controls_payload(["left", "right"])  # noqa: SLF001
+
+    assert first == second
+    assert codec.encode_calls == 2
 
 
 def test_retro_env_builders_enable_info_delta_and_action_schema_overrides():
