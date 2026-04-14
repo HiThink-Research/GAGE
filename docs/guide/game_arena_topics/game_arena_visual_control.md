@@ -153,7 +153,29 @@ The timeline drawer shows recent events such as `action_intent`, `action_committ
 
 Use it to check whether the browser action was accepted, whether the scene cursor moved, and whether the run reached a terminal result. For finished runs, replay works from the same `arena_visual_session/v1` artifacts.
 
-## 10. Common Troubleshooting
+## 10. Replay Snapshot Sampling
+
+Frame-driven GameKits can configure live frame transport separately from replay snapshot persistence. The live channel still pushes frames to the browser according to `frame_output_hz`; snapshot persistence only affects `arena_visual_session/v1/snapshots` and replay seek anchors.
+
+```yaml
+runtime_binding_policy_config:
+  artifact_sampling_mode: async_decimated_live
+  snapshot_persist_stride: 3
+```
+
+Supported modes:
+
+| Mode | Behavior | Use |
+| --- | --- | --- |
+| `sync_every_tick` | Records every tick through the recorder synchronously. | Low-frequency board games or write-order debugging. |
+| `async_every_tick` | Queues every tick and lets the background drain write snapshots. | Full tick replay without blocking the main loop. |
+| `async_decimated_live` | Keeps live output realtime while persisting replay snapshots every N ticks. | Retro Mario, low-latency frame games, and long human-play sessions. |
+
+`snapshot_persist_stride` controls N and defaults to `3`; `artifact_sampling_stride` is accepted as a compatibility alias. The async queue keeps up to 128 pending snapshots by default. When full, it drops the oldest pending snapshot and keeps newer frames. Session finish, error cleanup, and replay persistence flush the remaining queue.
+
+`snapshot_persist_stride` does not reduce browser live frame rate. If the live page is choppy, check `frame_output_hz`, media transport, and browser decoding first. If disk writes or replay artifacts are too large, increase `snapshot_persist_stride`.
+
+## 11. Common Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
@@ -166,7 +188,7 @@ Use it to check whether the browser action was accepted, whether the scene curso
 | Frontend dev server cannot reach a session | Check `VITE_ARENA_GATEWAY_BASE_URL` and the Python gateway port printed by the run. |
 | Replay artifact is missing | Confirm the run reached a sample and did not stop before the visual recorder wrote `arena_visual_session/v1`. |
 
-## 11. Related Docs
+## 12. Related Docs
 
 - [Game Arena Overview](../game_arena.md)
 - [Gomoku Guide](game_arena_gomoku.md)

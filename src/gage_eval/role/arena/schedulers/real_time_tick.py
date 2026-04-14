@@ -39,7 +39,8 @@ def _run_scheduler_owned_realtime_loop(session, *, tick_ms: int) -> None:
     tick_interval_s = float(tick_ms) / 1000.0
     while not session.should_stop():
         tick_started = _monotonic_seconds()
-        observation = session.observe()
+        observe_tick = getattr(session, "observe_scheduler_owned_realtime_tick", None)
+        observation = observe_tick() if callable(observe_tick) else session.observe()
         decisions = _drain_scheduler_owned_decisions(session, observation)
         if decisions:
             for decision in decisions:
@@ -49,6 +50,7 @@ def _run_scheduler_owned_realtime_loop(session, *, tick_ms: int) -> None:
                     break
             session.advance(decision_taken=False, tick_delta=1)
         else:
+            _drive_realtime_idle_tick(session)
             session.advance(decision_taken=False)
         capture_output_tick = getattr(session, "capture_output_tick", None)
         if callable(capture_output_tick):
@@ -76,6 +78,12 @@ def _drain_scheduler_owned_decisions(session, observation) -> list[object]:
     if callable(max_actions_resolver):
         max_actions_per_tick = max(1, int(max_actions_resolver()))
     return list(drain_actions(observation, max_items=max_actions_per_tick))[:max_actions_per_tick]
+
+
+def _drive_realtime_idle_tick(session) -> None:
+    tick_idle = getattr(session, "tick_realtime_idle", None)
+    if callable(tick_idle):
+        tick_idle(frames=1)
 
 
 def _resolve_scheduler_owned_tick_interval_ms(session) -> int | None:

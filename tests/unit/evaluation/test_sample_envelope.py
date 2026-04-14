@@ -268,6 +268,51 @@ def test_append_arena_contract_normalizes_paths_and_prunes_duplicates() -> None:
     assert sample["predict_result"][2]["index"] == 2
 
 
+def test_append_arena_contract_counts_duplicate_step_trace_entries() -> None:
+    sample = {"predict_result": []}
+    output = {
+        "result": {
+            "winner": "doom_alpha",
+            "reason": "p0_win",
+            "move_count": 3,
+        },
+        "arena_trace": [
+            {"step_index": 0, "player_id": "doom_alpha"},
+            {"step_index": 0, "player_id": "doom_beta"},
+            {"step_index": 1, "player_id": "doom_alpha"},
+            {"step_index": 1, "player_id": "doom_beta"},
+            {"step_index": 2, "player_id": "doom_alpha"},
+            {"step_index": 2, "player_id": "doom_beta"},
+        ],
+    }
+
+    envelope.append_arena_contract(sample, output, end_time_ms=5000)
+
+    entry = sample["predict_result"][0]
+    assert entry["game_arena"]["total_steps"] == len(entry["arena_trace"])
+
+
+def test_append_arena_contract_counts_sequential_trace_when_move_count_is_short() -> None:
+    sample = {"predict_result": []}
+    output = {
+        "result": {
+            "winner": None,
+            "reason": "user_finish",
+            "move_count": 2,
+        },
+        "arena_trace": [
+            {"step_index": 0, "player_id": "player_0"},
+            {"step_index": 1, "player_id": "player_0"},
+            {"step_index": 2, "player_id": "player_0"},
+        ],
+    }
+
+    envelope.append_arena_contract(sample, output, end_time_ms=5000)
+
+    entry = sample["predict_result"][0]
+    assert entry["game_arena"]["total_steps"] == len(entry["arena_trace"])
+
+
 def test_append_arena_contract_handles_missing_entry_and_footer_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(envelope.time, "time", lambda: 3.0)
 

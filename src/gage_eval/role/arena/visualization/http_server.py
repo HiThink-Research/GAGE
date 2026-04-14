@@ -198,6 +198,7 @@ def build_session_manifest_resolver(base_dir: str | Path) -> ManifestResolver:
 
 class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
     server_version = "GAGEArenaVisualServer/1.0"
+    protocol_version = "HTTP/1.1"
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)

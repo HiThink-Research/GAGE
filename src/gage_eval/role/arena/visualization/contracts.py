@@ -448,13 +448,14 @@ class VisualSession:
     scheduling: SchedulingState = field(default_factory=SchedulingState)
     capabilities: dict[str, Any] = field(default_factory=dict)
     summary: dict[str, Any] = field(default_factory=dict)
+    runtime_metrics: dict[str, Any] = field(default_factory=dict)
     timeline: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _validate_choice(self.lifecycle, _VISUAL_SESSION_LIFECYCLES, "lifecycle")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "sessionId": self.session_id,
             "gameId": self.game_id,
             "pluginId": self.plugin_id,
@@ -466,6 +467,9 @@ class VisualSession:
             "summary": _jsonify(self.summary),
             "timeline": _jsonify(self.timeline),
         }
+        if self.runtime_metrics:
+            payload["runtimeMetrics"] = _jsonify(self.runtime_metrics)
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "VisualSession":
@@ -473,6 +477,10 @@ class VisualSession:
         playback_payload = payload.get("playback", {})
         observer_payload = payload.get("observer", {})
         scheduling_payload = payload.get("scheduling", {})
+        summary_payload = _as_dict(payload.get("summary"))
+        runtime_metrics_payload = payload.get("runtimeMetrics")
+        if runtime_metrics_payload is None:
+            runtime_metrics_payload = summary_payload.get("realtimeMetrics")
         timeline_payload = _as_dict(payload.get("timeline"))
         return cls(
             session_id=_require_string(payload, "sessionId"),
@@ -483,7 +491,8 @@ class VisualSession:
             observer=ObserverRef.from_dict(observer_payload),
             scheduling=SchedulingState.from_dict(scheduling_payload),
             capabilities=_as_dict(payload.get("capabilities")),
-            summary=_as_dict(payload.get("summary")),
+            summary=summary_payload,
+            runtime_metrics=_as_dict(runtime_metrics_payload),
             timeline=_as_dict(timeline_payload),
         )
 

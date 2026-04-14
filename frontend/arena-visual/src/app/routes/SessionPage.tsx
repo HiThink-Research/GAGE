@@ -1101,17 +1101,19 @@ function SessionStage({
     !useRealtimeInputSocketPath &&
     session?.capabilities.supportsLowLatencyRealtimeInput === true &&
     plugin?.inputInterpreter !== undefined;
+  const realtimeInputSessionId = sessionRequest?.sessionId;
+  const realtimeInputRunId = sessionRequest?.runId;
 
   useEffect(() => {
     realtimeInputSocketRef.current?.close();
     realtimeInputSocketRef.current = null;
-    if (!useRealtimeInputSocketPath || !sessionRequest) {
+    if (!useRealtimeInputSocketPath || !realtimeInputSessionId) {
       return;
     }
     const socket = createRealtimeInputSocket({
       url: client.buildRealtimeActionSocketUrl({
-        sessionId: sessionRequest.sessionId,
-        runId: sessionRequest.runId,
+        sessionId: realtimeInputSessionId,
+        runId: realtimeInputRunId,
       }),
     });
     realtimeInputSocketRef.current = socket;
@@ -1121,7 +1123,7 @@ function SessionStage({
         realtimeInputSocketRef.current = null;
       }
     };
-  }, [client, sessionRequest, useRealtimeInputSocketPath]);
+  }, [client, realtimeInputRunId, realtimeInputSessionId, useRealtimeInputSocketPath]);
 
   const handleToggleFullscreen = async () => {
     const stageElement = stageRef.current;
@@ -1167,9 +1169,7 @@ function SessionStage({
         const realtimeSocket = realtimeInputSocketRef.current;
         if (realtimeSocket) {
           await realtimeSocket.submit(payload);
-          return;
         }
-        await store.submitActionLowLatency(payload);
       }
     : useLowLatencyRealtimeInputPath
     ? async (event: unknown): Promise<void> => {

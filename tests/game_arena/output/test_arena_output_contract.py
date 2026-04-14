@@ -6,10 +6,57 @@ from types import SimpleNamespace
 from gage_eval.evaluation.sample_envelope import append_arena_contract, ensure_arena_header
 from gage_eval.role.arena.core.game_session import GameSession
 from gage_eval.role.arena.core.types import ArenaSample
-from gage_eval.role.arena.output.writer import ArenaOutputWriter
+from gage_eval.role.arena.output.writer import ArenaOutputWriter, _build_footer_contract
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.arena.types import GameResult
+
+
+def test_arena_output_footer_counts_duplicate_step_trace_entries() -> None:
+    result = GameResult(
+        winner="doom_alpha",
+        result="win",
+        reason="p0_win",
+        move_count=3,
+        illegal_move_count=0,
+        final_board="",
+        move_log=[],
+    )
+    trace = [
+        {"step_index": 0, "player_id": "doom_alpha"},
+        {"step_index": 0, "player_id": "doom_beta"},
+        {"step_index": 1, "player_id": "doom_alpha"},
+        {"step_index": 1, "player_id": "doom_beta"},
+        {"step_index": 2, "player_id": "doom_alpha"},
+        {"step_index": 2, "player_id": "doom_beta"},
+    ]
+
+    footer = _build_footer_contract(result, trace)
+
+    assert footer is not None
+    assert footer["total_steps"] == len(trace)
+
+
+def test_arena_output_footer_uses_trace_length_when_move_count_is_short() -> None:
+    result = GameResult(
+        winner=None,
+        result="terminated",
+        reason="user_finish",
+        move_count=2,
+        illegal_move_count=0,
+        final_board="",
+        move_log=[],
+    )
+    trace = [
+        {"step_index": 0, "player_id": "player_0"},
+        {"step_index": 1, "player_id": "player_0"},
+        {"step_index": 2, "player_id": "player_0"},
+    ]
+
+    footer = _build_footer_contract(result, trace)
+
+    assert footer is not None
+    assert footer["total_steps"] == len(trace)
 
 
 def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample(

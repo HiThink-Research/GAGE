@@ -184,12 +184,14 @@ def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
         "expected_tick_ms",
         "expected_pure_human",
         "expected_low_latency",
+        "expected_websocket",
     ),
     [
         (
-            "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
-            "continuous_state",
-            16,
+            "config/custom/pettingzoo/space_invaders_human_visual_gamekit.yaml",
+            "queued_command",
+            33,
+            True,
             True,
             True,
         ),
@@ -199,11 +201,13 @@ def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
             16,
             False,
             False,
+            False,
         ),
         (
             "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
             "continuous_state",
             16,
+            True,
             True,
             True,
         ),
@@ -215,6 +219,7 @@ def test_runtime_binding_resolver_builds_realtime_runtime_profile_from_config(
     expected_tick_ms: int,
     expected_pure_human: bool,
     expected_low_latency: bool,
+    expected_websocket: bool,
 ) -> None:
     runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
     registry_module = importlib.import_module("gage_eval.game_kits.registry")
@@ -239,7 +244,7 @@ def test_runtime_binding_resolver_builds_realtime_runtime_profile_from_config(
     assert resolved.runtime_profile.tick_interval_ms == expected_tick_ms
     assert resolved.runtime_profile.pure_human_realtime is expected_pure_human
     assert resolved.runtime_profile.supports_low_latency_realtime_input is expected_low_latency
-    assert resolved.runtime_profile.supports_realtime_input_websocket is expected_low_latency
+    assert resolved.runtime_profile.supports_realtime_input_websocket is expected_websocket
 
     human_profile = resolved.runtime_profile.human_realtime_inputs[0]
     assert human_profile.player_id == resolved.player_bindings[0].player_id

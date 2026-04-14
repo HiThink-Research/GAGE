@@ -5,6 +5,7 @@ from queue import Empty
 
 import pytest
 
+import gage_eval.role.arena.human_input_protocol as human_input_protocol_module
 from gage_eval.role.arena.human_input_protocol import (
     ContinuousStateMailbox,
     LatestActionMailbox,
@@ -104,6 +105,58 @@ def test_latest_action_mailbox_ignores_stale_payloads_when_input_seq_regresses()
     payload = json.loads(mailbox.get_nowait())
     assert payload["action"] == "right"
     assert payload["metadata"]["input_seq"] == 10
+
+
+def test_latest_action_mailbox_coalesces_duplicate_state_payloads_inside_eight_ms_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_time = {"value": 10.0}
+    monkeypatch.setattr(
+        human_input_protocol_module.time,
+        "monotonic",
+        lambda: current_time["value"],
+    )
+    mailbox = LatestActionMailbox()
+    payload = dump_action_payload(
+        build_action_payload(
+            action="right",
+            player_id="player_0",
+            sample_id="retro-smoke",
+        )
+    )
+
+    mailbox.put(payload)
+    assert json.loads(mailbox.get_nowait())["action"] == "right"
+
+    current_time["value"] += 0.004
+    mailbox.put(payload)
+    with pytest.raises(Empty):
+        mailbox.get_nowait()
+
+    current_time["value"] += 0.009
+    mailbox.put(payload)
+    assert json.loads(mailbox.get_nowait())["action"] == "right"
+
+
+def test_coalesce_payload_key_does_not_mutate_dict_payload() -> None:
+    payload = build_action_payload(
+        action="right",
+        player_id="player_0",
+        sample_id="retro-smoke",
+        metadata={
+            "input_seq": 10,
+            "input_client_ts_ms": 12345,
+            "source": "browser",
+        },
+    )
+
+    key = human_input_protocol_module._coalesce_payload_key(payload)  # noqa: SLF001
+    normalized = json.loads(key)
+
+    assert payload["metadata"]["input_seq"] == 10
+    assert payload["metadata"]["input_client_ts_ms"] == 12345
+    assert payload["metadata"]["source"] == "browser"
+    assert normalized["metadata"] == {"source": "browser"}
 
 
 def test_sample_action_router_can_route_stateful_players_to_latest_mailboxes() -> None:

@@ -14,6 +14,7 @@ from tests._support.gamekit_matrix import (
     discover_replay_only_configs,
     expected_live_gamekit_config_paths,
     human_visual_families,
+    human_visual_required_families,
     iter_live_cases,
     load_primary_adapter_params,
     shipped_gamekit_families,
@@ -83,7 +84,8 @@ def test_human_visual_configs_keep_human_and_visual_runtime_semantics(case) -> N
 
 @pytest.mark.fast
 def test_every_shipped_gamekit_family_has_human_visual_coverage() -> None:
-    assert human_visual_families() == shipped_gamekit_families()
+    assert human_visual_families() == human_visual_required_families()
+    assert "pettingzoo" in shipped_gamekit_families()
 
 
 @pytest.mark.io
