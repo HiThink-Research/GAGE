@@ -39,6 +39,7 @@ backends:
     config:
       base_url: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}
       model: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      api_key: ${OLLAMA_API_KEY:-dummy}
       require_api_key: false
       timeout: 120
       generation_parameters:

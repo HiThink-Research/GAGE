@@ -407,7 +407,7 @@ def _load_local_dataset(
 
         builder, data_files = _discover_local_data_files(resolved, builder_name=builder_name)
         if builder and data_files:
-            data_files_arg: Any = data_files[0] if len(data_files) == 1 else data_files
+            data_files_arg = _build_local_data_files_arg(data_files, split=split)
             return _load_dataset_with_optional_trust_remote(
                 datasets_module=datasets_module,
                 path=builder,
@@ -474,6 +474,40 @@ def _infer_local_builder(path: Path) -> Optional[str]:
     return None
 
 
+def _infer_local_split_name(path: Path) -> Optional[str]:
+    """Infers a split name from a local dataset filename or parent directory."""
+
+    known_splits = {"train", "test", "validation", "valid", "dev"}
+    candidate_tokens = [path.parent.name.lower(), path.stem.lower()]
+
+    for token in candidate_tokens:
+        if token in known_splits:
+            return token
+        for separator in ("-", "_", "."):
+            prefix, _, _ = token.partition(separator)
+            if prefix in known_splits:
+                return prefix
+    return None
+
+
+def _build_local_data_files_arg(files: list[str], *, split: str) -> Any:
+    """Builds a datasets-compatible data_files argument for local snapshots."""
+
+    split_to_files: Dict[str, list[str]] = {}
+    for file in files:
+        inferred_split = _infer_local_split_name(Path(file))
+        if inferred_split is None:
+            continue
+        split_to_files.setdefault(inferred_split, []).append(file)
+
+    normalized_split = split.lower()
+    if normalized_split in split_to_files:
+        return {normalized_split: sorted(split_to_files[normalized_split])}
+    if split_to_files:
+        return {name: sorted(paths) for name, paths in sorted(split_to_files.items())}
+    return files[0] if len(files) == 1 else files
+
+
 def _discover_local_data_files(root: Path, *, builder_name: Optional[str]) -> tuple[Optional[str], list[str]]:
     if builder_name:
         files = sorted(str(path) for path in root.rglob("*") if path.is_file())
@@ -530,7 +564,7 @@ def _maybe_apply_bundle(
         )
         return new_sample
 
-    return dataset.map(_map_fn)
+    return [mapped for mapped in (_map_fn(item) for item in dataset) if mapped is not None]
 
 def _maybe_apply_preprocess(
     dataset,
@@ -564,8 +598,8 @@ def _maybe_apply_preprocess(
             **ctx.kwargs,
         )
         return new_sample
-    return [_map_fn(item) for item in dataset]
-    #return dataset.map(_map_fn)
+
+    return [mapped for mapped in (_map_fn(item) for item in dataset) if mapped is not None]
 
 
 def _inject_default_params(dataset, spec: DatasetSpec):

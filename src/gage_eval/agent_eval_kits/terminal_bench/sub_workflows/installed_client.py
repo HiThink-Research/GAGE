@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from gage_eval.agent_eval_kits.terminal_bench.artifacts import persist_terminal_artifacts
+from gage_eval.agent_eval_kits.terminal_bench.artifacts import (
+    normalize_terminal_answer,
+    persist_terminal_artifacts,
+)
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
-from gage_eval.agent_eval_kits.common import extract_instruction
+from gage_eval.agent_eval_kits.terminal_bench.units import build_terminal_instruction
 
 
 def build_workflow_bundle() -> SchedulerWorkflowBundle:
@@ -22,7 +25,7 @@ def build_workflow_bundle() -> SchedulerWorkflowBundle:
 
 def _prepare_inputs(*, session, sample, payload, sandbox_provider=None):
     return {
-        "instruction": extract_instruction(sample),
+        "instruction": build_terminal_instruction(sample),
         "cwd": session.runtime_context.get("cwd") or "/workspace",
         "env": dict(session.runtime_context.get("env") or {}),
         "metadata": dict(sample.get("metadata") or {}),
@@ -44,5 +47,13 @@ def _capture_environment_artifacts(*, session, sample, scheduler_output, sandbox
 def _finalize_result(*, session, sample, scheduler_output, artifact_paths):
     output = dict(scheduler_output or {})
     output.setdefault("artifact_paths", dict(artifact_paths or {}))
+    normalized_answer = normalize_terminal_answer(
+        session=session,
+        sample=sample,
+        scheduler_output=output,
+        sandbox_provider=None,
+    )
+    if normalized_answer is not None:
+        output["answer"] = normalized_answer
     output.setdefault("answer", output.get("answer") or "")
     return output

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-
-from gage_eval.agent_eval_kits.common import resolve_sample_artifact_target
+from gage_eval.agent_eval_kits.appworld.artifacts import persist_appworld_artifacts
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
+from gage_eval.agent_eval_kits.appworld.units import build_appworld_instruction
 
 
 def build_workflow_bundle(runtime_entry) -> SchedulerWorkflowBundle:
@@ -22,12 +21,17 @@ def build_workflow_bundle(runtime_entry) -> SchedulerWorkflowBundle:
 
 
 def _prepare_inputs(*, session, sample, payload, sandbox_provider=None):
+    instruction = build_appworld_instruction(
+        sample,
+        instruction_override=str(session.prompt_context.get("instruction") or ""),
+    )
     return {
-        "instruction": session.prompt_context.get("instruction"),
+        "instruction": instruction,
         "allowed_apps": list(session.prompt_context.get("allowed_apps") or []),
         "ground_truth_mode": session.prompt_context.get("ground_truth_mode"),
         "mcp_endpoint": session.prompt_context.get("mcp_endpoint"),
         "env_endpoint": session.prompt_context.get("env_endpoint"),
+        "tool_use_contract": "use_appworld_tools",
         "metadata": dict(sample.get("metadata") or {}),
     }
 
@@ -39,8 +43,13 @@ def _prepare_environment(*, session, sample, sandbox_provider=None):
 def _capture_environment_artifacts(*, runtime_entry, session, sample, scheduler_output, sandbox_provider=None):
     saved = runtime_entry.save(sample=sample, sandbox_provider=sandbox_provider)
     artifact_paths = dict(scheduler_output.get("artifact_paths") or {})
-    if saved:
-        artifact_paths["appworld_save"] = _persist_appworld_save_artifact(session, saved)
+    artifact_paths.update(
+        persist_appworld_artifacts(
+            session=session,
+            scheduler_output=scheduler_output,
+            saved_payload=saved,
+        )
+    )
     return artifact_paths
 
 
@@ -48,11 +57,3 @@ def _finalize_result(*, session, sample, scheduler_output, artifact_paths):
     output = dict(scheduler_output or {})
     output.setdefault("artifact_paths", dict(artifact_paths or {}))
     return output
-
-
-def _persist_appworld_save_artifact(session, saved: dict) -> str:
-    """Persists the AppWorld save payload under the sample root."""
-
-    target, relative_path = resolve_sample_artifact_target(session, "appworld_save.json")
-    target.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
-    return relative_path

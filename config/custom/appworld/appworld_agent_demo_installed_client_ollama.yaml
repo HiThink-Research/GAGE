@@ -1,0 +1,110 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: appworld_agent_demo_installed_client_ollama
+  description: AppWorld runtime-owned demo config backed by Ollama using the installed-client scheduler.
+
+datasets:
+  - dataset_id: appworld_demo
+    loader: jsonl
+    params:
+      path: tests/data/samples/appworld_demo.jsonl
+      streaming: false
+
+sandbox_profiles:
+  - sandbox_id: appworld_local
+    runtime: docker
+    image: appworld-mcp:latest
+    resources:
+      cpu: 2
+      memory: 4g
+    runtime_configs:
+      startup_timeout_s: 180
+      startup_interval_s: 0.5
+      ports: ["8000:8000", "9000:9000", "5001:5001"]
+      platform: linux/amd64
+      network_mode: bridge_host
+      env_endpoint: http://127.0.0.1:8000
+      apis_endpoint: http://127.0.0.1:9000
+      mcp_endpoint: http://127.0.0.1:5001
+      wait_for_http_endpoints:
+        - http://127.0.0.1:5001/mcp
+      start_container: true
+      entrypoint: /usr/local/bin/appworld
+      env:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      command:
+        - serve
+        - multiple
+        - --environment
+        - "--port 8000"
+        - --apis
+        - "--port 9000"
+        - --mcp
+        - "http --port 5001 --output-type structured_data_only"
+        - --root
+        - /run
+
+mcp_clients:
+  - mcp_client_id: appworld_env
+    transport: streamable_http
+    endpoint: http://127.0.0.1:5001
+    timeout_s: 180
+    params:
+      output_type: structured_data_only
+      session_retry_delay_s: 2
+      session_retry_timeout_s: 180
+
+metrics:
+  - metric_id: latency
+    implementation: latency
+  - metric_id: appworld_tgc
+    implementation: appworld_tgc
+  - metric_id: appworld_sgc
+    implementation: appworld_sgc
+  - metric_id: appworld_success_rate
+    implementation: appworld_success_rate
+  - metric_id: appworld_fail_count
+    implementation: appworld_fail_count
+  - metric_id: appworld_pass_count
+    implementation: appworld_pass_count
+
+role_adapters:
+  - adapter_id: toolchain_main
+    role_type: toolchain
+    mcp_client_id: appworld_env
+    params:
+      tool_doc_enabled: false
+      allow_runtime_owned_tool_docs: false
+
+  - adapter_id: dut_agent_main
+    role_type: dut_agent
+    agent_runtime_id: appworld_installed_client
+    sandbox:
+      sandbox_id: appworld_local
+      lifecycle: per_sample
+    params:
+      max_turns: 16
+
+  - adapter_id: appworld_runtime_judge
+    role_type: judge_extend
+    params:
+      implementation: appworld_evaluate
+      implementation_params:
+        appworld_root: /run
+
+tasks:
+  - task_id: appworld_agent_demo_installed_client_ollama
+    dataset_id: appworld_demo
+    steps:
+      - step: support
+        adapter_id: toolchain_main
+      - step: inference
+        adapter_id: dut_agent_main
+      - step: judge
+        adapter_id: appworld_runtime_judge
+      - step: auto_eval
+    concurrency: 1
+    max_samples: 2

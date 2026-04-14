@@ -29,9 +29,11 @@ class NativeVerifierAdapter(BaseVerifierAdapter):
             or sample.get("answer")
             or verifier_input.runtime_context.get("expected_answer")
         )
-        resolved = True
-        if expected not in (None, ""):
-            resolved = str(expected).strip() == answer
+        resolved, failure_reason = _resolve_native_verdict(
+            benchmark_kit_id=verifier_input.benchmark_kit_id,
+            answer=answer,
+            expected=expected,
+        )
         payload = {
             "status": "completed",
             "resolved": resolved,
@@ -39,6 +41,7 @@ class NativeVerifierAdapter(BaseVerifierAdapter):
             "summary": "native verifier completed",
             "answer": answer,
             "expected_answer": expected,
+            "failure_reason": failure_reason,
         }
         return VerifierResult(status="completed", payload=payload)
 
@@ -91,6 +94,32 @@ class SwebenchVerifierAdapter(JudgeVerifierAdapter):
         from gage_eval.role.judge.swebench_docker import SwebenchDocker
 
         super().__init__("swebench.verifier_adapter.run", SwebenchDocker())
+
+
+def _resolve_native_verdict(
+    *,
+    benchmark_kit_id: str,
+    answer: str,
+    expected: Any,
+) -> tuple[bool, str | None]:
+    """Resolve a stable native-verifier verdict for local benchmark adapters."""
+
+    expected_text = _normalize_expected_text(expected)
+    if expected_text is not None:
+        resolved = expected_text == answer
+        return resolved, None if resolved else "answer_mismatch"
+
+    if benchmark_kit_id == "terminal_bench":
+        return False, "missing_expected_answer"
+    return False, "missing_expected_answer"
+
+
+def _normalize_expected_text(expected: Any) -> str | None:
+    """Normalize the expected native-verifier answer when available."""
+
+    if expected in (None, ""):
+        return None
+    return str(expected).strip()
 
 
 def build_failure_result(

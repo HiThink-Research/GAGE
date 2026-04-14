@@ -1035,15 +1035,21 @@ def _apply_cli_max_samples_override(payload: dict, max_samples: int) -> None:
         if not isinstance(task, dict):
             continue
         task["max_samples"] = max_samples
-    # Best-effort: also set HF hub loader limit to avoid fetching unnecessary splits.
+    # NOTE: Only push the limit down into the dataset loader when the dataset has
+    # no preprocess/bundle stage that might filter records. Otherwise a tiny
+    # loader-side limit (for example: 1) can be exhausted by filtered records
+    # before the first valid sample is reached.
     for dataset in payload.get("datasets") or []:
         if not isinstance(dataset, dict):
             continue
         params = dataset.get("params")
+        has_record_filter_stage = False
         if isinstance(params, dict):
+            has_record_filter_stage = bool(params.get("preprocess") or params.get("bundle"))
+        if isinstance(params, dict) and not has_record_filter_stage:
             params["limit"] = max_samples
         hub_params = dataset.get("hub_params")
-        if isinstance(hub_params, dict):
+        if isinstance(hub_params, dict) and not has_record_filter_stage:
             hub_params["limit"] = max_samples
 
 

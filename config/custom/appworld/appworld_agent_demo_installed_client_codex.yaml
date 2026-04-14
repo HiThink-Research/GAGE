@@ -1,0 +1,81 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: appworld_agent_demo_installed_client_codex
+  description: AppWorld installed-client demo config using the builtin Codex CLI client.
+
+datasets:
+  - dataset_id: appworld_demo
+    loader: jsonl
+    params:
+      path: tests/data/samples/appworld_demo.jsonl
+      streaming: false
+
+sandbox_profiles:
+  - sandbox_id: appworld_local
+    runtime: docker
+    image: ${APPWORLD_CODEX_IMAGE:-appworld-mcp-codex:latest}
+    resources:
+      cpu: 2
+      memory: 4g
+    runtime_configs:
+      startup_timeout_s: 180
+      startup_interval_s: 0.5
+      ports: ["8000:8000", "9000:9000", "5001:5001"]
+      platform: linux/amd64
+      network_mode: bridge_host
+      env_endpoint: http://127.0.0.1:8000
+      apis_endpoint: http://127.0.0.1:9000
+      mcp_endpoint: http://127.0.0.1:5001
+      wait_for_http_endpoints:
+        - http://127.0.0.1:5001/mcp
+      start_container: true
+      entrypoint: /usr/local/bin/appworld
+      env:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+      command:
+        - serve
+        - multiple
+        - --environment
+        - "--port 8000"
+        - --apis
+        - "--port 9000"
+        - --mcp
+        - "http --port 5001 --output-type structured_data_only"
+        - --root
+        - /run
+
+metrics:
+  - metric_id: latency
+    implementation: latency
+
+role_adapters:
+  - adapter_id: dut_agent_main
+    role_type: dut_agent
+    agent_runtime_id: appworld_installed_client
+    sandbox:
+      sandbox_id: appworld_local
+      lifecycle: per_sample
+    params:
+      max_turns: 16
+
+  - adapter_id: appworld_runtime_judge
+    role_type: judge_extend
+    params:
+      implementation: appworld_evaluate
+      implementation_params:
+        appworld_root: /run
+
+tasks:
+  - task_id: appworld_agent_demo_installed_client_codex
+    dataset_id: appworld_demo
+    steps:
+      - step: inference
+        adapter_id: dut_agent_main
+      - step: judge
+        adapter_id: appworld_runtime_judge
+      - step: auto_eval
+    concurrency: 1
+    max_samples: 2

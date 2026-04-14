@@ -237,6 +237,7 @@ class ConfigRegistry:
                 build_compiled_runtime_executor(
                     compiled_plan=compiled_plan,
                     agent_backend=agent_backend_obj,
+                    installed_client_override=None,
                     prompt_renderer=adapter_kwargs.get("prompt_renderer"),
                     max_turns=int(adapter_kwargs.get("max_turns", 8)),
                     pre_hooks=adapter_kwargs.get("pre_hooks"),

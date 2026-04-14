@@ -13,6 +13,7 @@ from gage_eval.agent_runtime.session import AgentRuntimeSession
 from gage_eval.agent_runtime.verifier.adapters import build_failure_result
 from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome, VerifierInput
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.sandbox.provider import SandboxProvider
 
 
 class DefaultVerifierRunner:
@@ -135,6 +136,7 @@ class AgentRuntimeSessionFactory:
             sample_id=sample_id,
             benchmark_kit_id=plan.runtime_spec.benchmark_kit_id,
             scheduler_type=plan.runtime_spec.scheduler_type,
+            client_id=plan.runtime_spec.client_id,
             artifact_layout=layout,
         )
 
@@ -185,11 +187,20 @@ class CompiledRuntimeExecutor:
         final_failure: FailureEnvelope | None = None
         try:
             try:
-                lease_binding = self.resource_manager.acquire(
-                    session,
-                    resource_plan=self.compiled_plan.resource_plan,
-                    trace=trace,
-                )
+                bound_provider = payload.get("sandbox_provider")
+                if isinstance(bound_provider, SandboxProvider):
+                    lease_binding = self.resource_manager.bind_existing(
+                        session,
+                        resource_plan=self.compiled_plan.resource_plan,
+                        sandbox_provider=bound_provider,
+                    )
+                else:
+                    lease_binding = self.resource_manager.acquire(
+                        session,
+                        resource_plan=self.compiled_plan.resource_plan,
+                        trace=trace,
+                        sample=sample,
+                    )
                 session.resource_lease = lease_binding.resource_lease
             except Exception as exc:
                 failure = self.failure_mapper.map_exception(
@@ -398,14 +409,18 @@ def _normalize_judge_output(
     judge_source: str,
 ) -> dict[str, Any]:
     status = str(payload.get("status") or ("failed" if payload.get("failure_reason") else "completed"))
-    resolved = bool(payload.get("resolved", status == "completed"))
+    inferred_resolved, inferred_score, inferred_reason = _infer_benchmark_judge_fields(
+        payload,
+        status=status,
+    )
+    resolved = bool(payload.get("resolved", inferred_resolved))
     score = payload.get("score")
     if score is None:
-        score = 1.0 if resolved else 0.0
+        score = inferred_score
     normalized = {
         "status": status,
         "resolved": resolved,
-        "failure_reason": payload.get("failure_reason"),
+        "failure_reason": payload.get("failure_reason") or inferred_reason,
         "failure_domain": payload.get("failure_domain"),
         "score": score,
         "summary": payload.get("summary") or payload.get("message") or "",
@@ -413,9 +428,180 @@ def _normalize_judge_output(
         "runtime_handle": dict((scheduler_result.runtime_state if scheduler_result is not None else {})),
         "judge_source": payload.get("judge_source") or judge_source,
     }
+    diagnostic_reason, diagnostic_details = _build_diagnostic_fields(
+        payload,
+        scheduler_result=scheduler_result,
+        normalized=normalized,
+    )
+    if diagnostic_reason:
+        normalized["diagnostic_reason"] = diagnostic_reason
+    if diagnostic_details:
+        normalized["diagnostic_details"] = diagnostic_details
     for key, value in payload.items():
         normalized.setdefault(key, value)
     return to_json_compatible(normalized)
+
+
+def _infer_benchmark_judge_fields(
+    payload: dict[str, Any],
+    *,
+    status: str,
+) -> tuple[bool, float, str | None]:
+    """Infer canonical judge fields from benchmark-native verifier payloads."""
+
+    if "appworld" in payload and isinstance(payload.get("appworld"), dict):
+        return _infer_appworld_judge_fields(payload, status=status)
+    if "tau2" in payload and isinstance(payload.get("tau2"), dict):
+        return _infer_tau2_judge_fields(payload, status=status)
+    resolved = status == "completed"
+    return resolved, (1.0 if resolved else 0.0), payload.get("failure_reason")
+
+
+def _infer_appworld_judge_fields(
+    payload: dict[str, Any],
+    *,
+    status: str,
+) -> tuple[bool, float, str | None]:
+    """Infer AppWorld success from TGC/tests instead of completion status."""
+
+    appworld_payload = payload.get("appworld")
+    if not isinstance(appworld_payload, dict):
+        resolved = status == "completed"
+        return resolved, (1.0 if resolved else 0.0), payload.get("failure_reason")
+
+    appworld_status = str(appworld_payload.get("status") or "")
+    appworld_failure_reason = appworld_payload.get("failure_reason")
+    if appworld_status == "error" or appworld_failure_reason:
+        return False, 0.0, str(appworld_failure_reason or "appworld_error")
+
+    tgc = _coerce_float(appworld_payload.get("tgc"))
+    tests = appworld_payload.get("tests") if isinstance(appworld_payload.get("tests"), dict) else {}
+    fail_count = _coerce_collection_size(tests.get("fails"))
+    pass_count = _coerce_collection_size(tests.get("passes"))
+
+    if tgc is not None:
+        resolved = tgc >= (1.0 - 1e-6)
+        failure_reason = None if resolved else "task_incomplete"
+        return resolved, float(tgc), failure_reason
+
+    if fail_count is not None or pass_count is not None:
+        resolved = (fail_count or 0) == 0 and (pass_count or 0) > 0
+        failure_reason = None if resolved else "assertion_failed"
+        return resolved, (1.0 if resolved else 0.0), failure_reason
+
+    return False, 0.0, payload.get("failure_reason") or "missing_appworld_success_signal"
+
+
+def _infer_tau2_judge_fields(
+    payload: dict[str, Any],
+    *,
+    status: str,
+) -> tuple[bool, float, str | None]:
+    """Infer Tau2 success from reward instead of completion status."""
+
+    tau2_payload = payload.get("tau2")
+    if not isinstance(tau2_payload, dict):
+        resolved = status == "completed"
+        return resolved, (1.0 if resolved else 0.0), payload.get("failure_reason")
+
+    reward = _coerce_float(tau2_payload.get("reward"))
+    termination_reason = tau2_payload.get("termination_reason")
+    if reward is None:
+        return False, 0.0, payload.get("failure_reason") or "missing_reward"
+
+    resolved = abs(reward - 1.0) <= 1e-6
+    failure_reason = None if resolved else str(termination_reason or payload.get("failure_reason") or "reward_below_threshold")
+    return resolved, float(reward), failure_reason
+
+
+def _coerce_float(value: Any) -> float | None:
+    """Coerce a numeric payload field to float when possible."""
+
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_collection_size(value: Any) -> int | None:
+    """Resolve the size of a list-like verifier field."""
+
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value)
+    return None
+
+
+def _build_diagnostic_fields(
+    payload: dict[str, Any],
+    *,
+    scheduler_result: SchedulerResult | None,
+    normalized: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Build human-auditable diagnostics from verifier payloads and agent trace."""
+
+    failure_reason = normalized.get("failure_reason")
+    agent_output = scheduler_result.agent_output if scheduler_result is not None else {}
+    agent_trace_summary = _summarize_agent_trace(agent_output.get("agent_trace"))
+    raw_details = payload.get("diagnostic_details")
+    details: dict[str, Any] = dict(raw_details) if isinstance(raw_details, dict) else {}
+    if agent_trace_summary:
+        details["agent_trace_summary"] = agent_trace_summary
+    diagnostic_reason = payload.get("diagnostic_reason")
+    if diagnostic_reason not in (None, ""):
+        return str(diagnostic_reason), details or None
+    if failure_reason:
+        return str(failure_reason), details or None
+    return None, details or None
+
+
+def _summarize_agent_trace(agent_trace: Any) -> dict[str, Any] | None:
+    if not isinstance(agent_trace, list) or not agent_trace:
+        return None
+    summary_steps: list[dict[str, Any]] = []
+    for step in agent_trace[-3:]:
+        if not isinstance(step, dict):
+            continue
+        summary_steps.append(
+            {
+                "trace_step": step.get("trace_step"),
+                "trace_role": step.get("trace_role"),
+                "name": step.get("name") or step.get("tool"),
+                "status": step.get("status"),
+                "input_excerpt": _truncate_text(_render_trace_value(step.get("input"))),
+                "output_excerpt": _truncate_text(_render_trace_value(step.get("output"))),
+            }
+        )
+    return {
+        "step_count": len(agent_trace),
+        "last_steps": summary_steps,
+    }
+
+
+def _render_trace_value(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("answer", "text", "content", "stdout", "stderr", "error"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested.strip():
+                return nested
+        return str(to_json_compatible(value))
+    return str(value)
+
+
+def _truncate_text(value: Any, *, limit: int = 240) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
 
 
 def _build_runtime_model_output(

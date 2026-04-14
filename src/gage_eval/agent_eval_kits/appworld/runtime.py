@@ -97,7 +97,11 @@ class AppWorldRuntime:
         )
 
         # STEP 3: Project runtime-owned context for downstream workflows/verifier.
-        prompt_context = build_appworld_prompt_context(sample, runtime_handle)
+        prompt_context = build_appworld_prompt_context(
+            sample,
+            runtime_handle,
+            initialize_output,
+        )
         return {
             "runtime_context": {**prompt_context, "initialize": initialize_output, "runtime_handle": runtime_handle},
             "prompt_context": prompt_context,

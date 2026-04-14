@@ -82,8 +82,8 @@ class BufferedResultWriter:
             )
 
     def record(self, payload: dict) -> None:
-        line = json.dumps(payload, ensure_ascii=False)
-        entry = f"{line}\n"
+        formatted = json.dumps(payload, ensure_ascii=False, indent=2)
+        entry = f"{formatted}\n"
         with self._lock:
             if self._closed:
                 raise RuntimeError("BufferedResultWriter already closed")

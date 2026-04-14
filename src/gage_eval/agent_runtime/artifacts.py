@@ -55,6 +55,7 @@ class RuntimeArtifactSink:
             "sample_id": session.sample_id,
             "benchmark_kit_id": session.benchmark_kit_id,
             "scheduler_type": session.scheduler_type,
+            "client_id": session.client_id,
             "resource_lease": session.resource_lease.to_dict() if session.resource_lease is not None else None,
             "runtime_context": dict(session.runtime_context or {}),
             "prompt_context": dict(session.prompt_context or {}),

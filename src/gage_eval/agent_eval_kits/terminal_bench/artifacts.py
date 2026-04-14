@@ -92,6 +92,42 @@ def persist_terminal_artifacts(
     return artifact_paths
 
 
+def normalize_terminal_answer(
+    *,
+    session,
+    sample: Mapping[str, Any] | None,
+    scheduler_output: Mapping[str, Any] | None,
+    sandbox_provider,
+) -> str | None:
+    """Normalize the terminal completion token from workspace evidence."""
+
+    expected_answer = ""
+    if isinstance(sample, Mapping):
+        expected_answer = str(sample.get("expected_answer") or "").strip()
+    if expected_answer != "done":
+        return None
+
+    output = dict(scheduler_output or {})
+    answer = str(output.get("answer") or "").strip()
+    if answer == "done":
+        return "done"
+
+    initial_workspace_state = session.benchmark_state.get("workspace_state")
+    current_workspace_state = capture_terminal_workspace_state(
+        sandbox_provider,
+        cwd=str(session.runtime_context.get("cwd") or "/workspace"),
+    )
+    workspace_diff = _build_workspace_diff_payload(
+        initial_state=initial_workspace_state,
+        current_state=current_workspace_state,
+    )
+    if not workspace_diff.get("available"):
+        return None
+    if workspace_diff.get("added") or workspace_diff.get("removed") or workspace_diff.get("modified"):
+        return "done"
+    return None
+
+
 def _resolve_sandbox(sandbox_provider) -> Any | None:
     if sandbox_provider is None:
         return None

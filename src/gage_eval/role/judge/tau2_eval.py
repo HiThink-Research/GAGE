@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from gage_eval.registry import registry
 from gage_eval.role.judge.base import JudgeImplementation
 from gage_eval.sandbox.provider import SandboxProvider
+from gage_eval.utils.benchmark_helpers.tau2 import resolve_tau2_termination_reason
 
 
 @registry.asset(
@@ -34,7 +35,21 @@ class Tau2Evaluate(JudgeImplementation):
             domain=domain,
         )
         tau2_payload = _build_output_payload(simulation, reward_info, domain, evaluation_type)
-        return {"tau2": tau2_payload}
+        return {
+            "tau2": tau2_payload,
+            "diagnostic_reason": str(
+                tau2_payload.get("termination_reason")
+                or "tau2_evaluation_completed"
+            ),
+            "diagnostic_details": {
+                "tau2": {
+                    "reward": tau2_payload.get("reward"),
+                    "termination_reason": tau2_payload.get("termination_reason"),
+                    "reward_basis": tau2_payload.get("reward_basis"),
+                    "reward_info": tau2_payload.get("reward_info"),
+                }
+            },
+        }
 
 
 def _resolve_runtime_state(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -69,14 +84,17 @@ def _resolve_domain(sample: Dict[str, Any], runtime_state: Dict[str, Any]) -> st
 
 def _build_simulation(task: Any, runtime_state: Dict[str, Any]) -> Any:
     try:
-        from tau2.data_model.simulation import SimulationRun, TerminationReason  # type: ignore
+        from tau2.data_model.simulation import SimulationRun  # type: ignore
     except Exception as exc:
         raise RuntimeError("tau2 SimulationRun unavailable") from exc
 
     start_time = runtime_state.get("start_time") or _now()
     end_time = _now()
     duration = _duration_seconds(start_time, end_time)
-    termination = runtime_state.get("termination_reason") or TerminationReason.AGENT_ERROR
+    termination = resolve_tau2_termination_reason(
+        runtime_state.get("termination_reason"),
+        fallback="too_many_errors",
+    )
     return SimulationRun(
         id=str(runtime_state.get("simulation_id") or runtime_state.get("task_id") or task.id),
         task_id=str(task.id),

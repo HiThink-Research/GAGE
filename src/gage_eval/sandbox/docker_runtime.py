@@ -64,9 +64,11 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
             self._wait_for_ready(runtime_handle)
             return runtime_handle
 
-        if not image or not start_container:
+        if not start_container:
             self._running = True
             return self._build_runtime_handle()
+        if not image:
+            raise RuntimeError("docker_image_missing")
 
         docker_bin = str(self._runtime_configs.get("docker_bin") or "docker")
         _ensure_docker_available(docker_bin)

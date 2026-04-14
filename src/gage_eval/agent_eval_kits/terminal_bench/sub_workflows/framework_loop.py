@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from gage_eval.agent_eval_kits.terminal_bench.artifacts import persist_terminal_artifacts
+from gage_eval.agent_eval_kits.terminal_bench.artifacts import (
+    normalize_terminal_answer,
+    persist_terminal_artifacts,
+)
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
 from gage_eval.agent_eval_kits.terminal_bench.units import build_terminal_messages, build_terminal_tools
 
@@ -42,5 +45,13 @@ def _finalize_loop_result(*, session, sample, scheduler_output, sandbox_provider
             sandbox_provider=sandbox_provider,
         )
     )
+    normalized_answer = normalize_terminal_answer(
+        session=session,
+        sample=sample,
+        scheduler_output=output,
+        sandbox_provider=sandbox_provider,
+    )
+    if normalized_answer is not None:
+        output["answer"] = normalized_answer
     output["artifact_paths"] = artifact_paths
     return output

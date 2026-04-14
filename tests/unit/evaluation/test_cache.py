@@ -51,10 +51,11 @@ def test_eval_cache_root_journal_handles_concurrent_writes(tmp_path: Path) -> No
     assert not errors
     assert cache.sample_count == total_writes
 
-    lines = cache.samples_jsonl.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == total_writes
+    raw = cache.samples_jsonl.read_text(encoding="utf-8")
+    assert '\n  "sample_id"' in raw
 
-    records = [json.loads(line) for line in lines]
+    records = list(cache.iter_samples())
+    assert len(records) == total_writes
     assert sorted(record["sample_id"] for record in records) == sorted(
         f"sample-{index}" for index in range(total_writes)
     )

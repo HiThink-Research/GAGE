@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from gage_eval.sandbox.base import BaseSandbox, ExecResult, SandboxOptionalMixin
 from gage_eval.utils.benchmark_helpers.tau2 import (
     ensure_tau2_importable,
+    resolve_tau2_termination_reason,
     resolve_tau2_data_dir,
 )
 
@@ -249,6 +250,21 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             "start_time": self._start_time,
         }
 
+    def record_agent_usage(self, usage: Any) -> None:
+        """Record scheduler-reported agent usage into Tau2 runtime state.
+
+        Args:
+            usage: Scheduler-normalized usage payload. Supports either OpenAI-style
+                token fields (`total_tokens`, `prompt_tokens`, `completion_tokens`)
+                or normalized loop fields (`input_tokens`, `output_tokens`,
+                `cost_usd`).
+        """
+
+        resolved_cost = _resolve_agent_usage_cost(usage)
+        if resolved_cost is None:
+            return
+        self._agent_cost_total = resolved_cost
+
     def _handle_env_tool(self, name: str, arguments: Any) -> Dict[str, Any]:
         if self._env is None:
             raise RuntimeError("tau2_env_not_initialized")
@@ -386,11 +402,15 @@ def _build_tau2_user_simulator(
     seed: Optional[int],
 ) -> Any:
     UserSimulator = _tau2_import("tau2.user.user_simulator", "UserSimulator")
+    normalized_model_args = _normalize_tau2_user_model_args(
+        model=model,
+        model_args=model_args,
+    )
     user = UserSimulator(
         tools=tools,
         instructions=instructions,
         llm=model,
-        llm_args=model_args,
+        llm_args=normalized_model_args,
     )
     if seed is not None:
         try:
@@ -398,6 +418,23 @@ def _build_tau2_user_simulator(
         except Exception:
             pass
     return user
+
+
+def _normalize_tau2_user_model_args(
+    *,
+    model: Optional[str],
+    model_args: Optional[dict],
+) -> Optional[dict]:
+    """Normalize LiteLLM user-simulator args for provider-specific routing."""
+
+    if not isinstance(model_args, dict):
+        return model_args
+    normalized = dict(model_args)
+    if isinstance(model, str) and model.startswith("ollama_chat/"):
+        api_base = normalized.get("api_base")
+        if isinstance(api_base, str) and api_base.endswith("/v1"):
+            normalized["api_base"] = api_base[:-3]
+    return normalized
 
 
 def _filter_user_history(history: List[Any]) -> List[Any]:
@@ -507,19 +544,7 @@ def _is_agent_stop(content: Optional[str]) -> bool:
 
 
 def _termination_reason(reason: str) -> Any:
-    try:
-        TerminationReason = _tau2_import("tau2.data_model.simulation", "TerminationReason")
-    except RuntimeError:
-        return reason
-    mapping = {
-        "user_stop": TerminationReason.USER_STOP,
-        "agent_stop": TerminationReason.AGENT_STOP,
-        "max_steps": TerminationReason.MAX_STEPS,
-        "too_many_errors": TerminationReason.TOO_MANY_ERRORS,
-        "agent_error": TerminationReason.AGENT_ERROR,
-        "user_error": TerminationReason.USER_ERROR,
-    }
-    return mapping.get(reason, TerminationReason.AGENT_ERROR)
+    return resolve_tau2_termination_reason(reason, fallback="too_many_errors")
 
 
 def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:
@@ -567,6 +592,33 @@ def _coerce_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _resolve_agent_usage_cost(usage: Any) -> Optional[float]:
+    """Resolve one stable Tau2 agent cost from scheduler usage payloads."""
+
+    if not isinstance(usage, dict):
+        return None
+
+    direct_cost = _coerce_float(usage.get("cost_usd"))
+    if direct_cost is not None:
+        return direct_cost
+
+    total_tokens = _coerce_float(usage.get("total_tokens"))
+    if total_tokens is not None:
+        return total_tokens
+
+    prompt_tokens = _coerce_float(usage.get("prompt_tokens"))
+    completion_tokens = _coerce_float(usage.get("completion_tokens"))
+    if prompt_tokens is not None or completion_tokens is not None:
+        return float((prompt_tokens or 0.0) + (completion_tokens or 0.0))
+
+    input_tokens = _coerce_float(usage.get("input_tokens"))
+    output_tokens = _coerce_float(usage.get("output_tokens"))
+    if input_tokens is not None or output_tokens is not None:
+        return float((input_tokens or 0.0) + (output_tokens or 0.0))
+
+    return None
 
 
 def _now() -> str:

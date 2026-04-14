@@ -43,6 +43,7 @@ class Sample:
     schema_version: str
     id: str
     messages: List[Message]
+    instruction: Optional[str] = None
     choices: Optional[List[Any]] = None
     prompt: Optional[str] = None
     text: Optional[str] = None
@@ -59,6 +60,7 @@ class Sample:
     raw_assets: Optional[Dict[str, Any]] = None
     tools: Optional[List[Any]] = None
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    expected_answer: Optional[str] = None
     sampling_params: Optional[Dict[str, Any]] = None
     generation_params: Optional[Dict[str, Any]] = None
     eval_config: Optional[Dict[str, Any]] = None
@@ -123,6 +125,7 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         schema_version=str(payload.get("schema_version") or SCHEMA_VERSION),
         id=str(payload.get("id") or payload.get("sample_id") or ""),
         messages=messages,
+        instruction=payload.get("instruction") if payload.get("instruction") is not None else None,
         choices=payload.get("choices") if isinstance(payload.get("choices"), list) else None,
         prompt=payload.get("prompt") if payload.get("prompt") is not None else None,
         text=payload.get("text") if payload.get("text") is not None else None,
@@ -139,6 +142,11 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
         label=payload.get("label"),
         tools=payload.get("tools") if isinstance(payload.get("tools"), list) else None,
         tool_choice=payload.get("tool_choice"),
+        expected_answer=(
+            str(payload.get("expected_answer"))
+            if payload.get("expected_answer") is not None
+            else None
+        ),
         sampling_params=payload.get("sampling_params") or {},
         generation_params=payload.get("generation_params") or {},
         eval_config=payload.get("eval_config") or {},

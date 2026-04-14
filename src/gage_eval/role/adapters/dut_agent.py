@@ -35,7 +35,7 @@ class DUTAgentAdapter(RoleAdapter):
         role_type: str,
         capabilities,
         *,
-        agent_backend: AgentBackend,
+        agent_backend: AgentBackend | None = None,
         prompt_renderer: Optional[PromptRenderer] = None,
         sandbox_manager: Optional[SandboxManager] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -76,6 +76,8 @@ class DUTAgentAdapter(RoleAdapter):
                 payload=payload,
                 trace=payload.get("trace"),
             )
+        if self._agent_backend is None:
+            raise RuntimeError("agent_backend_missing_for_framework_loop")
         runtime_payload = dict(payload or {})
         runtime_payload.pop("trace", None)
         sample = runtime_payload.get("sample", {}) if isinstance(runtime_payload, dict) else {}
@@ -105,6 +107,41 @@ class DUTAgentAdapter(RoleAdapter):
         if system_prompt:
             result["system_prompt"] = system_prompt
         return result
+
+    def shutdown(self) -> None:
+        """Release adapter-owned backend and sandbox resources."""
+
+        issues: list[Exception] = []
+
+        # STEP 1: Shut down the benchmark executor-owned sandbox manager.
+        try:
+            if self.executor_ref is not None:
+                resource_manager = getattr(self.executor_ref, "resource_manager", None)
+                sandbox_manager = getattr(resource_manager, "_sandbox_manager", None)
+                shutdown_fn = getattr(sandbox_manager, "shutdown", None)
+                if callable(shutdown_fn):
+                    shutdown_fn()
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            issues.append(exc)
+
+        # STEP 2: Shut down the framework-loop agent backend.
+        try:
+            shutdown_fn = getattr(self._agent_backend, "shutdown", None)
+            if callable(shutdown_fn):
+                shutdown_fn()
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            issues.append(exc)
+
+        # STEP 3: Shut down the adapter-owned sandbox manager.
+        try:
+            self._sandbox_manager.shutdown()
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            issues.append(exc)
+
+        if issues:
+            raise RuntimeError(
+                "; ".join(f"{type(issue).__name__}: {issue}" for issue in issues)
+            )
 
     def _resolve_sandbox_config(
         self,

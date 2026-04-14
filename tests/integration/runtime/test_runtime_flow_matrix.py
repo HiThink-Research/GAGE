@@ -24,12 +24,38 @@ from gage_eval.role.agent.backends.demo_agent import RuntimeSmokeAgent
 
 
 class _InstalledClientStub:
+    def __init__(self, *, answer: str = "done", patch_content: str | None = None) -> None:
+        self._answer = answer
+        self._patch_content = patch_content
+
     def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "answer": "done",
+        result = {
+            "answer": self._answer,
             "agent_trace": [],
             "artifact_paths": {"stdout": "stdout.txt"},
         }
+        if self._patch_content is not None:
+            result["patch_content"] = self._patch_content
+        return result
+
+
+class _SwebenchFrameworkAgent:
+    def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "answer": "diff --git a/foo b/foo\n",
+            "patch_content": "diff --git a/foo b/foo\n",
+            "agent_trace": [
+                {
+                    "trace_step": 1,
+                    "trace_role": "tool",
+                    "name": "submit_patch_tool",
+                    "output": {"stdout": "diff --git a/foo b/foo\n"},
+                }
+            ],
+        }
+
+    def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.run(payload)
 
 
 class _PassingVerifierRunner:
@@ -104,7 +130,7 @@ class _StaticResourceManager:
         self._profile_id = profile_id
         self._sandbox_provider = sandbox_provider
 
-    def acquire(self, session, *, resource_plan, trace=None):
+    def acquire(self, session, *, resource_plan, trace=None, sample=None):
         handle = self._sandbox_provider.get_handle() if self._sandbox_provider is not None else None
         runtime_handle = dict(getattr(handle, "runtime_handle", {}) or {})
         resource_lease = ResourceLease(
@@ -126,6 +152,9 @@ class _StaticResourceManager:
 
 
 class _FakeTau2Runtime:
+    def __init__(self) -> None:
+        self._agent_cost = 0.1
+
     def initialize_task(self, sample: dict[str, Any]) -> dict[str, Any]:
         tau2_meta = sample.setdefault("metadata", {}).setdefault("tau2", {})
         tau2_meta.setdefault("policy", "policy")
@@ -149,12 +178,19 @@ class _FakeTau2Runtime:
             "metadata": sample["metadata"],
         }
 
+    def record_agent_usage(self, usage: dict[str, Any] | None) -> None:
+        if not isinstance(usage, dict):
+            return
+        total_tokens = usage.get("total_tokens")
+        if total_tokens is not None:
+            self._agent_cost = float(total_tokens)
+
     def get_state(self) -> dict[str, Any]:
         return {
             "domain": "telecom",
             "messages": [{"role": "assistant", "content": "done"}],
             "termination_reason": "agent_stop",
-            "agent_cost": 0.1,
+            "agent_cost": self._agent_cost,
             "user_cost": 0.0,
         }
 
@@ -247,10 +283,21 @@ def _build_executor(agent_runtime_id: str):
             "sandbox_config": {} if sandbox_provider is not None else None,
         },
     )
-    backend = _InstalledClientStub() if "installed_client" in agent_runtime_id else RuntimeSmokeAgent()
+    if agent_runtime_id == "swebench_framework_loop":
+        backend = _SwebenchFrameworkAgent()
+    elif agent_runtime_id == "swebench_installed_client":
+        backend = _InstalledClientStub(
+            answer="diff --git a/foo b/foo\n",
+            patch_content="diff --git a/foo b/foo\n",
+        )
+    elif "installed_client" in agent_runtime_id:
+        backend = _InstalledClientStub()
+    else:
+        backend = RuntimeSmokeAgent()
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
         agent_backend=backend,
+        installed_client_override=backend if "installed_client" in agent_runtime_id else None,
         max_turns=4,
     )
     executor.resource_manager = _StaticResourceManager(
@@ -299,7 +346,10 @@ def test_phase1_runtime_flow_matrix_smoke(
         )
     )
 
-    assert result["answer"] == "done"
+    if agent_runtime_id.startswith("swebench"):
+        assert "diff --git" in result["answer"]
+    else:
+        assert result["answer"] == "done"
     assert result["runtime_judge_outcome"]["judge_output"]["resolved"] is True
 
     runtime_session = result["runtime_session"]
@@ -320,7 +370,7 @@ def test_phase1_runtime_flow_matrix_smoke(
         assert artifact_paths["stdout"] == "artifacts/stdout.log"
         assert artifact_paths["stderr"] == "artifacts/stderr.log"
         assert artifact_paths["workspace_diff"] == "artifacts/workspace_diff.json"
-    if agent_runtime_id.startswith("swebench"):
-        assert verifier_payload["judge_output"]["artifact_paths"]["submission_patch"] == "submission.patch"
+        if agent_runtime_id.startswith("swebench"):
+            assert verifier_payload["judge_output"]["artifact_paths"]["submission_patch"] == "artifacts/submission.patch"
     if agent_runtime_id.startswith("appworld"):
         assert lifecycle_calls == ["initialize", "save"]

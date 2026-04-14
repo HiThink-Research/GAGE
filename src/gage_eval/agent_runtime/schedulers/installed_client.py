@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from gage_eval.agent_runtime.clients.runner import InstalledClientRunner
 from gage_eval.agent_runtime.contracts.failure import FailureEnvelopeError
@@ -28,12 +28,11 @@ class InstalledClientScheduler:
         """Execute the installed-client workflow and normalize its result."""
 
         # STEP 1: Build scheduler inputs and environment-specific context.
-        request_payload = {
-            "sample": sample,
-            "payload": payload,
-            "session": session,
-            "sandbox_provider": sandbox_provider,
-        }
+        request_payload = {"metadata": _build_client_request_metadata(session=session)}
+        environment_payload = _build_client_environment(
+            session=session,
+            sandbox_provider=sandbox_provider,
+        )
         workflow_path = _resolve_workflow_path(session)
         if callable(workflow_bundle.prepare_environment):
             try:
@@ -64,15 +63,18 @@ class InstalledClientScheduler:
                 ) from exc
             if isinstance(environment_state, dict):
                 session.scheduler_state.update(environment_state)
+                environment_payload.setdefault("scheduler_state", {}).update(environment_state)
         if callable(workflow_bundle.prepare_inputs):
             try:
-                request_payload.update(
-                    workflow_bundle.prepare_inputs(
-                        session=session,
-                        sample=sample,
-                        payload=payload,
-                        sandbox_provider=sandbox_provider,
-                    )
+                prepared_inputs = workflow_bundle.prepare_inputs(
+                    session=session,
+                    sample=sample,
+                    payload=payload,
+                    sandbox_provider=sandbox_provider,
+                )
+                request_payload = _merge_client_request_payload(
+                    request_payload,
+                    prepared_inputs,
                 )
             except Exception as exc:
                 raise FailureEnvelopeError(
@@ -97,7 +99,24 @@ class InstalledClientScheduler:
 
         # STEP 2: Run the external client surface.
         try:
-            raw_result = await self._runner.arun(request_payload)
+            session.scheduler_state.setdefault("client_id", session.client_id)
+            session.scheduler_state.setdefault(
+                "client_surface",
+                self._runner.client_surface_name,
+            )
+            environment_payload.setdefault("scheduler_state", {}).setdefault(
+                "client_id",
+                session.client_id,
+            )
+            environment_payload.setdefault("scheduler_state", {}).setdefault(
+                "client_surface",
+                self._runner.client_surface_name,
+            )
+            raw_result = await self._runner.arun(
+                request=request_payload,
+                environment=environment_payload,
+                session=session,
+            )
         except Exception as exc:
             raise FailureEnvelopeError(
                 self._failure_mapper.map_exception(
@@ -224,3 +243,78 @@ def _resolve_workflow_path(session: AgentRuntimeSession) -> str:
         f"src/gage_eval/agent_eval_kits/{session.benchmark_kit_id}"
         f"/sub_workflows/{session.scheduler_type}.py"
     )
+
+
+def _build_client_environment(
+    *,
+    session: AgentRuntimeSession,
+    sandbox_provider,
+) -> dict[str, Any]:
+    """Project the benchmark-owned runtime state into one client environment payload."""
+
+    return {
+        "session_id": session.session_id,
+        "run_id": session.run_id,
+        "task_id": session.task_id,
+        "sample_id": session.sample_id,
+        "benchmark_kit_id": session.benchmark_kit_id,
+        "scheduler_type": session.scheduler_type,
+        "client_id": session.client_id,
+        "artifact_layout": dict(session.artifact_layout or {}),
+        "runtime_context": dict(session.runtime_context or {}),
+        "prompt_context": dict(session.prompt_context or {}),
+        "benchmark_state": dict(session.benchmark_state or {}),
+        "scheduler_state": dict(session.scheduler_state or {}),
+        "runtime_handle": (
+            dict(session.resource_lease.handle_ref or {})
+            if session.resource_lease is not None
+            else {}
+        ),
+        "sandbox_provider": sandbox_provider,
+    }
+
+
+def _build_client_request_metadata(
+    *,
+    session: AgentRuntimeSession,
+) -> dict[str, Any]:
+    """Build one benchmark-neutral installed-client metadata payload."""
+
+    return {
+        "session_id": session.session_id,
+        "run_id": session.run_id,
+        "task_id": session.task_id,
+        "sample_id": session.sample_id,
+        "benchmark_kit_id": session.benchmark_kit_id,
+        "scheduler_type": session.scheduler_type,
+        "client_id": session.client_id,
+    }
+
+
+def _merge_client_request_payload(
+    base_payload: Mapping[str, Any],
+    update_payload: Any,
+) -> dict[str, Any]:
+    """Merge workflow-owned request fields into the client request envelope."""
+
+    merged = dict(base_payload or {})
+    if not isinstance(update_payload, Mapping):
+        return merged
+
+    for key, value in update_payload.items():
+        normalized_key = str(key)
+        if (
+            normalized_key == "metadata"
+            and isinstance(merged.get("metadata"), Mapping)
+            and isinstance(value, Mapping)
+        ):
+            merged["metadata"] = {
+                str(existing_key): existing_value
+                for existing_key, existing_value in merged["metadata"].items()
+            }
+            merged["metadata"].update(
+                {str(child_key): child_value for child_key, child_value in value.items()}
+            )
+            continue
+        merged[normalized_key] = value
+    return merged

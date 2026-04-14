@@ -8,6 +8,7 @@ from typing import Any
 
 from gage_eval.agent_eval_kits import load_benchmark_kit
 from gage_eval.agent_runtime.artifacts import RuntimeArtifactSink, RuntimeTraceEmitter
+from gage_eval.agent_runtime.clients import resolve_installed_client
 from gage_eval.agent_runtime.compiled_plan import CompiledRuntimePlan, RuntimeCompileError
 from gage_eval.agent_runtime.executor import (
     AgentRuntimeSessionFactory,
@@ -30,6 +31,7 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         agent_runtime_id="terminal_bench_installed_client",
         benchmark_kit_id="terminal_bench",
         scheduler_type="installed_client",
+        client_id="codex",
         sandbox_profile_id="terminal_bench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="terminal_bench_native",
@@ -46,6 +48,7 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         agent_runtime_id="swebench_installed_client",
         benchmark_kit_id="swebench",
         scheduler_type="installed_client",
+        client_id="codex",
         sandbox_profile_id="swebench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="swebench_verifier",
@@ -64,6 +67,7 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         agent_runtime_id="skillsbench_installed_client",
         benchmark_kit_id="skillsbench",
         scheduler_type="installed_client",
+        client_id="codex",
         sandbox_profile_id="swebench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="swebench_verifier",
@@ -82,6 +86,7 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         agent_runtime_id="appworld_installed_client",
         benchmark_kit_id="appworld",
         scheduler_type="installed_client",
+        client_id="codex",
         sandbox_profile_id="appworld_local",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="appworld_verifier",
@@ -100,6 +105,7 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         agent_runtime_id="tau2_installed_client",
         benchmark_kit_id="tau2",
         scheduler_type="installed_client",
+        client_id="codex",
         sandbox_profile_id="tau2_local",
         resource_policy={"resource_kind": "local_process", "lifecycle": "per_sample"},
         verifier_binding_id="tau2_verifier",
@@ -139,6 +145,18 @@ def compile_agent_runtime_plan(
     runtime_spec = resolve_agent_runtime_spec(agent_runtime_id)
     benchmark_kit = load_benchmark_kit(runtime_spec.benchmark_kit_id)
     diagnostics: list[dict[str, Any]] = []
+    if runtime_spec.scheduler_type == "installed_client" and not runtime_spec.client_id:
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": "installed_client_missing_client_id",
+                "agent_runtime_id": runtime_spec.agent_runtime_id,
+            }
+        )
+        raise RuntimeCompileError(
+            f"Installed-client runtime '{runtime_spec.agent_runtime_id}' requires client_id",
+            diagnostics=diagnostics,
+        )
 
     # STEP 2: Resolve the scheduler-local workflow and verifier resources.
     workflow_bundle = benchmark_kit.resolve_workflow_bundle(runtime_spec.scheduler_type)
@@ -206,6 +224,7 @@ def build_compiled_runtime_executor(
     *,
     compiled_plan: CompiledRuntimePlan,
     agent_backend: Any,
+    installed_client_override: Any = None,
     prompt_renderer=None,
     max_turns: int = 8,
     pre_hooks=None,
@@ -217,7 +236,12 @@ def build_compiled_runtime_executor(
 
     sandbox_manager = sandbox_manager or SandboxManager()
     if compiled_plan.runtime_spec.scheduler_type == "installed_client":
-        scheduler_handle = InstalledClientScheduler(agent_backend)
+        scheduler_handle = InstalledClientScheduler(
+            resolve_installed_client(
+                client_id=compiled_plan.runtime_spec.client_id,
+                client_override=installed_client_override,
+            )
+        )
     elif compiled_plan.runtime_spec.scheduler_type == "framework_loop":
         scheduler_handle = FrameworkLoopScheduler(
             backend=agent_backend,

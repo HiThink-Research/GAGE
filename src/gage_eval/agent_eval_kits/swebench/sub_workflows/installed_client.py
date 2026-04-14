@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
-from gage_eval.agent_eval_kits.common import extract_instruction
+from gage_eval.agent_eval_kits.swebench.artifacts import persist_swebench_artifacts
+from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction
 
 
 def build_workflow_bundle() -> SchedulerWorkflowBundle:
@@ -23,8 +22,12 @@ def build_workflow_bundle() -> SchedulerWorkflowBundle:
 
 def _prepare_inputs(*, session, sample, payload, sandbox_provider=None):
     return {
-        "instruction": extract_instruction(sample),
+        "instruction": build_swebench_instruction(sample),
         "submission_contract": "submission.patch",
+        "required_artifacts": ["submission.patch"],
+        "patch_submission_instructions": (
+            "Persist the final repository diff to /workspace/submission.patch before returning."
+        ),
         "repo": session.runtime_context.get("repo"),
         "base_commit": session.runtime_context.get("base_commit"),
         "test_command": session.runtime_context.get("test_command"),
@@ -37,22 +40,14 @@ def _prepare_environment(*, session, sample, sandbox_provider=None):
 
 
 def _capture_environment_artifacts(*, session, sample, scheduler_output, sandbox_provider=None):
-    artifact_paths = dict(scheduler_output.get("artifact_paths") or {})
-    artifact_paths["submission_patch"] = _normalize_submission_patch_path(
-        artifact_paths.get("submission_patch")
+    return persist_swebench_artifacts(
+        session=session,
+        scheduler_output=scheduler_output,
+        sandbox_provider=sandbox_provider,
     )
-    return artifact_paths
 
 
 def _finalize_result(*, session, sample, scheduler_output, artifact_paths):
     output = dict(scheduler_output or {})
-    output.setdefault("artifact_paths", dict(artifact_paths or {}))
+    output["artifact_paths"] = dict(artifact_paths or {})
     return output
-
-
-def _normalize_submission_patch_path(path: object) -> str:
-    """Normalizes submission.patch evidence to a sample-root relative path."""
-
-    if isinstance(path, str) and path.strip():
-        return Path(path).name
-    return "submission.patch"

@@ -32,6 +32,8 @@ def test_phase1_runtime_spec_matrix(
     assert spec.benchmark_kit_id == benchmark_kit_id
     assert spec.scheduler_type == scheduler_type
     assert spec.resource_policy["resource_kind"] == resource_kind
+    if scheduler_type == "installed_client":
+        assert spec.client_id == "codex"
 
 
 @pytest.mark.parametrize(

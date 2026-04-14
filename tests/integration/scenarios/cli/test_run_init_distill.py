@@ -68,3 +68,43 @@ def test_distill_multi_task_rejected(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert excinfo.value.code == 1
     assert "multi-task config" in captured.err.lower() or "distill" in captured.err.lower()
+
+
+def test_apply_cli_max_samples_override_skips_loader_limit_when_preprocess_present() -> None:
+    payload = {
+        "datasets": [
+            {
+                "dataset_id": "ds1",
+                "loader": "hf_hub",
+                "params": {"preprocess": "swebench_pro_standardizer"},
+                "hub_params": {},
+            }
+        ],
+        "tasks": [{"task_id": "t1", "dataset_id": "ds1"}],
+    }
+
+    gage_run._apply_cli_max_samples_override(payload, 1)
+
+    assert payload["tasks"][0]["max_samples"] == 1
+    assert "limit" not in payload["datasets"][0]["params"]
+    assert "limit" not in payload["datasets"][0]["hub_params"]
+
+
+def test_apply_cli_max_samples_override_keeps_loader_limit_for_plain_datasets() -> None:
+    payload = {
+        "datasets": [
+            {
+                "dataset_id": "ds1",
+                "loader": "hf_hub",
+                "params": {},
+                "hub_params": {},
+            }
+        ],
+        "tasks": [{"task_id": "t1", "dataset_id": "ds1"}],
+    }
+
+    gage_run._apply_cli_max_samples_override(payload, 2)
+
+    assert payload["tasks"][0]["max_samples"] == 2
+    assert payload["datasets"][0]["params"]["limit"] == 2
+    assert payload["datasets"][0]["hub_params"]["limit"] == 2
