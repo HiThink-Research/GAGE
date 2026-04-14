@@ -1228,6 +1228,165 @@ describe("SessionPage", () => {
     }
   });
 
+  it("keeps the realtime input websocket stable across live session refreshes", async () => {
+    class FakeWebSocket {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static instances: FakeWebSocket[] = [];
+
+      readonly send = vi.fn();
+      readonly url: string;
+      readyState = FakeWebSocket.CONNECTING;
+      onopen: ((event: Event) => void) | null = null;
+      onclose: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+      constructor(url: string) {
+        this.url = url;
+        FakeWebSocket.instances.push(this);
+      }
+
+      close(): void {
+        this.readyState = 3;
+        this.onclose?.(new Event("close"));
+      }
+
+      open(): void {
+        this.readyState = FakeWebSocket.OPEN;
+        this.onopen?.(new Event("open"));
+      }
+    }
+
+    const snapshot: ArenaSessionStoreSnapshot = {
+      status: "ready",
+      sessionRequest: {
+        sessionId: "sample-retro-ws",
+        runId: "run-live-9",
+      },
+      session: {
+        sessionId: "sample-retro-ws",
+        gameId: "retro_platformer",
+        pluginId: "arena.visualization.retro_platformer.frame_v1",
+        lifecycle: "live_running",
+        playback: {
+          mode: "live_tail",
+          cursorTs: 4023,
+          cursorEventSeq: 23,
+          speed: 1,
+          canSeek: true,
+        },
+        observer: {
+          observerId: "player_0",
+          observerKind: "player",
+        },
+        scheduling: {
+          family: "real_time_tick",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+          activeActorId: "player_0",
+        },
+        capabilities: {
+          supportsRealtimeInputWebSocket: true,
+          supportsLiveUpdateStream: true,
+        },
+        summary: {},
+        timeline: {},
+      },
+      sceneStatus: "ready",
+      scene: retroScene as VisualScene,
+      currentSceneSeq: 23,
+      timeline: {
+        status: "ready",
+        events: [],
+        nextAfterSeq: null,
+        hasMore: false,
+        limit: 50,
+        filters: {
+          eventTypes: [],
+          severity: "all",
+          humanIntentOnly: false,
+        },
+      },
+      latestActionReceipt: undefined,
+      error: undefined,
+    };
+    const { store, setSnapshot } = createMutableStore(snapshot);
+
+    createArenaGatewayClientMock.mockReturnValue({
+      buildRealtimeActionSocketUrl: vi
+        .fn()
+        .mockReturnValue("ws://arena.local/arena_visual/sessions/sample-retro-ws/actions/ws"),
+      buildLiveUpdatesStreamUrl: vi.fn().mockReturnValue(
+        "http://arena.local/arena_visual/sessions/sample-retro-ws/events?run_id=run-live-9",
+      ),
+    });
+    createArenaSessionStoreMock.mockReturnValue(store);
+    createArenaMediaResolverMock.mockReturnValue({
+      subscribe: vi.fn((request, listener) => {
+        listener({
+          mediaId: request.mediaId,
+          status: "ready",
+          src: FRAME_DATA_URL,
+        });
+        return () => {};
+      }),
+    });
+    createArenaLiveUpdateStreamMock.mockReturnValue({ close: vi.fn() });
+    vi.stubGlobal("WebSocket", FakeWebSocket as unknown as typeof WebSocket);
+
+    try {
+      render(
+        <MemoryRouter initialEntries={["/sessions/sample-retro-ws?run_id=run-live-9"]}>
+          <Routes>
+            <Route path="/sessions/:sessionId" element={<SessionPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      FakeWebSocket.instances[0]?.open();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL);
+      });
+
+      act(() => {
+        setSnapshot({
+          ...snapshot,
+          sessionRequest: {
+            sessionId: "sample-retro-ws",
+            runId: "run-live-9",
+            observer: {
+              observerId: "player_0",
+              observerKind: "player",
+            },
+          },
+          session: {
+            ...snapshot.session!,
+            playback: {
+              ...snapshot.session!.playback,
+              cursorTs: 4090,
+              cursorEventSeq: 24,
+            },
+          },
+        });
+      });
+
+      expect(FakeWebSocket.instances).toHaveLength(1);
+
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+
+      await waitFor(() => {
+        expect(FakeWebSocket.instances[0]?.send).toHaveBeenCalledWith(
+          expect.stringContaining("\"move\":\"right\""),
+        );
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("switches dense card-table sessions into the wide-stage arena layout", async () => {
     const snapshot: ArenaSessionStoreSnapshot = {
       status: "ready",

@@ -384,10 +384,21 @@ class ArenaVisualSessionRecorder:
         window_id: str | None = None,
     ) -> None:
         with self._lock:
-            self._scheduling_phase = str(phase)
-            self._scheduling_accepts_human_intent = bool(accepts_human_intent)
-            self._scheduling_active_actor_id = None if active_actor_id is None else str(active_actor_id)
-            self._scheduling_window_id = window_id
+            next_phase = str(phase)
+            next_accepts_human_intent = bool(accepts_human_intent)
+            next_active_actor_id = None if active_actor_id is None else str(active_actor_id)
+            next_window_id = window_id
+            if (
+                self._scheduling_phase == next_phase
+                and self._scheduling_accepts_human_intent == next_accepts_human_intent
+                and self._scheduling_active_actor_id == next_active_actor_id
+                and self._scheduling_window_id == next_window_id
+            ):
+                return
+            self._scheduling_phase = next_phase
+            self._scheduling_accepts_human_intent = next_accepts_human_intent
+            self._scheduling_active_actor_id = next_active_actor_id
+            self._scheduling_window_id = next_window_id
             self._mark_live_revision_locked()
 
     def update_runtime_metrics(self, **metrics: Any) -> None:
@@ -397,7 +408,6 @@ class ArenaVisualSessionRecorder:
                     self._runtime_metrics.pop(str(key), None)
                 else:
                     self._runtime_metrics[str(key)] = value
-            self._mark_live_revision_locked()
 
     def reopen_live_round(self) -> int:
         with self._lock:
@@ -620,6 +630,7 @@ class ArenaVisualSessionRecorder:
                 **copy.deepcopy(self.extra_capabilities),
             },
             summary=self._build_summary(),
+            runtime_metrics=copy.deepcopy(self._runtime_metrics),
             timeline=self._build_timeline_manifest(
                 include_snapshot_anchors=include_snapshot_anchors,
             ),

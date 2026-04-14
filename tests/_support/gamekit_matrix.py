@@ -14,6 +14,7 @@ HEADLESS_NO_HUMAN = "headless_no_human"
 VISUAL_NO_HUMAN = "visual_no_human"
 HUMAN_VISUAL = "human_visual"
 LIVE_LLM_SMOKE_ENV = "GAGE_RUN_LIVE_LLM_TESTS"
+HUMAN_VISUAL_UNSUPPORTED_FAMILIES = frozenset({"pettingzoo"})
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ PLUGIN_IDS_BY_GAME_KIT = {
     "doudizhu": "arena.visualization.doudizhu.table_v1",
     "mahjong": "arena.visualization.mahjong.table_v1",
     "pettingzoo": "arena.visualization.pettingzoo.frame_v1",
+    "gymnasium_atari": "arena.visualization.pettingzoo.frame_v1",
     "retro_platformer": "arena.visualization.retro_platformer.frame_v1",
     "vizdoom": "arena.visualization.vizdoom.frame_v1",
 }
@@ -291,10 +293,10 @@ _BASE_LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
     GameKitConfigCase(
         "config/custom/pettingzoo/space_invaders_human_visual_gamekit.yaml",
         HUMAN_VISUAL,
-        "pettingzoo",
+        "gymnasium_atari",
         "space_invaders",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["pettingzoo"],
-        live_scene_scheme="http_pull",
+        plugin_id=PLUGIN_IDS_BY_GAME_KIT["gymnasium_atari"],
+        live_scene_scheme="low_latency_channel",
     ),
     GameKitConfigCase(
         "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
@@ -586,6 +588,10 @@ def human_visual_families() -> set[str]:
 
 def shipped_gamekit_families() -> set[str]:
     return {case.game_kit for case in LIVE_GAMEKIT_CONFIG_CASES}
+
+
+def human_visual_required_families() -> set[str]:
+    return shipped_gamekit_families() - set(HUMAN_VISUAL_UNSUPPORTED_FAMILIES)
 
 
 def manual_human_visual_commands(python_bin: str) -> tuple[str, ...]:

@@ -27,6 +27,7 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         stateful_actions: bool = False,
         scheduler_owned_realtime: bool = False,
         action_schema: Mapping[str, Any] | None = None,
+        command_stale_after_ms: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -40,7 +41,14 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         self._uses_continuous_state = self._input_semantics == "continuous_state"
         self._scheduler_owned_realtime = bool(scheduler_owned_realtime)
         self._action_schema = dict(action_schema or {}) if isinstance(action_schema, Mapping) else {}
+        resolved_stale_after_ms = _coerce_optional_int(command_stale_after_ms)
+        self._command_stale_after_ms = (
+            resolved_stale_after_ms
+            if resolved_stale_after_ms is not None and resolved_stale_after_ms >= 0
+            else None
+        )
         self._last_continuous_payload: dict[str, Any] = {}
+        self._last_continuous_ts_ms: int | None = None
         self._async_lock = Lock()
         self._async_inflight = False
         self._async_observation: ArenaObservation | None = None
@@ -65,7 +73,10 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         if not self._scheduler_owned_realtime:
             return self.next_action(observation)
         payload = self._read_scheduler_owned_payload()
-        if not payload and not self._uses_continuous_state:
+        if not payload:
+            return None
+        if self._is_scheduler_owned_realtime_idle_payload(payload):
+            self._clear_continuous_payload()
             return None
         return self._build_action_from_payload(observation, payload)
 
@@ -79,9 +90,21 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             return []
         if self._uses_continuous_state:
             payload = self._read_scheduler_owned_payload()
-            if not payload:
+            if self._is_scheduler_owned_realtime_idle_payload(payload):
+                self._clear_continuous_payload()
                 return []
-            return [self._build_action_from_payload(observation, payload)]
+            if payload:
+                return [self._build_action_from_payload(observation, payload)]
+            replay_payload = self._resolve_continuous_replay_payload()
+            if not replay_payload:
+                return []
+            return [
+                self._build_action_from_payload(
+                    observation,
+                    replay_payload,
+                    remember_continuous=False,
+                )
+            ]
 
         queue = self._action_queue
         if queue is None:
@@ -194,8 +217,6 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             payload = self._read_latest_queued_payload(queue, timeout_s=None)
             if payload:
                 return payload
-            if self._last_continuous_payload:
-                return dict(self._last_continuous_payload)
             return {}
         get_nowait = getattr(queue, "get_nowait", None)
         if not callable(get_nowait):
@@ -205,6 +226,24 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         except Empty:
             return {}
         return parse_action_payload(queued)
+
+    def _is_scheduler_owned_realtime_idle_payload(self, payload: Mapping[str, Any] | None) -> bool:
+        if not self._scheduler_owned_realtime or not self._uses_continuous_state:
+            return False
+        if not isinstance(payload, Mapping):
+            return False
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return False
+        if not _coerce_optional_bool(metadata.get("realtime_input"), default=False):
+            return False
+        move = self._resolve_move(payload)
+        if not move:
+            return True
+        idle_moves = {"noop"}
+        if self._timeout_fallback_move:
+            idle_moves.add(str(self._timeout_fallback_move).strip())
+        return move in idle_moves
 
     def _read_async_action_payload(self, pending_payload: Mapping[str, Any] | None) -> dict[str, Any]:
         queue = self._action_queue
@@ -314,11 +353,14 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         self,
         observation: ArenaObservation,
         payload: Mapping[str, Any] | None,
+        *,
+        remember_continuous: bool = True,
     ) -> ArenaAction:
         resolved_payload = dict(payload) if isinstance(payload, Mapping) else {}
         if self._uses_continuous_state:
             if resolved_payload:
-                self._last_continuous_payload = dict(resolved_payload)
+                if remember_continuous:
+                    self._remember_continuous_payload(resolved_payload)
             elif self._last_continuous_payload:
                 resolved_payload = dict(self._last_continuous_payload)
         move = self._resolve_move(resolved_payload)
@@ -377,12 +419,34 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
 
     def request_stop(self) -> None:
         self._stop_requested.set()
+        self._clear_continuous_payload()
         self._clear_async_state()
 
     def reset_runtime_state(self) -> None:
         self._stop_requested.clear()
-        self._last_continuous_payload = {}
+        self._clear_continuous_payload()
         self._clear_async_state()
+
+    def _remember_continuous_payload(self, payload: Mapping[str, Any]) -> None:
+        self._last_continuous_payload = dict(payload)
+        self._last_continuous_ts_ms = _monotonic_ms()
+
+    def _clear_continuous_payload(self) -> None:
+        self._last_continuous_payload = {}
+        self._last_continuous_ts_ms = None
+
+    def _resolve_continuous_replay_payload(self) -> dict[str, Any]:
+        if not self._last_continuous_payload:
+            return {}
+        if self._command_stale_after_ms is None:
+            return dict(self._last_continuous_payload)
+        if self._last_continuous_ts_ms is None:
+            return dict(self._last_continuous_payload)
+        age_ms = _monotonic_ms() - self._last_continuous_ts_ms
+        if age_ms > self._command_stale_after_ms:
+            self._clear_continuous_payload()
+            return {}
+        return dict(self._last_continuous_payload)
 
     def _clear_async_state(self) -> None:
         with self._async_lock:
@@ -458,6 +522,7 @@ class LocalHumanInputDriver(PlayerDriver):
                 if isinstance(params.get("action_schema"), Mapping)
                 else None
             ),
+            command_stale_after_ms=_coerce_optional_int(params.get("command_stale_after_ms")),
             metadata={"driver_id": self.driver_id, "seat": spec.seat},
         )
 
@@ -482,6 +547,10 @@ def _coerce_optional_bool(value: object, *, default: bool) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _monotonic_ms() -> int:
+    return int(time.monotonic() * 1000.0)
 
 
 def _resolve_default_hold_ticks(

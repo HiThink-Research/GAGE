@@ -61,6 +61,20 @@ class FakeAecEnv:
         self.agent_selection = self.agents[(idx + 1) % len(self.agents)]
 
 
+class RecordingAecEnv(FakeAecEnv):
+    def __init__(self, max_steps: int = 4, action_n: int = 3) -> None:
+        self.actions: list[tuple[str, Any]] = []
+        super().__init__(max_steps=max_steps, action_n=action_n)
+
+    def reset(self, seed: Any = None, options: Any = None) -> None:
+        super().reset(seed=seed, options=options)
+        self.actions = []
+
+    def step(self, action: Any) -> None:
+        self.actions.append((str(self.agent_selection), action))
+        super().step(action)
+
+
 class FakeRgbFrame:
     shape = (2, 2, 3)
     dtype = "uint8"
@@ -244,3 +258,67 @@ def test_pettingzoo_env_captures_fresh_observation_when_last_is_stale():
     observation = adapter.observe(adapter.get_active_player())
 
     assert observation.metadata["raw_obs"]["step"] == env._step_count  # noqa: SLF001
+
+
+def test_pettingzoo_env_apply_repeats_human_action_and_auto_noops_dummy_turns():
+    env = RecordingAecEnv(max_steps=20, action_n=3)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        player_ids=["pilot_0", "pilot_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+        use_action_meanings=False,
+        action_schema={"hold_ticks_min": 1, "hold_ticks_max": 8, "hold_ticks_default": 4},
+        auto_noop_player_ids=["pilot_1"],
+    )
+
+    result = adapter.apply(
+        ArenaAction(
+            player="pilot_0",
+            move="1",
+            raw='{"move":"1","hold_ticks":3}',
+            metadata={"hold_ticks": 3},
+        )
+    )
+
+    assert result is None
+    assert env.actions == [
+        ("agent_0", 1),
+        ("agent_1", 0),
+        ("agent_0", 1),
+        ("agent_1", 0),
+        ("agent_0", 1),
+        ("agent_1", 0),
+    ]
+    assert adapter.get_active_player() == "pilot_0"
+    assert adapter._move_count == 1  # noqa: SLF001
+    assert adapter._move_log[0]["hold_ticks"] == 3  # noqa: SLF001
+
+
+def test_pettingzoo_env_uses_action_schema_default_and_exposes_schema_metadata():
+    env = RecordingAecEnv(max_steps=20, action_n=3)
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        player_ids=["pilot_0", "pilot_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+        use_action_meanings=False,
+        action_schema={"hold_ticks_min": 1, "hold_ticks_max": 8, "hold_ticks_default": 4},
+        auto_noop_player_ids=["pilot_1"],
+    )
+
+    observation = adapter.observe("pilot_0")
+    assert observation.metadata["action_schema_config"] == {
+        "hold_ticks_min": 1,
+        "hold_ticks_max": 8,
+        "hold_ticks_default": 4,
+    }
+    assert (
+        observation.context["action_schema_config"]
+        == observation.metadata["action_schema_config"]
+    )
+
+    adapter.apply(ArenaAction(player="pilot_0", move="1", raw="1"))
+
+    assert len(env.actions) == 8
+    assert env.actions[0] == ("agent_0", 1)
+    assert env.actions[-1] == ("agent_1", 0)
+    assert adapter._move_log[0]["hold_ticks"] == 4  # noqa: SLF001

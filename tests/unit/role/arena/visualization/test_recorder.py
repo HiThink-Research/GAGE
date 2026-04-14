@@ -144,6 +144,7 @@ def test_visual_session_recorder_can_update_scheduling_state_without_timeline_ev
         accepts_human_intent=True,
         active_actor_id="player_0",
     )
+    revision_after_scheduling = recorder.current_live_revision()
     recorder.update_runtime_metrics(tick_overshoot_ms=3.5, artifact_queue_depth=0)
 
     session = recorder.build_visual_session()
@@ -152,6 +153,8 @@ def test_visual_session_recorder_can_update_scheduling_state_without_timeline_ev
     assert session.scheduling.phase == "waiting_for_intent"
     assert session.scheduling.accepts_human_intent is True
     assert session.summary["realtimeMetrics"]["tick_overshoot_ms"] == 3.5
+    assert session.runtime_metrics["tick_overshoot_ms"] == 3.5
+    assert recorder.current_live_revision() == revision_after_scheduling
     assert header["lifecycle"] == "initializing"
     assert header["tailSeq"] == 0
 

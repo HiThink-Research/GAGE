@@ -106,6 +106,7 @@ class GameSession:
     _latest_live_frame_version: int = field(default=0, init=False, repr=False)
     _last_realtime_snapshot_ts_ms: int = field(default=0, init=False, repr=False)
     _last_input_age_ms: float | None = field(default=None, init=False, repr=False)
+    _realtime_observation_dirty: bool = field(default=True, init=False, repr=False)
     _environment_lock: RLock = field(default_factory=RLock, init=False, repr=False)
     _stop_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
@@ -225,6 +226,7 @@ class GameSession:
         )
         observation = support_context.payload.get("observation", observation)
         self._last_observation = observation
+        self._realtime_observation_dirty = False
         self._current_trace_entry = make_trace_entry(
             step_index=self.step,
             player_id=player_id,
@@ -240,6 +242,26 @@ class GameSession:
         else:
             self._record_visual_decision_window_open(player_id=player_id, observation=observation)
         return observation
+
+    def observe_scheduler_owned_realtime_tick(self):
+        """Return the cached realtime observation when it is still valid for input draining."""
+
+        if not self._uses_scheduler_owned_human_realtime():
+            return self.observe()
+        self._consume_requested_restart()
+        if self._last_observation is not None and not self._realtime_observation_dirty:
+            player_id = getattr(self._last_observation, "active_player", None)
+            if player_id in (None, "") and self.environment is not None:
+                with self._environment_lock:
+                    player_id = str(self.environment.get_active_player())
+            player_id = str(player_id or "")
+            self._set_visual_scheduling_state(
+                phase="waiting_for_intent",
+                player_id=player_id or None,
+                accepts_human_intent=bool(player_id and self._is_human_player(player_id)),
+            )
+            return self._last_observation
+        return self.observe()
 
     def decide_current_player(self, observation) -> ArenaAction | None:
         if self.environment is None:
@@ -375,6 +397,7 @@ class GameSession:
         trace_entry["is_action_legal"] = infer_legality(action)
         with self._environment_lock:
             result = self.environment.apply(action)
+        self._realtime_observation_dirty = True
         if result is not None:
             self.final_result = result
         after_context = self._run_support_hook(
@@ -410,6 +433,33 @@ class GameSession:
         self.arena_trace.append(finalized_trace_entry)
         self._current_trace_entry = None
 
+    def tick_realtime_idle(self, *, frames: int = 1) -> bool:
+        """Drive a scheduler-owned realtime environment by noop frames."""
+
+        if not self._uses_scheduler_owned_human_realtime():
+            return False
+        if self.environment is None:
+            return False
+        tick_idle = getattr(self.environment, "tick_idle", None)
+        if not callable(tick_idle):
+            return False
+
+        move = "noop"
+        control_profile = self._realtime_human_control_profile()
+        configured_fallback = (
+            getattr(control_profile, "fallback_move", None)
+            if control_profile is not None
+            else None
+        )
+        if configured_fallback:
+            move = str(configured_fallback)
+
+        with self._environment_lock:
+            result = tick_idle(frames=frames, move=move)
+        if result is not None:
+            self.final_result = result
+        return True
+
     def advance(
         self,
         *,
@@ -443,10 +493,56 @@ class GameSession:
         """Hook for schedulers that capture per-tick output on the v2 path."""
         if not self._uses_scheduler_owned_human_realtime():
             return None
+        frame_version_before = self._latest_live_frame_version
         frame_payload = self._capture_realtime_live_frame()
-        if self._should_record_realtime_snapshot():
+        frame_captured = self._latest_live_frame_version != frame_version_before
+        snapshot_persisted = self._should_record_realtime_snapshot()
+        inline_media = (
+            self._should_include_inline_snapshot_media() if snapshot_persisted else False
+        )
+        self._log_realtime_snapshot_diagnostic(
+            frame_captured=frame_captured,
+            frame_payload=frame_payload,
+            snapshot_persisted=snapshot_persisted,
+            inline_media=inline_media,
+        )
+        if snapshot_persisted:
             self._capture_realtime_snapshot(frame_payload=frame_payload)
         return None
+
+    def _log_realtime_snapshot_diagnostic(
+        self,
+        *,
+        frame_captured: bool,
+        frame_payload: Mapping[str, Any] | None,
+        snapshot_persisted: bool,
+        inline_media: bool,
+    ) -> None:
+        if not _realtime_snapshot_diagnostics_enabled():
+            return
+        if snapshot_persisted and frame_captured:
+            disposition = "both"
+        elif snapshot_persisted:
+            disposition = "persisted"
+        elif frame_captured:
+            disposition = "frame_captured"
+        else:
+            disposition = "neither"
+        logger.debug(
+            "realtime_snapshot_diagnostic disposition={} tick={} step={} "
+            "persisted={} frame_captured={} frame_available={} inline_media={} "
+            "snapshot_stride={} inline_stride={} live_frame_version={}",
+            disposition,
+            self.tick,
+            self.step,
+            snapshot_persisted,
+            frame_captured,
+            frame_payload is not None,
+            inline_media,
+            self._resolve_snapshot_persist_stride(),
+            self._resolve_inline_snapshot_stride(),
+            self._latest_live_frame_version,
+        )
 
     def ensure_result(self) -> object | None:
         if self.final_result is not None:
@@ -493,6 +589,7 @@ class GameSession:
         self._visualization_linger_s = _resolve_linger_seconds(visualizer_config)
         self._visualization_launch_browser = bool(visualizer_config.get("launch_browser", False))
         self._visualization_live_scene_scheme = _resolve_live_scene_scheme(visualizer_config)
+        self._configure_visual_capabilities()
         if self._visualization_mode == "arena_visual":
             from gage_eval.role.arena.visualization.live_session import ArenaVisualFinishGate
 
@@ -812,7 +909,10 @@ class GameSession:
         frame_payload = _load_environment_frame_payload(self.environment)
         if frame_payload is not None:
             ts_ms = wall_clock_ms()
-            normalized_frame_payload = dict(frame_payload)
+            normalized_frame_payload = _enrich_live_frame_payload_with_observation(
+                frame_payload,
+                self._last_observation,
+            )
             if (
                 self._latest_live_frame_payload is not None
                 and not _live_frame_payload_changed(
@@ -1325,6 +1425,7 @@ class GameSession:
         self.support_errors.clear()
         self._current_trace_entry = None
         self._last_observation = reset_observation
+        self._realtime_observation_dirty = True
         self._last_realtime_snapshot_ts_ms = 0
         self._last_input_age_ms = None
         self._finalized = False
@@ -1433,7 +1534,14 @@ class GameSession:
         if normalized_tick_ms <= 0:
             return 1
         stride = round(_REALTIME_INLINE_SNAPSHOT_TARGET_MS / float(normalized_tick_ms))
-        return max(1, int(stride))
+        tick_stride = max(1, int(stride))
+        if not self._uses_async_decimated_live_artifacts():
+            return tick_stride
+        snapshot_stride = max(1, self._resolve_snapshot_persist_stride())
+        if snapshot_stride <= 1:
+            return tick_stride
+        snapshot_multiple = max(1, round(float(tick_stride) / float(snapshot_stride)))
+        return max(snapshot_stride, int(snapshot_multiple) * snapshot_stride)
 
     def max_scheduler_owned_actions_per_tick(self) -> int:
         control_profile = self._realtime_human_control_profile()
@@ -1706,6 +1814,9 @@ def _inject_realtime_driver_params(bindings, *, runtime_profile) -> tuple[Player
             fallback_move = getattr(realtime_control, "fallback_move", None)
             if fallback_move not in (None, "") and "timeout_fallback_move" not in driver_params:
                 driver_params["timeout_fallback_move"] = str(fallback_move)
+            command_stale_after_ms = getattr(realtime_control, "command_stale_after_ms", None)
+            if command_stale_after_ms is not None and "command_stale_after_ms" not in driver_params:
+                driver_params["command_stale_after_ms"] = int(command_stale_after_ms)
         updated.append(replace(binding, driver_params=driver_params))
     return tuple(updated)
 
@@ -2245,12 +2356,15 @@ def _load_environment_frame_payload_for_observer(
         if resolved_active_player is not None:
             active_player = str(resolved_active_player).strip() or None
 
+    observer_observation = None
     try:
-        observe(observer.observer_id)
+        observer_observation = observe(observer.observer_id)
     except Exception:
         return None
 
     payload = _load_environment_frame_payload(environment)
+    if payload is not None:
+        payload = _enrich_live_frame_payload_with_observation(payload, observer_observation)
 
     if active_player is not None and active_player != observer.observer_id:
         try:
@@ -2259,6 +2373,102 @@ def _load_environment_frame_payload_for_observer(
             pass
 
     return payload
+
+
+def _enrich_live_frame_payload_with_observation(
+    frame_payload: Mapping[str, Any],
+    observation: object | None,
+) -> dict[str, Any]:
+    enriched = dict(frame_payload)
+    if observation is None:
+        return enriched
+
+    observation_snapshot = _visual_payload_snapshot(
+        observation,
+        include_inline_media=False,
+    )
+    if not isinstance(observation_snapshot, Mapping):
+        observation_snapshot = {}
+
+    active_player = (
+        _string_or_none(enriched.get("active_player_id"))
+        or _string_or_none(enriched.get("actor"))
+        or _string_or_none(enriched.get("active_player"))
+    )
+    if active_player is None:
+        active_player = _string_or_none(
+            _observation_context_value(
+                observation,
+                observation_snapshot,
+                "active_player",
+                "activePlayerId",
+            )
+        )
+        if active_player is not None:
+            enriched["active_player"] = active_player
+
+    if not _has_live_frame_legal_actions(enriched):
+        legal_actions = _observation_context_value(
+            observation,
+            observation_snapshot,
+            "legal_actions",
+            "legalActions",
+        )
+        if isinstance(legal_actions, Mapping):
+            enriched["legal_actions"] = dict(legal_actions)
+        else:
+            legal_moves = _coerce_string_sequence(
+                _observation_context_value(
+                    observation,
+                    observation_snapshot,
+                    "legal_moves",
+                    "legalMoves",
+                    "legal_actions_items",
+                )
+            )
+            if legal_moves:
+                enriched["legal_moves"] = legal_moves
+                enriched["legal_actions"] = {"items": legal_moves}
+
+    metadata = _merge_snapshot_mapping(
+        _observation_context_value(observation, observation_snapshot, "metadata"),
+        enriched.get("metadata"),
+    )
+    if active_player is not None:
+        metadata.setdefault("player_id", active_player)
+    if metadata:
+        enriched["metadata"] = metadata
+
+    return enriched
+
+
+def _observation_context_value(
+    observation: object,
+    observation_snapshot: Mapping[str, Any],
+    *names: str,
+) -> object | None:
+    for name in names:
+        if name in observation_snapshot:
+            return observation_snapshot[name]
+        try:
+            value = getattr(observation, name)
+        except Exception:
+            continue
+        if callable(value):
+            try:
+                return value()
+            except Exception:
+                continue
+        return value
+    return None
+
+
+def _has_live_frame_legal_actions(frame_payload: Mapping[str, Any]) -> bool:
+    legal_actions = frame_payload.get("legal_actions")
+    if isinstance(legal_actions, Mapping):
+        items = legal_actions.get("items")
+        return isinstance(items, Sequence) and not isinstance(items, (str, bytes))
+    return bool(_coerce_string_sequence(frame_payload.get("legal_moves")))
 
 
 def _merge_snapshot_mapping(primary: object | None, secondary: object | None) -> dict[str, Any]:
@@ -2295,6 +2505,13 @@ def _coerce_int(value: object | None) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _realtime_snapshot_diagnostics_enabled() -> bool:
+    value = os.environ.get("GAGE_REALTIME_SNAPSHOT_DIAGNOSTICS")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _string_or_none(value: object | None) -> str | None:

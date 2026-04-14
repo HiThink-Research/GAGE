@@ -246,7 +246,7 @@ def test_local_human_input_driver_continuous_state_mode_does_not_sleep_between_t
     assert current_time["value"] == pytest.approx(100.005, abs=1e-9)
 
 
-def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_immediately() -> None:
+def test_local_human_input_driver_scheduler_owned_realtime_consumes_latest_state_once() -> None:
     action_queue = LatestActionMailbox()
     action_queue.put(
         dump_action_payload(
@@ -282,11 +282,168 @@ def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_
         active_player="player_0",
     )
 
-    first_action = player.next_action(observation)
-    second_action = player.next_action(observation)
+    first_action = player.poll_scheduler_owned_action(observation)
+    second_action = player.poll_scheduler_owned_action(observation)
 
+    assert first_action is not None
     assert first_action.move == "right"
-    assert second_action.move == "right"
+    assert second_action is None
+
+
+def test_local_human_input_driver_scheduler_owned_realtime_replays_held_state_until_release() -> None:
+    action_queue = LatestActionMailbox()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="right",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 1, "realtime_input": True},
+            )
+        )
+    )
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "continuous_state",
+                "tick_interval_ms": 16,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+                "command_stale_after_ms": 200,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="retro frame",
+        legal_moves=("noop", "right", "right_jump"),
+        active_player="player_0",
+    )
+
+    first_batch = player.drain_scheduler_owned_actions(observation, max_items=1)
+    replay_batch = player.drain_scheduler_owned_actions(observation, max_items=1)
+
+    assert [action.move for action in first_batch] == ["right"]
+    assert [action.move for action in replay_batch] == ["right"]
+
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="noop",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 2, "realtime_input": True},
+            )
+        )
+    )
+
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+
+
+def test_local_human_input_driver_scheduler_owned_realtime_expires_held_state_after_stale_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    action_queue = LatestActionMailbox()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="right",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 1, "realtime_input": True},
+            )
+        )
+    )
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "continuous_state",
+                "tick_interval_ms": 16,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+                "command_stale_after_ms": 200,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="retro frame",
+        legal_moves=("noop", "right", "right_jump"),
+        active_player="player_0",
+    )
+    current_time = {"value": 100.0}
+    monkeypatch.setattr(
+        human_local_input_module.time,
+        "monotonic",
+        lambda: current_time["value"],
+    )
+
+    assert [action.move for action in player.drain_scheduler_owned_actions(observation, max_items=1)] == [
+        "right"
+    ]
+    current_time["value"] = 100.150
+    assert [action.move for action in player.drain_scheduler_owned_actions(observation, max_items=1)] == [
+        "right"
+    ]
+
+    current_time["value"] = 100.201
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+
+
+def test_local_human_input_driver_scheduler_owned_realtime_ignores_realtime_noop_state() -> None:
+    action_queue = LatestActionMailbox()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="noop",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 1, "realtime_input": True},
+            )
+        )
+    )
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "continuous_state",
+                "tick_interval_ms": 16,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="retro frame",
+        legal_moves=("noop", "right", "right_jump"),
+        active_player="player_0",
+    )
+
+    assert player.poll_scheduler_owned_action(observation) is None
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
 
     action_queue.put(
         dump_action_payload(

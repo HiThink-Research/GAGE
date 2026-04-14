@@ -140,6 +140,12 @@ export function buildRetroMarioKeyboardControls(): FrameKeyboardControls {
 export function buildPettingZooKeyboardControls(): FrameKeyboardControls {
   return {
     hint: "Keyboard: arrows move, Space/J/Z fires.",
+    holdTickMs: 16,
+    holdTicksMin: 1,
+    holdTicksMax: 4,
+    initialHoldTicks: 1,
+    heartbeatMs: 33,
+    heartbeatHoldTicks: 1,
     watchedKeys: buildWatchedKeys([
       "ArrowLeft",
       "ArrowRight",

@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -483,13 +484,14 @@ export function FrameSurface({
   const rootRef = useRef<HTMLElement | null>(null);
   const isImmersive = presentation === "immersive";
   const frameScene = readFrameScene(scene);
-  const actionDescriptors = readFrameActions(scene);
+  const actionDescriptors = useMemo(() => readFrameActions(scene), [scene]);
   const [immersiveViewportBounds, setImmersiveViewportBounds] = useState<FrameBounds | null>(null);
   const [observedViewport, setObservedViewport] = useState<FrameViewport | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
   const pressedKeyStartedAtRef = useRef<Map<string, number>>(new Map());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
   const lastKeyboardActionTsByIdRef = useRef<Map<string, number>>(new Map());
+  const keyboardNoopSeedRef = useRef<string | null>(null);
   const keyboardInputSequenceRef = useRef(0);
   const [optimisticOffset, setOptimisticOffset] = useState<FrameOptimisticOffset>({ x: 0, y: 0 });
   const primaryMediaRef = scene?.media?.primary;
@@ -527,6 +529,14 @@ export function FrameSurface({
     submitInput,
   };
 
+  function updateOptimisticOffset(nextOffset: FrameOptimisticOffset): void {
+    setOptimisticOffset((currentOffset) =>
+      currentOffset.x === nextOffset.x && currentOffset.y === nextOffset.y
+        ? currentOffset
+        : nextOffset,
+    );
+  }
+
   function dispatchKeyboardAction(
     pressedKeys: ReadonlySet<string>,
     options: KeyboardDispatchOptions = {},
@@ -549,7 +559,7 @@ export function FrameSurface({
         lastKeyboardDispatchRef.current = null;
       }
       if (context.keyboardControls.resolveOptimisticOffset) {
-        setOptimisticOffset({ x: 0, y: 0 });
+        updateOptimisticOffset({ x: 0, y: 0 });
       }
       return;
     }
@@ -588,13 +598,17 @@ export function FrameSurface({
         }
       : actionDescriptor.payload;
     if (context.keyboardControls.resolveOptimisticOffset) {
-      setOptimisticOffset(context.keyboardControls.resolveOptimisticOffset(pressedKeys));
+      updateOptimisticOffset(context.keyboardControls.resolveOptimisticOffset(pressedKeys));
     }
-    void context.submitInput({
-      playerId: context.resolvedActorId,
-      actionPayload,
-    })
-      .catch(() => {});
+    try {
+      const submitted = context.submitInput({
+        playerId: context.resolvedActorId,
+        actionPayload,
+      });
+      void Promise.resolve(submitted).catch(() => {});
+    } catch {
+      return;
+    }
   }
 
   useEffect(() => {
@@ -602,7 +616,7 @@ export function FrameSurface({
   }, [primaryMediaId]);
 
   useEffect(() => {
-    setOptimisticOffset({ x: 0, y: 0 });
+    updateOptimisticOffset({ x: 0, y: 0 });
   }, [keyboardSceneToken]);
 
   useEffect(() => {
@@ -610,7 +624,8 @@ export function FrameSurface({
       pressedKeysRef.current = new Set();
       pressedKeyStartedAtRef.current = new Map();
       lastKeyboardDispatchRef.current = null;
-      setOptimisticOffset({ x: 0, y: 0 });
+      keyboardNoopSeedRef.current = null;
+      updateOptimisticOffset({ x: 0, y: 0 });
       return;
     }
     const controls = keyboardControls;
@@ -623,7 +638,7 @@ export function FrameSurface({
       pressedKeysRef.current = new Set();
       pressedKeyStartedAtRef.current = new Map();
       lastKeyboardDispatchRef.current = null;
-      setOptimisticOffset({ x: 0, y: 0 });
+      updateOptimisticOffset({ x: 0, y: 0 });
       if (hadPressedKeys) {
         dispatchKeyboardAction(new Set(), {
           force: true,
@@ -687,6 +702,17 @@ export function FrameSurface({
       }
     }
 
+    const noopSeedToken =
+      canSubmitActions && resolvedActorId ? `${session.sessionId}:${resolvedActorId}` : null;
+    if (
+      noopSeedToken !== null &&
+      keyboardNoopSeedRef.current !== noopSeedToken &&
+      pressedKeysRef.current.size === 0
+    ) {
+      dispatchKeyboardAction(new Set(), { force: true, phase: "release" });
+      keyboardNoopSeedRef.current = noopSeedToken;
+    }
+
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("blur", handleWindowBlur);
@@ -695,9 +721,6 @@ export function FrameSurface({
     const heartbeatTimer =
       heartbeatMs !== undefined && heartbeatMs > 0
         ? window.setInterval(() => {
-            if (pressedKeysRef.current.size === 0) {
-              return;
-            }
             dispatchKeyboardAction(new Set(pressedKeysRef.current), {
               force: true,
               phase: "heartbeat",
