@@ -153,7 +153,29 @@ Timeline drawer 显示最近事件，例如 `action_intent`、`action_committed`
 
 它适合用来确认浏览器动作是否被接受、scene cursor 是否推进、运行是否到达终局。对已完成运行，replay 使用同一套 `arena_visual_session/v1` 产物。
 
-## 10. 常见排障
+## 10. Replay Snapshot 采样
+
+帧驱动 GameKit 可以把 live 画面传输和 replay snapshot 持久化分开配置。live channel 仍按 `frame_output_hz` 推送给浏览器；持久化 snapshot 只影响 `arena_visual_session/v1/snapshots` 和 replay seek anchors。
+
+```yaml
+runtime_binding_policy_config:
+  artifact_sampling_mode: async_decimated_live
+  snapshot_persist_stride: 3
+```
+
+支持的采样模式：
+
+| 模式 | 行为 | 适用场景 |
+| --- | --- | --- |
+| `sync_every_tick` | 每个 tick 同步进入 recorder。 | 低频棋盘、排查写盘顺序问题。 |
+| `async_every_tick` | 每个 tick 入异步队列，由后台 drain。 | 需要完整 replay tick，但不想阻塞主循环。 |
+| `async_decimated_live` | live 仍保持实时，replay 每 N 个 tick 持久化一次。 | Retro Mario、低延迟帧游戏和长时间人工操作。 |
+
+`snapshot_persist_stride` 控制 N，默认值是 `3`；`artifact_sampling_stride` 是兼容别名。异步队列默认最多保留 128 个待写 snapshot，队列满时丢弃最老帧并保留新帧。session 结束、异常收尾和 replay 持久化前都会 flush 剩余队列。
+
+`snapshot_persist_stride` 不会降低浏览器 live 帧率。如果页面实时画面卡顿，应先检查 `frame_output_hz`、media transport 和浏览器解码；如果磁盘写入或 replay 产物过大，再调大 `snapshot_persist_stride`。
+
+## 11. 常见排障
 
 | 现象 | 检查项 |
 | --- | --- |
@@ -166,7 +188,7 @@ Timeline drawer 显示最近事件，例如 `action_intent`、`action_committed`
 | 前端 dev server 连不上 session | 检查 `VITE_ARENA_GATEWAY_BASE_URL` 和运行时打印的 Python gateway 端口。 |
 | 缺少 replay 产物 | 确认运行确实进入了样本执行阶段，且没有在 visual recorder 写出 `arena_visual_session/v1` 前停止。 |
 
-## 11. 相关文档
+## 12. 相关文档
 
 - [Game Arena 总览](../game_arena_zh.md)
 - [五子棋指南](game_arena_gomoku_zh.md)

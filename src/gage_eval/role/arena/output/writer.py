@@ -125,6 +125,9 @@ def _build_footer_contract(
             "termination_reason": "unknown",
         }
 
+    total_steps = _coerce_int(_read_value(result, "move_count"), len(arena_trace))
+    if arena_trace and len(arena_trace) != total_steps:
+        total_steps = len(arena_trace)
     footer: dict[str, object] = {
         "winner_player_id": _coerce_optional_str(_read_value(result, "winner")),
         "termination_reason": str(
@@ -132,10 +135,7 @@ def _build_footer_contract(
             or _read_value(result, "result")
             or "unknown"
         ),
-        "total_steps": max(
-            0,
-            _coerce_int(_read_value(result, "move_count"), len(arena_trace)),
-        ),
+        "total_steps": max(0, total_steps),
     }
     ranks = _coerce_sequence_list(_read_value(result, "ranks"))
     if ranks is not None:

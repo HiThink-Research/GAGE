@@ -167,7 +167,7 @@ def _open_websocket(url: str) -> socket.socket:
         if not chunk:
             break
         response += chunk
-    assert b"101 Switching Protocols" in response
+    assert response.startswith(b"HTTP/1.1 101 Switching Protocols")
     return client
 
 

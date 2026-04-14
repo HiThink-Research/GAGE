@@ -122,6 +122,7 @@ class StableRetroArenaEnvironment:
 
         self._retro_env = None
         self._action_codec: Optional[RetroActionCodec] = None
+        self._controls_payload_cache: dict[tuple[str, ...], dict[str, Any]] = {}
         self._legal_moves_override = list(legal_moves) if legal_moves else None
         self._action_mapping_override = action_mapping
         self._info_history: list[dict[str, Any]] = []
@@ -195,6 +196,11 @@ class StableRetroArenaEnvironment:
         }
 
     def _build_controls_payload(self, legal_moves: Sequence[str]) -> dict[str, Any]:
+        cache_key = tuple(str(move) for move in legal_moves)
+        cached = self._controls_payload_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         key_aliases = {
             "w": "UP",
             "a": "LEFT",
@@ -225,7 +231,7 @@ class StableRetroArenaEnvironment:
                     "keys_combo": "+".join(pressed_keys),
                 }
 
-        return {
+        payload = {
             "scheme": "wasd_jkl",
             "keys_hint": "W/A/S/D = up/left/down/right; J=A(jump), K=B(run), "
             "L=select, Enter=start.",
@@ -233,6 +239,8 @@ class StableRetroArenaEnvironment:
             "buttons": self._action_codec.buttons() if self._action_codec else [],
             "move_aliases": move_aliases,
         }
+        self._controls_payload_cache[cache_key] = payload
+        return payload
 
     def _build_observation_image(self, frame: Any) -> Optional[dict[str, Any]]:
         if not self._obs_image or frame is None:
@@ -316,11 +324,37 @@ class StableRetroArenaEnvironment:
             self._illegal_move_count += 1
             encoded = self._action_codec.encode("noop")
 
+        executed_ticks, terminated, truncated = self._step_emulator(
+            encoded.buttons,
+            frames=hold_ticks,
+        )
+        self.record_decision(action, start_tick=start_tick, hold_ticks=max(1, executed_ticks))
+        return self._maybe_finalize_result(terminated, truncated)
+
+    def tick_idle(self, *, frames: int = 1, move: str = "noop") -> Optional[GameResult]:
+        """Advance the emulator without recording a player decision."""
+
+        if self._terminal:
+            return self._final_result
+        if self._retro_env is None or self._action_codec is None:
+            raise RuntimeError("retro environment not initialized")
+        try:
+            encoded = self._action_codec.encode(move)
+        except ValueError:
+            encoded = self._action_codec.encode("noop")
+        _executed_ticks, terminated, truncated = self._step_emulator(
+            encoded.buttons,
+            frames=frames,
+        )
+        return self._maybe_finalize_result(terminated, truncated)
+
+    def _step_emulator(self, buttons, *, frames: int) -> tuple[int, bool, bool]:
         terminated = False
         truncated = False
         executed_ticks = 0
-        while executed_ticks < hold_ticks:
-            step_result = self._retro_env.step(encoded.buttons)
+        target_ticks = max(1, int(frames))
+        while executed_ticks < target_ticks:
+            step_result = self._retro_env.step(buttons)
             obs, reward, terminated, truncated, info = self._normalize_step(step_result)
             self._last_obs = obs
             self._tick += 1
@@ -340,31 +374,16 @@ class StableRetroArenaEnvironment:
             self._maybe_render()
             if terminated or truncated:
                 break
+        return executed_ticks, terminated, truncated
 
-        self.record_decision(action, start_tick=start_tick, hold_ticks=max(1, executed_ticks))
-
+    def _maybe_finalize_result(self, terminated: bool, truncated: bool) -> Optional[GameResult]:
         if not (terminated or truncated):
             return None
         self._terminal = True
         status = self._derive_result(terminated, truncated, self._last_info)
         reason = "truncated" if truncated else "terminated"
         self._final_result = self.build_result(status=status, reason=reason)
-        if self._replay_writer is not None:
-            replay_path = self._replay_writer.finalize(self._final_result)
-            if replay_path:
-                self._final_result = GameResult(
-                    winner=self._final_result.winner,
-                    result=self._final_result.result,
-                    reason=self._final_result.reason,
-                    replay_path=replay_path,
-                    move_count=self._final_result.move_count,
-                    illegal_move_count=self._final_result.illegal_move_count,
-                    final_board=self._final_result.final_board,
-                    move_log=self._final_result.move_log,
-                    rule_profile=self._final_result.rule_profile,
-                    win_direction=self._final_result.win_direction,
-                    line_length=self._final_result.line_length,
-                )
+        self._final_result = self.finalize_replay(self._final_result)
         return self._final_result
 
     def is_terminal(self) -> bool:
@@ -457,12 +476,12 @@ class StableRetroArenaEnvironment:
         if candidate is None:
             candidate = self._extract_hold_ticks_from_raw(action.raw)
         if candidate is None:
-            hold_ticks = 1
+            hold_ticks = self._action_schema.default_hold_ticks
         else:
             try:
                 hold_ticks = int(candidate)
             except (TypeError, ValueError):
-                hold_ticks = 1
+                hold_ticks = self._action_schema.default_hold_ticks
         return max(
             self._action_schema.hold_ticks_min,
             min(self._action_schema.hold_ticks_max, hold_ticks),
@@ -495,6 +514,7 @@ class StableRetroArenaEnvironment:
         if self._retro_env is None or self._runtime_policy == "fresh":
             self._retro_env = self._make_env()
             self._action_codec = self._build_action_codec(self._retro_env)
+            self._controls_payload_cache = {}
 
     def _reset_state(self) -> None:
         if self._retro_env is None:
@@ -505,6 +525,7 @@ class StableRetroArenaEnvironment:
         self._decision_count = 0
         self._illegal_move_count = 0
         self._move_log = []
+        self._controls_payload_cache = {}
         self._last_move = None
         self._last_reward = 0.0
         self._last_info = {}
@@ -597,7 +618,11 @@ class StableRetroArenaEnvironment:
         if self._retro_env is None:
             return
         try:
-            logger.debug("Retro render tick={} force={}", self._tick, force)
+            logger.opt(lazy=True).debug(
+                "Retro render tick={} force={}",
+                lambda: self._tick,
+                lambda: force,
+            )
             if self._last_obs is None:
                 if self._tick <= 3:
                     logger.warning("Force frame viewer enabled but no frame is available yet.")
@@ -648,18 +673,12 @@ class StableRetroArenaEnvironment:
             logger.warning("Frame viewer skipped non-RGB frame: ndim={} shape={}", frame_ndim, frame_shape)
             return
         if self._tick <= 3 or self._tick % 60 == 0:
-            try:
-                min_val = float(frame.min())
-                max_val = float(frame.max())
-            except Exception:
-                min_val = None
-                max_val = None
-            logger.debug(
+            logger.opt(lazy=True).debug(
                 "Frame viewer stats: shape={} dtype={} min={} max={}",
-                frame_shape,
-                getattr(frame, "dtype", None),
-                min_val,
-                max_val,
+                lambda: frame_shape,
+                lambda: getattr(frame, "dtype", None),
+                lambda: _safe_frame_stat(frame, "min"),
+                lambda: _safe_frame_stat(frame, "max"),
             )
         if self._frame_viewer_disabled:
             return
@@ -760,6 +779,16 @@ class StableRetroArenaEnvironment:
             "last_info": self._last_info,
         }
         return str(summary)
+
+
+def _safe_frame_stat(frame: Any, method_name: str) -> float | None:
+    method = getattr(frame, method_name, None)
+    if not callable(method):
+        return None
+    try:
+        return float(method())
+    except Exception:
+        return None
 
 
 __all__ = ["DEFAULT_PLAYER_ID", "StableRetroArenaEnvironment"]

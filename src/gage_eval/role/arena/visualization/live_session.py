@@ -188,10 +188,13 @@ class RecorderLiveSessionSource:
         return self.recorder.export_live_header()
 
     def current_live_revision(self) -> int:
-        current_revision = getattr(self.recorder, "current_live_revision", None)
-        recorder_revision = int(current_revision()) if callable(current_revision) else 0
+        recorder_revision = self._current_recorder_revision()
         frame_version = self._current_stream_frame_version() or 0
         return _compose_live_revision(recorder_revision=recorder_revision, frame_version=frame_version)
+
+    def _current_recorder_revision(self) -> int:
+        current_revision = getattr(self.recorder, "current_live_revision", None)
+        return int(current_revision()) if callable(current_revision) else 0
 
     def wait_for_live_revision(self, *, after_revision: int, timeout_s: float | None = None) -> int:
         target_revision = int(after_revision)
@@ -251,7 +254,7 @@ class RecorderLiveSessionSource:
         seq: int,
         observer: ObserverRef | None = None,
     ) -> VisualScene | None:
-        revision = self.current_live_revision()
+        revision = self._live_state_cache_revision(self.current_live_revision())
         observer_kind, observer_id = self._normalize_observer_key(observer)
         cache_key = (revision, int(seq), observer_kind, observer_id)
         with self._cache_lock:
@@ -274,7 +277,9 @@ class RecorderLiveSessionSource:
         return self.recorder.lookup_marker(marker)
 
     def lookup_media(self, media_id: str) -> MediaSourceRef | None:
-        state = self._load_live_state(revision=self.current_live_revision())
+        state = self._load_live_state(
+            revision=self._live_state_cache_revision(self.current_live_revision())
+        )
         if self.live_scene_scheme == "binary_stream":
             binary_ref = self._lookup_binary_media_ref(state=state, media_id=media_id)
             if binary_ref is not None:
@@ -295,7 +300,9 @@ class RecorderLiveSessionSource:
         )
 
     def load_media_content(self, media_id: str) -> tuple[bytes, str | None] | None:
-        state = self._load_live_state(revision=self.current_live_revision())
+        state = self._load_live_state(
+            revision=self._live_state_cache_revision(self.current_live_revision())
+        )
         raw_ref = self._resolve_media_content_ref(state=state, media_id=media_id)
         if raw_ref is None:
             return None
@@ -351,7 +358,7 @@ class RecorderLiveSessionSource:
                 return cached[1]
         state = self.recorder.export_live_state()
         with self._cache_lock:
-            if revision == self.current_live_revision():
+            if revision == self._live_state_cache_revision(self.current_live_revision()):
                 retained_sessions = {
                     key: value
                     for key, value in self._session_cache.items()
@@ -368,6 +375,11 @@ class RecorderLiveSessionSource:
                 self._scene_cache.update(retained_scenes)
                 object.__setattr__(self, "_live_state_cache", (revision, state))
         return state
+
+    def _live_state_cache_revision(self, live_revision: int) -> int:
+        if self.live_scene_scheme == "low_latency_channel":
+            return _recorder_revision_from_live_revision(live_revision)
+        return int(live_revision)
 
     def _current_stream_frame_version(self) -> int | None:
         if self.live_frame_supplier is None:

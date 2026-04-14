@@ -10,6 +10,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.artifacts import (
     ArenaVisualArtifactLayout,
@@ -76,6 +78,7 @@ class ArenaVisualSessionRecorder:
     _playback_speed: float = field(default=1.0, init=False, repr=False)
     _runtime_metrics: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _pending_snapshots: list[PendingSnapshotRecord] = field(default_factory=list, init=False, repr=False)
+    _max_pending_snapshots: int = field(default=128, init=False, repr=False)
     _live_revision: int = field(default=0, init=False, repr=False)
     _background_snapshot_poll_interval_s: float = field(default=0.01, init=False, repr=False)
     _snapshot_drain_thread: threading.Thread | None = field(default=None, init=False, repr=False)
@@ -257,6 +260,17 @@ class ArenaVisualSessionRecorder:
         snapshot_is_scene_safe: bool = False,
     ) -> None:
         with self._lock:
+            max_pending = max(1, int(self._max_pending_snapshots))
+            if len(self._pending_snapshots) >= max_pending:
+                self._pending_snapshots.pop(0)
+                dropped = int(self._runtime_metrics.get("dropped_snapshot_count") or 0)
+                next_dropped = dropped + 1
+                self._runtime_metrics["dropped_snapshot_count"] = next_dropped
+                if dropped == 0 or next_dropped % 100 == 0:
+                    logger.warning(
+                        "ArenaVisualSessionRecorder dropped pending snapshot, total={}",
+                        next_dropped,
+                    )
             self._pending_snapshots.append(
                 PendingSnapshotRecord(
                     ts_ms=ts_ms,
@@ -370,10 +384,21 @@ class ArenaVisualSessionRecorder:
         window_id: str | None = None,
     ) -> None:
         with self._lock:
-            self._scheduling_phase = str(phase)
-            self._scheduling_accepts_human_intent = bool(accepts_human_intent)
-            self._scheduling_active_actor_id = None if active_actor_id is None else str(active_actor_id)
-            self._scheduling_window_id = window_id
+            next_phase = str(phase)
+            next_accepts_human_intent = bool(accepts_human_intent)
+            next_active_actor_id = None if active_actor_id is None else str(active_actor_id)
+            next_window_id = window_id
+            if (
+                self._scheduling_phase == next_phase
+                and self._scheduling_accepts_human_intent == next_accepts_human_intent
+                and self._scheduling_active_actor_id == next_active_actor_id
+                and self._scheduling_window_id == next_window_id
+            ):
+                return
+            self._scheduling_phase = next_phase
+            self._scheduling_accepts_human_intent = next_accepts_human_intent
+            self._scheduling_active_actor_id = next_active_actor_id
+            self._scheduling_window_id = next_window_id
             self._mark_live_revision_locked()
 
     def update_runtime_metrics(self, **metrics: Any) -> None:
@@ -383,7 +408,6 @@ class ArenaVisualSessionRecorder:
                     self._runtime_metrics.pop(str(key), None)
                 else:
                     self._runtime_metrics[str(key)] = value
-            self._mark_live_revision_locked()
 
     def reopen_live_round(self) -> int:
         with self._lock:
@@ -406,7 +430,7 @@ class ArenaVisualSessionRecorder:
             return ArenaVisualLiveState(
                 visual_session=self._build_visual_session_locked(include_snapshot_anchors=True),
                 timeline_events=tuple(self._events),
-                snapshot_payloads=tuple(copy.deepcopy(self._snapshot_payloads)),
+                snapshot_payloads=tuple(self._snapshot_payloads),
                 marker_index={key: tuple(value) for key, value in self._marker_index.items()},
             )
 
@@ -606,6 +630,7 @@ class ArenaVisualSessionRecorder:
                 **copy.deepcopy(self.extra_capabilities),
             },
             summary=self._build_summary(),
+            runtime_metrics=copy.deepcopy(self._runtime_metrics),
             timeline=self._build_timeline_manifest(
                 include_snapshot_anchors=include_snapshot_anchors,
             ),
