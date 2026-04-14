@@ -8,6 +8,7 @@ from queue import Empty
 from queue import Full
 from queue import Queue
 from threading import Condition, Lock
+import time
 from typing import Any, Mapping, Optional, Sequence
 
 from loguru import logger
@@ -159,16 +160,21 @@ def action_matches_route(
 class ContinuousStateMailbox:
     """Single-consumer mailbox that keeps only the latest unread state snapshot."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, coalesce_window_s: float = 0.008) -> None:
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._latest: str | None = None
         self._latest_input_seq: int | float | None = None
+        self._latest_coalesce_key: str | None = None
+        self._latest_put_monotonic: float = 0.0
+        self._coalesce_window_s = max(0.0, float(coalesce_window_s))
         self._has_unread = False
 
     def put(self, queued_action: Any) -> None:
         normalized = _normalize_mailbox_payload(queued_action)
         next_input_seq = _extract_input_sequence(normalized)
+        next_coalesce_key = _coalesce_payload_key(normalized)
+        now_monotonic = time.monotonic()
         with self._condition:
             if (
                 next_input_seq is not None
@@ -176,7 +182,14 @@ class ContinuousStateMailbox:
                 and next_input_seq < self._latest_input_seq
             ):
                 return
+            if (
+                next_coalesce_key == self._latest_coalesce_key
+                and now_monotonic - self._latest_put_monotonic < self._coalesce_window_s
+            ):
+                return
             self._latest = normalized
+            self._latest_coalesce_key = next_coalesce_key
+            self._latest_put_monotonic = now_monotonic
             if next_input_seq is not None:
                 self._latest_input_seq = next_input_seq
             self._has_unread = True
@@ -427,6 +440,20 @@ def _extract_input_sequence(queued_action: Any) -> int | float | None:
         if normalized is not None:
             return normalized
     return _coerce_sequence_number(payload.get("input_seq"))
+
+
+def _coalesce_payload_key(queued_action: Any) -> str:
+    payload = dict(parse_action_payload(queued_action))
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        normalized_metadata = dict(metadata)
+        for volatile_key in ("input_seq", "input_client_ts_ms", "client_ts_ms"):
+            normalized_metadata.pop(volatile_key, None)
+        if normalized_metadata:
+            payload["metadata"] = normalized_metadata
+        else:
+            payload.pop("metadata", None)
+    return dump_action_payload(payload)
 
 
 def _coerce_sequence_number(value: Any) -> int | float | None:

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ResolvedMediaSource } from "../../gateway/media";
 import type { VisualScene } from "../../gateway/types";
@@ -10,6 +10,11 @@ const FRAME_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAGUlEQVR4nGNkaGBgYGBg+M8ABYwMjAyMDAwAAB0vAQx0J7s8AAAAAElFTkSuQmCC";
 
 describe("RetroMarioPlugin", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it("renders low-latency Mario frames through a single multipart stream reader instead of polling content snapshots", async () => {
     const encoder = new TextEncoder();
     const fetchMock = vi.fn().mockResolvedValue(
@@ -288,9 +293,10 @@ describe("RetroMarioPlugin", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
-    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL);
 
     expect(screen.getByTestId("frame-surface-root")).toHaveClass("frame-surface--immersive");
     expect(screen.getByTestId("frame-surface-viewport")).toHaveStyle({
@@ -504,9 +510,10 @@ describe("RetroMarioPlugin", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
-    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL);
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(submitInput).toHaveBeenLastCalledWith({
@@ -514,7 +521,7 @@ describe("RetroMarioPlugin", () => {
       actionPayload: expect.objectContaining({
         id: "right",
         move: "right",
-        hold_ticks: 6,
+        hold_ticks: 3,
         metadata: expect.objectContaining({
           input_seq: 1,
           realtime_input: true
@@ -578,13 +585,13 @@ describe("RetroMarioPlugin", () => {
     fireEvent.keyDown(window, { key: " " });
     expect(submitInput).toHaveBeenLastCalledWith({
       playerId: "player_0",
-      actionPayload: expect.objectContaining({
-        id: "right_jump",
-        move: "right_jump",
-        hold_ticks: 6,
-        metadata: expect.objectContaining({
-          input_seq: 2,
-          realtime_input: true
+        actionPayload: expect.objectContaining({
+          id: "right_jump",
+          move: "right_jump",
+          hold_ticks: 3,
+          metadata: expect.objectContaining({
+            input_seq: 2,
+            realtime_input: true
         })
       })
     });
@@ -596,7 +603,6 @@ describe("RetroMarioPlugin", () => {
         actionPayload: expect.objectContaining({
           id: "right",
           move: "right",
-          hold_ticks: 6,
           metadata: expect.objectContaining({
             input_seq: 3,
             realtime_input: true
@@ -678,7 +684,7 @@ describe("RetroMarioPlugin", () => {
       actionPayload: expect.objectContaining({
         id: "right",
         move: "right",
-        hold_ticks: 6,
+        hold_ticks: 3,
         metadata: expect.objectContaining({
           input_seq: 1,
           realtime_input: true
@@ -694,12 +700,375 @@ describe("RetroMarioPlugin", () => {
       actionPayload: expect.objectContaining({
         id: "right_jump",
         move: "right_jump",
-        hold_ticks: 6,
+        hold_ticks: 3,
         metadata: expect.objectContaining({
           input_seq: 2,
           realtime_input: true
         })
       })
     });
+  });
+
+  it("keeps held retro keys alive with heartbeat hold ticks and sends release duration on keyup", async () => {
+    let nowMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <RetroMarioPlugin
+        session={{
+          sessionId: "retro-sample",
+          gameId: "retro_platformer",
+          pluginId: "arena.visualization.retro_platformer.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 4023,
+            cursorEventSeq: 23,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={retroScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(submitInput).toHaveBeenNthCalledWith(1, {
+      playerId: "player_0",
+      actionPayload: expect.objectContaining({
+        id: "right",
+        move: "right",
+        hold_ticks: 3,
+        metadata: expect.objectContaining({
+          input_seq: 1,
+          realtime_input: true
+        })
+      })
+    });
+
+    nowMs = 80;
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 90));
+    });
+
+    expect(submitInput).toHaveBeenNthCalledWith(2, {
+      playerId: "player_0",
+      actionPayload: expect.objectContaining({
+        id: "right",
+        move: "right",
+        hold_ticks: 5,
+        metadata: expect.objectContaining({
+          input_seq: 2,
+          realtime_input: true
+        })
+      })
+    });
+
+    nowMs = 176;
+    fireEvent.keyUp(window, { key: "ArrowRight" });
+
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "player_0",
+      actionPayload: expect.objectContaining({
+        id: "noop",
+        move: "noop",
+        hold_ticks: 11,
+        metadata: expect.objectContaining({
+          input_seq: 3,
+          realtime_input: true
+        })
+      })
+    });
+    const releasePayload = submitInput.mock.calls.at(-1)?.[0].actionPayload as Record<string, unknown>;
+    expect(releasePayload).not.toHaveProperty("released_key");
+    expect(releasePayload).not.toHaveProperty("released_hold_ticks");
+    expect(releasePayload).not.toHaveProperty("continuous");
+    expect(releasePayload).not.toHaveProperty("final");
+  });
+
+  it("uses fresh initial hold ticks when releasing one key while another remains pressed", async () => {
+    let nowMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+    const scene = JSON.parse(JSON.stringify(retroScene)) as VisualScene;
+    scene.legalActions = [
+      ...(scene.legalActions ?? []),
+      { id: "left", label: "Move Left", text: "Move Left" },
+    ];
+
+    render(
+      <RetroMarioPlugin
+        session={{
+          sessionId: "retro-sample",
+          gameId: "retro_platformer",
+          pluginId: "arena.visualization.retro_platformer.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 4023,
+            cursorEventSeq: 23,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={scene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    nowMs = 500;
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    nowMs = 520;
+    fireEvent.keyUp(window, { key: "ArrowRight" });
+
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "player_0",
+      actionPayload: expect.objectContaining({
+        id: "left",
+        move: "left",
+        hold_ticks: 3,
+        metadata: expect.objectContaining({
+          input_seq: 3,
+          realtime_input: true
+        })
+      })
+    });
+  });
+
+  it("clears held retro keys and optimistic offset when the window loses focus", async () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <RetroMarioPlugin
+        session={{
+          sessionId: "retro-sample",
+          gameId: "retro_platformer",
+          pluginId: "arena.visualization.retro_platformer.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 4023,
+            cursorEventSeq: 23,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={retroScene as VisualScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    const image = await screen.findByTestId("frame-surface-image");
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(image).toHaveStyle({ transform: "translate3d(3px, 0px, 0)" });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+    });
+
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "player_0",
+        actionPayload: expect.objectContaining({
+          id: "noop",
+          move: "noop",
+          metadata: expect.objectContaining({
+            input_seq: 2,
+            realtime_input: true
+        })
+      })
+    });
+    await waitFor(() =>
+      expect(image).toHaveStyle({ transform: "translate3d(0px, 0px, 0)" }),
+    );
+  });
+
+  it("applies a short optimistic viewport offset until the next backend frame arrives", async () => {
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+    const scene = JSON.parse(JSON.stringify(retroScene)) as VisualScene;
+    const { rerender } = render(
+      <RetroMarioPlugin
+        session={{
+          sessionId: "retro-sample",
+          gameId: "retro_platformer",
+          pluginId: "arena.visualization.retro_platformer.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 4023,
+            cursorEventSeq: 23,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={scene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    expect(screen.getByTestId("frame-surface-image")).toHaveStyle({
+      transform: "translate3d(3px, 0px, 0)",
+    });
+
+    const nextScene = JSON.parse(JSON.stringify(scene)) as VisualScene;
+    nextScene.sceneId = "retro-sample:seq:24";
+    nextScene.seq = 24;
+    rerender(
+      <RetroMarioPlugin
+        session={{
+          sessionId: "retro-sample",
+          gameId: "retro_platformer",
+          pluginId: "arena.visualization.retro_platformer.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 4024,
+            cursorEventSeq: 24,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "player_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "real_time_tick",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "player_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={nextScene}
+        submitAction={vi.fn()}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("frame-surface-image")).toHaveStyle({
+        transform: "translate3d(0px, 0px, 0)",
+      }),
+    );
   });
 });

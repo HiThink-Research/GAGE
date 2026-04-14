@@ -15,7 +15,11 @@ import {
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
 import type { ActionIntent } from "../sdk/input";
-import type { FrameActionDescriptor, FrameKeyboardControls } from "./contracts";
+import type {
+  FrameActionDescriptor,
+  FrameKeyboardControls,
+  FrameOptimisticOffset,
+} from "./contracts";
 import { normalizeKeyboardKey } from "./keyboardControls";
 import { LowLatencyFrameCanvas, resolveLowLatencyStreamUrl } from "./LowLatencyFrameCanvas";
 
@@ -79,6 +83,12 @@ interface FrameSurfaceProps {
 interface ScenePrimaryMediaRef {
   transport?: string;
   url?: string | null;
+}
+
+interface KeyboardDispatchOptions {
+  force?: boolean;
+  phase?: "press" | "heartbeat" | "release";
+  releasedHoldTicks?: number;
 }
 
 function readViewport(value: unknown): FrameViewport | null {
@@ -405,6 +415,60 @@ function resolveImmersiveImageStyle(fit: string): CSSProperties {
   };
 }
 
+function clampHoldTicks(value: number, controls: FrameKeyboardControls): number {
+  const min = Math.max(1, Math.round(controls.holdTicksMin ?? 1));
+  const max = Math.max(min, Math.round(controls.holdTicksMax ?? value));
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function resolveReleasedHoldTicks(durationMs: number, controls: FrameKeyboardControls): number {
+  const tickMs = Math.max(1, Number(controls.holdTickMs ?? 16));
+  return clampHoldTicks(durationMs / tickMs, controls);
+}
+
+function resolveKeyboardHoldTicks(
+  controls: FrameKeyboardControls,
+  options: KeyboardDispatchOptions,
+): number | null {
+  if (options.phase === "release" && options.releasedHoldTicks !== undefined) {
+    return clampHoldTicks(options.releasedHoldTicks, controls);
+  }
+  if (options.phase === "heartbeat" && controls.heartbeatHoldTicks !== undefined) {
+    return clampHoldTicks(controls.heartbeatHoldTicks, controls);
+  }
+  if ((options.phase === "press" || options.phase === undefined) && controls.initialHoldTicks !== undefined) {
+    return clampHoldTicks(controls.initialHoldTicks, controls);
+  }
+  return null;
+}
+
+function mergeFrameStyle(
+  baseStyle: CSSProperties | undefined,
+  optimisticStyle: CSSProperties | undefined,
+): CSSProperties | undefined {
+  if (!baseStyle && !optimisticStyle) {
+    return undefined;
+  }
+  return {
+    ...(baseStyle ?? {}),
+    ...(optimisticStyle ?? {}),
+  };
+}
+
+function resolveOptimisticFrameStyle(
+  controls: FrameKeyboardControls | undefined,
+  offset: FrameOptimisticOffset,
+): CSSProperties | undefined {
+  if (!controls?.resolveOptimisticOffset) {
+    return undefined;
+  }
+  return {
+    transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
+    transition: "transform 80ms ease-out",
+    willChange: "transform",
+  };
+}
+
 export function FrameSurface({
   gameLabel,
   session,
@@ -423,8 +487,11 @@ export function FrameSurface({
   const [immersiveViewportBounds, setImmersiveViewportBounds] = useState<FrameBounds | null>(null);
   const [observedViewport, setObservedViewport] = useState<FrameViewport | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
+  const pressedKeyStartedAtRef = useRef<Map<string, number>>(new Map());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
+  const lastKeyboardActionTsByIdRef = useRef<Map<string, number>>(new Map());
   const keyboardInputSequenceRef = useRef(0);
+  const [optimisticOffset, setOptimisticOffset] = useState<FrameOptimisticOffset>({ x: 0, y: 0 });
   const primaryMediaRef = scene?.media?.primary;
   const primaryMediaId = primaryMediaRef?.mediaId;
   const mediaState = useMediaSource({
@@ -460,7 +527,10 @@ export function FrameSurface({
     submitInput,
   };
 
-  function dispatchKeyboardAction(pressedKeys: ReadonlySet<string>): void {
+  function dispatchKeyboardAction(
+    pressedKeys: ReadonlySet<string>,
+    options: KeyboardDispatchOptions = {},
+  ): void {
     const context = keyboardDispatchContextRef.current;
     if (
       !context.keyboardControls ||
@@ -478,25 +548,48 @@ export function FrameSurface({
       if (pressedKeys.size === 0) {
         lastKeyboardDispatchRef.current = null;
       }
+      if (context.keyboardControls.resolveOptimisticOffset) {
+        setOptimisticOffset({ x: 0, y: 0 });
+      }
       return;
+    }
+    const nowMs = performance.now();
+    const throttleMs = context.keyboardControls.resolveActionThrottleMs?.(actionDescriptor) ?? 0;
+    if (throttleMs > 0) {
+      const lastSubmittedAt = lastKeyboardActionTsByIdRef.current.get(actionDescriptor.id);
+      if (
+        lastSubmittedAt !== undefined &&
+        nowMs - lastSubmittedAt < throttleMs
+      ) {
+        return;
+      }
     }
     const pressedKeysToken = [...pressedKeys].sort().join(",");
     const dispatchToken = `${context.keyboardSceneToken}:${context.resolvedActorId}:${actionDescriptor.id}:${pressedKeysToken}`;
-    if (lastKeyboardDispatchRef.current === dispatchToken) {
+    if (!options.force && lastKeyboardDispatchRef.current === dispatchToken) {
       return;
     }
     lastKeyboardDispatchRef.current = dispatchToken;
+    if (throttleMs > 0) {
+      lastKeyboardActionTsByIdRef.current.set(actionDescriptor.id, nowMs);
+    }
     keyboardInputSequenceRef.current += 1;
+    const timedHoldTicks = resolveKeyboardHoldTicks(context.keyboardControls, options);
     const actionPayload = isRecord(actionDescriptor.payload)
       ? {
           ...actionDescriptor.payload,
+          ...(timedHoldTicks !== null ? { hold_ticks: timedHoldTicks } : {}),
           metadata: {
             ...(isRecord(actionDescriptor.payload.metadata) ? actionDescriptor.payload.metadata : {}),
             input_seq: keyboardInputSequenceRef.current,
+            input_client_ts_ms: Date.now(),
             realtime_input: true,
           },
         }
       : actionDescriptor.payload;
+    if (context.keyboardControls.resolveOptimisticOffset) {
+      setOptimisticOffset(context.keyboardControls.resolveOptimisticOffset(pressedKeys));
+    }
     void context.submitInput({
       playerId: context.resolvedActorId,
       actionPayload,
@@ -509,14 +602,35 @@ export function FrameSurface({
   }, [primaryMediaId]);
 
   useEffect(() => {
+    setOptimisticOffset({ x: 0, y: 0 });
+  }, [keyboardSceneToken]);
+
+  useEffect(() => {
     if (!keyboardControls) {
       pressedKeysRef.current = new Set();
+      pressedKeyStartedAtRef.current = new Map();
       lastKeyboardDispatchRef.current = null;
+      setOptimisticOffset({ x: 0, y: 0 });
       return;
     }
+    const controls = keyboardControls;
     const watchedKeys = new Set(
-      keyboardControls.watchedKeys.map((key) => normalizeKeyboardKey(key)),
+      controls.watchedKeys.map((key) => normalizeKeyboardKey(key)),
     );
+
+    function resetKeyboardState(): void {
+      const hadPressedKeys = pressedKeysRef.current.size > 0;
+      pressedKeysRef.current = new Set();
+      pressedKeyStartedAtRef.current = new Map();
+      lastKeyboardDispatchRef.current = null;
+      setOptimisticOffset({ x: 0, y: 0 });
+      if (hadPressedKeys) {
+        dispatchKeyboardAction(new Set(), {
+          force: true,
+          phase: "release",
+        });
+      }
+    }
 
     function handleKeyDown(event: KeyboardEvent) {
       const normalizedKey = normalizeKeyboardKey(event.key);
@@ -529,7 +643,8 @@ export function FrameSurface({
       pressedKeysRef.current = nextPressedKeys;
       event.preventDefault();
       if (nextPressedKeys.size !== sizeBefore) {
-        dispatchKeyboardAction(nextPressedKeys);
+        pressedKeyStartedAtRef.current.set(normalizedKey, performance.now());
+        dispatchKeyboardAction(nextPressedKeys, { phase: "press" });
       }
     }
 
@@ -543,15 +658,60 @@ export function FrameSurface({
       pressedKeysRef.current = nextPressedKeys;
       event.preventDefault();
       if (hadKey) {
-        dispatchKeyboardAction(nextPressedKeys);
+        const startedAt = pressedKeyStartedAtRef.current.get(normalizedKey);
+        pressedKeyStartedAtRef.current.delete(normalizedKey);
+        const releasedHoldTicks =
+          startedAt === undefined
+            ? undefined
+            : resolveReleasedHoldTicks(performance.now() - startedAt, controls);
+        if (nextPressedKeys.size === 0) {
+          dispatchKeyboardAction(nextPressedKeys, {
+            phase: "release",
+            releasedHoldTicks,
+          });
+        } else {
+          dispatchKeyboardAction(nextPressedKeys, {
+            phase: "press",
+          });
+        }
+      }
+    }
+
+    function handleWindowBlur() {
+      resetKeyboardState();
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        resetKeyboardState();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const heartbeatMs = controls.heartbeatMs;
+    const heartbeatTimer =
+      heartbeatMs !== undefined && heartbeatMs > 0
+        ? window.setInterval(() => {
+            if (pressedKeysRef.current.size === 0) {
+              return;
+            }
+            dispatchKeyboardAction(new Set(pressedKeysRef.current), {
+              force: true,
+              phase: "heartbeat",
+            });
+          }, Math.max(1, heartbeatMs))
+        : null;
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+      }
     };
   }, [actionDescriptors, canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput]);
 
@@ -660,6 +820,7 @@ export function FrameSurface({
   const immersiveImageStyle = isImmersive
     ? resolveImmersiveImageStyle(frameScene.frame.fit)
     : undefined;
+  const optimisticFrameStyle = resolveOptimisticFrameStyle(keyboardControls, optimisticOffset);
 
   return (
     <section
@@ -710,7 +871,7 @@ export function FrameSurface({
               });
             }}
             streamUrl={lowLatencyStreamUrl}
-            style={immersiveCanvasStyle}
+            style={mergeFrameStyle(immersiveCanvasStyle, optimisticFrameStyle)}
           />
         ) : imageSrc ? (
           <img
@@ -736,7 +897,7 @@ export function FrameSurface({
                 return { width, height };
               });
             }}
-            style={immersiveImageStyle}
+            style={mergeFrameStyle(immersiveImageStyle, optimisticFrameStyle)}
           />
         ) : (
           <div className="frame-surface__fallback">Loading frame...</div>

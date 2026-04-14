@@ -28,8 +28,13 @@ role_adapters:
       env: space_invaders
       runtime_overrides:
         backend_mode: real
+        max_cycles: 1000
         include_raw_obs: true
         use_action_meanings: true
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 8
+          hold_ticks_default: 4
       human_input:
         enabled: true
         host: 127.0.0.1

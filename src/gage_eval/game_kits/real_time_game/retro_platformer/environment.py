@@ -457,12 +457,12 @@ class StableRetroArenaEnvironment:
         if candidate is None:
             candidate = self._extract_hold_ticks_from_raw(action.raw)
         if candidate is None:
-            hold_ticks = 1
+            hold_ticks = self._action_schema.default_hold_ticks
         else:
             try:
                 hold_ticks = int(candidate)
             except (TypeError, ValueError):
-                hold_ticks = 1
+                hold_ticks = self._action_schema.default_hold_ticks
         return max(
             self._action_schema.hold_ticks_min,
             min(self._action_schema.hold_ticks_max, hold_ticks),
@@ -597,7 +597,11 @@ class StableRetroArenaEnvironment:
         if self._retro_env is None:
             return
         try:
-            logger.debug("Retro render tick={} force={}", self._tick, force)
+            logger.opt(lazy=True).debug(
+                "Retro render tick={} force={}",
+                lambda: self._tick,
+                lambda: force,
+            )
             if self._last_obs is None:
                 if self._tick <= 3:
                     logger.warning("Force frame viewer enabled but no frame is available yet.")
@@ -648,18 +652,12 @@ class StableRetroArenaEnvironment:
             logger.warning("Frame viewer skipped non-RGB frame: ndim={} shape={}", frame_ndim, frame_shape)
             return
         if self._tick <= 3 or self._tick % 60 == 0:
-            try:
-                min_val = float(frame.min())
-                max_val = float(frame.max())
-            except Exception:
-                min_val = None
-                max_val = None
-            logger.debug(
+            logger.opt(lazy=True).debug(
                 "Frame viewer stats: shape={} dtype={} min={} max={}",
-                frame_shape,
-                getattr(frame, "dtype", None),
-                min_val,
-                max_val,
+                lambda: frame_shape,
+                lambda: getattr(frame, "dtype", None),
+                lambda: _safe_frame_stat(frame, "min"),
+                lambda: _safe_frame_stat(frame, "max"),
             )
         if self._frame_viewer_disabled:
             return
@@ -760,6 +758,16 @@ class StableRetroArenaEnvironment:
             "last_info": self._last_info,
         }
         return str(summary)
+
+
+def _safe_frame_stat(frame: Any, method_name: str) -> float | None:
+    method = getattr(frame, method_name, None)
+    if not callable(method):
+        return None
+    try:
+        return float(method())
+    except Exception:
+        return None
 
 
 __all__ = ["DEFAULT_PLAYER_ID", "StableRetroArenaEnvironment"]

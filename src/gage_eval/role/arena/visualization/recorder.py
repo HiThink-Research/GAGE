@@ -10,6 +10,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.artifacts import (
     ArenaVisualArtifactLayout,
@@ -76,6 +78,7 @@ class ArenaVisualSessionRecorder:
     _playback_speed: float = field(default=1.0, init=False, repr=False)
     _runtime_metrics: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _pending_snapshots: list[PendingSnapshotRecord] = field(default_factory=list, init=False, repr=False)
+    _max_pending_snapshots: int = field(default=128, init=False, repr=False)
     _live_revision: int = field(default=0, init=False, repr=False)
     _background_snapshot_poll_interval_s: float = field(default=0.01, init=False, repr=False)
     _snapshot_drain_thread: threading.Thread | None = field(default=None, init=False, repr=False)
@@ -257,6 +260,17 @@ class ArenaVisualSessionRecorder:
         snapshot_is_scene_safe: bool = False,
     ) -> None:
         with self._lock:
+            max_pending = max(1, int(self._max_pending_snapshots))
+            if len(self._pending_snapshots) >= max_pending:
+                self._pending_snapshots.pop(0)
+                dropped = int(self._runtime_metrics.get("dropped_snapshot_count") or 0)
+                next_dropped = dropped + 1
+                self._runtime_metrics["dropped_snapshot_count"] = next_dropped
+                if dropped == 0 or next_dropped % 100 == 0:
+                    logger.warning(
+                        "ArenaVisualSessionRecorder dropped pending snapshot, total={}",
+                        next_dropped,
+                    )
             self._pending_snapshots.append(
                 PendingSnapshotRecord(
                     ts_ms=ts_ms,

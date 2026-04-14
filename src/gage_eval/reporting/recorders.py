@@ -262,6 +262,8 @@ class FileRecorder(RecorderBase):
     """Recorder that appends events to a JSONL file."""
 
     def __init__(self, run_id: str, *, output_path: Path, **kwargs) -> None:
+        kwargs.setdefault("min_flush_events", 100)
+        kwargs.setdefault("min_flush_seconds", 0.1)
         super().__init__(run_id, **kwargs)
         self.output_path = output_path
         self.output_path.parent.mkdir(parents=True, exist_ok=True)

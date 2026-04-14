@@ -203,6 +203,7 @@ def test_pettingzoo_dummy_visual_configs_cover_visual_schemes(relpath: str, expe
     assert params["env"] == "space_invaders"
     assert params["runtime_overrides"] == {
         "backend_mode": "real",
+        "max_cycles": 500,
         "include_raw_obs": True,
         "use_action_meanings": True,
     }
@@ -235,8 +236,14 @@ def test_pettingzoo_human_visual_config_routes_human_input_to_pilot_0() -> None:
     }
     assert params["runtime_overrides"] == {
         "backend_mode": "real",
+        "max_cycles": 1000,
         "include_raw_obs": True,
         "use_action_meanings": True,
+        "action_schema": {
+            "hold_ticks_min": 1,
+            "hold_ticks_max": 8,
+            "hold_ticks_default": 4,
+        },
     }
     assert visualizer["enabled"] is True
     assert visualizer["launch_browser"] is True
@@ -287,8 +294,8 @@ def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> Non
         ],
         "action_schema": {
             "hold_ticks_min": 1,
-            "hold_ticks_max": 1,
-            "hold_ticks_default": 1,
+            "hold_ticks_max": 30,
+            "hold_ticks_default": 10,
         },
         "max_turns": 7200,
         "runtime_binding_policy_config": {
@@ -299,6 +306,7 @@ def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> Non
             "tick_interval_ms": 16,
             "frame_output_hz": 60,
             "artifact_sampling_mode": "async_decimated_live",
+            "snapshot_persist_stride": 3,
             "fallback_move": "noop",
         },
     }
@@ -390,7 +398,7 @@ def test_pettingzoo_double_llm_visual_config_routes_both_seats_to_same_backend()
     assert params["env"] == "space_invaders"
     assert params["runtime_overrides"] == {
         "backend_mode": "real",
-        "max_cycles": 32,
+        "max_cycles": 200,
         "include_raw_obs": True,
         "use_action_meanings": True,
     }
@@ -420,7 +428,7 @@ def test_pettingzoo_double_llm_low_latency_visual_config_routes_both_seats_to_sa
     assert params["env"] == "space_invaders"
     assert params["runtime_overrides"] == {
         "backend_mode": "real",
-        "max_cycles": 32,
+        "max_cycles": 200,
         "include_raw_obs": True,
         "use_action_meanings": True,
     }

@@ -34,12 +34,20 @@ class FakeRetroEnvNoSeed(FakeRetroEnv):
         return self.reset_result
 
 
-def _make_env_with_stubbed_runtime(*, retro_env, codec, seed=None, obs_image=False):
+def _make_env_with_stubbed_runtime(
+    *,
+    retro_env,
+    codec,
+    seed=None,
+    obs_image=False,
+    action_schema=None,
+):
     env = StableRetroArenaEnvironment(
         game="SuperMarioBros3-Nes-v0",
         display_mode="headless",
         seed=seed,
         obs_image=obs_image,
+        action_schema=action_schema,
     )
     env._retro_env = retro_env  # type: ignore[attr-defined]
     env._action_codec = codec  # type: ignore[attr-defined]
@@ -248,7 +256,7 @@ def test_retro_env_apply_returns_none_when_not_terminal():
     env = _make_env_with_stubbed_runtime(retro_env=retro_env, codec=codec)
     env.reset()
 
-    action = ArenaAction(player="player_0", move="noop", raw="noop")
+    action = ArenaAction(player="player_0", move="noop", raw='{"move":"noop","hold_ticks":1}')
     assert env.apply(action) is None
     assert env.is_terminal() is False
 
@@ -279,6 +287,32 @@ def test_retro_env_apply_respects_hold_ticks_from_action_raw():
     assert env._tick == 3  # noqa: SLF001
     assert env._decision_count == 1  # noqa: SLF001
     assert env._move_log[0]["hold_ticks"] == 3  # noqa: SLF001
+
+
+def test_retro_env_apply_uses_action_schema_default_when_hold_ticks_omitted():
+    frame = object()
+    retro_env = FakeRetroEnv(
+        reset_result=(frame, {}),
+        step_results=[
+            (frame, 0.1, False, False, {"tick": 1}),
+            (frame, 0.2, False, False, {"tick": 2}),
+            (frame, 0.3, False, False, {"tick": 3}),
+            (frame, 0.4, False, False, {"tick": 4}),
+        ],
+    )
+    codec = RetroActionCodec(buttons=["LEFT", "RIGHT"])
+    env = _make_env_with_stubbed_runtime(
+        retro_env=retro_env,
+        codec=codec,
+        action_schema={"hold_ticks_min": 1, "hold_ticks_max": 30, "hold_ticks_default": 4},
+    )
+    env.reset()
+
+    result = env.apply(ArenaAction(player="player_0", move="right", raw="right"))
+
+    assert result is None
+    assert len(retro_env.step_payloads) == 4
+    assert env._move_log[0]["hold_ticks"] == 4  # noqa: SLF001
 
 
 def test_retro_env_apply_attaches_replay_path_when_writer_returns_one():

@@ -86,6 +86,49 @@ def test_local_human_input_driver_preserves_structured_raw_payload_and_metadata(
     }
 
 
+def test_local_human_input_driver_uses_observation_hold_ticks_default_when_payload_omits_it() -> None:
+    action_queue: Queue[str] = Queue()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="right",
+                player_id="player_0",
+                sample_id="retro-smoke",
+            )
+        )
+    )
+    driver = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    )
+    player = driver.bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={"action_queue": action_queue},
+        )
+    )
+
+    action = player.next_action(
+        ArenaObservation(
+            board_text="retro frame",
+            legal_moves=("noop", "right"),
+            active_player="player_0",
+            metadata={
+                "action_schema_config": {
+                    "hold_ticks_min": 1,
+                    "hold_ticks_max": 30,
+                    "hold_ticks_default": 10,
+                }
+            },
+        )
+    )
+
+    assert action.metadata["hold_ticks"] == 10
+
+
 def test_local_human_input_driver_reuses_last_stateful_action_until_changed() -> None:
     action_queue: Queue[str] = Queue()
     action_queue.put(

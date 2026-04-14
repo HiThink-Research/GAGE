@@ -534,6 +534,15 @@ class RuntimeBindingResolver:
         frame_output_hz = cls._coerce_positive_int(config.get("frame_output_hz"))
         input_transport = cls._coerce_optional_text(config.get("input_transport"))
         artifact_sampling_mode = cls._coerce_optional_text(config.get("artifact_sampling_mode"))
+        artifact_sampling_stride = cls._coerce_positive_int(config.get("artifact_sampling_stride"))
+        snapshot_persist_stride = (
+            cls._coerce_positive_int(config.get("snapshot_persist_stride"))
+            or artifact_sampling_stride
+        )
+        if artifact_sampling_mode == "async_decimated_live" and snapshot_persist_stride is None:
+            snapshot_persist_stride = 3
+        if artifact_sampling_stride is None:
+            artifact_sampling_stride = snapshot_persist_stride
         fallback_move = cls._coerce_optional_text(config.get("fallback_move"))
         max_commands_per_tick = cls._coerce_positive_int(config.get("max_commands_per_tick")) or 4
         max_command_queue_size = cls._coerce_positive_int(config.get("max_command_queue_size")) or 128
@@ -553,6 +562,8 @@ class RuntimeBindingResolver:
             input_transport=input_transport,
             frame_output_hz=frame_output_hz,
             artifact_sampling_mode=artifact_sampling_mode,
+            artifact_sampling_stride=artifact_sampling_stride,
+            snapshot_persist_stride=snapshot_persist_stride,
             fallback_move=fallback_move,
             max_commands_per_tick=max_commands_per_tick,
             max_command_queue_size=max_command_queue_size,

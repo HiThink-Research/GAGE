@@ -47,6 +47,12 @@ function hasAnyPressed(pressedKeys: ReadonlySet<string>, keys: readonly string[]
 export function buildRetroMarioKeyboardControls(): FrameKeyboardControls {
   return {
     hint: "Keyboard: arrows/WASD move, Space/J/Z jump, X/K run, Enter start, Shift/L select.",
+    holdTickMs: 16,
+    holdTicksMin: 1,
+    holdTicksMax: 30,
+    initialHoldTicks: 3,
+    heartbeatMs: 80,
+    heartbeatHoldTicks: 5,
     watchedKeys: buildWatchedKeys([
       "ArrowLeft",
       "ArrowRight",
@@ -116,6 +122,75 @@ export function buildRetroMarioKeyboardControls(): FrameKeyboardControls {
         return findActionById(actionDescriptors, "run") ?? findActionById(actionDescriptors, "noop");
       }
       return findActionById(actionDescriptors, "noop");
+    },
+    resolveOptimisticOffset(pressedKeys) {
+      const left = hasAnyPressed(pressedKeys, ["ArrowLeft", "a"]);
+      const right = hasAnyPressed(pressedKeys, ["ArrowRight", "d"]);
+      if (left && !right) {
+        return { x: -3, y: 0 };
+      }
+      if (right && !left) {
+        return { x: 3, y: 0 };
+      }
+      return { x: 0, y: 0 };
+    },
+  };
+}
+
+export function buildPettingZooKeyboardControls(): FrameKeyboardControls {
+  return {
+    hint: "Keyboard: arrows move, Space/J/Z fires.",
+    watchedKeys: buildWatchedKeys([
+      "ArrowLeft",
+      "ArrowRight",
+      "ArrowUp",
+      "ArrowDown",
+      "a",
+      "d",
+      "w",
+      "s",
+      "Space",
+      "j",
+      "z",
+    ]),
+    resolveAction(actionDescriptors, pressedKeys) {
+      const left = hasAnyPressed(pressedKeys, ["ArrowLeft", "a"]);
+      const right = hasAnyPressed(pressedKeys, ["ArrowRight", "d"]);
+      const up = hasAnyPressed(pressedKeys, ["ArrowUp", "w"]);
+      const down = hasAnyPressed(pressedKeys, ["ArrowDown", "s"]);
+      const fire = hasAnyPressed(pressedKeys, ["Space", "j", "z"]);
+
+      if (fire && left && !right) {
+        return (
+          findActionByToken(actionDescriptors, "left", "fire") ??
+          findActionByToken(actionDescriptors, "fire")
+        );
+      }
+      if (fire && right && !left) {
+        return (
+          findActionByToken(actionDescriptors, "right", "fire") ??
+          findActionByToken(actionDescriptors, "fire")
+        );
+      }
+      if (fire) {
+        return findActionByToken(actionDescriptors, "fire");
+      }
+      if (left && !right) {
+        return findActionByToken(actionDescriptors, "left");
+      }
+      if (right && !left) {
+        return findActionByToken(actionDescriptors, "right");
+      }
+      if (up && !down) {
+        return findActionByToken(actionDescriptors, "up");
+      }
+      if (down && !up) {
+        return findActionByToken(actionDescriptors, "down");
+      }
+      return null;
+    },
+    resolveActionThrottleMs(actionDescriptor) {
+      return actionSearchText(actionDescriptor).includes("fire") ? 500 : 0;
     },
   };
 }

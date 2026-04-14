@@ -92,6 +92,8 @@ class RealtimeHumanControlProfile:
     input_transport: str | None = None
     frame_output_hz: int | None = None
     artifact_sampling_mode: str | None = None
+    artifact_sampling_stride: int | None = None
+    snapshot_persist_stride: int | None = None
     fallback_move: str | None = None
     max_commands_per_tick: int | None = None
     max_command_queue_size: int | None = None

@@ -158,18 +158,13 @@ class SpaceInvadersEnvironment:
                 env_kwargs=resolved_env_kwargs,
                 **adapter_kwargs,
             )
-        except Exception:
-            if resolved_backend_mode == "real":
-                raise
-            logger.warning(
-                "SpaceInvadersEnvironment falling back to stub backend for env_id={}",
+        except Exception as exc:
+            logger.error(
+                "SpaceInvadersEnvironment failed to load real backend for env_id={}: {}",
                 env_id,
+                exc,
             )
-            self._adapter = PettingZooAecArenaEnvironment(
-                env=_StubSpaceInvadersAecEnv(max_cycles=max_cycles),
-                env_id=env_id,
-                **adapter_kwargs,
-            )
+            raise
 
     @classmethod
     def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):

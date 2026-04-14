@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ResolvedMediaSource } from "../../gateway/media";
 import type { VisualScene } from "../../gateway/types";
@@ -12,6 +12,10 @@ const FRAME_DATA_URL_2 =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAHElEQVR4nGNkYPjPAAJMDKiAVTAxoKJAAgA+MAEF4c6mRwAAAABJRU5ErkJggg==";
 
 describe("PettingZooPlugin", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("renders an inline frame immediately when the scene already carries a data-url media ref", async () => {
     render(
       <PettingZooPlugin
@@ -307,5 +311,81 @@ describe("PettingZooPlugin", () => {
     await waitFor(() =>
       expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL_2),
     );
+  });
+
+  it("throttles repeated Space Invaders FIRE keyboard submissions for 500ms", async () => {
+    let nowMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    const submitInput = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <PettingZooPlugin
+        session={{
+          sessionId: "pettingzoo-sample",
+          gameId: "pettingzoo",
+          pluginId: "arena.visualization.pettingzoo.frame_v1",
+          lifecycle: "live_running",
+          playback: {
+            mode: "live_tail",
+            cursorTs: 2011,
+            cursorEventSeq: 11,
+            speed: 1,
+            canSeek: true
+          },
+          observer: {
+            observerId: "pilot_0",
+            observerKind: "player"
+          },
+          scheduling: {
+            family: "agent_cycle",
+            phase: "waiting_for_intent",
+            acceptsHumanIntent: true,
+            activeActorId: "pilot_0"
+          },
+          capabilities: {},
+          summary: {},
+          timeline: {}
+        }}
+        scene={pettingzooScene as VisualScene}
+        submitAction={async () => undefined}
+        submitInput={submitInput}
+        mediaSubscribe={(request, listener) => {
+          listener({
+            mediaId: request.mediaId,
+            status: "ready",
+            src: FRAME_DATA_URL
+          } as ResolvedMediaSource);
+          return () => {};
+        }}
+        isFallback={false}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
+    );
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+    nowMs = 200;
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+
+    expect(submitInput).toHaveBeenCalledTimes(1);
+    expect(submitInput).toHaveBeenLastCalledWith({
+      playerId: "pilot_0",
+      actionPayload: expect.objectContaining({
+        id: "FIRE",
+        move: "FIRE",
+        metadata: expect.objectContaining({
+          realtime_input: true
+        })
+      })
+    });
+
+    nowMs = 501;
+    fireEvent.keyDown(window, { key: " " });
+
+    expect(submitInput).toHaveBeenCalledTimes(2);
   });
 });

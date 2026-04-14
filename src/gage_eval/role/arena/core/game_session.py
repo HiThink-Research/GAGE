@@ -47,8 +47,20 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Image = None
 
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency
+    np = None
+
 _LIVE_MEDIA_INLINE_SCHEMES = {"binary_stream", "low_latency_channel"}
 _REALTIME_INLINE_SNAPSHOT_TARGET_MS = 250
+_FRAME_DATA_URL_BUFFER_POOL_MAX = 16
+_FRAME_DATA_URL_BUFFER_POOL: list[io.BytesIO] = []
+_FRAME_DATA_URL_BUFFER_POOL_LOCK = Lock()
+_FRAME_ARRAY_POOL_MAX = 16
+_FRAME_ARRAY_POOL: dict[tuple[tuple[int, ...], str], list[object]] = {}
+_FRAME_ARRAY_POOL_LOCK = Lock()
+_WEBP_FALLBACK_LOGGED = False
 
 
 @dataclass
@@ -847,6 +859,13 @@ class GameSession:
             return True
         if self._last_realtime_snapshot_ts_ms <= 0:
             return True
+        if self._artifact_sampling_mode() in {"sync_every_tick", "async_every_tick"}:
+            return True
+        if self._uses_async_decimated_live_artifacts():
+            stride = self._resolve_snapshot_persist_stride()
+            if stride <= 1:
+                return True
+            return self._resolve_inline_snapshot_cadence_index() % stride == 0
         now_ms = wall_clock_ms()
         return now_ms - self._last_realtime_snapshot_ts_ms >= self._resolve_realtime_snapshot_interval_ms()
 
@@ -876,13 +895,35 @@ class GameSession:
         return getattr(runtime_profile, "realtime_human_control", None)
 
     def _uses_async_decimated_live_artifacts(self) -> bool:
+        return self._artifact_sampling_mode() == "async_decimated_live"
+
+    def _uses_async_live_artifacts(self) -> bool:
+        return self._artifact_sampling_mode() in {
+            "async_decimated_live",
+            "async_every_tick",
+        }
+
+    def _artifact_sampling_mode(self) -> str:
         control_profile = self._realtime_human_control_profile()
         if control_profile is None:
-            return False
-        return (
-            str(getattr(control_profile, "artifact_sampling_mode", "") or "").strip()
-            == "async_decimated_live"
-        )
+            return ""
+        return str(getattr(control_profile, "artifact_sampling_mode", "") or "").strip()
+
+    def _resolve_snapshot_persist_stride(self) -> int:
+        control_profile = self._realtime_human_control_profile()
+        if control_profile is None:
+            return 1
+        for attr_name in ("snapshot_persist_stride", "artifact_sampling_stride"):
+            value = getattr(control_profile, attr_name, None)
+            try:
+                stride = int(value)
+            except (TypeError, ValueError):
+                continue
+            if stride > 0:
+                return stride
+        if self._uses_async_decimated_live_artifacts():
+            return 3
+        return 1
 
     def _flush_pending_visual_snapshots(self) -> int:
         recorder = self.visual_recorder
@@ -1043,7 +1084,7 @@ class GameSession:
             "result": _visual_payload_snapshot(self.final_result),
         }
         ts_ms = wall_clock_ms()
-        if self._uses_async_decimated_live_artifacts():
+        if self._uses_async_live_artifacts():
             enqueue_snapshot = getattr(recorder, "enqueue_snapshot", None)
             if callable(enqueue_snapshot):
                 enqueue_snapshot(
@@ -1308,7 +1349,7 @@ class GameSession:
         if recorder is None:
             return
         start_background_snapshot_drain = getattr(recorder, "start_background_snapshot_drain", None)
-        if self._uses_async_decimated_live_artifacts() and callable(start_background_snapshot_drain):
+        if self._uses_async_live_artifacts() and callable(start_background_snapshot_drain):
             start_background_snapshot_drain()
         extra_capabilities = dict(getattr(recorder, "extra_capabilities", {}) or {})
         if self._supports_live_restart():
@@ -1373,7 +1414,11 @@ class GameSession:
         return cadence_index % stride == 0
 
     def _resolve_inline_snapshot_cadence_index(self) -> int:
-        if self._uses_scheduler_owned_human_realtime():
+        recorder = self.visual_recorder
+        if (
+            self._uses_scheduler_owned_human_realtime()
+            or str(getattr(recorder, "scheduling_family", "") or "") == "real_time_tick"
+        ):
             return int(self.tick)
         return int(self.step)
 
@@ -2304,18 +2349,91 @@ def _resolve_frame_image_payload(
 def _encode_frame_data_url(frame: object) -> str | None:
     if Image is None:
         return None
+    global _WEBP_FALLBACK_LOGGED
+    buffer = _borrow_frame_data_url_buffer()
+    pooled_frame: object | None = None
+    image_frame = frame
     try:
-        image = Image.fromarray(frame)
+        image_frame, pooled_frame = _borrow_frame_array(frame)
+        image = Image.fromarray(image_frame)
         if image.mode not in {"RGB", "RGBA", "L"}:
             image = image.convert("RGB")
         elif image.mode == "RGBA":
             image = image.convert("RGB")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
+        try:
+            image.save(buffer, format="WEBP", lossless=False, quality=95)
+            mime_type = "image/webp"
+        except Exception:
+            if not _WEBP_FALLBACK_LOGGED:
+                logger.warning(
+                    "WebP encoder unavailable; falling back to PNG. Install libwebp for better realtime frame encoding."
+                )
+                _WEBP_FALLBACK_LOGGED = True
+            buffer.seek(0)
+            buffer.truncate(0)
+            image.save(buffer, format="PNG", optimize=True)
+            mime_type = "image/png"
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     except Exception:
         return None
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    finally:
+        _return_frame_array(pooled_frame)
+        _return_frame_data_url_buffer(buffer)
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _borrow_frame_data_url_buffer() -> io.BytesIO:
+    with _FRAME_DATA_URL_BUFFER_POOL_LOCK:
+        if _FRAME_DATA_URL_BUFFER_POOL:
+            buffer = _FRAME_DATA_URL_BUFFER_POOL.pop()
+        else:
+            buffer = io.BytesIO()
+    buffer.seek(0)
+    buffer.truncate(0)
+    return buffer
+
+
+def _return_frame_data_url_buffer(buffer: io.BytesIO) -> None:
+    buffer.seek(0)
+    buffer.truncate(0)
+    with _FRAME_DATA_URL_BUFFER_POOL_LOCK:
+        if len(_FRAME_DATA_URL_BUFFER_POOL) < _FRAME_DATA_URL_BUFFER_POOL_MAX:
+            _FRAME_DATA_URL_BUFFER_POOL.append(buffer)
+
+
+def _borrow_frame_array(frame: object) -> tuple[object, object | None]:
+    if np is None:
+        return frame, None
+    try:
+        source = np.asarray(frame)
+    except Exception:
+        return frame, None
+    if source.dtype != np.uint8 or source.ndim not in {2, 3}:
+        return frame, None
+    if source.ndim == 3 and source.shape[2] not in {1, 3, 4}:
+        return frame, None
+    key = (tuple(int(dim) for dim in source.shape), str(source.dtype))
+    with _FRAME_ARRAY_POOL_LOCK:
+        pool = _FRAME_ARRAY_POOL.get(key)
+        target = pool.pop() if pool else None
+    if target is None:
+        target = np.empty(source.shape, dtype=source.dtype)
+    try:
+        np.copyto(target, source, casting="no")
+    except Exception:
+        _return_frame_array((key, target))
+        return frame, None
+    return target, (key, target)
+
+
+def _return_frame_array(pooled_frame: object | None) -> None:
+    if pooled_frame is None:
+        return
+    key, target = pooled_frame
+    with _FRAME_ARRAY_POOL_LOCK:
+        pool = _FRAME_ARRAY_POOL.setdefault(key, [])
+        if len(pool) < _FRAME_ARRAY_POOL_MAX:
+            pool.append(target)
 
 
 def _build_display_id(

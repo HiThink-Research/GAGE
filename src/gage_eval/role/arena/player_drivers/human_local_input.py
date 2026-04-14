@@ -26,6 +26,7 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         input_semantics: str | None = None,
         stateful_actions: bool = False,
         scheduler_owned_realtime: bool = False,
+        action_schema: Mapping[str, Any] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -38,6 +39,7 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         )
         self._uses_continuous_state = self._input_semantics == "continuous_state"
         self._scheduler_owned_realtime = bool(scheduler_owned_realtime)
+        self._action_schema = dict(action_schema or {}) if isinstance(action_schema, Mapping) else {}
         self._last_continuous_payload: dict[str, Any] = {}
         self._async_lock = Lock()
         self._async_inflight = False
@@ -333,6 +335,19 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         payload_metadata = resolved_payload.get("metadata") if isinstance(resolved_payload, Mapping) else None
         if isinstance(payload_metadata, Mapping):
             metadata.update(dict(payload_metadata))
+        if "hold_ticks" not in metadata:
+            payload_hold_ticks = _coerce_optional_int(
+                resolved_payload.get("hold_ticks", resolved_payload.get("holdTicks"))
+            )
+            if payload_hold_ticks is not None:
+                metadata["hold_ticks"] = payload_hold_ticks
+        if "hold_ticks" not in metadata:
+            default_hold_ticks = _resolve_default_hold_ticks(
+                observation=observation,
+                action_schema=self._action_schema,
+            )
+            if default_hold_ticks is not None:
+                metadata["hold_ticks"] = default_hold_ticks
         return ArenaAction(
             player=self.player_id,
             move=move,
@@ -438,6 +453,11 @@ class LocalHumanInputDriver(PlayerDriver):
                 params.get("scheduler_owned_realtime"),
                 default=False,
             ),
+            action_schema=(
+                params.get("action_schema")
+                if isinstance(params.get("action_schema"), Mapping)
+                else None
+            ),
             metadata={"driver_id": self.driver_id, "seat": spec.seat},
         )
 
@@ -462,6 +482,37 @@ def _coerce_optional_bool(value: object, *, default: bool) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _resolve_default_hold_ticks(
+    *,
+    observation: ArenaObservation,
+    action_schema: Mapping[str, Any],
+) -> int | None:
+    candidates: list[Mapping[str, Any]] = []
+    if action_schema:
+        candidates.append(action_schema)
+    metadata = observation.metadata if isinstance(observation.metadata, Mapping) else {}
+    schema_config = metadata.get("action_schema_config")
+    if isinstance(schema_config, Mapping):
+        candidates.append(schema_config)
+    context = observation.context if isinstance(observation.context, Mapping) else {}
+    context_schema = context.get("action_schema_config")
+    if isinstance(context_schema, Mapping):
+        candidates.append(context_schema)
+    prompt = observation.prompt
+    prompt_payload = prompt.payload if prompt is not None and isinstance(prompt.payload, Mapping) else {}
+    prompt_schema = prompt_payload.get("action_schema_config")
+    if isinstance(prompt_schema, Mapping):
+        candidates.append(prompt_schema)
+
+    for candidate in candidates:
+        default_hold_ticks = _coerce_optional_int(
+            candidate.get("hold_ticks_default", candidate.get("default_hold_ticks"))
+        )
+        if default_hold_ticks is not None:
+            return default_hold_ticks
+    return None
 
 
 def _normalize_input_semantics(

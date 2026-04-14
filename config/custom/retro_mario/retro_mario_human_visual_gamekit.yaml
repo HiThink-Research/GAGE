@@ -52,8 +52,8 @@ role_adapters:
           - select
         action_schema:
           hold_ticks_min: 1
-          hold_ticks_max: 1
-          hold_ticks_default: 1
+          hold_ticks_max: 30
+          hold_ticks_default: 10
         max_turns: 7200
         runtime_binding_policy_config:
           mode: scheduler_owned_human_realtime
@@ -63,6 +63,7 @@ role_adapters:
           tick_interval_ms: 16
           frame_output_hz: 60
           artifact_sampling_mode: async_decimated_live
+          snapshot_persist_stride: 3  # default, explicit for replay sampling clarity
           fallback_move: noop
       human_input:
         enabled: true

@@ -526,8 +526,18 @@ class PettingZooAecArenaEnvironment:
         return labels
 
     def _capture_last(self) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
-        obs, reward, termination, truncation, info = self._env.last()
+        agent = getattr(self._env, "agent_selection", None)
+        if agent is None or not hasattr(self._env, "observe"):
+            obs, reward, termination, truncation, info = self._env.last()
+        else:
+            obs = self._env.observe(agent)
+            reward = _mapping_get(getattr(self._env, "rewards", None), agent, 0.0)
+            termination = _mapping_get(getattr(self._env, "terminations", None), agent, False)
+            truncation = _mapping_get(getattr(self._env, "truncations", None), agent, False)
+            info = _mapping_get(getattr(self._env, "infos", None), agent, {})
         reward = _coerce_reward(reward)
+        if not isinstance(info, dict):
+            info = {}
         transition = {
             "observation": obs,
             "reward": reward,
@@ -874,3 +884,14 @@ def _coerce_reward(value: Any) -> float:
             except (TypeError, ValueError):
                 pass
     return 0.0
+
+
+def _mapping_get(mapping: Any, key: Any, default: Any) -> Any:
+    if not isinstance(mapping, dict):
+        return default
+    if key in mapping:
+        return mapping[key]
+    text_key = str(key)
+    if text_key in mapping:
+        return mapping[text_key]
+    return default

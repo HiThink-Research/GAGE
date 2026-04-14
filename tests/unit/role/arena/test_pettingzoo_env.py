@@ -74,6 +74,20 @@ class FakeRgbAecEnv(FakeAecEnv):
         return {"observation": FakeRgbFrame(), "agent": agent, "step": self._step_count}
 
 
+class FakeStaleLastAecEnv(FakeAecEnv):
+    def __init__(self) -> None:
+        super().__init__(max_steps=4, action_n=3)
+        self._last_obs_step = 0
+
+    def last(self):
+        agent = self.agent_selection
+        reward = self.rewards[agent]
+        termination = self.terminations[agent]
+        truncation = self.truncations[agent]
+        info = self.infos[agent]
+        return {"agent": agent, "step": self._last_obs_step}, reward, termination, truncation, info
+
+
 class ScalarLikeReward:
     def __init__(self, value: float) -> None:
         self.value = value
@@ -214,3 +228,19 @@ def test_pettingzoo_env_normalizes_scalar_like_reward_to_python_float():
 
     assert result.move_log[0]["reward"] == 1.5
     assert isinstance(result.move_log[0]["reward"], float)
+
+
+def test_pettingzoo_env_captures_fresh_observation_when_last_is_stale():
+    env = FakeStaleLastAecEnv()
+    adapter = PettingZooAecArenaEnvironment(
+        env=env,
+        player_ids=["player_0", "player_1"],
+        illegal_policy={"retry": 0, "on_fail": "loss"},
+        include_raw_obs=True,
+    )
+
+    active_player = adapter.get_active_player()
+    adapter.apply(ArenaAction(player=active_player, move="1", raw="1"))
+    observation = adapter.observe(adapter.get_active_player())
+
+    assert observation.metadata["raw_obs"]["step"] == env._step_count  # noqa: SLF001

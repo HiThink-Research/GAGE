@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import gage_eval.role.arena.visualization.recorder as recorder_module
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.contracts import ControlCommand
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
@@ -212,6 +213,48 @@ def test_visual_session_recorder_can_drain_snapshots_in_background() -> None:
         assert live_state.snapshot_payloads[0]["snapshot"]["board_text"] == "queued-frame"
     finally:
         recorder.stop_background_snapshot_drain()
+
+
+def test_visual_session_recorder_drops_oldest_pending_snapshot_when_async_queue_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[tuple[str, int]] = []
+
+    class FakeLogger:
+        @staticmethod
+        def warning(message: str, total: int) -> None:
+            warnings.append((message, total))
+
+    monkeypatch.setattr(recorder_module, "logger", FakeLogger())
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-bg-artifacts",
+    )
+    recorder._max_pending_snapshots = 2  # noqa: SLF001
+
+    for tick in range(1, 4):
+        recorder.enqueue_snapshot(
+            ts_ms=1000 + tick,
+            step=tick,
+            tick=tick,
+            snapshot={"board_text": f"queued-frame-{tick}"},
+            snapshot_is_scene_safe=True,
+        )
+
+    assert recorder.pending_snapshot_count() == 2
+    recorder.flush_pending_snapshots()
+    live_state = recorder.export_live_state()
+
+    assert [
+        snapshot["snapshot"]["board_text"]
+        for snapshot in live_state.snapshot_payloads
+    ] == ["queued-frame-2", "queued-frame-3"]
+    assert recorder.build_visual_session().summary["realtimeMetrics"]["dropped_snapshot_count"] == 1
+    assert warnings == [
+        ("ArenaVisualSessionRecorder dropped pending snapshot, total={}", 1)
+    ]
 
 
 def test_visual_session_recorder_persists_seek_snapshot_index(tmp_path: Path) -> None:
