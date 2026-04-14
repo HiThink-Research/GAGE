@@ -300,6 +300,46 @@ samples/runtime/<task_id>/<sample_id>/
 - `appworld_tool_trace.json`
 - `appworld_logs.json`
 
+### 6.4.1 一个很重要的注意事项
+
+`artifacts/` 目录存在，**不代表 artifact 一定已经成功落盘**。
+
+当前 runtime artifact layout 会在 sample 开始时就先创建：
+
+- `artifacts/`
+- `verifier/`
+- `logs/`
+
+因此会出现一种常见情况：
+
+- `artifacts/` 目录已经存在
+- 但目录是空的
+- 同时 `logs/raw_error.json`、`runtime_metadata.json`、`verifier/result.json` 已经存在
+
+这通常说明失败发生在 benchmark-specific artifact capture 之前，而不是“目录丢了”。
+
+尤其在 `framework_loop` 路径下，这个现象更常见。因为 framework-loop 的 artifact 主要依赖 benchmark kit 在 `finalize_loop_result()` 中回收；如果 run 在这些阶段提前失败：
+
+- `acquire_lease`
+- `bootstrap_runtime`
+- `run_scheduler`
+
+那么 `finalize_loop_result()` 根本不会执行，最终就会留下一个空的 `artifacts/` 目录。
+
+因此在检查“artifact 是否正常”时，不要只看目录是否存在，建议同时一起看：
+
+- `logs/raw_error.json`
+- `runtime_metadata.json`
+- `verifier/result.json`
+
+如果这几个文件已经存在，而 `artifacts/` 为空，优先判断为：
+
+- 失败过早，未进入 benchmark-specific artifact capture
+
+而不是直接判断为：
+
+- artifact sink 写坏了
+
 ### 6.5 一份实用验收清单
 
 每条 run 至少检查：
