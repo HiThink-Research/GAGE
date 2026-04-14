@@ -112,11 +112,15 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         )
         self._mm_supported, self._mm_strategy, self._strict_mm = resolve_vllm_mm_support(config, self._vllm_version)
 
-        try:
-            super().__init__(cfg)
-        except Exception:
-            self.shutdown()
-            raise
+        # Initialize a dedicated event loop thread to avoid deadlocks when vLLM spins loops internally.
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._run_loop, name="VLLMBackendLoop", daemon=True)
+        self._loop_thread.start()
+
+        super().__init__(cfg)
+        install_signal_cleanup(self.shutdown)
+        import atexit
+        atexit.register(self.shutdown)
 
     def _run_loop(self) -> None:
         if self._loop is None:  # pragma: no cover - defensive guard
@@ -152,6 +156,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             return loop
 
     def shutdown(self) -> None:
+<<<<<<< HEAD
         with self._shutdown_lock:
             if self._shutdown_started or self._shutdown_completed:
                 return
@@ -164,6 +169,54 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             cleanup_unregister()
             with self._shutdown_lock:
                 self._shutdown_completed = True
+=======
+        # vLLM v1 engine shutdown: suppress the spurious EngineDeadError by
+        # (1) cancelling the output_handler, (2) marking engine_dead before
+        # engine_core.shutdown() so the monitor thread doesn't log an error.
+        try:
+            model = getattr(self, "model", None)
+            if model is not None:
+                handler = getattr(model, "output_handler", None)
+                if handler is not None:
+                    try:
+                        from vllm.utils.async_utils import cancel_task_threadsafe
+                        cancel_task_threadsafe(handler)
+                        # Poll briefly until the task actually finishes to avoid
+                        # a race where the handler logs an exception after core
+                        # shutdown.
+                        import time
+                        for _ in range(30):
+                            if handler.done():
+                                break
+                            time.sleep(0.05)
+                    except Exception:
+                        pass
+
+                if engine_core := getattr(model, "engine_core", None):
+                    resources = getattr(engine_core, "resources", None)
+                    if resources is not None:
+                        try:
+                            resources.engine_dead = True
+                        except Exception:
+                            pass
+                    try:
+                        engine_core.shutdown()
+                    except Exception:
+                        pass
+
+                if renderer := getattr(model, "renderer", None):
+                    try:
+                        renderer.shutdown()
+                    except Exception:
+                        pass
+
+                # Drop the reference so AsyncLLM.__del__ doesn't race during
+                # Python process exit and log a TypeError.
+                self.model = None
+        except Exception:
+            pass
+        graceful_loop_shutdown(self._loop, self._loop_thread, None)
+>>>>>>> benchmark video-mme
 
     def load_model(self, config: Dict[str, Any]):
         """Load the model/processor and apply compatibility patches (reward/MoE/rope scaling/low-memory)."""
@@ -882,15 +935,19 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         sources = collect_multimodal_sources(prepared)
         images = self._load_images(sources.get("image"))
         audios = sources.get("audio") or []
+        videos = sources.get("video") or []
         images = [img for img in images if img is not None]
         audios = [au for au in audios if au is not None]
-        if not images and not audios:
+        videos = [v for v in videos if v is not None]
+        if not images and not audios and not videos:
             return None
         result: Dict[str, Any] = {}
         if images:
             result["image"] = images
         if audios:
             result["audio"] = audios
+        if videos:
+            result["video"] = videos
         return result
 
     def _load_images(self, sources) -> List[Any]:

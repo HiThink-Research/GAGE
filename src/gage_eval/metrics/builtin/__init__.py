@@ -178,6 +178,7 @@ from gage_eval.metrics.builtin.inverse_ifeval import (
     InverseIFEvalJudgePassRateMetric,
     InverseIFEvalPassRateMetric,
 )
+from gage_eval.metrics.builtin.video_mme import VideoMMEAccuracyMetric
 
 __all__ = [
     "ARCAGI2AccuracyMetric",
@@ -235,4 +236,5 @@ __all__ = [
     "CompletionFlagMetric",
     "InverseIFEvalJudgePassRateMetric",
     "InverseIFEvalPassRateMetric",
+    "VideoMMEAccuracyMetric",
 ]

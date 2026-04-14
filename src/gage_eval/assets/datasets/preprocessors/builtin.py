@@ -142,6 +142,9 @@ from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import Beyond
 # benchmark AMO-Bench
 from gage_eval.assets.datasets.preprocessors.amo_bench.converter import AMOBenchPreprocessor
 
+# benchmark Video-MME
+from gage_eval.assets.datasets.preprocessors.video_mme import VideoMMEChatPreprocessor
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -583,5 +586,16 @@ class BeyondAIMEPreprocessorProvider(BeyondAIMEPreprocessor):
     tags=("prompt", "amo_bench", "math"),
 )
 class AMOBenchPreprocessorProvider(AMOBenchPreprocessor):
+    pass
+
+
+# benchmark Video-MME
+@registry.asset(
+    "dataset_preprocessors",
+    "video_mme_chat_preprocessor",
+    desc="Video-MME multimodal preprocessor (prompt + video + multiple-choice)",
+    tags=("prompt", "video", "video_mme"),
+)
+class VideoMMEChatPreprocessorProvider(VideoMMEChatPreprocessor):
     pass
 

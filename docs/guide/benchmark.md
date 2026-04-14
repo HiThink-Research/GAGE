@@ -155,6 +155,33 @@ python run.py \
 | **`shot_type`** | Defines the reasoning format for few-shot examples. | `'solution'` (Natural Language), `'code'` (Program-of-Thought) |
 
 
+### Video-MME
+
+Video-MME is the first-ever full-spectrum, Multi-Modal Evaluation benchmark of MLLMs in Video analysis. It is designed to comprehensively assess the capabilities of MLLMs in processing video data, covering a wide range of visual domains, temporal durations, and data modalities. Video-MME comprises **900 videos** with a total of **254 hours**, and **2,700 human-annotated question-answer pairs**.
+
+**Key Features:**
+* **Duration in temporal dimension**: Encompassing short- (< 2min), medium- (4min~15min), and long-term (30min~60min) videos, ranging from 11 seconds to 1 hour, for robust contextual dynamics;
+* **Diversity in video types**: Spanning 6 primary visual domains, i.e., Knowledge, Film & Television, Sports Competition, Life Record, and Multilingual, with 30 subfields to ensure broad scenario generalizability;
+* **Breadth in data modalities**: Integrating multi-modal inputs besides video frames, including subtitles and audios, to assess the all-round capabilities of MLLMs;
+* **Quality in annotations**: All data are newly collected and annotated by humans, not from any existing video dataset, ensuring diversity and quality.
+
+#### Execution Command
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/video_mme/chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id video_mme
+```
+
+#### Detailed Configuration
+
+| Parameter | Description | Supported Values |
+| --- | --- | --- |
+| **`pre_encode_video`** | Whether to fetch the video URL and encode it as a base64 data URL before sending to the backend. | `true`, `false` |
+| **`include_subtitles`** | Whether to include subtitle text in the prompt. | `true`, `false` |
+
+
 ### AMO-Bench
 AMO-Bench, an Advanced Mathematical reasoning benchmark with Olympiad level or even higher difficulty, comprising 50 human-crafted problems. Existing benchmarks have widely leveraged high school math competitions for evaluating mathematical reasoning capabilities of large language models (LLMs). However, many existing math competitions are becoming less effective for assessing top-tier LLMs due to performance saturation (e.g., AIME24/25). To address this, AMO-Bench introduces more rigorous challenges by ensuring all 50 problems are (1) cross-validated by experts to meet at least the International Mathematical Olympiad (IMO) difficulty standards, and (2) entirely original problems to prevent potential performance leakages from data memorization. Moreover, each problem in AMO-Bench requires only a final answer rather than a proof, enabling automatic and robust grading for evaluation.
 

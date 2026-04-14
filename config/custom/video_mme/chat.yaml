@@ -1,0 +1,75 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: video_mme_vllm_async
+  description: 使用 vllm_backend 运行 Video-MME（视频多模态）评测。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: video_mme
+    hub: huggingface
+    hub_params:
+      hub_id: lmms-lab/Video-MME
+      split: test
+    loader: video_mme_hf_hub
+    params:
+      streaming: true
+      video_dir: /mnt/aime_data_ssd/user_workspace/zhuwenqiao/data/video-mme
+      preprocess: video_mme_chat_preprocessor
+      preprocess_kwargs:
+        pre_encode_video: true
+
+backends:
+  - backend_id: video_mme_vllm_backend
+    type: vllm
+    config:
+      model_path: /mnt/model/qwen3_vl_2B
+      tokenizer_path: /mnt/model/qwen3_vl_2B
+      force_tokenize_prompt: true
+      tensor_parallel_size: 8
+      max_tokens: 512
+      sampling_params:
+        temperature: 0.0
+      max_batch_size: 1
+      max_model_len: 32768
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 8
+      output_type: text
+  - backend_id: litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_video_mme_vllm
+    role_type: dut_model
+    backend_id: video_mme_vllm_backend
+    capabilities:
+      - chat_completion
+      - multimodal_chat_completion
+
+metrics:
+  - metric_id: video_mme_acc
+    implementation: video_mme_accuracy
+
+tasks:
+  - task_id: video_mme_eval
+    dataset_id: video_mme
+    max_samples: 10
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/video_mme_events.jsonl
