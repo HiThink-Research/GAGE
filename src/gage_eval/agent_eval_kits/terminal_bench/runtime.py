@@ -16,7 +16,6 @@ class TerminalBenchRuntime:
     resource_requirements = {"resource_kind": "docker"}
     lifecycle_policy = {"initialize": "noop", "save": "noop", "teardown": "provider_managed"}
     state_schema_keys = ("runtime_context", "prompt_context", "benchmark_state", "scheduler_state")
-    compat_mode = "none"
 
     def bootstrap(self, *, session, sample: dict[str, Any], payload: dict[str, Any], sandbox_provider=None) -> dict[str, Any]:
         """Bootstrap terminal benchmark state for one sample."""

@@ -13,7 +13,6 @@ class Tau2RuntimeEntry:
     resource_requirements = {"resource_kind": "local_process"}
     lifecycle_policy = {"initialize": "initialize_task", "save": "state_snapshot", "teardown": "provider_managed"}
     state_schema_keys = ("runtime_context", "prompt_context", "benchmark_state", "scheduler_state")
-    compat_mode = "legacy_support"
 
     def bootstrap(self, *, session, sample, payload, sandbox_provider=None):
         """Bootstrap Tau2 runtime state through initialize_task()."""

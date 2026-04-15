@@ -41,7 +41,6 @@ ComponentKind = Literal[
     "verifier_adapter",
     "artifact_sink",
     "provider",
-    "compat_shim",
 ]
 
 

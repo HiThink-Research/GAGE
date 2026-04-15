@@ -62,8 +62,6 @@ def test_compile_phase1_runtime_matrix(
     assert plan.judge_binding.judge_mode == "runtime_verifier"
     assert "adapter" in (plan.judge_binding.verifier_resource_refs or {})
     assert plan.resource_plan["resource_kind"] == resource_kind
-    assert plan.compat_shim is not None
-    assert plan.compat_shim.removal_phase == "phase_3"
     assert plan.cache_key
 
 
@@ -82,9 +80,6 @@ def test_compile_runtime_plan_exposes_diagnostics_when_verifier_binding_is_missi
 
         def resolve_verifier_resources(self) -> dict[str, object]:
             return {}
-
-        def resolve_compat_shim(self):
-            return None
 
     monkeypatch.setattr(resolver_module, "load_benchmark_kit", lambda _benchmark_kit_id: _KitStub())
 

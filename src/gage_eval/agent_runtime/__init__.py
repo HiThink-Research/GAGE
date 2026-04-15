@@ -9,7 +9,6 @@ __all__ = [
     "build_compiled_runtime_executor",
     "compile_agent_runtime_plan",
     "CompiledRuntimePlan",
-    "CompatMigrationShim",
     "RuntimeCompileError",
     "FailureEnvelope",
     "FailureEnvelopeError",
@@ -25,17 +24,15 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Lazily expose agent runtime symbols."""
 
-    if name in {"CompiledRuntimePlan", "CompatMigrationShim", "RuntimeCompileError", "SchedulerWorkflowBundle"}:
+    if name in {"CompiledRuntimePlan", "RuntimeCompileError", "SchedulerWorkflowBundle"}:
         from gage_eval.agent_runtime.compiled_plan import (
             CompiledRuntimePlan,
-            CompatMigrationShim,
             RuntimeCompileError,
             SchedulerWorkflowBundle,
         )
 
         return {
             "CompiledRuntimePlan": CompiledRuntimePlan,
-            "CompatMigrationShim": CompatMigrationShim,
             "RuntimeCompileError": RuntimeCompileError,
             "SchedulerWorkflowBundle": SchedulerWorkflowBundle,
         }[name]

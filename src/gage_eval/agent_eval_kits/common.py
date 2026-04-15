@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from gage_eval.agent_runtime.compiled_plan import CompatMigrationShim, SchedulerWorkflowBundle
+from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
 
 
 @dataclass(frozen=True)
@@ -18,12 +18,10 @@ class BenchmarkKitEntry:
     resource_requirements: dict[str, Any]
     lifecycle_policy: dict[str, Any]
     state_schema_keys: tuple[str, ...]
-    compat_mode: str
     runtime_entry: Any
     workflow_resolver: Callable[[str], SchedulerWorkflowBundle]
     verifier_resource_resolver: Callable[[], dict[str, Any]]
     trace_mapper: Callable[..., dict[str, Any]] | None = None
-    compat_shim_resolver: Callable[[], CompatMigrationShim | None] | None = None
 
     def resolve_workflow_bundle(self, scheduler_type: str) -> SchedulerWorkflowBundle:
         """Resolve the scheduler-local workflow bundle."""
@@ -34,13 +32,6 @@ class BenchmarkKitEntry:
         """Resolve the runtime-owned verifier resources."""
 
         return self.verifier_resource_resolver()
-
-    def resolve_compat_shim(self) -> CompatMigrationShim | None:
-        """Resolve the compat shim when one is declared."""
-
-        if self.compat_shim_resolver is None:
-            return None
-        return self.compat_shim_resolver()
 
 
 def extract_instruction(sample: dict[str, Any]) -> str:
@@ -108,22 +99,3 @@ def resolve_sample_artifact_target(session: Any, filename: str) -> tuple[Path, s
     target = artifacts_dir / filename
     target.parent.mkdir(parents=True, exist_ok=True)
     return target, relative_path.as_posix()
-
-
-def build_noop_compat_shim(
-    *,
-    shim_id: str,
-    legacy_source: str,
-    target_runtime_id: str,
-    target_benchmark_kit_id: str,
-) -> CompatMigrationShim:
-    """Build a no-op compat shim for kits without legacy migration work."""
-
-    return CompatMigrationShim(
-        shim_id=shim_id,
-        legacy_source=legacy_source,
-        target_runtime_id=target_runtime_id,
-        target_benchmark_kit_id=target_benchmark_kit_id,
-        migration_mode="support_to_runtime",
-        removal_phase="phase_3",
-    )

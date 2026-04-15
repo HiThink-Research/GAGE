@@ -16,7 +16,6 @@ class AgentRuntimeSpec:
     sandbox_profile_id: str | None = None
     resource_policy: dict[str, Any] = field(default_factory=dict)
     verifier_binding_id: str | None = None
-    compat_mode: Literal["none", "legacy_backend", "legacy_support"] = "none"
     runtime_overrides: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -32,7 +31,6 @@ class AgentRuntimeSpec:
             "sandbox_profile_id": self.sandbox_profile_id,
             "resource_policy": dict(self.resource_policy or {}),
             "verifier_binding_id": self.verifier_binding_id,
-            "compat_mode": self.compat_mode,
             "runtime_overrides": dict(self.runtime_overrides or {}),
             "metadata": dict(self.metadata or {}),
         }

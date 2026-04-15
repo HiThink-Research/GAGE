@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from gage_eval.agent_eval_kits.common import BenchmarkKitEntry
 from gage_eval.agent_eval_kits.tau2.judge_bridge import resolve_verifier_resources
-from gage_eval.agent_eval_kits.tau2.legacy_support_migration import resolve_compat_shim
 from gage_eval.agent_eval_kits.tau2.resources import build_resource_plan
 from gage_eval.agent_eval_kits.tau2.runtime import Tau2RuntimeEntry
 from gage_eval.agent_eval_kits.tau2.sub_workflows.framework_loop import (
@@ -26,12 +25,10 @@ def load_kit() -> BenchmarkKitEntry:
         resource_requirements=runtime.resource_requirements,
         lifecycle_policy=runtime.lifecycle_policy,
         state_schema_keys=runtime.state_schema_keys,
-        compat_mode=runtime.compat_mode,
         runtime_entry=runtime,
         workflow_resolver=resolve_workflow_bundle,
         verifier_resource_resolver=resolve_verifier_resources,
         trace_mapper=map_trace_payload,
-        compat_shim_resolver=resolve_compat_shim,
     )
 
 

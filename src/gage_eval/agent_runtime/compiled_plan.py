@@ -16,21 +16,6 @@ class RuntimeCompileError(ValueError):
 
 
 @dataclass(frozen=True)
-class CompatMigrationShim:
-    """Records one explicit compat bridge from legacy runtime paths."""
-
-    shim_id: str
-    legacy_source: str
-    target_runtime_id: str
-    target_benchmark_kit_id: str
-    migration_mode: str
-    field_mappings: dict[str, str] = field(default_factory=dict)
-    dropped_fields: tuple[str, ...] = ()
-    warning_event: str | None = None
-    removal_phase: str = "phase_2"
-
-
-@dataclass(frozen=True)
 class SchedulerWorkflowBundle:
     """Captures the scheduler-local workflow projection functions."""
 
@@ -60,6 +45,5 @@ class CompiledRuntimePlan:
     judge_binding: JudgeBinding
     resource_plan: dict[str, Any]
     artifact_policy: dict[str, Any]
-    compat_shim: CompatMigrationShim | None
     cache_key: str
     compile_diagnostics: list[dict[str, Any]] = field(default_factory=list)

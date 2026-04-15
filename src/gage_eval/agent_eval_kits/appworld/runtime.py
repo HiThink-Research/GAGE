@@ -49,7 +49,6 @@ class AppWorldRuntime:
     resource_requirements = {"resource_kind": "docker"}
     lifecycle_policy = {"initialize": "http_initialize", "save": "http_save", "teardown": "provider_managed"}
     state_schema_keys = ("runtime_context", "prompt_context", "benchmark_state", "scheduler_state")
-    compat_mode = "legacy_support"
 
     def __init__(
         self,

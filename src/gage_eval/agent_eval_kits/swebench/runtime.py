@@ -13,7 +13,6 @@ class SwebenchRuntime:
     resource_requirements = {"resource_kind": "docker"}
     lifecycle_policy = {"initialize": "noop", "save": "noop", "teardown": "provider_managed"}
     state_schema_keys = ("runtime_context", "prompt_context", "benchmark_state", "scheduler_state")
-    compat_mode = "legacy_backend"
 
     def bootstrap(self, *, session, sample, payload, sandbox_provider=None):
         """Bootstrap SWE-bench runtime context."""

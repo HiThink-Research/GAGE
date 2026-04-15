@@ -30,7 +30,6 @@ class SupportStep(SampleStep):
         self._steps = steps
         self.static_only = True
         self.support_payload_policy: Dict[str, Any] = {}
-        self.compat_shim_registry: Dict[str, Any] = {}
 
     def execute(
         self,

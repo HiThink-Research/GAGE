@@ -52,7 +52,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="swebench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="swebench_verifier",
-        compat_mode="legacy_backend",
     ),
     "swebench_framework_loop": AgentRuntimeSpec(
         agent_runtime_id="swebench_framework_loop",
@@ -61,7 +60,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="swebench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="swebench_verifier",
-        compat_mode="legacy_backend",
     ),
     "skillsbench_installed_client": AgentRuntimeSpec(
         agent_runtime_id="skillsbench_installed_client",
@@ -71,7 +69,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="swebench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="swebench_verifier",
-        compat_mode="legacy_backend",
     ),
     "skillsbench_framework_loop": AgentRuntimeSpec(
         agent_runtime_id="skillsbench_framework_loop",
@@ -80,7 +77,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="swebench_runtime",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="swebench_verifier",
-        compat_mode="legacy_backend",
     ),
     "appworld_installed_client": AgentRuntimeSpec(
         agent_runtime_id="appworld_installed_client",
@@ -90,7 +86,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="appworld_local",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="appworld_verifier",
-        compat_mode="legacy_support",
     ),
     "appworld_framework_loop": AgentRuntimeSpec(
         agent_runtime_id="appworld_framework_loop",
@@ -99,7 +94,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="appworld_local",
         resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
         verifier_binding_id="appworld_verifier",
-        compat_mode="legacy_support",
     ),
     "tau2_installed_client": AgentRuntimeSpec(
         agent_runtime_id="tau2_installed_client",
@@ -109,7 +103,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="tau2_local",
         resource_policy={"resource_kind": "local_process", "lifecycle": "per_sample"},
         verifier_binding_id="tau2_verifier",
-        compat_mode="legacy_support",
     ),
     "tau2_framework_loop": AgentRuntimeSpec(
         agent_runtime_id="tau2_framework_loop",
@@ -118,7 +111,6 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
         sandbox_profile_id="tau2_local",
         resource_policy={"resource_kind": "local_process", "lifecycle": "per_sample"},
         verifier_binding_id="tau2_verifier",
-        compat_mode="legacy_support",
     ),
 }
 
@@ -182,12 +174,11 @@ def compile_agent_runtime_plan(
         failure_policy="bind_failure",
     )
 
-    # STEP 3: Resolve resource plan, artifact policy, and compat shim.
+    # STEP 3: Resolve resource plan and artifact policy.
     kit_module = importlib.import_module(
         f"gage_eval.agent_eval_kits.{runtime_spec.benchmark_kit_id}.kit"
     )
     resource_plan = kit_module.build_resource_plan(runtime_spec, sandbox_config)
-    compat_shim = benchmark_kit.resolve_compat_shim()
     artifact_policy = {
         "write_runtime_metadata": True,
         "write_verifier_result": True,
@@ -214,7 +205,6 @@ def compile_agent_runtime_plan(
         judge_binding=judge_binding,
         resource_plan=resource_plan,
         artifact_policy=artifact_policy,
-        compat_shim=compat_shim,
         cache_key=cache_key,
         compile_diagnostics=diagnostics,
     )

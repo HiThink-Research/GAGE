@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from gage_eval.agent_eval_kits.appworld.judge_bridge import resolve_verifier_resources
-from gage_eval.agent_eval_kits.appworld.legacy_support_migration import resolve_compat_shim
 from gage_eval.agent_eval_kits.appworld.resources import build_resource_plan
 from gage_eval.agent_eval_kits.appworld.runtime import AppWorldRuntime
 from gage_eval.agent_eval_kits.appworld.sub_workflows.framework_loop import (
@@ -26,12 +25,10 @@ def load_kit() -> BenchmarkKitEntry:
         resource_requirements=runtime.resource_requirements,
         lifecycle_policy=runtime.lifecycle_policy,
         state_schema_keys=runtime.state_schema_keys,
-        compat_mode=runtime.compat_mode,
         runtime_entry=runtime,
         workflow_resolver=lambda scheduler_type: resolve_workflow_bundle(runtime, scheduler_type),
         verifier_resource_resolver=resolve_verifier_resources,
         trace_mapper=map_trace_payload,
-        compat_shim_resolver=resolve_compat_shim,
     )
 
 
