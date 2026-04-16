@@ -258,6 +258,17 @@ python GAGE/run.py \
   --run-id aime2026
 ```
 
+### GSM8K
+GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse grade school math word problems. The dataset was created to support the task of question answering on basic mathematical problems that require multi-step reasoning.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/gsm8k/gsm8k.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id gsm8k
+```
+
 ### MMLU-Pro
 MMLU-Pro dataset is a more robust and challenging massive multi-task understanding dataset tailored to more rigorously benchmark large language models' capabilities. This dataset contains 12K complex questions across various disciplines.
 

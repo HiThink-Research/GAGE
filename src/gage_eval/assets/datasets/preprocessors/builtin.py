@@ -145,6 +145,9 @@ from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import Beyond
 # benchmark AMO-Bench
 from gage_eval.assets.datasets.preprocessors.amo_bench.converter import AMOBenchPreprocessor
 
+# benchmark GSM8K
+from gage_eval.assets.datasets.preprocessors.gsm8k.converter import GSM8KPreprocessor
+
 # benchmark Video-MME
 from gage_eval.assets.datasets.preprocessors.video_mme import VideoMMEChatPreprocessor
 
@@ -600,6 +603,17 @@ class BeyondAIMEPreprocessorProvider(BeyondAIMEPreprocessor):
     tags=("prompt", "amo_bench", "math"),
 )
 class AMOBenchPreprocessorProvider(AMOBenchPreprocessor):
+    pass
+
+
+# benchmark GSM8K
+@registry.asset(
+    "dataset_preprocessors",
+    "gsm8k_preprocessor",
+    desc="GSM8K prompt wrapper",
+    tags=("prompt", "gsm8k", "math"),
+)
+class GSM8KPreprocessorProvider(GSM8KPreprocessor):
     pass
 
 

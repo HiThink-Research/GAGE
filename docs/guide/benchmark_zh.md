@@ -290,6 +290,20 @@ python GAGE/run.py \
 
 ```
 
+### GSM8K
+
+GSM8K（Grade School Math 8K）是一个包含 8.5K 道高质量、语言多样化的小学数学应用题数据集。该数据集旨在支持基础数学问题的问答任务，这些问题需要多步推理才能解决。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/gsm8k/gsm8k.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id gsm8k
+
+```
+
 ### MMLU-Pro
 
 MMLU-Pro 数据集是一个更稳健、更具挑战性的大规模多任务理解数据集，旨在更严格地基准测试大语言模型的能力。该数据集包含跨多个学科的 12,000 个复杂问题。
