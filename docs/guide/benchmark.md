@@ -247,6 +247,17 @@ python run.py \
   --run-id aime2025
 ```
 
+### AIME 2026
+American Invitational Mathematics Examination (AIME) 2026
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/aime26/aime2026_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id aime2026
+```
+
 ### MMLU-Pro
 MMLU-Pro dataset is a more robust and challenging massive multi-task understanding dataset tailored to more rigorously benchmark large language models' capabilities. This dataset contains 12K complex questions across various disciplines.
 

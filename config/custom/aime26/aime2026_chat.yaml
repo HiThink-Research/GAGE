@@ -1,8 +1,8 @@
-api_version: aime2024/v1alpha1
+api_version: aime2026/v1alpha1
 kind: PipelineConfig
 metadata:
-  name: aime2024_vllm_async
-  description: 使用 vllm_backend aime2024。
+  name: aime2026_vllm_async
+  description: using vllm_backend aime2026。
 
 custom:
   steps:
@@ -10,23 +10,20 @@ custom:
     - step: auto_eval
 
 datasets:
-  - dataset_id: aime2024_ds
+  - dataset_id: aime2026_ds
     hub: huggingface
     hub_params:
-      hub_id: Maxwell-Jia/AIME_2024
-      split: train
+      hub_id: math-ai/aime26
+      split: test
     loader: hf_hub
     params:
-      #preprocess: gpqa_diamond_multi_choice
-      #preprocess_kwargs:
-      #  gpqa_prompt_type: zero_shot    
-      preprocess: aime2024_preprocessor
+      preprocess: aime2026_preprocessor
 backends:
-  - backend_id: aime2024_vllm_backend
+  - backend_id: aime2026_vllm_backend
     type: vllm
     config:
-      model_path: ${AIME2024_MODEL_PATH:-/mnt/model/qwen2_5_7B}
-      tokenizer_path: ${AIME2024_TOKENIZER_PATH:-/mnt/model/qwen2_5_7B}
+      model_path: ${AIME2026_MODEL_PATH:-/mnt/model/qwen2_5_7B}
+      tokenizer_path: ${AIME2026_TOKENIZER_PATH:-/mnt/model/qwen2_5_7B}
       force_tokenize_prompt: true
       tokenizer_trust_remote_code: true      
       tensor_parallel_size: 2
@@ -51,24 +48,23 @@ backends:
       max_retries: 6
 
 role_adapters:
-  - adapter_id: dut_aime2024_vllm_qwen
+  - adapter_id: dut_aime2026_vllm_qwen
     role_type: dut_model
-    backend_id: aime2024_vllm_backend
-    #backend_id: litellm_backend    
+    backend_id: aime2026_vllm_backend
     capabilities:
       - chat_completion
 
 metrics:
-  - metric_id: aime2024_acc
-    implementation: aime2024_accuracy
+  - metric_id: aime2026_acc
+    implementation: aime2026_accuracy
 
 tasks:
-  - task_id: aime2024_eval
-    dataset_id: aime2024_ds
+  - task_id: aime2026_eval
+    dataset_id: aime2026_ds
     max_samples: 30
     reporting:
       sinks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/aime2024_vllm_events.jsonl
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/aime2026_vllm_events.jsonl

@@ -30,7 +30,7 @@ backends:
       model_path: /mnt/model/qwen3_vl_2B
       tokenizer_path: /mnt/model/qwen3_vl_2B
       force_tokenize_prompt: true
-      tensor_parallel_size: 8
+      tensor_parallel_size: 2
       max_tokens: 512
       sampling_params:
         temperature: 0.0

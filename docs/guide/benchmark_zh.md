@@ -276,6 +276,20 @@ python run.py \
 
 ```
 
+### AIME 2026
+
+2026 年美国数学邀请赛（AIME）。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/aime26/aime2026_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id aime2026
+
+```
+
 ### MMLU-Pro
 
 MMLU-Pro 数据集是一个更稳健、更具挑战性的大规模多任务理解数据集，旨在更严格地基准测试大语言模型的能力。该数据集包含跨多个学科的 12,000 个复杂问题。

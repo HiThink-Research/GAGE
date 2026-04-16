@@ -56,6 +56,9 @@ from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Prepro
 # benchmark aime 2025
 from gage_eval.assets.datasets.preprocessors.aime.aime2025 import AIME2025Preprocessor as NewAIME2025Preprocessor
 
+# benchmark aime 2026
+from gage_eval.assets.datasets.preprocessors.aime.aime2026 import AIME2026Preprocessor as NewAIME2026Preprocessor
+
 # benchmark HLE (Humanity's Last Exam)
 from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLEConverter
 
@@ -390,6 +393,17 @@ class AIME2024Preprocessor(NewAIME2024Preprocessor):
     tags=("prompt", "aime2025"),
 )
 class AIME2025Preprocessor(NewAIME2025Preprocessor):
+    pass
+
+
+# benchmark aime2026
+@registry.asset(
+    "dataset_preprocessors",
+    "aime2026_preprocessor",
+    desc="AIME 2026 prompt wrapper",
+    tags=("prompt", "aime2026"),
+)
+class AIME2026Preprocessor(NewAIME2026Preprocessor):
     pass
 
 # benchmark HLE (Humanity's Last Exam)

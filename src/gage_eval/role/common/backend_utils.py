@@ -573,7 +573,18 @@ def maybe_tokenize_messages(
             rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
             tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
 
-        token_ids = normalize_prompt_token_ids(tokenized)
+        if isinstance(tokenized, list):
+            first = tokenized[0] if tokenized else []
+            token_ids = first if isinstance(first, (list, tuple)) else tokenized
+        else:
+            # Handle transformers BatchEncoding / dict-like outputs
+            if hasattr(tokenized, "__getitem__") and "input_ids" in tokenized:
+                token_ids = tokenized["input_ids"]
+                # BatchEncoding may return nested list for batch dimension
+                if isinstance(token_ids, list) and token_ids and isinstance(token_ids[0], list):
+                    token_ids = token_ids[0]
+            else:
+                token_ids = tokenized
 
         new_prompt = str(rendered) if rendered else prompt
         if not isinstance(inputs, dict):
