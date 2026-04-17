@@ -113,6 +113,7 @@ def _build_runtime(
     sample_count: int = 3,
     concurrency: int = 1,
     max_inflight: int = 2,
+    cpus: int = 1,
     adapter: _FailingInferenceAdapter | None = None,
 ):
     FakeSandbox.start_calls = 0
@@ -136,7 +137,7 @@ def _build_runtime(
     )
     planner = TaskPlanner()
     planner.configure_custom_steps([{"step": "inference", "adapter_id": "dut"}])
-    role_manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)]))
+    role_manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=cpus)]))
     role_manager.register_role_adapter("dut", adapter or _FailingInferenceAdapter())
     borrow_calls: list[str | None] = []
     original_borrow = role_manager.borrow_role
@@ -176,9 +177,10 @@ def test_graceful_allows_running_samples_to_finish_after_first_error() -> None:
     sample_started = threading.Event()
     sample_loop, planner, role_manager, trace, borrow_calls = _build_runtime(
         failure_policy="graceful",
-        sample_count=3,
+        sample_count=2,
         concurrency=2,
         max_inflight=2,
+        cpus=2,
         adapter=_FailingInferenceAdapter(
             wait_before_failure=sample_started,
             sleep_by_sample={"s1": 0.05},
@@ -195,9 +197,32 @@ def test_graceful_allows_running_samples_to_finish_after_first_error() -> None:
 
     assert outcome.status == "aborted"
     assert outcome.completed_after_first_error >= 1
-    assert outcome.cancelled_samples >= 1
+    assert outcome.cancelled_samples == 0
     assert FakeSandbox.start_calls == 2
     assert len(borrow_calls) == 2
+
+
+@pytest.mark.fast
+def test_graceful_records_queued_cancellations_after_first_error() -> None:
+    sample_loop, planner, role_manager, trace, borrow_calls = _build_runtime(
+        failure_policy="graceful",
+        sample_count=3,
+        concurrency=1,
+        max_inflight=1,
+    )
+
+    with pytest.raises(SampleLoopExecutionError) as exc_info:
+        sample_loop.run(planner, role_manager, trace)
+
+    outcome = exc_info.value.outcome
+    sample_loop.shutdown()
+    role_manager.shutdown()
+
+    assert outcome.status == "aborted"
+    assert outcome.completed_after_first_error == 0
+    assert outcome.cancelled_samples >= 1
+    assert FakeSandbox.start_calls == 1
+    assert len(borrow_calls) == 1
 
 
 @pytest.mark.fast
@@ -225,9 +250,10 @@ def test_graceful_does_not_count_post_error_failed_samples_as_completed() -> Non
     sample_started = threading.Event()
     sample_loop, planner, role_manager, trace, borrow_calls = _build_runtime(
         failure_policy="graceful",
-        sample_count=3,
+        sample_count=2,
         concurrency=2,
         max_inflight=2,
+        cpus=2,
         adapter=_FailingInferenceAdapter(
             fail_on={"s0", "s1"},
             wait_before_failure=sample_started,
@@ -246,7 +272,7 @@ def test_graceful_does_not_count_post_error_failed_samples_as_completed() -> Non
     assert outcome.status == "aborted"
     assert outcome.failed_sample_id == "s0"
     assert outcome.completed_after_first_error == 0
-    assert outcome.cancelled_samples >= 1
+    assert outcome.cancelled_samples == 0
     assert FakeSandbox.start_calls == 2
     assert len(borrow_calls) == 2
 
