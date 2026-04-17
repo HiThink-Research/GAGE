@@ -318,6 +318,7 @@ python run.py \
 
 - 需要 Docker（verifier 会在容器内执行官方测试流程）
 - 评测脚本与 Dockerfiles 已包含在 `third_party/swebench_pro/`
+- 本地模型示例默认使用 Ollama 兼容接口
 
 ### 6.2 准备数据集
 
@@ -331,12 +332,23 @@ export SWEBENCH_LOCAL_PATH=/path/to/local-datasets/swebench_pro
 
 ```bash
 cd /path/to/GAGE
+export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+export OLLAMA_MODEL=qwen3-vl:2b-instruct
+export OLLAMA_API_KEY=dummy
 .venv/bin/python run.py \
-  --config config/custom/swebench/swebench_framework_loop.yaml \
+  --config config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml \
   --run-id swebench_framework_$(date +%H%M%S) \
   --output-dir runs \
   --max-samples 1
 ```
+
+说明：
+
+- 推荐使用 `swebench_pro_smoke_runtime_ollama_local.yaml` 跑本地 smoke demo；它会从本地数据集读取样本，并通过 `framework_loop` 驱动 agent。
+- 现在可以安全地追加 `--max-samples 1` 作为单条 smoke demo：本地 loader 会在应用 dataset `limit` 前，先把 smoke allowlist 中的样本排到前面，避免再出现 `sample_count=0` 的 0 sample run。
+- 若不传 `--max-samples`，则按配置内置的 smoke 子集与 `tasks[].max_samples` 执行，适合跑完整 smoke 集。
+- `concurrency: 1` 只表示同一时刻只处理 1 个 sample，并不表示内存一定恒定。当前 SampleLoop 默认仍会保留一个很小的预取缓冲区；同时 SWE-bench 每个 sample 都可能切换到不同的 Docker 镜像。若第 2 个 sample 触发了新的镜像拉取、解压或容器启动，宿主机内存占用可能明显高于第 1 个 sample，这不一定代表出现了并行执行。
+- 运行过程如果看起来“卡住”，常见原因是 Docker 首次拉取/启动某个 sample 对应的实例镜像，或 verifier 正在执行该 sample 的官方测试脚本。
 
 ### 6.4 运行评测（installed_client）
 
@@ -353,6 +365,7 @@ cd /path/to/GAGE
 
 - 指标：`swebench_resolve_rate`、`swebench_failure_reason`
 - 产物：`submission.patch`、`agent_trace.json`、`swebench_diagnostics.json`
+- 运行目录：`runs/<run_id>/events.jsonl`、`runs/<run_id>/samples.jsonl`、`runs/<run_id>/logs/<instance_id>/`
 
 ## 7. Tau2 评测
 
