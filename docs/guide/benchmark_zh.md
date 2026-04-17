@@ -169,6 +169,85 @@ python run.py \
 | **`shot_num`** | 提示词上下文中包含的 few-shot 示例数量。 | *整数 (例如, 0, 3, 5)* |
 | **`shot_type`** | 定义 few-shot 示例的推理格式。 | `'solution'` (自然语言), `'code'` (Program-of-Thought) |
 
+### Video-MME
+
+Video-MME 是首个面向视频分析的多模态大语言模型（MLLMs）综合评估基准。它旨在全面评估 MLLM 处理视频数据的能力，涵盖广泛的视觉领域、时间跨度和数据模态。Video-MME 包含 **900 个视频**，总时长 **254 小时**，以及 **2,700 对人工标注的问答对**。
+
+**核心特点：**
+* **时间维度上的跨度**：涵盖短视频（< 2 分钟）、中视频（4~15 分钟）和长视频（30~60 分钟），时长从 11 秒到 1 小时不等，充分考验模型的时序动态理解能力；
+* **视频类型的多样性**：覆盖 6 大主要视觉领域（知识、影视、体育竞技、生活记录、多语言等），并细分为 30 个子领域，确保广泛场景泛化性；
+* **数据模态的广度**：除视频帧外，还整合了字幕、音频等多模态输入，全面评估 MLLM 的综合能力；
+* **标注质量**：所有数据均为人工全新收集和标注，不来自任何现有视频数据集，保证了多样性和高质量。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/video_mme/chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id video_mme
+```
+
+#### 详细配置
+
+| 参数 | 描述 | 支持的值 |
+| --- | --- | --- |
+| **`pre_encode_video`** | 是否在发送到后端之前将视频 URL 获取并编码为 base64 data URL。 | `true`, `false` |
+| **`include_subtitles`** | 是否在 prompt 中引入字幕文本。 | `true`, `false` |
+
+### AMO-Bench
+
+AMO-Bench（Advanced Mathematical Olympiad Benchmark）是一个高级数学推理基准测试，难度达到或超过奥林匹克竞赛水平，包含 50 道人工精心设计的问题。现有的基准测试广泛利用高中数学竞赛来评估大语言模型（LLM）的数学推理能力。然而，由于性能饱和（例如 AIME24/25），许多现有的数学竞赛在评估顶级 LLM 方面效果越来越差。为解决这一问题，AMO-Bench 通过以下方式引入了更具挑战性的难题：确保所有 50 道问题（1）经过专家交叉验证，达到至少国际数学奥林匹克（IMO）难度标准；（2）完全原创，防止数据记忆导致的性能泄漏。此外，AMO-Bench 中的每道问题只需要最终答案而非证明，从而支持自动且稳健的评估。
+
+实验结果表明，在 AMO-Bench 上评估的 26 个 LLM 中，即使是表现最好的模型准确率也只有 52.4%，大多数 LLM 的得分低于 40%。除了表现不佳之外，进一步分析显示了随着测试时计算增加的有希望的扩展趋势。这些结果突显了当前 LLM 在数学推理方面仍有很大的提升空间。
+
+AMO-Bench 根据 answer_type 使用不同的评估方法：
+- **description**：使用 LLM 评判模型进行语义比较
+- **number/set**：使用 math_verify 解析器进行数学等价性验证
+- **variable**：使用 try_list 和 sympy 求解器进行函数验证
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/amo-bench/amo.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id amo_bench
+```
+
+### HMMT（哈佛-麻省理工数学锦标赛）
+
+该数据集包含 HMMT 2025 年 2 月竞赛的题目，用于 MathArena 排行榜。HMMT 是由哈佛大学和麻省理工学院学生组织的著名数学竞赛，其题目极具挑战性，旨在测试参赛者的高级数学推理和问题解决能力。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/hmmt/feb_2025.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id hmmt
+
+```
+
+### BeyondAIME
+
+BeyondAIME 是一个精心设计的测试集，用于评估高级数学推理能力。其创建遵循以下核心原则，以确保评估的公平性和挑战性：
+
+* **高难度**：题目来源于高中和大学数学竞赛，难度级别大于或等于 AIME 第 11-15 题。
+* **抗污染**：每道题目都经过人工修改，确保其独特性，不会出现在标准的预训练语料库中，从而真实测试模型的推理能力。
+* **专注推理，而非知识**：数据集专门测试推理能力，确保题目不需要超出标准大学水平的数学知识。
+* **鲁棒的问题设计**：数据集避免了"伪证明"类题目。对于需要类证明步骤的题目，它们被重新设计，使得猜测答案的难度与正式求解相当。
+* **自动化且准确的评估**：每道题目的答案都是正整数，可以实现明确无误且 100% 准确的自动化验证。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/beyond_aime/beyond_aime_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id beyond_aime
+
+```
 ### AIME 2024
 
 该数据集包含 2024 年美国数学邀请赛（AIME）的试题。AIME 是一项著名的数学竞赛，以其极具挑战性的数学问题而闻名。
@@ -194,6 +273,34 @@ python run.py \
   --config config/custom/aime25/aime2025_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id aime2025
+
+```
+
+### AIME 2026
+
+2026 年美国数学邀请赛（AIME）。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/aime26/aime2026_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id aime2026
+
+```
+
+### GSM8K
+
+GSM8K（Grade School Math 8K）是一个包含 8.5K 道高质量、语言多样化的小学数学应用题数据集。该数据集旨在支持基础数学问题的问答任务，这些问题需要多步推理才能解决。
+
+#### 执行命令
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/gsm8k/gsm8k.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id gsm8k
 
 ```
 
@@ -382,3 +489,18 @@ python run.py \
 | 参数 | 描述 | 支持的取值 |
 | --- | --- | --- |
 | **`audio_path_root`** | 存储 MMSU 数据的根目录。 | *有效系统路径 (Path)* |
+
+### Inverse IFEval
+
+是一个新颖的基准测试，旨在评估大型语言模型（LLM）遵循反直觉指令的能力，这些指令刻意偏离了传统的训练范式。该数据集挑战模型克服其根深蒂固的训练惯例，忠实地执行与标准认知模式或标注规范相冲突的指令。
+
+#### Execution Command
+
+使用以下命令启动基准测试流程：
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/inverse_ifeval/inverse_ifeval_qwen_omni_suite.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id inverse_ifeval
+```

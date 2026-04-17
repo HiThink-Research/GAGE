@@ -46,7 +46,11 @@ class MMLUProAccuracyMetric(SimpleMetric):
         pred = extract_single_choice_letter(pred)
 
         # STEP 3: compute score
-        final_pred, score = match_str(pred, str(answer), location="exact")
+        if pred is None or answer is None:
+            final_pred = ""
+            score = 0.0
+        else:
+            final_pred, score = match_str(pred, str(answer), location="exact")
         score = float(score)
         metadata = {"prediction": final_pred, "references": answer}
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)

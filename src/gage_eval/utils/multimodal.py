@@ -8,6 +8,7 @@ import math
 import os
 from typing import Any, Optional
 
+import numpy as np
 from PIL import Image
 
 try:  # pragma: no cover - optional dependency
@@ -38,23 +39,25 @@ def load_multimodal_data(
     return_dict: bool = False,
     *,
     resize_opts: Optional[dict[str, Any]] = None,
+    video: list[str] | None = None,
 ) -> Any:
-    """Loads and normalizes multimodal inputs (image/audio) for model backends.
+    """Loads and normalizes multimodal inputs (image/audio/video) for model backends.
 
     Args:
         processor: Backend tokenizer/processor that may include audio feature settings.
         image: A list of image sources. Each element can be a local file path or a
             `data:` URL.
         audio: A list of audio file paths.
-        return_dict: Whether to return a dict `{image: ..., audio: ...}` instead of
-            a tuple `(image, audio)`.
+        return_dict: Whether to return a dict `{image: ..., audio: ..., video: ...}` instead of
+            a tuple `(image, audio, video)`.
         resize_opts: Optional resizing overrides. Values can also be set by env vars:
             - `GAGE_EVAL_IMAGE_MIN_PIXELS`
             - `GAGE_EVAL_IMAGE_MAX_PIXELS`
             - `GAGE_EVAL_IMAGE_FACTOR`
+        video: A list of video sources (local file paths).
 
     Returns:
-        Either a `(image, audio)` tuple or a `{image, audio}` dict depending on
+        Either a `(image, audio, video)` tuple or a `{image, audio, video}` dict depending on
         `return_dict`.
 
     Raises:
@@ -117,11 +120,67 @@ def load_multimodal_data(
             for x in audio
         ]
 
-    # STEP 5: Return outputs in the requested container format.
+    if video is not None:
+        # STEP 5: Load videos from local paths into raw numpy arrays.
+        # vLLM Qwen3VL processor expects (np.ndarray, metadata) tuples where
+        # the array has shape (num_frames, height, width, 3) in RGB order.
+        import cv2
+
+        video_items: list[Any] = []
+        for src in video:
+            if src is None:
+                continue
+            if isinstance(src, str):
+                cap = cv2.VideoCapture(src)
+                if not cap.isOpened():
+                    raise RuntimeError(f"Failed to open video: {src}")
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                frames: list[Any] = []
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                cap.release()
+                if not frames:
+                    raise RuntimeError(f"No frames read from video: {src}")
+
+                # Uniformly sample frames to avoid exceeding max_model_len.
+                # Align with Qwen3VL default fps=2.0 behavior.
+                duration = len(frames) / fps if fps > 0 else 0.0
+                target_fps = 2.0
+                target_num_frames = max(4, min(len(frames), int(duration * target_fps)))
+                if len(frames) > target_num_frames:
+                    indices = np.linspace(0, len(frames) - 1, target_num_frames).round().astype(int)
+                    frames = [frames[i] for i in indices]
+                else:
+                    indices = np.arange(len(frames))
+
+                arr = np.stack(frames)
+                metadata = {
+                    "fps": target_fps,
+                    "duration": duration,
+                    "total_num_frames": total_frames,
+                    "frames_indices": indices.tolist(),
+                    "video_backend": "opencv",
+                    "do_sample_frames": False,
+                }
+                video_items.append((arr, metadata))
+            elif isinstance(src, tuple) and len(src) == 2:
+                # Already a (array, metadata) tuple
+                video_items.append(src)
+            elif isinstance(src, np.ndarray):
+                video_items.append(src)
+            else:
+                video_items.append(src)
+        video = video_items
+
+    # STEP 6: Return outputs in the requested container format.
     if return_dict:
-        return {k: v for k, v in [('image', image), ('audio', audio)] if v is not None}
+        return {k: v for k, v in [('image', image), ('audio', audio), ('video', video)] if v is not None}
     else:
-        return image, audio
+        return image, audio, video
 
 
 def to_rgb(pil_image: Image.Image) -> Image.Image:
