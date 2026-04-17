@@ -492,15 +492,6 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
     *_OPENAI_LIVE_GAMEKIT_CONFIG_CASES,
 )
 
-REPLAY_ONLY_CONFIGS = (
-    "config/custom/oneclick/replay_dummy/doudizhu_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/gomoku_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/mahjong_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/pettingzoo_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/tictactoe_dummy_replay.yaml",
-)
-
-
 LIVE_CASES_BY_CATEGORY = {
     HEADLESS_NO_HUMAN: tuple(case for case in LIVE_GAMEKIT_CONFIG_CASES if case.category == HEADLESS_NO_HUMAN),
     VISUAL_NO_HUMAN: tuple(case for case in LIVE_GAMEKIT_CONFIG_CASES if case.category == VISUAL_NO_HUMAN),
@@ -565,15 +556,6 @@ def discover_live_gamekit_configs() -> tuple[str, ...]:
         sorted(
             str(path.relative_to(REPO_ROOT))
             for path in (REPO_ROOT / "config/custom").rglob("*gamekit*.yaml")
-        )
-    )
-
-
-def discover_replay_only_configs() -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            str(path.relative_to(REPO_ROOT))
-            for path in (REPO_ROOT / "config/custom/oneclick/replay_dummy").glob("*.yaml")
         )
     )
 

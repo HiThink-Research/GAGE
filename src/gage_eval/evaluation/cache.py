@@ -170,15 +170,7 @@ class EvalCache:
         """Iterate over cached sample payloads."""
 
         if self._samples_jsonl.exists():
-            with self._samples_jsonl.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+            yield from _iter_json_objects(self._samples_jsonl)
             return
 
         if not self._samples_dir.exists():
@@ -309,6 +301,27 @@ def _json_default(obj: Any) -> Any:
         except Exception:  # pragma: no cover
             return str(obj)
     return str(obj)
+
+
+def _iter_json_objects(path: Path) -> Iterator[Dict[str, Any]]:
+    """Iterate one file containing consecutive pretty-printed JSON objects."""
+
+    decoder = json.JSONDecoder()
+    content = path.read_text(encoding="utf-8")
+    length = len(content)
+    index = 0
+    while index < length:
+        while index < length and content[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        try:
+            payload, next_index = decoder.raw_decode(content, index)
+        except json.JSONDecodeError:
+            break
+        if isinstance(payload, dict):
+            yield payload
+        index = next_index
 
 
 def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:

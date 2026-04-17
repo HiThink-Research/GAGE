@@ -1,0 +1,43 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+scene: agent
+metadata:
+  name: agent_noop
+datasets:
+  - dataset_id: agent_ds
+    loader: jsonl
+    params:
+      path: tests/data/samples/agent_noop.jsonl
+backends:
+  - backend_id: main_backend
+    type: litellm
+    config:
+      provider: openai
+      model: gpt-4.1
+  - backend_id: other_backend
+    type: litellm
+    config:
+      provider: openai
+      model: gpt-4.1-mini
+role_adapters:
+  - adapter_id: agent_actor
+    role_type: dut_model
+    backend_id: main_backend
+    capabilities:
+      - chat_completion
+custom:
+  steps:
+    - step: inference
+      adapter_id: agent_actor
+    - step: auto_eval
+tasks:
+  - task_id: agent_task
+    dataset_id: agent_ds
+    backend: other_backend
+    steps:
+      - step: inference
+        adapter_id: agent_actor
+      - step: auto_eval
+    reporting:
+      sinks:
+        - type: console

@@ -155,6 +155,76 @@ python run.py \
 | **`shot_type`** | Defines the reasoning format for few-shot examples. | `'solution'` (Natural Language), `'code'` (Program-of-Thought) |
 
 
+### Video-MME
+
+Video-MME is the first-ever full-spectrum, Multi-Modal Evaluation benchmark of MLLMs in Video analysis. It is designed to comprehensively assess the capabilities of MLLMs in processing video data, covering a wide range of visual domains, temporal durations, and data modalities. Video-MME comprises **900 videos** with a total of **254 hours**, and **2,700 human-annotated question-answer pairs**.
+
+**Key Features:**
+* **Duration in temporal dimension**: Encompassing short- (< 2min), medium- (4min~15min), and long-term (30min~60min) videos, ranging from 11 seconds to 1 hour, for robust contextual dynamics;
+* **Diversity in video types**: Spanning 6 primary visual domains, i.e., Knowledge, Film & Television, Sports Competition, Life Record, and Multilingual, with 30 subfields to ensure broad scenario generalizability;
+* **Breadth in data modalities**: Integrating multi-modal inputs besides video frames, including subtitles and audios, to assess the all-round capabilities of MLLMs;
+* **Quality in annotations**: All data are newly collected and annotated by humans, not from any existing video dataset, ensuring diversity and quality.
+
+#### Execution Command
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/video_mme/chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id video_mme
+```
+
+#### Detailed Configuration
+
+| Parameter | Description | Supported Values |
+| --- | --- | --- |
+| **`pre_encode_video`** | Whether to fetch the video URL and encode it as a base64 data URL before sending to the backend. | `true`, `false` |
+| **`include_subtitles`** | Whether to include subtitle text in the prompt. | `true`, `false` |
+
+
+### AMO-Bench
+AMO-Bench, an Advanced Mathematical reasoning benchmark with Olympiad level or even higher difficulty, comprising 50 human-crafted problems. Existing benchmarks have widely leveraged high school math competitions for evaluating mathematical reasoning capabilities of large language models (LLMs). However, many existing math competitions are becoming less effective for assessing top-tier LLMs due to performance saturation (e.g., AIME24/25). To address this, AMO-Bench introduces more rigorous challenges by ensuring all 50 problems are (1) cross-validated by experts to meet at least the International Mathematical Olympiad (IMO) difficulty standards, and (2) entirely original problems to prevent potential performance leakages from data memorization. Moreover, each problem in AMO-Bench requires only a final answer rather than a proof, enabling automatic and robust grading for evaluation.
+
+AMO-Bench uses different evaluation methods based on answer_type:
+- **description**: Uses LLM judge for semantic comparison
+- **number/set**: Uses math_verify parser for mathematical equivalence
+- **variable**: Uses try_list with sympy solver for function verification
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/amo-bench/amo.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id amo_bench
+```
+
+### HMMT (Harvard-MIT Mathematics Tournament)
+This dataset contains the questions from HMMT February 2025 used for the MathArena Leaderboard. HMMT is a prestigious mathematics competition organized by Harvard and MIT students, featuring challenging problems that test advanced mathematical reasoning and problem-solving skills.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/hmmt/feb_2025.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id hmmt
+```
+
+### BeyondAIME
+BeyondAIME is a curated test set designed to benchmark advanced mathematical reasoning. Its creation was guided by the following core principles to ensure a fair and challenging evaluation:
+
+* **High Difficulty**: Problems are sourced from high-school and university mathematics competitions, with a difficulty level greater than or equal to that of AIME Problems #11-15.
+* **Contamination-Resistant**: Every problem has been manually revised to be unique, ensuring it will not be found in standard pre-training corpora and providing a true test of a model's reasoning abilities.
+* **Focus on Reasoning, Not Knowledge**: The dataset exclusively tests reasoning by ensuring that problems do not require mathematical knowledge beyond the standard university level.
+* **Robust Problem Design**: The dataset avoids "pseudo-proof" problems. For problems requiring proof-like steps, they have been reformulated so that guessing the answer is as difficult as formally solving the problem.
+* **Automated & Accurate Evaluation**: Each problem's answer is a positive integer, allowing for an unambiguous and 100% accurate automated verification of model performance.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/beyond_aime/beyond_aime_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id beyond_aime
+```
 ### AIME 2024
 This dataset contains problems from the American Invitational Mathematics Examination (AIME) 2024. AIME is a prestigious high school mathematics competition known for its challenging mathematical problems.
 
@@ -175,6 +245,28 @@ python run.py \
   --config config/custom/aime25/aime2025_chat.yaml \
   --output-dir ./gage_runs/final_test \
   --run-id aime2025
+```
+
+### AIME 2026
+American Invitational Mathematics Examination (AIME) 2026
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/aime26/aime2026_chat.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id aime2026
+```
+
+### GSM8K
+GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse grade school math word problems. The dataset was created to support the task of question answering on basic mathematical problems that require multi-step reasoning.
+
+#### Execution Command
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/gsm8k/gsm8k.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id gsm8k
 ```
 
 ### MMLU-Pro
@@ -332,3 +424,17 @@ python run.py \
 | --- | --- | --- |
 | **`audio_path_root`** | The root directory where the downloaded MMSU data is stored. | *Valid System Path* |
 
+
+### Inverse IFEval
+is a novel benchmark designed to evaluate large language models' (LLMs) ability to follow counterintuitive instructions that deliberately deviate from conventional training paradigms. The dataset challenges models to override their ingrained training conventions and faithfully execute instructions that conflict with standard cognitive patterns or annotation norms.
+
+#### Execution Command
+
+Use the following command to initiate the benchmark process:
+
+```bash
+python GAGE/run.py \
+  --config GAGE/config/custom/inverse_ifeval/inverse_ifeval_qwen_omni_suite.yaml \
+  --output-dir ./gage_runs/final_test \
+  --run-id inverse_ifeval
+```

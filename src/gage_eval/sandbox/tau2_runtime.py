@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from gage_eval.sandbox.base import BaseSandbox, ExecResult, SandboxOptionalMixin
 from gage_eval.utils.benchmark_helpers.tau2 import (
     ensure_tau2_importable,
+    resolve_tau2_termination_reason,
     resolve_tau2_data_dir,
 )
 
@@ -194,6 +195,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             )
             trajectory.append(user_message)
             self._user_state = user_state
+            self._user_cost_total += _resolve_user_message_cost(user_message)
             if getattr(user_message, "tool_calls", None):
                 self._resolve_user_tool_calls(user_message)
         else:
@@ -204,11 +206,13 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                 )
                 trajectory.append(user_message)
                 self._user_state = user_state
+                self._user_cost_total += _resolve_user_message_cost(user_message)
                 if getattr(user_message, "tool_calls", None):
                     self._resolve_user_tool_calls(user_message)
 
         # STEP 3: Prepare sample payload updates (messages + tools + metadata).
         tools_schema = [tool.openai_schema for tool in env.get_tools()]
+        tools_schema = tools_schema + [_build_respond_tool_schema(self._respond_tool_name)]
         sample_messages = [
             msg for msg in (_tau2_to_gage_message(m) for m in trajectory) if msg
         ]
@@ -249,6 +253,21 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             "start_time": self._start_time,
         }
 
+    def record_agent_usage(self, usage: Any) -> None:
+        """Record scheduler-reported agent usage into Tau2 runtime state.
+
+        Args:
+            usage: Scheduler-normalized usage payload. Supports either OpenAI-style
+                token fields (`total_tokens`, `prompt_tokens`, `completion_tokens`)
+                or normalized loop fields (`input_tokens`, `output_tokens`,
+                `cost_usd`).
+        """
+
+        resolved_cost = _resolve_agent_usage_cost(usage)
+        if resolved_cost is None:
+            return
+        self._agent_cost_total = resolved_cost
+
     def _handle_env_tool(self, name: str, arguments: Any) -> Dict[str, Any]:
         if self._env is None:
             raise RuntimeError("tau2_env_not_initialized")
@@ -281,7 +300,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             assistant_msg, self._user_state
         )
         self._trajectory.append(user_msg)
-        self._user_cost_total += _coerce_float(getattr(user_msg, "cost", None)) or 0.0
+        self._user_cost_total += _resolve_user_message_cost(user_msg)
 
         if _is_user_stop(user_msg):
             self._termination_reason = _termination_reason("user_stop")
@@ -319,9 +338,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                 next_input, self._user_state
             )
             self._trajectory.append(next_user_msg)
-            self._user_cost_total += (
-                _coerce_float(getattr(next_user_msg, "cost", None)) or 0.0
-            )
+            self._user_cost_total += _resolve_user_message_cost(next_user_msg)
             current = next_user_msg
             if _is_user_stop(current):
                 break
@@ -386,11 +403,15 @@ def _build_tau2_user_simulator(
     seed: Optional[int],
 ) -> Any:
     UserSimulator = _tau2_import("tau2.user.user_simulator", "UserSimulator")
+    normalized_model_args = _normalize_tau2_user_model_args(
+        model=model,
+        model_args=model_args,
+    )
     user = UserSimulator(
         tools=tools,
         instructions=instructions,
         llm=model,
-        llm_args=model_args,
+        llm_args=normalized_model_args,
     )
     if seed is not None:
         try:
@@ -398,6 +419,23 @@ def _build_tau2_user_simulator(
         except Exception:
             pass
     return user
+
+
+def _normalize_tau2_user_model_args(
+    *,
+    model: Optional[str],
+    model_args: Optional[dict],
+) -> Optional[dict]:
+    """Normalize LiteLLM user-simulator args for provider-specific routing."""
+
+    if not isinstance(model_args, dict):
+        return model_args
+    normalized = dict(model_args)
+    if isinstance(model, str) and model.startswith("ollama_chat/"):
+        api_base = normalized.get("api_base")
+        if isinstance(api_base, str) and api_base.endswith("/v1"):
+            normalized["api_base"] = api_base[:-3]
+    return normalized
 
 
 def _filter_user_history(history: List[Any]) -> List[Any]:
@@ -456,6 +494,27 @@ def _tau2_to_gage_message(message: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _build_respond_tool_schema(respond_tool_name: str) -> Dict[str, Any]:
+    """Build the OpenAI function schema for the agent-facing respond tool."""
+    return {
+        "type": "function",
+        "function": {
+            "name": respond_tool_name,
+            "description": "Send a message to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to send to the user.",
+                    }
+                },
+                "required": ["message"],
+            },
+        },
+    }
+
+
 def _build_tool_call(name: str, arguments: Any, *, requestor: str) -> Any:
     ToolCall = _tau2_import("tau2.data_model.message", "ToolCall")
     payload = _normalize_tool_args(arguments)
@@ -507,19 +566,7 @@ def _is_agent_stop(content: Optional[str]) -> bool:
 
 
 def _termination_reason(reason: str) -> Any:
-    try:
-        TerminationReason = _tau2_import("tau2.data_model.simulation", "TerminationReason")
-    except RuntimeError:
-        return reason
-    mapping = {
-        "user_stop": TerminationReason.USER_STOP,
-        "agent_stop": TerminationReason.AGENT_STOP,
-        "max_steps": TerminationReason.MAX_STEPS,
-        "too_many_errors": TerminationReason.TOO_MANY_ERRORS,
-        "agent_error": TerminationReason.AGENT_ERROR,
-        "user_error": TerminationReason.USER_ERROR,
-    }
-    return mapping.get(reason, TerminationReason.AGENT_ERROR)
+    return resolve_tau2_termination_reason(reason, fallback="too_many_errors")
 
 
 def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:
@@ -567,6 +614,59 @@ def _coerce_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _resolve_user_message_cost(msg: Any) -> float:
+    """Resolve cost from a user simulator message, falling back to token counts.
+
+    For local/free models (e.g. Ollama) monetary cost is always 0.0, but the
+    message's ``usage`` dict carries token counts from LiteLLM.  This mirrors
+    the fallback logic in ``_resolve_agent_usage_cost`` so that ``user_cost``
+    and ``agent_cost`` use a consistent unit (tokens) when USD cost is absent.
+    """
+
+    cost = _coerce_float(getattr(msg, "cost", None))
+    if cost:
+        return cost
+    usage = getattr(msg, "usage", None)
+    if not isinstance(usage, dict):
+        return 0.0
+    direct = _coerce_float(usage.get("cost_usd"))
+    if direct:
+        return direct
+    total = _coerce_float(usage.get("total_tokens"))
+    if total is not None:
+        return total
+    prompt = _coerce_float(usage.get("prompt_tokens")) or 0.0
+    completion = _coerce_float(usage.get("completion_tokens")) or 0.0
+    return prompt + completion
+
+
+def _resolve_agent_usage_cost(usage: Any) -> Optional[float]:
+    """Resolve one stable Tau2 agent cost from scheduler usage payloads."""
+
+    if not isinstance(usage, dict):
+        return None
+
+    direct_cost = _coerce_float(usage.get("cost_usd"))
+    if direct_cost is not None:
+        return direct_cost
+
+    total_tokens = _coerce_float(usage.get("total_tokens"))
+    if total_tokens is not None:
+        return total_tokens
+
+    prompt_tokens = _coerce_float(usage.get("prompt_tokens"))
+    completion_tokens = _coerce_float(usage.get("completion_tokens"))
+    if prompt_tokens is not None or completion_tokens is not None:
+        return float((prompt_tokens or 0.0) + (completion_tokens or 0.0))
+
+    input_tokens = _coerce_float(usage.get("input_tokens"))
+    output_tokens = _coerce_float(usage.get("output_tokens"))
+    if input_tokens is not None or output_tokens is not None:
+        return float((input_tokens or 0.0) + (output_tokens or 0.0))
+
+    return None
 
 
 def _now() -> str:

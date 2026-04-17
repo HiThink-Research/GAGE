@@ -57,6 +57,8 @@ def test_build_runtime_metadata_snapshot_projects_stable_fields() -> None:
             "backend_inline": {"type": "inline", "config": {"x": 1}},
             "capabilities": ["chat", "tool_use"],
             "prompt_id": "prompt-main",
+            "agent_runtime_id": None,
+            "compat_runtime_id": None,
         },
     )
     assert snapshot.summary_generators == ("arena", "tau2")

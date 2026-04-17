@@ -17,6 +17,7 @@ from gage_eval.evaluation.sample_envelope import (
     append_arena_contract,
     append_predict_result,
     ensure_arena_header,
+    resolve_runtime_judge_output,
     update_eval_result,
 )
 from gage_eval.evaluation.step_factory import StepFactory, TaskStepBundle
@@ -367,6 +368,10 @@ class StepExecutionContext:
             sandbox_provider=self._role_payload_sandbox_provider(),
         )
         append_predict_result(self.sample, self._model_output)
+        runtime_judge_output = resolve_runtime_judge_output(self._model_output)
+        if runtime_judge_output:
+            self._judge_output = runtime_judge_output
+            update_eval_result(self.sample, runtime_judge_output)
 
     def execute_arena(self) -> None:
         logger.trace("Executing arena step adapter={}", getattr(self.arena, "_adapter_id", None))

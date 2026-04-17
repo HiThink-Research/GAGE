@@ -20,6 +20,7 @@ from gage_eval.evaluation.sample_envelope import (
     resolve_arena_trace,
     resolve_judge_output,
     resolve_model_output,
+    resolve_runtime_judge_output,
     snapshot_sample,
 )
 from gage_eval.pipeline.steps.base import SampleStep
@@ -322,6 +323,8 @@ class AutoEvalStep(SampleStep):
 
         resolved_model_output = resolve_model_output(sample, model_output)
         resolved_judge_output = resolve_judge_output(sample, judge_output)
+        if not resolved_judge_output:
+            resolved_judge_output = resolve_runtime_judge_output(resolved_model_output)
         resolved_arena_trace = resolve_arena_trace(sample, resolved_model_output)
         if resolved_arena_trace or "arena_trace" in resolved_model_output:
             normalized_model_output = dict(resolved_model_output)

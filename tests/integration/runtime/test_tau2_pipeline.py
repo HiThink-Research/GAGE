@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
+from gage_eval.agent_eval_kits.tau2.runtime import Tau2RuntimeEntry
 from gage_eval.assets.datasets.loaders.tau2_hf_loader import Tau2TasksLoader
 from gage_eval.config.pipeline_config import DatasetSpec
-from gage_eval.role.context.tau2_bootstrap import Tau2BootstrapContext
 from gage_eval.role.judge.tau2_eval import Tau2Evaluate
 from gage_eval.sandbox.manager import SandboxManager
 from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
@@ -34,7 +35,7 @@ def test_tau2_pipeline_end_to_end(tmp_path: Path, monkeypatch) -> None:
 
     manager = SandboxManager()
     judge = Tau2Evaluate()
-    bootstrap = Tau2BootstrapContext()
+    runtime_entry = Tau2RuntimeEntry()
     for domain in ("airline", "retail"):
         spec = DatasetSpec(
             dataset_id=f"tau2_{domain}",
@@ -61,7 +62,13 @@ def test_tau2_pipeline_end_to_end(tmp_path: Path, monkeypatch) -> None:
             {"runtime": "tau2", "runtime_configs": {"data_dir": str(tmp_path)}},
             SandboxScope(sample_id=f"tau2-{domain}"),
         )
-        bootstrap.provide({"sample": sample, "sandbox_provider": provider})
+        bootstrap = runtime_entry.bootstrap(
+            session=SimpleNamespace(),
+            sample=sample,
+            payload={},
+            sandbox_provider=provider,
+        )
+        assert bootstrap["prompt_context"]["domain"] == domain
         runtime = provider.get_handle().sandbox
         runtime.exec_tool("respond", {"message": "please stop"})
         output = judge.invoke({"sample": sample, "sandbox_provider": provider})

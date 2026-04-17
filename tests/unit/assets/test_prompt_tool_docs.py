@@ -10,7 +10,7 @@ from gage_eval.assets.prompts.renderers import JinjaChatPromptRenderer, PromptCo
 def test_prompt_renderer_injects_tool_documentation() -> None:
     renderer = JinjaChatPromptRenderer(template="{{ tool_documentation }}")
     context = PromptContext(
-        sample={"support_outputs": [{"tool_documentation": "DOCS", "tool_documentation_meta": {"apps": 1}}]},
+        sample={"prompt_context": {"tool_documentation": "DOCS", "tool_documentation_meta": {"apps": 1}}},
         payload={},
     )
     result = renderer.render(context)

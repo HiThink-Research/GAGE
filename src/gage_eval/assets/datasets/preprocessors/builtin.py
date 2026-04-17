@@ -29,7 +29,11 @@ from gage_eval.assets.datasets.preprocessors.tau2_preprocessor import Tau2Prepro
 from gage_eval.registry import registry
 
 # benchmark GPQA-diamond
-from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
+try:
+    from gage_eval.assets.datasets.preprocessors.gpqa.gpqa_diamond_preprocessor import GpqaDiamondPreprocessor as NewGpqaDiamond
+except Exception as exc:  # pragma: no cover - optional dependency guard
+    NewGpqaDiamond = None
+    warnings.warn(f"GPQA diamond preprocessor unavailable: {exc}", RuntimeWarning)
 
 # benchmark MathVista
 try:
@@ -55,6 +59,9 @@ from gage_eval.assets.datasets.preprocessors.aime.aime2024 import AIME2024Prepro
 
 # benchmark aime 2025
 from gage_eval.assets.datasets.preprocessors.aime.aime2025 import AIME2025Preprocessor as NewAIME2025Preprocessor
+
+# benchmark aime 2026
+from gage_eval.assets.datasets.preprocessors.aime.aime2026 import AIME2026Preprocessor as NewAIME2026Preprocessor
 
 # benchmark HLE (Humanity's Last Exam)
 from gage_eval.assets.datasets.preprocessors.hle.hle_chat_converter import HLEConverter
@@ -101,6 +108,8 @@ from gage_eval.assets.datasets.preprocessors.mrcr.mrcr_converter import MRCRConv
 # benchmark MMSU (audio)
 from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConverter
 
+# benchmark inverse_ifeval
+from gage_eval.assets.datasets.preprocessors.inverse_ifeval.inverse_ifeval_preprocessor import InverseIFEvalPreprocessor
 
 def _warn_deprecated_dataset_preprocessor(
     asset_name: str,
@@ -131,6 +140,20 @@ class _DeprecatedDatasetPreprocessorMixin:
         )
         super().__init__(*args, **kwargs)
 
+# benchmark HMMT Feb 2025
+from gage_eval.assets.datasets.preprocessors.hmmt.hmmt_converter import HMMTFeb2025Preprocessor
+
+# benchmark BeyondAIME
+from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import BeyondAIMEPreprocessor
+
+# benchmark AMO-Bench
+from gage_eval.assets.datasets.preprocessors.amo_bench.converter import AMOBenchPreprocessor
+
+# benchmark GSM8K
+from gage_eval.assets.datasets.preprocessors.gsm8k.converter import GSM8KPreprocessor
+
+# benchmark Video-MME
+from gage_eval.assets.datasets.preprocessors.video_mme import VideoMMEChatPreprocessor
 
 @registry.asset(
     "dataset_preprocessors",
@@ -338,14 +361,15 @@ if NewMathVista is not None:
 
 
 # benchmark GPQA-diamond
-@registry.asset(
-    "dataset_preprocessors",
-    "gpqa_diamond_multi_choice",
-    desc="GPQA diamond subset multiple-choice prompt wrapper",
-    tags=("prompt", "gpqa", "gpqa_diamond", "multiple-choice"),
-)
-class GpqaDiamondPreprocessor(NewGpqaDiamond):
-    pass
+if NewGpqaDiamond is not None:
+    @registry.asset(
+        "dataset_preprocessors",
+        "gpqa_diamond_multi_choice",
+        desc="GPQA diamond subset multiple-choice prompt wrapper",
+        tags=("prompt", "gpqa", "gpqa_diamond", "multiple-choice"),
+    )
+    class GpqaDiamondPreprocessor(NewGpqaDiamond):
+        pass
 
 # benchmark MathVista
 if NewMathVistaChat is not None:
@@ -377,6 +401,17 @@ class AIME2024Preprocessor(NewAIME2024Preprocessor):
     tags=("prompt", "aime2025"),
 )
 class AIME2025Preprocessor(NewAIME2025Preprocessor):
+    pass
+
+
+# benchmark aime2026
+@registry.asset(
+    "dataset_preprocessors",
+    "aime2026_preprocessor",
+    desc="AIME 2026 prompt wrapper",
+    tags=("prompt", "aime2026"),
+)
+class AIME2026Preprocessor(NewAIME2026Preprocessor):
     pass
 
 # benchmark HLE (Humanity's Last Exam)
@@ -531,5 +566,69 @@ class MRCRPreprocessor(MRCRConverter):
     tags=("prompt", "MMSU"),
 )
 class MMSUPreprocessor(MMSUConverter):
+    pass
+
+@registry.asset(
+    "dataset_preprocessors",
+    "inverse_ifeval_preprocessor",
+    desc="Inverse IFEval preprocessing logic",
+    tags=("instruction_following", "ifeval", "inverse"),
+)
+class InverseIFEvalPreprocessorProvider(InverseIFEvalPreprocessor):
+    pass
+
+
+# benchmark HMMT Feb 2025
+@registry.asset(
+    "dataset_preprocessors",
+    "hmmt_feb_2025_preprocessor",
+    desc="HMMT Feb 2025 prompt wrapper",
+    tags=("prompt", "hmmt", "math"),
+)
+class HMMTFeb2025PreprocessorProvider(HMMTFeb2025Preprocessor):
+    pass
+
+
+# benchmark BeyondAIME
+@registry.asset(
+    "dataset_preprocessors",
+    "beyond_aime_preprocessor",
+    desc="BeyondAIME prompt wrapper",
+    tags=("prompt", "beyond_aime", "math"),
+)
+class BeyondAIMEPreprocessorProvider(BeyondAIMEPreprocessor):
+    pass
+
+
+# benchmark AMO-Bench
+@registry.asset(
+    "dataset_preprocessors",
+    "amo_bench_preprocessor",
+    desc="AMO-Bench prompt wrapper",
+    tags=("prompt", "amo_bench", "math"),
+)
+class AMOBenchPreprocessorProvider(AMOBenchPreprocessor):
+    pass
+
+
+# benchmark GSM8K
+@registry.asset(
+    "dataset_preprocessors",
+    "gsm8k_preprocessor",
+    desc="GSM8K prompt wrapper",
+    tags=("prompt", "gsm8k", "math"),
+)
+class GSM8KPreprocessorProvider(GSM8KPreprocessor):
+    pass
+
+
+# benchmark Video-MME
+@registry.asset(
+    "dataset_preprocessors",
+    "video_mme_chat_preprocessor",
+    desc="Video-MME multimodal preprocessor (prompt + video + multiple-choice)",
+    tags=("prompt", "video", "video_mme"),
+)
+class VideoMMEChatPreprocessorProvider(VideoMMEChatPreprocessor):
     pass
 

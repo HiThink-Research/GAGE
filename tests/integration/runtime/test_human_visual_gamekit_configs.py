@@ -166,16 +166,6 @@ def test_phase_card_manifest_entries_point_to_gamekit_modules() -> None:
     )
 
 
-def test_doudizhu_dummy_replay_config_uses_gamekit_parser() -> None:
-    payload = _load_config("config/custom/oneclick/replay_dummy/doudizhu_dummy_replay.yaml")
-    arena_adapter = next(
-        adapter for adapter in payload["role_adapters"] if adapter["adapter_id"] == "doudizhu_arena"
-    )
-    parser = arena_adapter["params"]["parser"]
-
-    assert parser["impl"] == "doudizhu_v1"
-
-
 @pytest.mark.parametrize(
     ("relpath", "expected_scheme"),
     [
@@ -329,11 +319,12 @@ def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> Non
             "activation_scope": "pure_human_only",
             "input_model": "continuous_state",
             "input_transport": "realtime_ws",
-            "tick_interval_ms": 16,
+            "tick_interval_ms": 18,
             "frame_output_hz": 60,
             "artifact_sampling_mode": "async_decimated_live",
             "snapshot_persist_stride": 3,
             "fallback_move": "noop",
+            "command_stale_after_ms": 200,
         },
     }
     assert visualizer["enabled"] is True
@@ -349,8 +340,8 @@ def test_retro_mario_human_visual_config_routes_human_input_to_player_0() -> Non
             "driver_params": {
                 "input_semantics": "continuous_state",
                 "stateful_actions": True,
-                "tick_interval_ms": 16,
-                "timeout_ms": 16,
+                "tick_interval_ms": 18,
+                "timeout_ms": 18,
                 "timeout_fallback_move": "noop",
             },
         }

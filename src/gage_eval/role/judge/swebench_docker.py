@@ -71,13 +71,27 @@ class SwebenchDocker(JudgeImplementation):
         if not patch and sandbox_provider is not None:
             patch = _load_submission_patch(sandbox_provider, payload, sample)
         if not patch:
-            return {"resolved": False, "failure_reason": "missing_patch"}
+            return {
+                "resolved": False,
+                "failure_reason": "missing_patch",
+                "diagnostic_reason": "missing_patch_submission",
+                "diagnostic_details": {"submission_patch": None},
+            }
 
         instance_id = _resolve_instance_id(sample)
         repo = _get_meta(sample, "repo")
         base_commit = _get_meta(sample, "base_commit")
         if not instance_id or not repo or not base_commit:
-            return {"resolved": False, "failure_reason": "missing_metadata"}
+            return {
+                "resolved": False,
+                "failure_reason": "missing_metadata",
+                "diagnostic_reason": "missing_required_metadata",
+                "diagnostic_details": {
+                    "instance_id": instance_id,
+                    "repo": repo,
+                    "base_commit": base_commit,
+                },
+            }
 
         run_id = _resolve_run_id(payload)
         log_dir = _host_log_dir(run_id, instance_id)
@@ -149,6 +163,8 @@ class SwebenchDocker(JudgeImplementation):
                 "resolved": False,
                 "failure_reason": run_result.get("failure_reason", "container_error"),
                 "log_dir": str(log_dir),
+                "diagnostic_reason": str(run_result.get("failure_reason", "container_error")),
+                "diagnostic_details": {"log_dir": str(log_dir)},
             }
 
         patch_status = _load_patch_status_file(workspace_dir / "patch_apply_status.json")
@@ -159,6 +175,11 @@ class SwebenchDocker(JudgeImplementation):
                     "resolved": False,
                     "failure_reason": failure_reason,
                     "log_dir": str(log_dir),
+                    "diagnostic_reason": str(failure_reason),
+                    "diagnostic_details": {
+                        "log_dir": str(log_dir),
+                        "submission_patch": "artifacts/submission.patch",
+                    },
                 }
 
         output = _load_output_json(workspace_dir / "output.json")
@@ -167,6 +188,8 @@ class SwebenchDocker(JudgeImplementation):
                 "resolved": False,
                 "failure_reason": "missing_output",
                 "log_dir": str(log_dir),
+                "diagnostic_reason": "missing_output",
+                "diagnostic_details": {"log_dir": str(log_dir)},
             }
 
         resolved, failure_reason = _evaluate_resolution(
@@ -174,12 +197,19 @@ class SwebenchDocker(JudgeImplementation):
             _parse_list(_get_meta(sample, "fail_to_pass")),
             _parse_list(_get_meta(sample, "pass_to_pass")),
         )
-        return {
+        result = {
             "resolved": resolved,
             "failure_reason": failure_reason,
             "tests": output.get("tests", []),
             "log_dir": str(log_dir),
         }
+        if not resolved:
+            result["diagnostic_reason"] = str(failure_reason or "resolution_failed")
+            result["diagnostic_details"] = {
+                "log_dir": str(log_dir),
+                "submission_patch": "artifacts/submission.patch",
+            }
+        return result
 
     def _run_with_sandbox(
         self,

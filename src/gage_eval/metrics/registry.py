@@ -227,6 +227,9 @@ class MetricRegistry:
             metric_cls = lookup.get("metrics", impl_key)
             return metric_cls(spec)
         except KeyError:
+            if self._registry_view is not None and _looks_like_import_path(impl_key):
+                cls = self._import_metric_class(impl_key)
+                return cls(spec)
             if self._registry_view is not None:
                 raise
             _import_metric_asset_module(impl_key)
@@ -251,7 +254,7 @@ class MetricRegistry:
             )
         module = importlib.import_module(module_name)
         candidate = getattr(module, class_name)
-        
+
         from gage_eval.metrics.base import BaseMetric
         if not issubclass(candidate, BaseMetric):
             raise TypeError(
@@ -262,6 +265,10 @@ class MetricRegistry:
 
 def _import_metric_asset_module(metric_id: str) -> None:
     import_asset_from_manifest("metrics", str(metric_id), registry=registry, source="metric_registry")
+
+
+def _looks_like_import_path(implementation: str) -> bool:
+    return ":" in implementation or implementation.count(".") >= 2
 
 
 class MetricInstance:

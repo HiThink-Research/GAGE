@@ -1,0 +1,1 @@
+{"id":"skillsbench-1","instruction":"Fix the described issue and provide a unified patch.","metadata":{"repo":"demo/repo","base_commit":"deadbeef","test_command":"pytest -q"},"messages":[{"role":"user","content":"Fix the bug and provide the patch."}]}

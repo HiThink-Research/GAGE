@@ -35,13 +35,16 @@ class DUTAgentAdapter(RoleAdapter):
         role_type: str,
         capabilities,
         *,
-        agent_backend: AgentBackend,
+        agent_backend: AgentBackend | None = None,
         prompt_renderer: Optional[PromptRenderer] = None,
         sandbox_manager: Optional[SandboxManager] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         tool_router: Optional[ToolRouter] = None,
         mcp_clients: Optional[Dict[str, McpClient]] = None,
         human_gateway: Optional[HumanGateway] = None,
+        agent_runtime_id: Optional[str] = None,
+        compat_runtime_id: Optional[str] = None,
+        executor_ref: Optional[Any] = None,
         max_turns: int = 8,
         **params,
     ) -> None:
@@ -60,15 +63,30 @@ class DUTAgentAdapter(RoleAdapter):
         self._pre_hooks = build_hook_chain(params.pop("pre_hooks", None) or params.pop("pre_hook", None))
         self._post_hooks = build_hook_chain(params.pop("post_hooks", None) or params.pop("post_hook", None))
         self._prompt_renderer = prompt_renderer
+        self.agent_runtime_id = agent_runtime_id
+        self.compat_runtime_id = compat_runtime_id
+        self.executor_ref = executor_ref
+        self.params = dict(params)
+        self.max_turns = self._max_turns
 
     async def ainvoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
-        sample = payload.get("sample", {}) if isinstance(payload, dict) else {}
-        messages = list(sample.get("messages") or payload.get("messages") or [])
-        messages = self._apply_prompt(payload, sample, messages)
+        if self.executor_ref is not None:
+            return await self.executor_ref.aexecute(
+                sample=payload.get("sample") or {},
+                payload=payload,
+                trace=payload.get("trace"),
+            )
+        if self._agent_backend is None:
+            raise RuntimeError("agent_backend_missing_for_framework_loop")
+        runtime_payload = dict(payload or {})
+        runtime_payload.pop("trace", None)
+        sample = runtime_payload.get("sample", {}) if isinstance(runtime_payload, dict) else {}
+        messages = list(sample.get("messages") or runtime_payload.get("messages") or [])
+        messages = self._apply_prompt(runtime_payload, sample, messages)
         system_prompt = _extract_system_prompt(messages)
         tools = self._resolve_tools(sample)
         tool_choice = sample.get("tool_choice")
-        sandbox_provider = payload.get("sandbox_provider") if isinstance(payload, dict) else None
+        sandbox_provider = runtime_payload.get("sandbox_provider") if isinstance(runtime_payload, dict) else None
         sandbox_config = self._resolve_sandbox_config(sample, sandbox_provider)
         loop = AgentLoop(
             backend=self._agent_backend,
@@ -89,6 +107,41 @@ class DUTAgentAdapter(RoleAdapter):
         if system_prompt:
             result["system_prompt"] = system_prompt
         return result
+
+    def shutdown(self) -> None:
+        """Release adapter-owned backend and sandbox resources."""
+
+        issues: list[Exception] = []
+
+        # STEP 1: Shut down the benchmark executor-owned sandbox manager.
+        try:
+            if self.executor_ref is not None:
+                resource_manager = getattr(self.executor_ref, "resource_manager", None)
+                sandbox_manager = getattr(resource_manager, "_sandbox_manager", None)
+                shutdown_fn = getattr(sandbox_manager, "shutdown", None)
+                if callable(shutdown_fn):
+                    shutdown_fn()
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            issues.append(exc)
+
+        # STEP 2: Shut down the framework-loop agent backend.
+        try:
+            shutdown_fn = getattr(self._agent_backend, "shutdown", None)
+            if callable(shutdown_fn):
+                shutdown_fn()
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            issues.append(exc)
+
+        # STEP 3: Shut down the adapter-owned sandbox manager.
+        try:
+            self._sandbox_manager.shutdown()
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            issues.append(exc)
+
+        if issues:
+            raise RuntimeError(
+                "; ".join(f"{type(issue).__name__}: {issue}" for issue in issues)
+            )
 
     def _resolve_sandbox_config(
         self,
@@ -129,6 +182,11 @@ class DUTAgentAdapter(RoleAdapter):
 
     @staticmethod
     def _resolve_tools(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
+        prompt_context = sample.get("prompt_context")
+        if isinstance(prompt_context, dict):
+            tools = prompt_context.get("tools_schema")
+            if isinstance(tools, list):
+                return [dict(tool) for tool in tools if isinstance(tool, dict)]
         return resolve_support_tools(sample)
 
 

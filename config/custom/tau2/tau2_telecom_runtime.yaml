@@ -1,0 +1,107 @@
+api_version: gage/v1
+kind: PipelineConfig
+
+metadata:
+  name: tau2_telecom_runtime
+  description: Tau2 telecom runtime-owned config.
+
+prompts:
+  - prompt_id: dut/tau2@v1
+    renderer: jinja_chat
+    template: |
+      <instructions>
+      {{ sample.metadata.tau2.agent_instruction }}
+      {{ sample.metadata.tau2.gage_instruction }}
+      </instructions>
+      <policy>
+      {{ sample.metadata.tau2.policy }}
+      </policy>
+    params:
+      role: system
+      include_existing: true
+
+datasets:
+  - dataset_id: tau2_telecom_base
+    loader: tau2_tasks
+    params:
+      domain: telecom
+      task_split: base
+      num_trials: ${TAU2_NUM_TRIALS:-1}
+      seed: ${TAU2_SEED:-300}
+      hub_id: HuggingFaceH4/tau2-bench-data
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      preprocess: tau2_preprocessor
+
+backends:
+  - backend_id: tau2_openai_http
+    type: openai_http
+    config:
+      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
+      require_api_key: true
+      max_retries: 6
+      generation_parameters:
+        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+
+agent_backends:
+  - agent_backend_id: tau2_agent_backend
+    type: model_backend
+    backend_id: tau2_openai_http
+    config:
+      force_tool_choice: first_turn
+
+sandbox_profiles:
+  - sandbox_id: tau2_local
+    runtime: tau2
+    runtime_configs:
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      max_steps: ${TAU2_MAX_STEPS:-200}
+      max_errors: ${TAU2_MAX_ERRORS:-10}
+      respond_tool_name: respond
+      user_model: ${TAU2_USER_MODEL:-gpt-4.1}
+      user_model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+
+role_adapters:
+  - adapter_id: tau2_agent
+    role_type: dut_agent
+    agent_backend_id: tau2_agent_backend
+    agent_runtime_id: tau2_framework_loop
+    prompt_id: dut/tau2@v1
+    sandbox:
+      sandbox_id: tau2_local
+      lifecycle: per_sample
+    params:
+      max_turns: ${TAU2_MAX_TURNS:-200}
+
+  - adapter_id: tau2_runtime_judge
+    role_type: judge_extend
+    params:
+      implementation: tau2_eval
+
+metrics:
+  - metric_id: tau2_reward
+    implementation: tau2_reward
+  - metric_id: tau2_pass
+    implementation: tau2_pass
+  - metric_id: tau2_pass_hat_k
+    implementation: tau2_pass_hat_k
+    aggregation: tau2_pass_hat
+  - metric_id: tau2_agent_cost
+    implementation: tau2_agent_cost
+  - metric_id: tau2_user_cost
+    implementation: tau2_user_cost
+
+summary_generators:
+  - tau2_summary
+
+tasks:
+  - task_id: tau2_telecom_runtime
+    dataset_id: tau2_telecom_base
+    steps:
+      - step: inference
+        adapter_id: tau2_agent
+      - step: judge
+        adapter_id: tau2_runtime_judge
+      - step: auto_eval
+    concurrency: 1

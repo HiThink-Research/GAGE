@@ -146,7 +146,12 @@ class AppWorldEvaluate(JudgeImplementation):
             appworld_output = _redact_test_output(appworld_output)
         if subset in _TEST_SUBSETS and self._redact_trace:
             _redact_agent_trace(sample)
-        return {"appworld": appworld_output}
+        diagnostic_reason, diagnostic_details = _build_appworld_diagnostics(appworld_output)
+        return {
+            "appworld": appworld_output,
+            "diagnostic_reason": diagnostic_reason,
+            "diagnostic_details": diagnostic_details,
+        }
 
 
 def _resolve_appworld_meta(sample: Dict[str, Any]) -> Dict[str, Any]:
@@ -180,6 +185,34 @@ def _resolve_container(runtime_handle: Dict[str, Any], params: Dict[str, Any]) -
         if value:
             return str(value)
     return None
+
+
+def _build_appworld_diagnostics(appworld_output: Dict[str, Any]) -> tuple[str | None, Dict[str, Any] | None]:
+    tests = appworld_output.get("tests") if isinstance(appworld_output.get("tests"), dict) else {}
+    failures = tests.get("fails") if isinstance(tests.get("fails"), list) else []
+    if not failures:
+        return None, None
+    normalized_failures: list[dict[str, Any]] = []
+    for failure in failures[:3]:
+        if not isinstance(failure, dict):
+            continue
+        normalized_failures.append(
+            {
+                "label": failure.get("label"),
+                "requirement": failure.get("requirement"),
+                "trace_excerpt": _truncate_text(failure.get("trace"), limit=400),
+            }
+        )
+    if not normalized_failures:
+        return None, None
+    return "verifier_assertion_failed", {"verifier_failures": normalized_failures}
+
+
+def _truncate_text(value: Any, *, limit: int = 400) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
 
 
 def _resolve_eval_command(

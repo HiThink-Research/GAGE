@@ -1,95 +1,65 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from gage_eval.role.agent.hooks import AgentHookContext
-from gage_eval.sandbox.integrations.appworld.hooks import (
-    AppWorldInitializeHook,
-    AppWorldSaveHook,
-)
+from gage_eval.agent_eval_kits.appworld.runtime import AppWorldRuntime
+
+
+class _StubProvider:
+    def __init__(self, runtime_handle: dict[str, Any]) -> None:
+        self._handle = SimpleNamespace(runtime_handle=runtime_handle, sandbox=None)
+
+    def get_handle(self):
+        return self._handle
 
 
 @pytest.mark.fast
-def test_appworld_initialize_hook_builds_payload() -> None:
-    calls: List[tuple[str, Dict[str, Any]]] = []
+def test_appworld_runtime_builds_initialize_payload() -> None:
+    calls: list[tuple[str, str, dict[str, Any], int]] = []
 
-    def requester(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        calls.append((method, payload))
+    def requester(
+        endpoint: str,
+        method: str,
+        payload: dict[str, Any],
+        timeout_s: int,
+    ) -> dict[str, Any]:
+        calls.append((endpoint, method, payload, timeout_s))
         return {"output": {"task_id": payload.get("task_id"), "status": "ok"}}
 
-    hook = AppWorldInitializeHook(requester=requester)
-    context = AgentHookContext(
-        sample={},
-        metadata={
+    runtime = AppWorldRuntime(requester=requester)
+    sample = {
+        "metadata": {
             "appworld": {
                 "task_id": "task-1",
                 "ground_truth_mode": "auto",
                 "allowed_apps": ["mail"],
             }
-        },
-        runtime_handle={"env_endpoint": "http://env"},
-        sandbox_config={"runtime_configs": {"apis_endpoint": "http://apis"}},
+        }
+    }
+    provider = _StubProvider({"env_endpoint": "http://env", "apis_endpoint": "http://apis"})
+
+    result = runtime.bootstrap(
+        session=SimpleNamespace(),
+        sample=sample,
+        payload={},
+        sandbox_provider=provider,
     )
 
-    result = hook.run(context)
-    assert result["task_id"] == "task-1"
-    assert calls[0][0] == "initialize"
-    assert calls[0][1]["task_id"] == "task-1"
-    assert calls[0][1]["remote_apis_url"] == "http://apis"
-    assert calls[0][1]["ground_truth_mode"] == "minimal"
-    assert "allowed_apps" not in calls[0][1]
-    assert context.hook_state["appworld"]["initialize"]["status"] == "ok"
+    assert result["benchmark_state"]["initialize"]["task_id"] == "task-1"
+    assert calls[0][1] == "initialize"
+    assert calls[0][2]["task_id"] == "task-1"
+    assert calls[0][2]["remote_apis_url"] == "http://apis"
+    assert calls[0][2]["ground_truth_mode"] == "minimal"
+    assert "allowed_apps" not in calls[0][2]
 
 
 @pytest.mark.fast
-def test_appworld_save_hook_uses_task_id() -> None:
-    calls: List[tuple[str, Dict[str, Any]]] = []
+def test_appworld_runtime_save_requires_task_id() -> None:
+    runtime = AppWorldRuntime(requester=lambda *_: {"output": {}})
+    provider = _StubProvider({"env_endpoint": "http://env"})
 
-    def requester(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        calls.append((method, payload))
-        return {"output": None}
-
-    hook = AppWorldSaveHook(requester=requester)
-    context = AgentHookContext(
-        sample={},
-        metadata={"appworld": {"task_id": "task-2"}},
-        runtime_handle={},
-        sandbox_config={"runtime_configs": {"env_endpoint": "http://env"}},
-        agent_trace=[],
-    )
-
-    hook.run(context)
-    assert calls[0][0] == "save"
-    assert calls[0][1]["task_id"] == "task-2"
-
-
-@pytest.mark.fast
-def test_appworld_initialize_hook_prefers_runtime_handle_endpoints() -> None:
-    calls: List[tuple[str, Dict[str, Any]]] = []
-
-    def requester(method: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        calls.append((method, payload))
-        return {"output": {"status": "ok"}}
-
-    hook = AppWorldInitializeHook(requester=requester)
-    context = AgentHookContext(
-        sample={},
-        metadata={"appworld": {"task_id": "task-3"}},
-        runtime_handle={
-            "env_endpoint": "http://runtime-env",
-            "apis_endpoint": "http://runtime-apis",
-        },
-        sandbox_config={
-            "runtime_configs": {
-                "env_endpoint": "http://config-env",
-                "apis_endpoint": "http://config-apis",
-            }
-        },
-    )
-
-    hook.run(context)
-
-    assert calls[0][0] == "initialize"
-    assert calls[0][1]["remote_apis_url"] == "http://runtime-apis"
+    with pytest.raises(ValueError, match="appworld.task_id is required for save"):
+        runtime.save(sample={"metadata": {"appworld": {}}}, sandbox_provider=provider)

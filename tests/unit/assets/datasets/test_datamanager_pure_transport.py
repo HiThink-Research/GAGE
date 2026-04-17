@@ -6,6 +6,8 @@ def test_datamanager_transport_without_mutation():
     records = [
         {
             "id": "s1",
+            "instruction": "say done",
+            "expected_answer": "done",
             "_dataset_id": "ds",
             "_dataset_metadata": {"path": "/tmp/data.jsonl"},
             "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
@@ -18,4 +20,6 @@ def test_datamanager_transport_without_mutation():
 
     out = list(dm.iter_samples("ds"))
     assert out[0]["id"] == "s1"
+    assert out[0]["instruction"] == "say done"
+    assert out[0]["expected_answer"] == "done"
     assert out[0]["messages"][0]["content"][0]["text"] == "hi"

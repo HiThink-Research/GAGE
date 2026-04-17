@@ -123,31 +123,46 @@ flowchart LR
 
 - Docker is required; the judge runs the official test workflow in containers.
 - SWE-bench run scripts and dockerfiles are bundled under `third_party/swebench_pro/`.
-- Dataset is pulled from HuggingFace (`ScaleAI/SWE-bench_Pro`) via the HF loader.
+- The local runtime smoke demo uses a local SWE-bench snapshot plus an Ollama-compatible model endpoint.
 
 ### 3.3 Default Config (Smoke Subset)
 
-The default config `swebench_pro_smoke_agent.yaml` is a smoke-only evaluation:
+The local smoke demo config `swebench_pro_smoke_runtime_ollama_local.yaml` is a smoke-only evaluation:
 
 - Filters instances using `third_party/swebench_pro/run_scripts/smoke_instance_ids.txt`.
+- Loads records from `SWEBENCH_LOCAL_PATH`.
 - Uses per-sample Docker containers (`runtime: docker`) with network blocked by default.
+- Calls the DUT agent through an Ollama-compatible OpenAI HTTP backend.
 - Judges with `swebench_docker` (offline test execution).
 
 ### 3.4 Run Evaluation
 
 ```bash
-cd gage-eval-main
-export OPENAI_API_KEY=your_key
+cd /path/to/GAGE
+export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+export OLLAMA_MODEL=qwen3-vl:2b-instruct
+export OLLAMA_API_KEY=dummy
+export SWEBENCH_LOCAL_PATH=/path/to/local-datasets/swebench_pro
 python run.py \
-  --config config/custom/swebench_pro/swebench_pro_smoke_agent.yaml \
-  --run-id swebench_pro_smoke_run_$(date +%H%M%S) \
-  --output-dir runs/swebench_pro_smoke
+  --config config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml \
+  --run-id swebench_framework_$(date +%H%M%S) \
+  --output-dir runs \
+  --max-samples 1
 ```
+
+Notes:
+
+- This config is the recommended local smoke workflow for a quick SWE-bench demo.
+- `--max-samples 1` is now safe for the local smoke config: before applying the dataset `limit`, the local loader moves smoke-allowlisted instances to the front so the run still selects a valid smoke sample.
+- If you omit `--max-samples`, the run uses the config's built-in smoke subset and `tasks[].max_samples`.
+- `concurrency: 1` only means one sample worker runs at a time. It does not guarantee flat memory usage. The loop still keeps a small prefetch buffer, and each SWE-bench sample may switch to a different per-instance Docker image. If sample 2 triggers a new image pull, unpack, or container startup, host memory can be noticeably higher than sample 1 without any hidden parallel sample execution.
+- A run that looks "stuck" is often still making progress while Docker pulls or starts a per-sample image, or while the verifier executes the official test script for that instance.
 
 ### 3.5 Metrics and Outputs
 
 - Metrics: resolve rate (`swebench_resolve_rate`), failure reasons (`swebench_failure_reason`).
 - Judge logs: `runs/<run_id>/logs/` and per-instance workspaces under `runs/<run_id>/logs/<instance_id>/`.
+- Core run artifacts: `runs/<run_id>/events.jsonl`, `runs/<run_id>/samples.jsonl`, `runs/<run_id>/summary.json`.
 
 If you need a full evaluation, remove the smoke allowlist in the dataset preprocessor and adjust `max_samples`/`concurrency`.
 

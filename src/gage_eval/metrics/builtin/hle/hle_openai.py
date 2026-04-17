@@ -35,7 +35,7 @@ from gage_eval.registry import registry
 from loguru import logger
 from gage_eval.evaluation.support_artifacts import resolve_support_field
 
-JUDGE_PROMPT = """Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
+JUDGE_PROMPT = r"""Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
 
 [question]: {question}
 

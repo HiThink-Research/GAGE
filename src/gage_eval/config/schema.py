@@ -156,8 +156,10 @@ def _validate_role_bindings(
         inline_backend = adapter.get("backend")
         agent_backend_id = adapter.get("agent_backend_id")
         inline_agent_backend = adapter.get("agent_backend")
+        agent_runtime_id = adapter.get("agent_runtime_id")
         prompt_id = adapter.get("prompt_id")
         mcp_client_id = adapter.get("mcp_client_id")
+        role_type = adapter.get("role_type")
         adapter_id = adapter.get("adapter_id", "<unknown>")
         if backend_id and backend_id not in backend_set:
             errors.append(
@@ -184,6 +186,15 @@ def _validate_role_bindings(
             elif not inline_agent_backend.get("type"):
                 errors.append(
                     f"role adapter '{adapter_id}' inline agent backend missing required field 'type'"
+                )
+        if _is_installed_client_dut_agent(role_type=role_type, agent_runtime_id=agent_runtime_id):
+            if agent_backend_id:
+                errors.append(
+                    f"role adapter '{adapter_id}' uses installed_client runtime '{agent_runtime_id}' and must not declare 'agent_backend_id'"
+                )
+            if inline_agent_backend is not None:
+                errors.append(
+                    f"role adapter '{adapter_id}' uses installed_client runtime '{agent_runtime_id}' and must not declare inline 'agent_backend'"
                 )
         if prompt_id and prompt_id not in prompt_set:
             if not _prompt_id_in_registry(prompt_id):
@@ -215,6 +226,14 @@ def _prompt_id_in_registry(prompt_id: str) -> bool:
         return load_default_manifest_repository().resolve("prompts", prompt_id) is not None
     except Exception:
         return False
+
+
+def _is_installed_client_dut_agent(*, role_type: Any, agent_runtime_id: Any) -> bool:
+    if role_type != "dut_agent":
+        return False
+    if not isinstance(agent_runtime_id, str):
+        return False
+    return "installed_client" in agent_runtime_id
 
 
 def _validate_steps(

@@ -1,5 +1,4 @@
 """Lazy exports for builtin metric implementations.
-
 Importing this package must stay side-effect free so runtime-scoped registry
 assembly can safely reference builtin metric submodules after the global
 registry has been frozen.
@@ -91,6 +90,18 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TerminationReasonMetric": ("gage_eval.metrics.builtin.arena", "TerminationReasonMetric"),
     "TextLengthMetric": ("gage_eval.metrics.builtin.text", "TextLengthMetric"),
     "TimeoutCountMetric": ("gage_eval.metrics.builtin.arena", "TimeoutCountMetric"),
+    "InverseIFEvalJudgePassRateMetric": (
+        "gage_eval.metrics.builtin.inverse_ifeval",
+        "InverseIFEvalJudgePassRateMetric",
+    ),
+    "InverseIFEvalPassRateMetric": (
+        "gage_eval.metrics.builtin.inverse_ifeval",
+        "InverseIFEvalPassRateMetric",
+    ),
+    "VideoMMEAccuracyMetric": (
+        "gage_eval.metrics.builtin.video_mme",
+        "VideoMMEAccuracyMetric",
+    ),
     "WinFlagPerPlayerMetric": ("gage_eval.metrics.builtin.arena", "WinFlagPerPlayerMetric"),
     "WinnerPlayerIdMetric": ("gage_eval.metrics.builtin.arena", "WinnerPlayerIdMetric"),
 }

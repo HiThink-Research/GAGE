@@ -113,7 +113,6 @@ def test_mahjong_input_mapper_resolves_index_and_filters_illegal_action() -> Non
     )
     assert illegal == []
 
-
 def test_mahjong_input_mapper_import_does_not_load_rlcard_core() -> None:
     package_prefix = "gage_eval.game_kits.phase_card_game.mahjong"
     for module_name in list(sys.modules):
@@ -315,4 +314,3 @@ def test_vizdoom_input_mapper_supports_keyboard_map_and_filters_illegal() -> Non
         context=context,
     )
     assert illegal == []
-

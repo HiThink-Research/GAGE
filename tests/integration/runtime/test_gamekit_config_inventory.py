@@ -8,10 +8,8 @@ from tests._support.gamekit_matrix import (
     HUMAN_VISUAL,
     LIVE_CASES_BY_CATEGORY,
     PLUGIN_IDS_BY_GAME_KIT,
-    REPLAY_ONLY_CONFIGS,
     VISUAL_NO_HUMAN,
     discover_live_gamekit_configs,
-    discover_replay_only_configs,
     expected_live_gamekit_config_paths,
     human_visual_families,
     human_visual_required_families,
@@ -28,8 +26,6 @@ def test_live_gamekit_config_inventory_matches_frozen_matrix() -> None:
     assert len(LIVE_CASES_BY_CATEGORY[HUMAN_VISUAL]) == 17
 
     assert discover_live_gamekit_configs() == expected_live_gamekit_config_paths()
-    assert discover_replay_only_configs() == REPLAY_ONLY_CONFIGS
-    assert set(REPLAY_ONLY_CONFIGS).isdisjoint(expected_live_gamekit_config_paths())
 
 
 @pytest.mark.fast

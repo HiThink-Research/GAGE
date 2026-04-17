@@ -99,3 +99,77 @@ def load_tau2_split(path: Path) -> Optional[dict[str, list[str]]]:
         raise ValueError(f"Tau2 split file is malformed: {path}")
     return {str(k): list(v) for k, v in payload.items() if isinstance(v, list)}
 
+
+def resolve_tau2_termination_reason(
+    reason: Any,
+    *,
+    fallback: str = "too_many_errors",
+) -> Any:
+    """Resolve a termination reason against the installed tau2 enum surface.
+
+    Newer tau2 releases removed legacy error-flavored enum members such as
+    ``AGENT_ERROR`` and ``USER_ERROR``. This helper keeps GAGE compatible with
+    both enum shapes by selecting the closest available failure-like member.
+
+    Args:
+        reason: Raw termination reason value, enum member, or string.
+        fallback: Preferred fallback reason when the raw value is empty or
+            unavailable in the installed tau2 version.
+
+    Returns:
+        A tau2 ``TerminationReason`` enum member when tau2 is importable and a
+        matching member exists. Otherwise returns the normalized string value.
+    """
+
+    try:
+        from tau2.data_model.simulation import TerminationReason  # type: ignore
+    except Exception:
+        return _normalize_reason_value(reason) or fallback
+
+    if isinstance(reason, TerminationReason):
+        return reason
+
+    normalized = _normalize_reason_value(reason) or fallback
+    resolved = _match_termination_reason(TerminationReason, normalized)
+    if resolved is not None:
+        return resolved
+
+    for candidate in _fallback_reason_candidates(normalized, fallback):
+        resolved = _match_termination_reason(TerminationReason, candidate)
+        if resolved is not None:
+            return resolved
+
+    return normalized
+
+
+def _normalize_reason_value(reason: Any) -> Optional[str]:
+    if reason in (None, ""):
+        return None
+    value = getattr(reason, "value", reason)
+    text = str(value).strip()
+    return text or None
+
+
+def _match_termination_reason(enum_type: Any, candidate: str) -> Optional[Any]:
+    normalized = str(candidate).strip()
+    if not normalized:
+        return None
+    upper_name = normalized.upper()
+    for member in enum_type:
+        if member.name == upper_name or str(member.value) == normalized:
+            return member
+    return None
+
+
+def _fallback_reason_candidates(reason: str, fallback: str) -> list[str]:
+    candidates = [fallback]
+    if reason in {"agent_error", "user_error"}:
+        candidates.extend(["too_many_errors", "max_steps", "agent_stop", "user_stop"])
+    else:
+        candidates.extend(["too_many_errors", "max_steps", "agent_stop", "user_stop"])
+    ordered: list[str] = []
+    for candidate in candidates:
+        text = str(candidate).strip()
+        if text and text not in ordered:
+            ordered.append(text)
+    return ordered

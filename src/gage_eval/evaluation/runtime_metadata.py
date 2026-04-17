@@ -29,6 +29,17 @@ class RunMetadataSnapshot:
     run_identity: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class SampleRuntimeMetadataSnapshot:
+    """Stable sample-scoped runtime metadata written by agent runtimes."""
+
+    session_id: str
+    sample_id: str
+    scheduler_type: str
+    resource_lease: dict[str, Any] | None = None
+    failure: dict[str, Any] | None = None
+
+
 def build_runtime_metadata_snapshot(config: PipelineConfig) -> RuntimeMetadataSnapshot:
     """Project stable runtime metadata from a PipelineConfig."""
 
@@ -61,6 +72,8 @@ def build_runtime_metadata_snapshot(config: PipelineConfig) -> RuntimeMetadataSn
                 "backend_inline": spec.backend,
                 "capabilities": list(spec.capabilities or ()),
                 "prompt_id": spec.prompt_id,
+                "agent_runtime_id": spec.agent_runtime_id,
+                "compat_runtime_id": spec.compat_runtime_id,
             }
             for spec in (config.role_adapters or [])
         ),
@@ -96,3 +109,22 @@ def record_run_metadata(cache_store: EvalCache, snapshot: RunMetadataSnapshot) -
 
     cache_store.set_metadata("run_metadata_schema_version", snapshot.schema_version)
     cache_store.set_metadata("run_identity", dict(snapshot.run_identity))
+
+
+def build_sample_runtime_metadata_snapshot(
+    *,
+    session_id: str,
+    sample_id: str,
+    scheduler_type: str,
+    resource_lease: dict[str, Any] | None = None,
+    failure: dict[str, Any] | None = None,
+) -> SampleRuntimeMetadataSnapshot:
+    """Project stable sample-scoped runtime metadata."""
+
+    return SampleRuntimeMetadataSnapshot(
+        session_id=session_id,
+        sample_id=sample_id,
+        scheduler_type=scheduler_type,
+        resource_lease=dict(resource_lease or {}) or None,
+        failure=dict(failure or {}) or None,
+    )

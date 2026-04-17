@@ -50,6 +50,14 @@ class ToolchainAdapter(RoleAdapter):
         self._max_tools = _coerce_int(params.pop("max_tools", None))
         self._meta_tool_mode = bool(params.pop("meta_tool_mode", False))
         self._tool_doc_enabled = bool(params.pop("tool_doc_enabled", False))
+        self.tools = list(self._tools)
+        self.mcp_client_id = self._mcp_client_id
+        self.meta_tool_mode = self._meta_tool_mode
+        self.tool_doc_enabled = self._tool_doc_enabled
+        self.static_tool_policy = dict(params.pop("static_tool_policy", {}))
+        self.allow_runtime_owned_tool_docs = bool(
+            params.pop("allow_runtime_owned_tool_docs", False)
+        )
         self._tool_doc_format = params.pop("tool_doc_format", "text")
         self._tool_doc_max_endpoints = _coerce_int(params.pop("tool_doc_max_endpoints", None))
         self._tool_doc_max_chars = _coerce_int(params.pop("tool_doc_max_chars", None))
@@ -91,24 +99,33 @@ class ToolchainAdapter(RoleAdapter):
         if self._meta_tool_mode and raw_mcp_tools:
             allowed_apps = _resolve_allowed_apps(sample, doc_allowed_apps)
             catalog = build_app_catalog(raw_mcp_tools, allowed_apps=allowed_apps)
-            documentation = build_tool_documentation(
-                catalog,
-                doc_format=self._tool_doc_format,
-                max_endpoints=self._tool_doc_max_endpoints,
-                max_chars=self._tool_doc_max_chars,
-            )
+            endpoints_by_app = {
+                app: [endpoint.endpoint for endpoint in endpoints]
+                for app, endpoints in catalog.items()
+            }
+            documentation = None
+            if self.allow_runtime_owned_tool_docs:
+                documentation = build_tool_documentation(
+                    catalog,
+                    doc_format=self._tool_doc_format,
+                    max_endpoints=self._tool_doc_max_endpoints,
+                    max_chars=self._tool_doc_max_chars,
+                )
+                endpoints_by_app = documentation.endpoints_by_app
             meta_tools = build_meta_tools(
-                documentation.endpoints_by_app,
+                endpoints_by_app,
                 mcp_client_id=self._mcp_client_id,
             )
             tools_schema = _merge_tools(self._tools, sample.get("tools") or [])
             tools_schema = _merge_tools(tools_schema, meta_tools)
-            return {
+            response = {
                 "tools_schema": tools_schema,
                 "mcp_client_id": self._mcp_client_id,
-                "tool_documentation": documentation.text,
-                "tool_documentation_meta": documentation.meta,
             }
+            if documentation is not None:
+                response["tool_documentation"] = documentation.text
+                response["tool_documentation_meta"] = documentation.meta
+            return response
         if raw_mcp_tools:
             mcp_tools = _map_mcp_tools(raw_mcp_tools, self._mcp_client_id)
         if tool_allowlist or tool_prefixes or max_tools:
@@ -119,7 +136,7 @@ class ToolchainAdapter(RoleAdapter):
                 max_tools=max_tools,
             )
         tool_docs_payload: Dict[str, Any] = {}
-        if raw_mcp_tools and mcp_tools and self._tool_doc_enabled:
+        if raw_mcp_tools and mcp_tools and self._tool_doc_enabled and self.allow_runtime_owned_tool_docs:
             allowed_apps = _resolve_allowed_apps(sample, doc_allowed_apps)
             doc_tools = _select_raw_tools(raw_mcp_tools, mcp_tools)
             catalog = build_app_catalog(doc_tools, allowed_apps=allowed_apps)

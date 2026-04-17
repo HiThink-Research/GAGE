@@ -48,6 +48,15 @@ def _safe_copy(value: Any) -> Any:
 
 def _extract_tool_documentation(sample: Dict[str, Any], payload: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
     for source in (payload, sample):
+        if not isinstance(source, dict):
+            continue
+        prompt_context = source.get("prompt_context")
+        if isinstance(prompt_context, dict):
+            doc = prompt_context.get("tool_documentation")
+            meta = prompt_context.get("tool_documentation_meta")
+            if isinstance(doc, str) and doc.strip():
+                return doc, dict(meta) if isinstance(meta, dict) else {}
+    for source in (payload, sample):
         if isinstance(source, dict):
             doc = source.get("tool_documentation")
             meta = source.get("tool_documentation_meta") if isinstance(source.get("tool_documentation_meta"), dict) else {}

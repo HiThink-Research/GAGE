@@ -1,0 +1,43 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: skillsbench_smoke_runtime
+  description: SkillsBench family parse/config smoke using SWE-bench-compatible runtime contract.
+
+datasets:
+  - dataset_id: skillsbench_smoke
+    loader: jsonl
+    params:
+      path: tests/data/samples/skillsbench_demo.jsonl
+      streaming: false
+
+agent_backends:
+  - agent_backend_id: skillsbench_agent
+    type: agent_class
+    config:
+      agent_class: gage_eval.role.agent.backends.demo_agent.RuntimeSmokeAgent
+
+sandbox_profiles:
+  - sandbox_id: swebench_runtime
+    runtime: docker
+    runtime_configs:
+      start_container: false
+
+role_adapters:
+  - adapter_id: skillsbench_agent_main
+    role_type: dut_agent
+    agent_backend_id: skillsbench_agent
+    agent_runtime_id: skillsbench_framework_loop
+    sandbox:
+      sandbox_id: swebench_runtime
+      lifecycle: per_sample
+    params:
+      max_turns: 12
+
+tasks:
+  - task_id: skillsbench_smoke_runtime
+    dataset_id: skillsbench_smoke
+    steps:
+      - step: inference
+        adapter_id: skillsbench_agent_main

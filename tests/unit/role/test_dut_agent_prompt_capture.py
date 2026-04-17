@@ -25,6 +25,25 @@ class AsyncModelOnlyBackend:
         return {"answer": "ok"}
 
 
+class ShutdownTrackingBackend:
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+
+    def invoke(self, payload):
+        return {"answer": "ok"}
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
+class ShutdownTrackingSandboxManager:
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
 class ToolDocPrompt(PromptRenderer):
     def render(self, context: PromptContext) -> PromptRenderResult:
         tool_doc = context.to_mapping().get("tool_documentation") or ""
@@ -43,7 +62,7 @@ def test_dut_agent_persists_system_prompt() -> None:
     payload = {
         "sample": {
             "messages": [{"role": "user", "content": "hi"}],
-            "support_outputs": [{"tool_documentation": "DOCS"}],
+            "prompt_context": {"tool_documentation": "DOCS"},
         }
     }
 
@@ -74,3 +93,35 @@ def test_dut_agent_awaits_async_model_backend_in_current_thread() -> None:
     asyncio.run(_run())
 
     assert wrapped_backend.thread_id == observed_thread_ids[0]
+
+
+@pytest.mark.fast
+def test_dut_agent_shutdown_releases_backend_and_sandbox_resources() -> None:
+    backend = ShutdownTrackingBackend()
+    sandbox_manager = ShutdownTrackingSandboxManager()
+    executor_sandbox_manager = ShutdownTrackingSandboxManager()
+    executor_ref = type(
+        "_ExecutorRef",
+        (),
+        {
+            "resource_manager": type(
+                "_ResourceManager",
+                (),
+                {"_sandbox_manager": executor_sandbox_manager},
+            )()
+        },
+    )()
+    adapter = DUTAgentAdapter(
+        adapter_id="dut_agent",
+        role_type="dut_agent",
+        capabilities=(),
+        agent_backend=backend,
+        sandbox_manager=sandbox_manager,
+        executor_ref=executor_ref,
+    )
+
+    adapter.shutdown()
+
+    assert backend.shutdown_calls == 1
+    assert sandbox_manager.shutdown_calls == 1
+    assert executor_sandbox_manager.shutdown_calls == 1

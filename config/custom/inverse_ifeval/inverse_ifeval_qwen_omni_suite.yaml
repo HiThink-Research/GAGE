@@ -1,0 +1,138 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: inverse_ifeval_qwen_omni_suite
+  description: Evaluate Inverse IFEval with a local DUT model and an LLM judge.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_qwen3_omni
+    - step: judge
+      adapter_id: judge_inverse_ifeval
+    - step: auto_eval
+
+prompts:
+  - prompt_id: inverse_ifeval_judge_prompt
+    renderer: jinja_delimited_chat
+    template: |
+      {% set meta = sample.get("metadata", {}) %}
+      {{ meta.get("judge_system_prompt") or "You are a strict instruction-following grader. Return only a single score between 0 and 1." }}
+      ---
+      {% set judge_template = meta.get("judge_prompt_template") or "<Question>: {prompt}\n<Reference Answer>: {response_reference}\n<Model Answer>: {response}\nJudge whether the model answer follows the instruction. Return only 0 or 1." %}
+      {% set prompt_text = meta.get("prompt_text") or "" %}
+      {% set reference_text = meta.get("response_reference") or sample.get("label") or "" %}
+      {% set model_answer = payload.get("model_output", {}).get("answer") or "" %}
+      {{ judge_template
+          | replace("{prompt}", prompt_text | string)
+          | replace("{response_reference}", reference_text | string)
+          | replace("{response}", model_answer | string)
+      }}
+
+datasets:
+  - dataset_id: inverse_ifeval_test
+    hub: huggingface
+    hub_params:
+      hub_id: m-a-p/Inverse_IFEval
+      split: train
+      revision: main
+    loader: hf_hub
+    params:
+      preprocess: inverse_ifeval_preprocessor
+      streaming: false
+
+backends:
+  - backend_id: qwen25_omni_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+  - backend_id: qwen3_omni_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+  - backend_id: inverse_ifeval_judge_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+  - backend_id: qwen3_vl_30b_a3b_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_qwen25_omni
+    role_type: dut_model
+    backend_id: qwen25_omni_backend
+    capabilities:
+      - chat_completion
+
+  - adapter_id: dut_qwen3_omni
+    role_type: dut_model
+    backend_id: qwen3_omni_backend
+    capabilities:
+      - chat_completion
+
+  - adapter_id: judge_inverse_ifeval
+    role_type: judge_model
+    backend_id: inverse_ifeval_judge_backend
+    prompt_id: inverse_ifeval_judge_prompt
+    capabilities:
+      - chat_completion
+
+  - adapter_id: dut_qwen3_vl_30b_a3b
+    role_type: dut_model
+    backend_id: qwen3_vl_30b_a3b_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: inverse_ifeval_judge_pass_rate
+    implementation: inverse_ifeval_judge_pass_rate
+    params:
+      threshold: 0.5
+      fallback: 0.0
+  - metric_id: latency
+    implementation: latency
+
+tasks:
+  - task_id: inverse_ifeval_qwen25_omni
+    dataset_id: inverse_ifeval_test
+    max_samples: 10
+    steps:
+      - step: inference
+        adapter_id: dut_qwen25_omni
+      - step: judge
+        adapter_id: judge_inverse_ifeval
+      - step: auto_eval
+

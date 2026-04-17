@@ -75,3 +75,11 @@ def test_docker_exec_decodes_binary_output(monkeypatch: pytest.MonkeyPatch) -> N
     assert isinstance(result.stdout, str)
     assert isinstance(result.stderr, str)
     assert result.stdout
+
+
+@pytest.mark.fast
+def test_docker_start_requires_image_when_start_container_enabled() -> None:
+    sandbox = DockerSandbox(runtime_configs={"start_container": True})
+
+    with pytest.raises(RuntimeError, match="docker_image_missing"):
+        sandbox.start({"runtime": "docker", "runtime_configs": {"start_container": True}})

@@ -37,6 +37,7 @@ def test_toolchain_emits_tool_documentation() -> None:
         mcp_client=client,
         meta_tool_mode=True,
         tool_doc_format="text",
+        allow_runtime_owned_tool_docs=True,
     )
 
     result = asyncio.run(adapter.ainvoke({"sample": {}}, RoleAdapterState()))
@@ -79,6 +80,7 @@ def test_toolchain_emits_tool_documentation_native_mode() -> None:
         meta_tool_mode=False,
         tool_doc_enabled=True,
         tool_doc_format="app_kv",
+        allow_runtime_owned_tool_docs=True,
     )
 
     result = asyncio.run(adapter.ainvoke({"sample": {}}, RoleAdapterState()))

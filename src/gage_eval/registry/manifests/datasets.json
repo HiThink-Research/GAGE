@@ -47,6 +47,15 @@
       "optional": false
     },
     {
+      "kind": "bundles",
+      "name": "video_mme",
+      "module": "gage_eval.assets.datasets.bundles.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/bundles/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
       "kind": "dataset_hubs",
       "name": "huggingface",
       "module": "gage_eval.assets.datasets.hubs.builtin",
@@ -182,6 +191,15 @@
       "optional": false
     },
     {
+      "kind": "dataset_loaders",
+      "name": "video_mme_hf_hub",
+      "module": "gage_eval.assets.datasets.loaders.video_mme.loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/video_mme/loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
       "kind": "dataset_preprocessors",
       "name": "aime2024_preprocessor",
       "module": "gage_eval.assets.datasets.preprocessors.builtin",
@@ -201,6 +219,24 @@
     },
     {
       "kind": "dataset_preprocessors",
+      "name": "aime2026_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "amo_bench_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
       "name": "appworld_preprocessor",
       "module": "gage_eval.assets.datasets.preprocessors.builtin",
       "load_phase": "prepare_only",
@@ -211,6 +247,15 @@
     {
       "kind": "dataset_preprocessors",
       "name": "arcagi2",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "beyond_aime_preprocessor",
       "module": "gage_eval.assets.datasets.preprocessors.builtin",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
@@ -300,7 +345,34 @@
     },
     {
       "kind": "dataset_preprocessors",
+      "name": "gsm8k_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
       "name": "hle_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "hmmt_feb_2025_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "inverse_ifeval_preprocessor",
       "module": "gage_eval.assets.datasets.preprocessors.builtin",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
@@ -472,6 +544,15 @@
     {
       "kind": "dataset_preprocessors",
       "name": "tau2_preprocessor",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "video_mme_chat_preprocessor",
       "module": "gage_eval.assets.datasets.preprocessors.builtin",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
