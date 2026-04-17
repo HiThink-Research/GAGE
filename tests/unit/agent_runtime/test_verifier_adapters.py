@@ -106,6 +106,7 @@ def test_normalize_judge_output_surfaces_trace_summary_for_swebench_failures() -
                     "trace_step": 1,
                     "trace_role": "assistant",
                     "name": "agent_response",
+                    "status": "success",
                     "output": {"answer": "I could not produce a valid patch."},
                 }
             ]
@@ -128,4 +129,5 @@ def test_normalize_judge_output_surfaces_trace_summary_for_swebench_failures() -
 
     assert normalized["diagnostic_reason"] == "patch_apply_failed"
     assert normalized["diagnostic_details"]["agent_trace_summary"]["step_count"] == 1
+    assert normalized["diagnostic_details"]["agent_trace_summary"]["last_steps"][0]["response_return_status"] == "success"
     assert normalized["diagnostic_details"]["log_dir"] == "/tmp/swebench-logs"

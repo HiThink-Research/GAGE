@@ -570,7 +570,7 @@ def _summarize_agent_trace(agent_trace: Any) -> dict[str, Any] | None:
                 "trace_step": step.get("trace_step"),
                 "trace_role": step.get("trace_role"),
                 "name": step.get("name") or step.get("tool"),
-                "status": step.get("status"),
+                "response_return_status": step.get("status"),
                 "input_excerpt": _truncate_text(_render_trace_value(step.get("input"))),
                 "output_excerpt": _truncate_text(_render_trace_value(step.get("output"))),
             }

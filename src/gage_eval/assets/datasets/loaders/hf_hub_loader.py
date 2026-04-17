@@ -185,6 +185,12 @@ def load_hf_hub_dataset(
             local_path=local_path,
         )
 
+        dataset = _maybe_prioritize_local_smoke_subset(
+            dataset,
+            spec,
+            local_path=local_path,
+        )
+
         if loader_params.get("shuffle"):
             dataset = dataset.shuffle(seed=loader_params.get("seed"))
 
@@ -466,6 +472,80 @@ def _load_dataset_with_optional_trust_remote(*, datasets_module, trust_remote: b
     if trust_remote and _datasets_supports_trust_remote_code(datasets_module):
         kwargs.setdefault("trust_remote_code", True)
     return datasets_module.load_dataset(**kwargs)
+
+
+def _maybe_prioritize_local_smoke_subset(dataset, spec: DatasetSpec, *, local_path: Any):
+    """Move configured smoke instances to the front before dataset limiting.
+
+    This keeps local SWE-bench smoke runs stable when CLI overrides inject a
+    dataset-level `limit`. Without this reordering, `--max-samples 1` can
+    truncate the local snapshot to a non-smoke row before the preprocessor
+    applies the smoke allowlist.
+    """
+
+    if not local_path:
+        return dataset
+    if not hasattr(dataset, "column_names") or "instance_id" not in set(dataset.column_names):
+        return dataset
+
+    smoke_ids_path = _resolve_smoke_ids_path(spec)
+    if smoke_ids_path is None:
+        return dataset
+
+    smoke_ids = _load_smoke_ids_in_order(smoke_ids_path)
+    if not smoke_ids:
+        return dataset
+
+    try:
+        instance_ids = list(dataset["instance_id"])
+    except Exception:
+        return dataset
+
+    smoke_index_order = {instance_id: order for order, instance_id in enumerate(smoke_ids)}
+    smoke_matches: list[tuple[int, int]] = []
+    non_smoke_indices: list[int] = []
+    for index, instance_id in enumerate(instance_ids):
+        normalized = str(instance_id or "").strip()
+        order = smoke_index_order.get(normalized)
+        if order is None:
+            non_smoke_indices.append(index)
+            continue
+        smoke_matches.append((order, index))
+
+    if not smoke_matches:
+        return dataset
+
+    smoke_matches.sort()
+    reordered_indices = [index for _, index in smoke_matches]
+    reordered_indices.extend(non_smoke_indices)
+
+    if reordered_indices == list(range(len(instance_ids))):
+        return dataset
+    return dataset.select(reordered_indices)
+
+
+def _resolve_smoke_ids_path(spec: DatasetSpec) -> Optional[Path]:
+    preprocess_kwargs = spec.params.get("preprocess_kwargs")
+    if not isinstance(preprocess_kwargs, dict):
+        return None
+    raw_path = preprocess_kwargs.get("smoke_ids_path")
+    if not raw_path:
+        return None
+    resolved = Path(str(raw_path)).expanduser()
+    if not resolved.exists():
+        return None
+    return resolved
+
+
+def _load_smoke_ids_in_order(path: Path) -> list[str]:
+    try:
+        return [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except Exception:
+        return []
 
 
 def _datasets_supports_trust_remote_code(datasets_module) -> bool:
