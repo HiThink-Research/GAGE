@@ -1,0 +1,71 @@
+api_version: gsm8k/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: gsm8k_vllm_async
+  description: using vllm_backend gsm8k
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: gsm8k_ds
+    hub: huggingface
+    hub_params:
+      hub_id: openai/gsm8k
+      subset: main
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: gsm8k_preprocessor
+backends:
+  - backend_id: gsm8k_vllm_backend
+    type: vllm
+    config:
+      model_path: ${GSM8K_MODEL_PATH:-/mnt/model/qwen2_5_7B}
+      tokenizer_path: ${GSM8K_TOKENIZER_PATH:-/mnt/model/qwen2_5_7B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true      
+      tensor_parallel_size: 2
+      max_tokens: 1280
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+  - backend_id: litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_gsm8k_vllm_qwen
+    role_type: dut_model
+    backend_id: gsm8k_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: gsm8k_acc
+    implementation: gsm8k_accuracy
+
+tasks:
+  - task_id: gsm8k_eval
+    dataset_id: gsm8k_ds
+    max_samples: 30
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/gsm8k_vllm_events.jsonl

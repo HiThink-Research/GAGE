@@ -25,11 +25,11 @@ backends:
   - backend_id: aime2024_vllm_backend
     type: vllm
     config:
-      model_path: ${AIME2024_MODEL_PATH:-/mnt/model/qwen2_5_05B}
-      tokenizer_path: ${AIME2024_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      model_path: ${AIME2024_MODEL_PATH:-/mnt/model/qwen2_5_7B}
+      tokenizer_path: ${AIME2024_TOKENIZER_PATH:-/mnt/model/qwen2_5_7B}
       force_tokenize_prompt: true
       tokenizer_trust_remote_code: true      
-      tensor_parallel_size: 1
+      tensor_parallel_size: 2
       max_tokens: 1280
       sampling_params:
         temperature: 0.0
@@ -53,8 +53,8 @@ backends:
 role_adapters:
   - adapter_id: dut_aime2024_vllm_qwen
     role_type: dut_model
-    #backend_id: aime2024_vllm_backend
-    backend_id: litellm_backend    
+    backend_id: aime2024_vllm_backend
+    #backend_id: litellm_backend    
     capabilities:
       - chat_completion
 

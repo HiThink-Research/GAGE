@@ -46,7 +46,11 @@ class GlobalPIQAAccuracyMetric(SimpleMetric):
         ])
 
         # STEP 3: compute score
-        final_pred, score = match_str(pred, str(answer), location="exact")
+        if pred is None or answer is None:
+            score = 0
+            final_pred = ''
+        else:
+            final_pred, score = match_str(pred, str(answer), location="exact")
         score = float(score)
         metadata = {"prediction": final_pred, "references": answer}
         return MetricResult(sample_id=context.sample_id, values={self.value_key: score}, metadata=metadata)

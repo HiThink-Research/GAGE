@@ -1,0 +1,102 @@
+api_version: ai/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: amo_bench_vllm_async
+  description: AMO-Bench evaluation with vLLM backend.
+
+custom:
+  steps:
+    - step: inference
+      adapter_id: dut_vllm
+    - step: judge
+      adapter_id: judge_vllm
+    - step: auto_eval
+
+prompts:
+  - prompt_id: amo_bench_judge_prompt
+    renderer: jinja_delimited_chat
+    template: |
+      {% set meta = sample.get("metadata", {}) %}
+      {% set question = meta.get("original_prompt") or sample.get("label") or "" %}
+      {% set reference = sample.get("references", [""])[0] if sample.get("references") else "" %}
+      {% set model_answer = payload.get("model_output", {}).get("answer") or "" %}
+      For the following math problem, we have the reference answer and the student's answer.
+      Determine whether the student's answer is equivalent to the reference answer.
+      If equivalent, output "Correct".
+      If not equivalent, output "Incorrect".
+
+      ### Problem
+      {{ question }}
+
+      ### Reference Answer
+      {{ reference }}
+
+      ### Student Answer
+      {{ model_answer }}
+
+      Now, please provide your judgment.
+      Please strictly follow the format below to summarize your conclusion at the end of your judgment:
+      ### Conclusion: Correct/Incorrect
+      If the answer involves a decimal approximation, it must be accurate to at least four decimal places.
+
+datasets:
+  - dataset_id: amo_bench_ds
+    hub: huggingface
+    hub_params:
+      hub_id: meituan-longcat/AMO-Bench
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: amo_bench_preprocessor
+
+backends:
+  - backend_id: vllm_backend
+    type: vllm
+    config:
+      model_path: ${AMO_BENCH_MODEL_PATH:-/mnt/model/qwen2_5_05B}
+      tokenizer_path: ${AMO_BENCH_TOKENIZER_PATH:-/mnt/model/qwen2_5_05B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true      
+      tensor_parallel_size: 1
+      max_tokens: 8192
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 32768
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+
+role_adapters:
+  - adapter_id: dut_vllm
+    role_type: dut_model
+    backend_id: vllm_backend
+    capabilities:
+      - chat_completion
+  - adapter_id: judge_vllm
+    role_type: judge_model
+    backend_id: vllm_backend
+    prompt_id: amo_bench_judge_prompt
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: amo_bench_accuracy
+    implementation: amo_bench_accuracy
+
+tasks:
+  - task_id: amo_bench_eval
+    dataset_id: amo_bench_ds
+    max_samples: 50
+    steps:
+      - step: inference
+        adapter_id: dut_vllm
+      - step: judge
+        adapter_id: judge_vllm
+      - step: auto_eval
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/amo_bench_vllm_events.jsonl

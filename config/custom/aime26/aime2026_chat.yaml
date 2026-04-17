@@ -1,0 +1,70 @@
+api_version: aime2026/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: aime2026_vllm_async
+  description: using vllm_backend aime2026。
+
+custom:
+  steps:
+    - step: inference
+    - step: auto_eval
+
+datasets:
+  - dataset_id: aime2026_ds
+    hub: huggingface
+    hub_params:
+      hub_id: math-ai/aime26
+      split: test
+    loader: hf_hub
+    params:
+      preprocess: aime2026_preprocessor
+backends:
+  - backend_id: aime2026_vllm_backend
+    type: vllm
+    config:
+      model_path: ${AIME2026_MODEL_PATH:-/mnt/model/qwen2_5_7B}
+      tokenizer_path: ${AIME2026_TOKENIZER_PATH:-/mnt/model/qwen2_5_7B}
+      force_tokenize_prompt: true
+      tokenizer_trust_remote_code: true      
+      tensor_parallel_size: 2
+      max_tokens: 1280
+      sampling_params:
+        temperature: 0.0
+        top_p: 0.8
+      max_batch_size: 16
+      max_model_len: 4096
+      gpu_memory_utilization: 0.9
+      async_max_concurrency: 32
+  - backend_id: litellm_backend
+    type: litellm
+    config:
+      api_base: https://api.openai.com/v1
+      model: gpt-4.1
+      provider: openai
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+      streaming: false
+      max_retries: 6
+
+role_adapters:
+  - adapter_id: dut_aime2026_vllm_qwen
+    role_type: dut_model
+    backend_id: aime2026_vllm_backend
+    capabilities:
+      - chat_completion
+
+metrics:
+  - metric_id: aime2026_acc
+    implementation: aime2026_accuracy
+
+tasks:
+  - task_id: aime2026_eval
+    dataset_id: aime2026_ds
+    max_samples: 30
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/aime2026_vllm_events.jsonl

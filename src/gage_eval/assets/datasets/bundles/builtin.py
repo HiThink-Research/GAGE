@@ -8,6 +8,7 @@ from gage_eval.assets.datasets.bundles.mmlu_pro.few_shot import MMLUProBundle
 from gage_eval.assets.datasets.bundles.mme import MMEBundle
 from gage_eval.assets.datasets.bundles.screenspot_pro.bundle import ScreenSpotProBundle
 from gage_eval.assets.datasets.bundles.charxiv.bundle import CharXivBundle
+from gage_eval.assets.datasets.bundles.video_mme.bundle import VideoMMEBundle
 from gage_eval.registry import registry
 
 # mathvista
@@ -49,6 +50,17 @@ class MMLUProBundleProvider(MMLUProBundle):
 )
 class ScreenSpotProBundleProvider(ScreenSpotProBundle):
     pass
+
+# video_mme
+@registry.asset(
+    "bundles",
+    "video_mme",
+    desc="Video-MME benchmark resource providers (local video filtering)",
+    tags=("video", "video_mme"),
+)
+class VideoMMEBundleProvider(VideoMMEBundle):
+    pass
+
 
 # charxiv
 @registry.asset(

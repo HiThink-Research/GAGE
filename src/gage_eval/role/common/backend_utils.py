@@ -329,6 +329,38 @@ def extract_audios_from_messages(messages: List[Dict[str, Any]]) -> List[Any]:
     return sources
 
 
+def extract_videos_from_messages(messages: List[Dict[str, Any]]) -> List[Any]:
+    """Extract video sources from message content list."""
+
+    sources: List[Any] = []
+    for message in messages or []:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for fragment in content:
+            if not isinstance(fragment, dict):
+                continue
+            frag_type = fragment.get("type")
+            payload = None
+            if frag_type == "video_url":
+                payload = fragment.get("video_url")
+            elif frag_type == "video":
+                payload = fragment.get("video")
+            else:
+                continue
+            if isinstance(payload, dict):
+                value = payload.get("url") or payload.get("path")
+                if value is not None:
+                    sources.append(value)
+            elif payload is None:
+                value = fragment.get("url")
+                if value is not None:
+                    sources.append(value)
+            else:
+                sources.append(payload)
+    return sources
+
+
 def dedup_media_sources(sources: List[Any]) -> List[Any]:
     """Deduplicate media sources, preserving order."""
 
@@ -391,14 +423,18 @@ def collect_multimodal_sources(prepared: Dict[str, Any]) -> Dict[str, List[Any]]
     messages = prepared.get("messages") or sample.get("messages") or []
     message_images = extract_images_from_messages(messages)
     message_audios = extract_audios_from_messages(messages)
+    message_videos = extract_videos_from_messages(messages)
 
     images = _merge_multimodal_sources(image_sources, message_images)
     audios = _merge_multimodal_sources(audio_sources, message_audios)
+    videos = _merge_multimodal_sources([], message_videos)
     result: Dict[str, List[Any]] = {}
     if images:
         result["image"] = images
     if audios:
         result["audio"] = audios
+    if videos:
+        result["video"] = videos
     return result
 
 
@@ -537,7 +573,18 @@ def maybe_tokenize_messages(
             rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
             tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
 
-        token_ids = normalize_prompt_token_ids(tokenized)
+        if isinstance(tokenized, list):
+            first = tokenized[0] if tokenized else []
+            token_ids = first if isinstance(first, (list, tuple)) else tokenized
+        else:
+            # Handle transformers BatchEncoding / dict-like outputs
+            if hasattr(tokenized, "__getitem__") and "input_ids" in tokenized:
+                token_ids = tokenized["input_ids"]
+                # BatchEncoding may return nested list for batch dimension
+                if isinstance(token_ids, list) and token_ids and isinstance(token_ids[0], list):
+                    token_ids = token_ids[0]
+            else:
+                token_ids = tokenized
 
         new_prompt = str(rendered) if rendered else prompt
         if not isinstance(inputs, dict):
@@ -690,7 +737,13 @@ def load_multimodal_payload(
 
     def _safe_load():
         try:
-            return load_multimodal_data(processor, mm.get("image"), mm.get("audio"), True)
+            return load_multimodal_data(
+                processor,
+                mm.get("image"),
+                mm.get("audio"),
+                True,
+                video=mm.get("video"),
+            )
         except Exception as exc:
             logger.error(
                 "{}: load_multimodal_data failed in thread; fallback to raw mm (error={})",

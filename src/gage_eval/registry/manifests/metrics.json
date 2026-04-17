@@ -15,7 +15,25 @@
       "name": "aime2024_accuracy",
       "module": "gage_eval.metrics.builtin.aime",
       "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/metrics/builtin/aime.py",
+      "declared_in": "src/gage_eval/metrics/builtin/aime/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "aime2026_accuracy",
+      "module": "gage_eval.metrics.builtin.aime",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/aime/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "amo_bench_accuracy",
+      "module": "gage_eval.metrics.builtin.amo_bench",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/amo_bench/__init__.py",
       "aliases": [],
       "optional": false
     },
@@ -79,6 +97,15 @@
       "module": "gage_eval.metrics.builtin.arcagi2",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/metrics/builtin/arcagi2.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "beyond_aime_accuracy",
+      "module": "gage_eval.metrics.builtin.beyond_aime",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/beyond_aime/__init__.py",
       "aliases": [],
       "optional": false
     },
@@ -246,6 +273,15 @@
     },
     {
       "kind": "metrics",
+      "name": "gsm8k_accuracy",
+      "module": "gage_eval.metrics.builtin.gsm8k",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/gsm8k/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
       "name": "hle_accuracy_deepseek",
       "module": "gage_eval.metrics.builtin.hle.hle_deepseek",
       "load_phase": "prepare_only",
@@ -282,6 +318,15 @@
     },
     {
       "kind": "metrics",
+      "name": "hmmt_accuracy",
+      "module": "gage_eval.metrics.builtin.hmmt",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/hmmt/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
       "name": "illegal_action_count",
       "module": "gage_eval.metrics.builtin.arena",
       "load_phase": "prepare_only",
@@ -295,6 +340,24 @@
       "module": "gage_eval.metrics.builtin.arena",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "inverse_ifeval_judge_pass_rate",
+      "module": "gage_eval.metrics.builtin.inverse_ifeval",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/inverse_ifeval.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "inverse_ifeval_pass_rate",
+      "module": "gage_eval.metrics.builtin.inverse_ifeval",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/inverse_ifeval.py",
       "aliases": [],
       "optional": false
     },
@@ -682,6 +745,15 @@
       "module": "gage_eval.metrics.builtin.arena",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/metrics/builtin/arena.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "video_mme_accuracy",
+      "module": "gage_eval.metrics.builtin.video_mme",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/video_mme/__init__.py",
       "aliases": [],
       "optional": false
     },

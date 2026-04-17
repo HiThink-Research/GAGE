@@ -90,6 +90,10 @@ class BasePreprocessor(DatasetPreprocessor):
             # STEP 2: Let the dataset-specific preprocessor structure the record.
             structured_sample = self.to_sample(sample, **to_sample_kwargs)
 
+            # Allow preprocessors to signal "skip this sample" by returning None.
+            if structured_sample is None:
+                return None
+
             # Auto-convert dict to Sample if needed
             if isinstance(structured_sample, dict):
                 structured_sample = sample_from_dict(structured_sample)

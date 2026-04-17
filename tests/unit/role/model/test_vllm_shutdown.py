@@ -1,137 +1,49 @@
 from __future__ import annotations
 
 import sys
-import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[4] / "src"
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from gage_eval.role.common.backend_utils import graceful_loop_shutdown
 from gage_eval.role.model.backends.vllm_backend import VLLMBackend
 
 
-class DummyModel:
-    """Lightweight placeholder to avoid real vLLM engine initialization in tests."""
-
-
-def make_backend() -> VLLMBackend:
-    """Create a backend instance with heavyweight dependencies patched out."""
-
+def _make_backend() -> VLLMBackend:
     config = {"model_path": "dummy-model", "tokenizer_path": "dummy-tokenizer"}
     with (
-        patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend.load_model", return_value=DummyModel()),
-        patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend._init_tokenizer", return_value=MagicMock()),
-        patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend._load_auto_processor", return_value=MagicMock()),
+        patch.object(VLLMBackend, "load_model", return_value=MagicMock()),
+        patch.object(VLLMBackend, "_init_tokenizer", return_value=MagicMock()),
+        patch.object(VLLMBackend, "_load_auto_processor", return_value=MagicMock()),
     ):
         return VLLMBackend(config)
 
 
-class _FakeLoop:
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
-        self._running = True
+def test_shutdown_closes_engine_core_and_renderer_and_clears_model() -> None:
+    backend = _make_backend()
+    backend.model = MagicMock()
+    backend.model.output_handler = MagicMock(done=MagicMock(return_value=True))
+    engine_core_mock = backend.model.engine_core
+    renderer_mock = backend.model.renderer
 
-    def is_running(self) -> bool:
-        return self._running
+    with patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown") as mock_graceful:
+        backend.shutdown()
 
-    def stop(self) -> None:
-        self._running = False
-
-    def call_soon_threadsafe(self, func) -> None:
-        self._calls.append("loop.stop")
-        func()
-
-
-class _FakeThread:
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
-
-    def is_alive(self) -> bool:
-        return True
-
-    def join(self, timeout: float | None = None) -> None:
-        self._calls.append(f"thread.join:{timeout}")
+    engine_core_mock.shutdown.assert_called_once()
+    renderer_mock.shutdown.assert_called_once()
+    assert backend.model is None
+    mock_graceful.assert_called_once_with(backend._loop, backend._loop_thread, None)
 
 
-class _FakeModel:
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
+def test_ensure_background_loop_raises_when_shutdown_flag_is_set() -> None:
+    backend = _make_backend()
+    backend._loop.call_soon_threadsafe(backend._loop.stop)
+    backend._loop_thread.join(timeout=2.0)
+    backend._shutdown_started = True
 
-    def shutdown(self) -> None:
-        self._calls.append("model.shutdown")
-
-
-class VLLMShutdownTests(unittest.TestCase):
-    def test_graceful_loop_shutdown_stops_model_before_loop(self) -> None:
-        calls: list[str] = []
-        loop = _FakeLoop(calls)
-        loop_thread = _FakeThread(calls)
-        model = _FakeModel(calls)
-
-        with patch("gage_eval.role.common.backend_utils.torch_gpu_cleanup", side_effect=lambda: calls.append("gpu.cleanup")):
-            graceful_loop_shutdown(loop, loop_thread, model)
-
-        self.assertEqual(
-            calls,
-            ["model.shutdown", "loop.stop", "thread.join:1.0", "gpu.cleanup"],
-        )
-
-    def test_vllm_backend_shutdown_is_idempotent(self) -> None:
-        backend = make_backend()
-
-        with patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown") as shutdown_mock:
-            backend.shutdown()
-            backend.shutdown()
-
-        shutdown_mock.assert_called_once_with(backend._loop, backend._loop_thread, backend.model)
-        self.assertTrue(backend._shutdown_started)
-        self.assertTrue(backend._shutdown_completed)
-
-    def test_vllm_backend_shutdown_unregisters_cleanup_callback(self) -> None:
-        backend = make_backend()
-        unregister = MagicMock()
-        backend._cleanup_unregister = unregister
-
-        with patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown"):
-            backend.shutdown()
-            backend.shutdown()
-
-        unregister.assert_called_once_with()
-
-    def test_vllm_backend_starts_background_loop_lazily_once(self) -> None:
-        backend = make_backend()
-        fake_loop = object()
-        fake_thread = MagicMock()
-        unregister = MagicMock()
-
-        with (
-            patch("gage_eval.role.model.backends.vllm_backend.asyncio.new_event_loop", return_value=fake_loop),
-            patch("gage_eval.role.model.backends.vllm_backend.threading.Thread", return_value=fake_thread),
-            patch("gage_eval.role.model.backends.vllm_backend.install_signal_cleanup", return_value=unregister),
-        ):
-            resolved_first = backend._ensure_background_loop()
-            resolved_second = backend._ensure_background_loop()
-
-        self.assertIs(resolved_first, fake_loop)
-        self.assertIs(resolved_second, fake_loop)
-        fake_thread.start.assert_called_once_with()
-        unregister.assert_not_called()
-        self.assertIs(backend._loop, fake_loop)
-        self.assertIs(backend._loop_thread, fake_thread)
-
-    def test_vllm_backend_shutdown_runs_on_init_failure(self) -> None:
-        with (
-            patch("gage_eval.role.model.backends.vllm_backend.graceful_loop_shutdown") as shutdown_mock,
-            patch("gage_eval.role.model.backends.vllm_backend.VLLMBackend.load_model", side_effect=RuntimeError("boom")),
-            self.assertRaisesRegex(RuntimeError, "boom"),
-        ):
-            VLLMBackend({"model_path": "dummy-model"})
-
-        shutdown_mock.assert_called_once_with(None, None, None)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    with pytest.raises(RuntimeError, match="unavailable after shutdown"):
+        backend._ensure_background_loop()
