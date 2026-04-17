@@ -1,0 +1,43 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+scene: game
+metadata:
+  name: game_noop
+datasets:
+  - dataset_id: game_ds
+    loader: jsonl
+    params:
+      path: tests/data/samples/game_noop.jsonl
+backends:
+  - backend_id: main_backend
+    type: litellm
+    config:
+      provider: openai
+      model: gpt-4.1
+  - backend_id: other_backend
+    type: litellm
+    config:
+      provider: openai
+      model: gpt-4.1-mini
+role_adapters:
+  - adapter_id: game_player
+    role_type: dut_model
+    backend_id: main_backend
+    capabilities:
+      - chat_completion
+custom:
+  steps:
+    - step: inference
+      adapter_id: game_player
+    - step: auto_eval
+tasks:
+  - task_id: game_task
+    dataset_id: game_ds
+    backend: other_backend
+    steps:
+      - step: inference
+        adapter_id: game_player
+      - step: auto_eval
+    reporting:
+      sinks:
+        - type: console

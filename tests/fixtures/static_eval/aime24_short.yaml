@@ -1,0 +1,21 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+scene: static
+metadata:
+  name: aime24
+datasets:
+  - dataset_id: aime24_ds
+    hub_id: Maxwell-Jia/AIME_2024
+    split: train
+    params:
+      preprocess: aime2024_preprocessor
+backends:
+  - backend_id: openai
+    type: litellm
+    config:
+      provider: openai
+      model: gpt-4.1
+metrics:
+  - aime2024_accuracy
+task:
+  max_samples: 30

@@ -1,0 +1,1 @@
+{"schema_version":"gage.v1","id":"game_noop_0001","task_type":"game","messages":[{"role":"user","content":[{"type":"text","text":"Take a no-op game action."}]}]}
