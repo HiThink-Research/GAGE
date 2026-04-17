@@ -156,20 +156,6 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             return loop
 
     def shutdown(self) -> None:
-<<<<<<< HEAD
-        with self._shutdown_lock:
-            if self._shutdown_started or self._shutdown_completed:
-                return
-            self._shutdown_started = True
-            cleanup_unregister = self._cleanup_unregister
-            self._cleanup_unregister = lambda: None
-        try:
-            graceful_loop_shutdown(self._loop, self._loop_thread, getattr(self, "model", None))
-        finally:
-            cleanup_unregister()
-            with self._shutdown_lock:
-                self._shutdown_completed = True
-=======
         # vLLM v1 engine shutdown: suppress the spurious EngineDeadError by
         # (1) cancelling the output_handler, (2) marking engine_dead before
         # engine_core.shutdown() so the monitor thread doesn't log an error.
@@ -216,7 +202,6 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         except Exception:
             pass
         graceful_loop_shutdown(self._loop, self._loop_thread, None)
->>>>>>> benchmark video-mme
 
     def load_model(self, config: Dict[str, Any]):
         """Load the model/processor and apply compatibility patches (reward/MoE/rope scaling/low-memory)."""

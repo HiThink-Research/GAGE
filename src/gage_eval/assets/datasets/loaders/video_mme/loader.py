@@ -62,7 +62,12 @@ def _inject_local_video(
 )
 class VideoMMEHFDatasetLoader(DatasetLoader):
     def load(self, hub_handle: Optional[DatasetHubHandle], *, trace=None) -> DataSource:
-        return load_video_mme_hf_dataset(self.spec, hub_handle, trace=trace)
+        return load_video_mme_hf_dataset(
+            self.spec,
+            hub_handle,
+            trace=trace,
+            registry_lookup=self.registry_lookup,
+        )
 
 
 def load_video_mme_hf_dataset(
@@ -70,6 +75,7 @@ def load_video_mme_hf_dataset(
     hub_handle: Optional[DatasetHubHandle] = None,
     *,
     trace=None,
+    registry_lookup=None,
 ) -> DataSource:
     try:
         import datasets  # type: ignore
@@ -162,6 +168,7 @@ def load_video_mme_hf_dataset(
         records,
         spec,
         data_path=hub_id,
+        registry_lookup=registry_lookup,
         doc_to_text=doc_to_text,
         doc_to_visual=doc_to_visual,
         doc_to_audio=doc_to_audio,
