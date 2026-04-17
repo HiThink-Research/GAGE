@@ -90,6 +90,18 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "TerminationReasonMetric": ("gage_eval.metrics.builtin.arena", "TerminationReasonMetric"),
     "TextLengthMetric": ("gage_eval.metrics.builtin.text", "TextLengthMetric"),
     "TimeoutCountMetric": ("gage_eval.metrics.builtin.arena", "TimeoutCountMetric"),
+    "InverseIFEvalJudgePassRateMetric": (
+        "gage_eval.metrics.builtin.inverse_ifeval",
+        "InverseIFEvalJudgePassRateMetric",
+    ),
+    "InverseIFEvalPassRateMetric": (
+        "gage_eval.metrics.builtin.inverse_ifeval",
+        "InverseIFEvalPassRateMetric",
+    ),
+    "VideoMMEAccuracyMetric": (
+        "gage_eval.metrics.builtin.video_mme",
+        "VideoMMEAccuracyMetric",
+    ),
     "WinFlagPerPlayerMetric": ("gage_eval.metrics.builtin.arena", "WinFlagPerPlayerMetric"),
     "WinnerPlayerIdMetric": ("gage_eval.metrics.builtin.arena", "WinnerPlayerIdMetric"),
 }
@@ -110,131 +122,3 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(_LAZY_EXPORTS))
-from gage_eval.metrics.builtin.gomoku import (
-    GomokuAverageTurnsMetric,
-    GomokuIllegalRateMetric,
-    GomokuWinRateMetric,
-)
-from gage_eval.metrics.builtin.multi_choice import MultiChoiceAccuracyMetric
-from gage_eval.metrics.builtin.docvqa_anls import DocVQAANLSMetric
-from gage_eval.metrics.builtin.mmmu import MMMUAccuracyMetric
-from gage_eval.metrics.builtin.likelihood import LikelihoodMetric
-from gage_eval.metrics.builtin.ranking import RankingMetric
-from gage_eval.metrics.builtin.mathvista import MathVistaAccuracyMetric
-from gage_eval.metrics.builtin.appworld import (
-    AppWorldFailCountMetric,
-    AppWorldPassCountMetric,
-    AppWorldDifficultyMetric,
-    AppWorldSGCMetric,
-    AppWorldSuccessMetric,
-    AppWorldTGCMetric,
-)
-from gage_eval.metrics.builtin.text import (
-    ContainsMatchMetric,
-    ExactMatchMetric,
-    JudgeThresholdMetric,
-    LatencyMetric,
-    NumericMatchMetric,
-    RegexMatchMetric,
-    TextLengthMetric,
-)
-from gage_eval.metrics.builtin.tau2 import (
-    Tau2AgentCostMetric,
-    Tau2PassMetric,
-    Tau2PassHatMetric,
-    Tau2RewardMetric,
-    Tau2UserCostMetric,
-)
-from gage_eval.metrics.builtin.simpleqa_verified import (
-    SimpleQAVerifiedAccuracyMetric,
-    SimpleQAVerifiedJudgeAccuracyMetric,
-)
-from gage_eval.metrics.builtin.arcagi2 import ARCAGI2AccuracyMetric
-from gage_eval.metrics.builtin.charxiv import CharXivReasoningMatchMetric
-from gage_eval.metrics.builtin.screenspot_pro import ScreenSpotPointInBboxMetric
-from gage_eval.metrics.builtin.arena import (
-    CompletionFlagMetric,
-    DrawFlagMetric,
-    EpisodeDurationMsMetric,
-    EpisodeLengthStepsMetric,
-    FinalScorePerPlayerMetric,
-    IllegalActionCountMetric,
-    IllegalReasonDistributionMetric,
-    LegalActionRateMetric,
-    ObsToActionLatencyMeanMetric,
-    ObsToActionLatencyP50Metric,
-    ObsToActionLatencyP95Metric,
-    OnTimeRateMetric,
-    RankListMetric,
-    RetryCountMeanMetric,
-    RetryCountP95Metric,
-    RewardPerSecondPerPlayerMetric,
-    ScoreMarginMetric,
-    TerminationReasonMetric,
-    TimeoutCountMetric,
-    WinFlagPerPlayerMetric,
-    WinnerPlayerIdMetric)
-from gage_eval.metrics.builtin.inverse_ifeval import (
-    InverseIFEvalJudgePassRateMetric,
-    InverseIFEvalPassRateMetric,
-)
-from gage_eval.metrics.builtin.video_mme import VideoMMEAccuracyMetric
-
-__all__ = [
-    "ARCAGI2AccuracyMetric",
-    "ExactMatchMetric",
-    "ContainsMatchMetric",
-    "NumericMatchMetric",
-    "RegexMatchMetric",
-    "JudgeThresholdMetric",
-    "TextLengthMetric",
-    "LatencyMetric",
-    "GomokuWinRateMetric",
-    "GomokuIllegalRateMetric",
-    "GomokuAverageTurnsMetric",
-    "MultiChoiceAccuracyMetric",
-    "DocVQAANLSMetric",
-    "MMMUAccuracyMetric",
-    "MathVistaAccuracyMetric",
-    "AppWorldTGCMetric",
-    "AppWorldSGCMetric",
-    "AppWorldSuccessMetric",
-    "AppWorldPassCountMetric",
-    "AppWorldFailCountMetric",
-    "AppWorldDifficultyMetric",
-    "LikelihoodMetric",
-    "RankingMetric",
-    "Tau2RewardMetric",
-    "Tau2PassMetric",
-    "Tau2PassHatMetric",
-    "Tau2AgentCostMetric",
-    "Tau2UserCostMetric",
-    "SimpleQAVerifiedAccuracyMetric",
-    "SimpleQAVerifiedJudgeAccuracyMetric",
-    "ScreenSpotPointInBboxMetric",
-    "CharXivReasoningMatchMetric",
-    "FinalScorePerPlayerMetric",
-    "EpisodeDurationMsMetric",
-    "EpisodeLengthStepsMetric",
-    "RewardPerSecondPerPlayerMetric",
-    "ObsToActionLatencyMeanMetric",
-    "ObsToActionLatencyP50Metric",
-    "ObsToActionLatencyP95Metric",
-    "OnTimeRateMetric",
-    "TimeoutCountMetric",
-    "LegalActionRateMetric",
-    "IllegalActionCountMetric",
-    "RetryCountMeanMetric",
-    "RetryCountP95Metric",
-    "IllegalReasonDistributionMetric",
-    "WinnerPlayerIdMetric",
-    "WinFlagPerPlayerMetric",
-    "DrawFlagMetric",
-    "RankListMetric",
-    "ScoreMarginMetric",
-    "TerminationReasonMetric",
-    "CompletionFlagMetric",
-    "InverseIFEvalJudgePassRateMetric",
-    "InverseIFEvalPassRateMetric",
-    "VideoMMEAccuracyMetric",
-]
