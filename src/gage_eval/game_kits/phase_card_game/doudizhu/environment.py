@@ -824,23 +824,6 @@ class DoudizhuArenaEnvironment(_CardArenaPlayerResolutionMixin):
 
     def _save_replay(self) -> Optional[str]:
         try:
-            if self._core.is_terminal():
-                return self._core.get_payoffs()
-        except Exception:
-            pass
-        return [0.0 for _ in self._player_ids]
-
-    def _resolve_winner(self, payoffs: Sequence[float]) -> Optional[str]:
-        if not payoffs:
-            return None
-        max_payoff = max(payoffs)
-        if max_payoff <= 0:
-            return None
-        winner_index = list(payoffs).index(max_payoff)
-        return self._player_id_map.get(winner_index)
-
-    def _save_replay(self) -> Optional[str]:
-        try:
             replay = self._build_replay_projection()
         except Exception as exc:
             logger.warning("Failed to build Doudizhu replay projection: {}", exc)

@@ -138,15 +138,6 @@
     },
     {
       "kind": "game_kits",
-      "name": "openra",
-      "module": "gage_eval.game_kits.real_time_game.openra.kit",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/game_kits/real_time_game/openra/kit.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "game_kits",
       "name": "pettingzoo",
       "module": "gage_eval.game_kits.aec_env_game.pettingzoo.kit",
       "load_phase": "prepare_only",
@@ -241,15 +232,6 @@
       "module": "gage_eval.game_kits.phase_card_game.mahjong.parsers.mahjong",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/parsers/mahjong.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "parser_impls",
-      "name": "openra_action_v1",
-      "module": "gage_eval.game_kits.real_time_game.openra.parser",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/game_kits/real_time_game/openra/parser.py",
       "aliases": [],
       "optional": false
     },
@@ -412,15 +394,6 @@
       "module": "gage_eval.game_kits.phase_card_game.mahjong.visualization",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/visualization.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "visualization_specs",
-      "name": "arena/visualization/openra_rts_v1",
-      "module": "gage_eval.game_kits.real_time_game.openra.visualization",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/game_kits/real_time_game/openra/visualization.py",
       "aliases": [],
       "optional": false
     },

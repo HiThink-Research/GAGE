@@ -40,7 +40,6 @@ PLUGIN_IDS_BY_GAME_KIT = {
     "gymnasium_atari": "arena.visualization.pettingzoo.frame_v1",
     "retro_platformer": "arena.visualization.retro_platformer.frame_v1",
     "vizdoom": "arena.visualization.vizdoom.frame_v1",
-    "openra": "arena.visualization.openra.rts_v1",
 }
 
 
@@ -128,36 +127,6 @@ _BASE_LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         HEADLESS_NO_HUMAN,
         "vizdoom",
         "duel_map01",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_dummy_gamekit.yaml",
-        HEADLESS_NO_HUMAN,
-        "openra",
-        "ra_map01",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_ra_skirmish_dummy_gamekit.yaml",
-        HEADLESS_NO_HUMAN,
-        "openra",
-        "ra_skirmish_1v1",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_cnc_dummy_gamekit.yaml",
-        HEADLESS_NO_HUMAN,
-        "openra",
-        "cnc_mission_gdi01",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_d2k_dummy_gamekit.yaml",
-        HEADLESS_NO_HUMAN,
-        "openra",
-        "d2k_skirmish_1v1",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_llm_headless_gamekit.yaml",
-        HEADLESS_NO_HUMAN,
-        "openra",
-        "ra_map01",
     ),
     GameKitConfigCase(
         "config/custom/doudizhu/doudizhu_dummy_visual_gamekit.yaml",
@@ -280,54 +249,6 @@ _BASE_LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         live_scene_scheme="http_pull",
     ),
     GameKitConfigCase(
-        "config/custom/openra/openra_dummy_visual_gamekit.yaml",
-        VISUAL_NO_HUMAN,
-        "openra",
-        "ra_map01",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="http_pull",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_ra_skirmish_dummy_visual_gamekit.yaml",
-        VISUAL_NO_HUMAN,
-        "openra",
-        "ra_skirmish_1v1",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="http_pull",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_ra_skirmish_native_dummy_visual_gamekit.yaml",
-        VISUAL_NO_HUMAN,
-        "openra",
-        "ra_skirmish_1v1",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="low_latency_channel",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_cnc_dummy_visual_gamekit.yaml",
-        VISUAL_NO_HUMAN,
-        "openra",
-        "cnc_mission_gdi01",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="http_pull",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_d2k_dummy_visual_gamekit.yaml",
-        VISUAL_NO_HUMAN,
-        "openra",
-        "d2k_skirmish_1v1",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="http_pull",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_llm_visual_gamekit.yaml",
-        VISUAL_NO_HUMAN,
-        "openra",
-        "ra_map01",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="http_pull",
-    ),
-    GameKitConfigCase(
         "config/custom/doudizhu/doudizhu_human_visual_acceptance_gamekit.yaml",
         HUMAN_VISUAL,
         "doudizhu",
@@ -375,22 +296,6 @@ _BASE_LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
         "gymnasium_atari",
         "space_invaders",
         plugin_id=PLUGIN_IDS_BY_GAME_KIT["gymnasium_atari"],
-        live_scene_scheme="low_latency_channel",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_human_visual_gamekit.yaml",
-        HUMAN_VISUAL,
-        "openra",
-        "ra_map01",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
-        live_scene_scheme="http_pull",
-    ),
-    GameKitConfigCase(
-        "config/custom/openra/openra_ra_skirmish_native_human_visual_gamekit.yaml",
-        HUMAN_VISUAL,
-        "openra",
-        "ra_skirmish_1v1",
-        plugin_id=PLUGIN_IDS_BY_GAME_KIT["openra"],
         live_scene_scheme="low_latency_channel",
     ),
     GameKitConfigCase(
@@ -587,15 +492,6 @@ LIVE_GAMEKIT_CONFIG_CASES: tuple[GameKitConfigCase, ...] = (
     *_OPENAI_LIVE_GAMEKIT_CONFIG_CASES,
 )
 
-REPLAY_ONLY_CONFIGS = (
-    "config/custom/oneclick/replay_dummy/doudizhu_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/gomoku_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/mahjong_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/pettingzoo_dummy_replay.yaml",
-    "config/custom/oneclick/replay_dummy/tictactoe_dummy_replay.yaml",
-)
-
-
 LIVE_CASES_BY_CATEGORY = {
     HEADLESS_NO_HUMAN: tuple(case for case in LIVE_GAMEKIT_CONFIG_CASES if case.category == HEADLESS_NO_HUMAN),
     VISUAL_NO_HUMAN: tuple(case for case in LIVE_GAMEKIT_CONFIG_CASES if case.category == VISUAL_NO_HUMAN),
@@ -660,15 +556,6 @@ def discover_live_gamekit_configs() -> tuple[str, ...]:
         sorted(
             str(path.relative_to(REPO_ROOT))
             for path in (REPO_ROOT / "config/custom").rglob("*gamekit*.yaml")
-        )
-    )
-
-
-def discover_replay_only_configs() -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            str(path.relative_to(REPO_ROOT))
-            for path in (REPO_ROOT / "config/custom/oneclick/replay_dummy").glob("*.yaml")
         )
     )
 

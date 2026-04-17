@@ -7,7 +7,6 @@ from typing import Any, Optional, Sequence
 
 from gage_eval.registry import registry
 from gage_eval.game_kits.board_game.gomoku.coord_scheme import GomokuCoordCodec, normalize_coord_scheme
-from gage_eval.role.arena.visualizers.utils import build_board_interaction_js
 
 GOMOKU_BOARD_CSS = """
 .gomoku-shell {
