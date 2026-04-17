@@ -37,6 +37,8 @@ sandbox_profiles:
     runtime_configs:
       startup_timeout_s: 180
       startup_interval_s: 0.5
+      cpu: 2
+      memory: 4g
       ports: ["8000:8000", "9000:9000", "5001:5001"]
       env_endpoint: http://127.0.0.1:8000
       apis_endpoint: http://127.0.0.1:9000

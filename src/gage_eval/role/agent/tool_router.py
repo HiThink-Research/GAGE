@@ -57,10 +57,12 @@ class ToolRouter:
             status = "error"
             output = {"error": str(exc)}
         latency_ms = (time.perf_counter() - start) * 1000.0
+        normalized_output = _normalize_output(output)
+        status = _resolve_tool_status(status, normalized_output)
         result = {
             "name": name,
             "input": arguments,
-            "output": _normalize_output(output),
+            "output": normalized_output,
             "status": status,
             "latency_ms": latency_ms,
         }
@@ -162,6 +164,20 @@ def _normalize_output(output: Any) -> Dict[str, Any]:
     if isinstance(output, dict):
         return dict(output)
     return serialize_exec_result(output)
+
+
+def _resolve_tool_status(status: str, output: Dict[str, Any]) -> str:
+    if status != "success":
+        return status
+    if output.get("error"):
+        return "failed"
+    exit_code = output.get("exit_code")
+    if exit_code is None:
+        return status
+    try:
+        return "success" if int(exit_code) == 0 else "failed"
+    except (TypeError, ValueError):
+        return status
 
 
 def _normalize_tool_arguments(arguments: Any) -> Dict[str, Any]:

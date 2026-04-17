@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from gage_eval.agent_eval_kits.appworld.artifacts import persist_appworld_artifacts
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
-from gage_eval.agent_eval_kits.appworld.units import build_appworld_instruction
+from gage_eval.agent_eval_kits.appworld.units import (
+    build_appworld_instruction,
+    build_appworld_tools,
+    fetch_mcp_tool_schemas,
+)
+from gage_eval.evaluation.support_artifacts import resolve_support_field
 
 
 def build_workflow_bundle(runtime_entry) -> SchedulerWorkflowBundle:
@@ -25,13 +30,28 @@ def _prepare_inputs(*, session, sample, payload, sandbox_provider=None):
         sample,
         instruction_override=str(session.prompt_context.get("instruction") or ""),
     )
+    mcp_endpoint = session.prompt_context.get("mcp_endpoint")
+    allowed_apps = list(session.prompt_context.get("allowed_apps") or [])
+    mcp_client_id = resolve_support_field(sample, "mcp_client_id")
+    if mcp_endpoint:
+        try:
+            tools_schema = fetch_mcp_tool_schemas(
+                mcp_endpoint,
+                mcp_client_id,
+                allowed_apps=allowed_apps or None,
+            )
+        except Exception:
+            tools_schema = build_appworld_tools(sample)
+    else:
+        tools_schema = build_appworld_tools(sample)
     return {
         "instruction": instruction,
-        "allowed_apps": list(session.prompt_context.get("allowed_apps") or []),
+        "allowed_apps": allowed_apps,
         "ground_truth_mode": session.prompt_context.get("ground_truth_mode"),
-        "mcp_endpoint": session.prompt_context.get("mcp_endpoint"),
+        "mcp_endpoint": mcp_endpoint,
         "env_endpoint": session.prompt_context.get("env_endpoint"),
         "tool_use_contract": "use_appworld_tools",
+        "tools_schema": tools_schema,
         "metadata": dict(sample.get("metadata") or {}),
     }
 

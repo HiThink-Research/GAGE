@@ -64,6 +64,11 @@ class FakeSandbox:
         return True
 
 
+class FailingFakeSandbox(FakeSandbox):
+    def exec(self, command, timeout=30):
+        return ExecResult(exit_code=127, stdout="", stderr="/bin/sh: 1: badcmd: not found\n", duration_ms=1.0)
+
+
 @pytest.mark.fast
 def test_agent_loop_tool_call_flow():
     manager = SandboxManager()
@@ -118,6 +123,49 @@ def test_agent_loop_async_tool_call_flow() -> None:
     assert len(result["agent_trace"]) == 2
     assert result["agent_trace"][0]["trace_role"] == "tool"
     assert result["agent_trace"][1]["trace_role"] == "assistant"
+
+
+@pytest.mark.fast
+def test_agent_loop_records_failed_tool_trace_for_nonzero_exit_code():
+    class FailingBackend:
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, payload):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "tool_calls": [
+                        {
+                            "id": "c1",
+                            "function": {"name": "run_shell", "arguments": "{\"command\": \"badcmd\"}"},
+                        }
+                    ]
+                }
+            return {"answer": "done"}
+
+    manager = SandboxManager()
+    manager.register_runtime("fake", FailingFakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    loop = AgentLoop(
+        backend=FailingBackend(),
+        tool_router=ToolRouter(),
+        max_turns=3,
+    )
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+    provider.release()
+    assert result["agent_trace"][0]["trace_role"] == "tool"
+    assert result["agent_trace"][0]["status"] == "failed"
+    assert result["agent_trace"][0]["output"]["exit_code"] == 127
 
 
 @pytest.mark.fast

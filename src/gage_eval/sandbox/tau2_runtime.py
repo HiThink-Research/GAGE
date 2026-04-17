@@ -195,6 +195,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             )
             trajectory.append(user_message)
             self._user_state = user_state
+            self._user_cost_total += _resolve_user_message_cost(user_message)
             if getattr(user_message, "tool_calls", None):
                 self._resolve_user_tool_calls(user_message)
         else:
@@ -205,11 +206,13 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                 )
                 trajectory.append(user_message)
                 self._user_state = user_state
+                self._user_cost_total += _resolve_user_message_cost(user_message)
                 if getattr(user_message, "tool_calls", None):
                     self._resolve_user_tool_calls(user_message)
 
         # STEP 3: Prepare sample payload updates (messages + tools + metadata).
         tools_schema = [tool.openai_schema for tool in env.get_tools()]
+        tools_schema = tools_schema + [_build_respond_tool_schema(self._respond_tool_name)]
         sample_messages = [
             msg for msg in (_tau2_to_gage_message(m) for m in trajectory) if msg
         ]
@@ -297,7 +300,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             assistant_msg, self._user_state
         )
         self._trajectory.append(user_msg)
-        self._user_cost_total += _coerce_float(getattr(user_msg, "cost", None)) or 0.0
+        self._user_cost_total += _resolve_user_message_cost(user_msg)
 
         if _is_user_stop(user_msg):
             self._termination_reason = _termination_reason("user_stop")
@@ -335,9 +338,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                 next_input, self._user_state
             )
             self._trajectory.append(next_user_msg)
-            self._user_cost_total += (
-                _coerce_float(getattr(next_user_msg, "cost", None)) or 0.0
-            )
+            self._user_cost_total += _resolve_user_message_cost(next_user_msg)
             current = next_user_msg
             if _is_user_stop(current):
                 break
@@ -493,6 +494,27 @@ def _tau2_to_gage_message(message: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _build_respond_tool_schema(respond_tool_name: str) -> Dict[str, Any]:
+    """Build the OpenAI function schema for the agent-facing respond tool."""
+    return {
+        "type": "function",
+        "function": {
+            "name": respond_tool_name,
+            "description": "Send a message to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to send to the user.",
+                    }
+                },
+                "required": ["message"],
+            },
+        },
+    }
+
+
 def _build_tool_call(name: str, arguments: Any, *, requestor: str) -> Any:
     ToolCall = _tau2_import("tau2.data_model.message", "ToolCall")
     payload = _normalize_tool_args(arguments)
@@ -592,6 +614,32 @@ def _coerce_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _resolve_user_message_cost(msg: Any) -> float:
+    """Resolve cost from a user simulator message, falling back to token counts.
+
+    For local/free models (e.g. Ollama) monetary cost is always 0.0, but the
+    message's ``usage`` dict carries token counts from LiteLLM.  This mirrors
+    the fallback logic in ``_resolve_agent_usage_cost`` so that ``user_cost``
+    and ``agent_cost`` use a consistent unit (tokens) when USD cost is absent.
+    """
+
+    cost = _coerce_float(getattr(msg, "cost", None))
+    if cost:
+        return cost
+    usage = getattr(msg, "usage", None)
+    if not isinstance(usage, dict):
+        return 0.0
+    direct = _coerce_float(usage.get("cost_usd"))
+    if direct:
+        return direct
+    total = _coerce_float(usage.get("total_tokens"))
+    if total is not None:
+        return total
+    prompt = _coerce_float(usage.get("prompt_tokens")) or 0.0
+    completion = _coerce_float(usage.get("completion_tokens")) or 0.0
+    return prompt + completion
 
 
 def _resolve_agent_usage_cost(usage: Any) -> Optional[float]:

@@ -5,7 +5,7 @@ from gage_eval.agent_eval_kits.terminal_bench.artifacts import (
     persist_terminal_artifacts,
 )
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
-from gage_eval.agent_eval_kits.terminal_bench.units import build_terminal_instruction
+from gage_eval.agent_eval_kits.terminal_bench.units import build_terminal_instruction, build_terminal_tools
 
 
 def build_workflow_bundle() -> SchedulerWorkflowBundle:
@@ -28,6 +28,7 @@ def _prepare_inputs(*, session, sample, payload, sandbox_provider=None):
         "instruction": build_terminal_instruction(sample),
         "cwd": session.runtime_context.get("cwd") or "/workspace",
         "env": dict(session.runtime_context.get("env") or {}),
+        "tools_schema": build_terminal_tools(sample),
         "metadata": dict(sample.get("metadata") or {}),
     }
 

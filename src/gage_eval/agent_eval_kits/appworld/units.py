@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from gage_eval.agent_eval_kits.common import extract_instruction, normalize_tools
 from gage_eval.evaluation.support_artifacts import resolve_support_tools
 
@@ -65,6 +67,71 @@ def build_appworld_tools(sample: dict[str, object]) -> list[dict[str, object]]:
     if tools:
         return tools
     return normalize_tools(sample)
+
+
+def fetch_mcp_tool_schemas(
+    mcp_endpoint: str,
+    mcp_client_id: str | None,
+    *,
+    allowed_apps: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch live tool schemas from the AppWorld MCP server.
+
+    Uses AppWorldStreamableMcpClient to connect to the running sandbox MCP
+    endpoint, lists tools, filters by allowed_apps, and maps each into the
+    OpenAI function-call format expected by the ToolRouter.  The client is
+    disconnected immediately after tool discovery so no persistent session
+    is kept in the kit layer.
+
+    The returned schemas carry ``x-gage: {mcp_client_id: <id>}`` so the
+    ToolRouter can dispatch tool calls through the already-registered MCP
+    client (e.g. ``appworld_env`` from the pipeline config).
+    """
+
+    from gage_eval.sandbox.integrations.appworld.mcp_client import AppWorldStreamableMcpClient
+
+    client = AppWorldStreamableMcpClient(
+        mcp_client_id=mcp_client_id or "appworld",
+        endpoint=mcp_endpoint,
+        params={"session_retry_attempts": 1, "session_retry_timeout_s": 30},
+    )
+    try:
+        raw_tools = client.list_tools()
+    finally:
+        client.disconnect()
+
+    allowed = set(allowed_apps) if allowed_apps else set()
+    result: list[dict[str, Any]] = []
+    for tool in raw_tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name") or ""
+        if allowed:
+            app = name.split("__", 1)[0] if "__" in name else name
+            if app not in allowed:
+                continue
+        schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": tool.get("description") or "",
+                "parameters": _strip_nulls(
+                    tool.get("inputSchema") or tool.get("parameters") or {}
+                ),
+            },
+        }
+        if mcp_client_id:
+            schema["x-gage"] = {"mcp_client_id": mcp_client_id}
+        result.append(schema)
+    return result
+
+
+def _strip_nulls(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _strip_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_strip_nulls(item) for item in value if item is not None]
+    return value
 
 
 def build_appworld_instruction(

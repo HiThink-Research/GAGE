@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from gage_eval.agent_eval_kits.appworld.artifacts import persist_appworld_artifacts
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
+from gage_eval.evaluation.support_artifacts import resolve_support_field
 from gage_eval.agent_eval_kits.appworld.units import (
     build_appworld_instruction,
     build_appworld_messages,
     build_appworld_tools,
+    fetch_mcp_tool_schemas,
 )
 
 
@@ -43,7 +45,38 @@ def _inject_prompt_context(*, session, sample, payload):
 
 
 def _inject_tool_schemas(*, session, sample, payload):
-    return build_appworld_tools(sample)
+    import traceback
+    mcp_endpoint = session.prompt_context.get("mcp_endpoint")
+    if not mcp_endpoint:
+        return build_appworld_tools(sample)
+    mcp_client_id = resolve_support_field(sample, "mcp_client_id")
+    allowed_apps = list(session.prompt_context.get("allowed_apps") or [])
+    try:
+        schemas = fetch_mcp_tool_schemas(
+            mcp_endpoint,
+            mcp_client_id,
+            allowed_apps=allowed_apps or None,
+        )
+        import pathlib, datetime
+        pathlib.Path("/tmp/gage_inject_tool_schemas_ok.txt").write_text(
+            f"{datetime.datetime.now(datetime.timezone.utc).isoformat()}\n"
+            f"mcp_endpoint={mcp_endpoint!r}\n"
+            f"mcp_client_id={mcp_client_id!r}\n"
+            f"schemas_count={len(schemas)}\n"
+            f"first_tool={schemas[0].get('function', {}).get('name') if schemas else 'NONE'}\n"
+        )
+        return schemas
+    except Exception:
+        import pathlib, datetime
+        log_path = pathlib.Path("/tmp/gage_inject_tool_schemas_error.txt")
+        log_path.write_text(
+            f"{datetime.datetime.now(datetime.timezone.utc).isoformat()}\n"
+            f"mcp_endpoint={mcp_endpoint!r}\n"
+            f"mcp_client_id={mcp_client_id!r}\n"
+            f"allowed_apps={allowed_apps!r}\n"
+            f"{traceback.format_exc()}"
+        )
+        return build_appworld_tools(sample)
 
 
 def _finalize_loop_result(*, runtime_entry, session, sample, scheduler_output, sandbox_provider=None):

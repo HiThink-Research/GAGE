@@ -32,7 +32,7 @@ class CodexClient:
         *,
         service_url: str | None = None,
         auth_token: str | None = None,
-        default_timeout_sec: int = 1800,
+        default_timeout_sec: int = 300,
         session: requests.Session | None = None,
     ) -> None:
         """Initializes the HTTP-backed installed client.

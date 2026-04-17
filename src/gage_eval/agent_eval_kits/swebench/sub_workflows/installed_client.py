@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
 from gage_eval.agent_eval_kits.swebench.artifacts import persist_swebench_artifacts
-from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction
+from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction, build_swebench_tools
 
 
 def build_workflow_bundle() -> SchedulerWorkflowBundle:
@@ -31,6 +31,7 @@ def _prepare_inputs(*, session, sample, payload, sandbox_provider=None):
         "repo": session.runtime_context.get("repo"),
         "base_commit": session.runtime_context.get("base_commit"),
         "test_command": session.runtime_context.get("test_command"),
+        "tools_schema": build_swebench_tools(sample),
         "metadata": dict(sample.get("metadata") or {}),
     }
 
