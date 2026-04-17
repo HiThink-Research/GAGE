@@ -10,7 +10,7 @@ Usage:
 
 Defaults:
   --config     config/custom/appworld/appworld_official_jsonl.yaml
-  --output-dir ${GAGE_EVAL_SAVE_DIR:-/Users/shuo/code/GAGE/runs}
+  --output-dir ${GAGE_EVAL_SAVE_DIR:-${GAGE_RUNS_DIR:-${GAGE_WORKSPACE_ROOT}/runs}}
   --run-id     appworld_official_jsonl
 USAGE
 }

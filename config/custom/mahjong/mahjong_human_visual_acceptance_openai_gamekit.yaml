@@ -1,0 +1,79 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: mahjong_human_visual_acceptance_openai_gamekit
+  description: >
+    GameArena Mahjong real human-vs-LLM acceptance config for manual arena_visual
+    verification. This uses the RLCard-backed riichi_4p_real environment and a
+    dedicated visualizer port so live input, LLM opponents, and replay handoff
+    can be checked without reusing the default smoke session.
+
+datasets:
+  - dataset_id: mahjong_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_Mahjong_GameKit.jsonl
+      streaming: false
+
+backends:
+  - backend_id: openai_litellm_backend
+    type: litellm
+    config:
+      provider: openai
+      api_base: ${OPENAI_API_BASE:-https://api.openai.com/v1}
+      api_key: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      model: ${GAGE_GAME_ARENA_LLM_MODEL:-gpt-5.4}
+      streaming: false
+      timeout: 30
+      max_retries: 3
+      generation_parameters:
+        max_new_tokens: 96
+        temperature: 0.0
+        top_p: 1.0
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: mahjong_human_visual_acceptance_gamekit_arena
+
+role_adapters:
+  - adapter_id: mahjong_human_visual_acceptance_gamekit_arena
+    role_type: arena
+    params:
+      game_kit: mahjong
+      env: riichi_4p_real
+      runtime_overrides:
+        replay_live: true
+        chat_mode: all
+        chat_every_n: 1
+        illegal_policy:
+          retry: 0
+          on_fail: random
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE Mahjong Acceptance Table
+        launch_browser: true
+        mode: arena_visual
+        port: 5816
+        linger_after_finish_s: 15.0
+      players:
+        - seat: east
+          player_id: east
+          player_kind: human
+        - seat: south
+          player_id: south
+          player_kind: llm
+          backend_id: openai_litellm_backend
+        - seat: west
+          player_id: west
+          player_kind: llm
+          backend_id: openai_litellm_backend
+        - seat: north
+          player_id: north
+          player_kind: llm
+          backend_id: openai_litellm_backend

@@ -1,6 +1,6 @@
 # 标准化 Sample 设计与对齐说明
 
-[English](sample.md) | 中文
+中文 | [English](sample.md)
 
 本文用于对齐现有框架的样本结构与新标准化 Sample 设计，服务于数据接入、推理、裁判、统计与报告的统一。
 

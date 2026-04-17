@@ -15,3 +15,7 @@ class PlayerDriverLookupError(GameArenaError, KeyError):
 
 class PlayerExecutionUnavailableError(GameArenaError):
     """Raised when a bound player cannot execute in the current runtime."""
+
+
+class PlayerStopRequested(GameArenaError):
+    """Raised when a bound player is interrupted by a session stop request."""

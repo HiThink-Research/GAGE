@@ -60,7 +60,7 @@ def test_appworld_demo_with_streamable_http(
         / "config"
         / "custom"
         / "appworld"
-        / "appworld_agent_demo_runtime.yaml"
+        / "appworld_agent_demo.yaml"
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")

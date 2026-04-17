@@ -115,6 +115,7 @@ class SpaceInvadersEnvironment:
         illegal_policy: dict[str, str | int] | None,
         action_labels: Sequence[str] | None,
         player_specs: Sequence[object],
+        action_schema: dict[str, Any] | None = None,
         backend_mode: str = "auto",
         env_kwargs: dict[str, Any] | None = None,
         replay_output_dir: str | None = None,
@@ -140,6 +141,8 @@ class SpaceInvadersEnvironment:
             "replay_output_dir": replay_output_dir,
             "run_id": run_id,
             "sample_id": sample_id,
+            "action_schema": action_schema,
+            "auto_noop_player_ids": _resolve_auto_noop_player_ids(player_specs),
         }
         if resolved_backend_mode == "dummy":
             self._adapter = PettingZooAecArenaEnvironment(
@@ -158,18 +161,13 @@ class SpaceInvadersEnvironment:
                 env_kwargs=resolved_env_kwargs,
                 **adapter_kwargs,
             )
-        except Exception:
-            if resolved_backend_mode == "real":
-                raise
-            logger.warning(
-                "SpaceInvadersEnvironment falling back to stub backend for env_id={}",
+        except Exception as exc:
+            logger.error(
+                "SpaceInvadersEnvironment failed to load real backend for env_id={}: {}",
                 env_id,
+                exc,
             )
-            self._adapter = PettingZooAecArenaEnvironment(
-                env=_StubSpaceInvadersAecEnv(max_cycles=max_cycles),
-                env_id=env_id,
-                **adapter_kwargs,
-            )
+            raise
 
     @classmethod
     def from_runtime(cls, *, sample, resolved, resources, player_specs, invocation_context=None):
@@ -195,6 +193,11 @@ class SpaceInvadersEnvironment:
             include_raw_obs=bool(defaults.get("include_raw_obs", False)),
             illegal_policy=defaults.get("illegal_policy"),
             action_labels=action_labels,
+            action_schema=(
+                defaults.get("action_schema")
+                if isinstance(defaults.get("action_schema"), dict)
+                else None
+            ),
             player_specs=player_specs,
             backend_mode=str(defaults.get("backend_mode", "auto")),
             env_kwargs=defaults.get("env_kwargs"),
@@ -226,6 +229,22 @@ class SpaceInvadersEnvironment:
         closer = getattr(self._adapter, "close", None)
         if callable(closer):
             closer()
+
+
+def _resolve_auto_noop_player_ids(player_specs: Sequence[object]) -> tuple[str, ...]:
+    specs = tuple(player_specs or ())
+    has_human = any(
+        str(getattr(player, "player_kind", "") or "") == "human"
+        for player in specs
+    )
+    if not has_human:
+        return ()
+    return tuple(
+        str(getattr(player, "player_id"))
+        for player in specs
+        if str(getattr(player, "player_kind", "") or "") == "dummy"
+        and str(getattr(player, "player_id", "") or "").strip()
+    )
 
 
 def build_space_invaders_environment(

@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-DEFAULT_JUDGE_PROMPT = """Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
+DEFAULT_JUDGE_PROMPT = r"""Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
 
 [question]: {question}
 

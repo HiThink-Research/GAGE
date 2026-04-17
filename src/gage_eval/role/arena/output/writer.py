@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
+import json
 from types import MappingProxyType
 from typing import Any
 
 from gage_eval.role.arena.output.models import ArenaOutput
+from gage_eval.role.arena.types import GameResult
 
 
 def _freeze_value(value):
@@ -123,6 +125,9 @@ def _build_footer_contract(
             "termination_reason": "unknown",
         }
 
+    total_steps = _coerce_int(_read_value(result, "move_count"), len(arena_trace))
+    if arena_trace:
+        total_steps = max(total_steps, len(arena_trace))
     footer: dict[str, object] = {
         "winner_player_id": _coerce_optional_str(_read_value(result, "winner")),
         "termination_reason": str(
@@ -130,10 +135,7 @@ def _build_footer_contract(
             or _read_value(result, "result")
             or "unknown"
         ),
-        "total_steps": max(
-            0,
-            _coerce_int(_read_value(result, "move_count"), len(arena_trace)),
-        ),
+        "total_steps": max(0, total_steps),
     }
     ranks = _coerce_sequence_list(_read_value(result, "ranks"))
     if ranks is not None:
@@ -211,10 +213,141 @@ def _build_game_context_contract(session: Any) -> dict[str, object]:
     return payload
 
 
+def _attach_arena_trace_to_result(
+    result: Any,
+    arena_trace: Sequence[Mapping[str, object]],
+) -> Any:
+    if result is None or not arena_trace:
+        return result
+
+    frozen_trace = tuple(dict(entry) for entry in arena_trace)
+    if isinstance(result, GameResult):
+        if tuple(result.arena_trace) == frozen_trace:
+            return result
+        return replace(result, arena_trace=frozen_trace)
+
+    if isinstance(result, Mapping):
+        existing_trace = result.get("arena_trace")
+        if isinstance(existing_trace, Sequence) and not isinstance(existing_trace, (str, bytes)):
+            if list(existing_trace) == list(frozen_trace):
+                return result
+        enriched = dict(result)
+        enriched["arena_trace"] = list(frozen_trace)
+        return enriched
+
+    if is_dataclass(result) and hasattr(result, "arena_trace"):
+        existing_trace = getattr(result, "arena_trace", ())
+        if isinstance(existing_trace, Sequence) and not isinstance(existing_trace, (str, bytes)):
+            if list(existing_trace) == list(frozen_trace):
+                return result
+        try:
+            return replace(result, arena_trace=frozen_trace)
+        except TypeError:
+            return result
+
+    return result
+
+
+def _result_to_mapping(result: Any) -> dict[str, Any] | None:
+    if isinstance(result, Mapping):
+        return dict(result)
+    if is_dataclass(result):
+        return {
+            field.name: getattr(result, field.name)
+            for field in fields(result)
+        }
+    return None
+
+
+def _parse_sectioned_final_board(final_board: str) -> dict[str, Any] | None:
+    section_headers = {
+        "Public State:": "public_state",
+        "Private State:": "private_state",
+        "Chat Log:": "chat_log",
+        "UI_STATE_JSON:": "ui_state",
+    }
+    structured: dict[str, Any] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+
+    def _flush_current() -> None:
+        nonlocal current_key, current_lines
+        if current_key is None:
+            current_lines = []
+            return
+        raw_value = "\n".join(current_lines).strip()
+        if not raw_value:
+            current_key = None
+            current_lines = []
+            return
+        try:
+            structured[current_key] = json.loads(raw_value)
+        except json.JSONDecodeError:
+            structured[current_key] = raw_value
+        current_key = None
+        current_lines = []
+
+    for line in final_board.splitlines():
+        stripped = line.strip()
+        if stripped in section_headers:
+            _flush_current()
+            current_key = section_headers[stripped]
+            continue
+        if stripped.startswith("Legal Moves (preview):"):
+            _flush_current()
+            preview_text = stripped.split(":", 1)[1].strip()
+            structured["legal_moves_preview"] = (
+                []
+                if preview_text in {"", "none"}
+                else [item.strip() for item in preview_text.split(",") if item.strip()]
+            )
+            continue
+        if current_key is None:
+            continue
+        if not stripped and not current_lines:
+            continue
+        current_lines.append(line)
+
+    _flush_current()
+    return structured or None
+
+
+def _parse_structured_final_board(final_board: Any) -> Any:
+    if not isinstance(final_board, str):
+        return None
+    stripped = final_board.strip()
+    if not stripped:
+        return None
+    if stripped.startswith("{") or stripped.startswith("["):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+    return _parse_sectioned_final_board(stripped)
+
+
+def _enrich_result_for_output(
+    result: Any,
+    arena_trace: Sequence[Mapping[str, object]],
+) -> Any:
+    with_trace = _attach_arena_trace_to_result(result, arena_trace)
+    payload = _result_to_mapping(with_trace)
+    if payload is None:
+        return with_trace
+    structured_final_board = _parse_structured_final_board(payload.get("final_board"))
+    if structured_final_board is not None:
+        payload["final_board_structured"] = structured_final_board
+        return payload
+    return with_trace
+
+
 class ArenaOutputWriter:
     def finalize(self, session) -> ArenaOutput:
         frozen_sample = _freeze_value(session.sample)
-        result = session.ensure_result()
+        result = _enrich_result_for_output(
+            session.ensure_result(),
+            session.arena_trace,
+        )
         frozen_result = _freeze_value(result)
         frozen_trace = tuple(_freeze_value(entry) for entry in session.arena_trace)
         resource_artifacts = _freeze_value(_build_artifacts_contract(session, result))

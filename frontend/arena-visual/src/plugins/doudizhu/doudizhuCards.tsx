@@ -1,4 +1,20 @@
+import { memo, type MouseEventHandler } from "react";
+
+import { cx } from "../../lib/cx";
+
 const DOUDIZHU_ACTION_TOKEN_PATTERN = /[3456789TJQKA2BR]/g;
+
+const cardAssetModules = import.meta.glob("./assets/cards/*.{png,jpg,jpeg}", {
+  eager: true,
+  import: "default",
+}) as Record<string, string>;
+
+const cardAssets = Object.fromEntries(
+  Object.entries(cardAssetModules).map(([path, url]) => {
+    const fileName = path.split("/").pop() ?? path;
+    return [fileName.replace(/\.(png|jpg|jpeg)$/i, ""), url];
+  }),
+);
 
 function buildTokenCounts(tokens: string[]): Map<string, number> {
   const counts = new Map<string, number>();
@@ -51,22 +67,44 @@ export function resolveDoudizhuCardLabel(card: string): string {
   return card;
 }
 
-export function resolveDoudizhuCardToken(card: string): string | null {
+function normalizeSuitfulCard(card: string): string {
   const normalized = resolveDoudizhuCardLabel(card).trim();
+  if (normalized === "BlackJoker") {
+    return "BJ";
+  }
+  if (normalized === "RedJoker") {
+    return "RJ";
+  }
+  if (/^[SHDC](10|[3456789TJQKA2])$/i.test(normalized)) {
+    const suit = normalized.charAt(0).toUpperCase();
+    const rank = normalized.slice(1).toUpperCase();
+    return `${suit}${rank === "10" || rank === "T" ? "10" : rank}`;
+  }
+  if (/^(10|[3456789TJQKA2])[SHDC]$/i.test(normalized)) {
+    const suit = normalized.slice(-1).toUpperCase();
+    const rank = normalized.slice(0, -1).toUpperCase();
+    return `${suit}${rank === "10" || rank === "T" ? "10" : rank}`;
+  }
+  return normalized;
+}
+
+export function resolveDoudizhuCardToken(card: string): string | null {
+  const normalized = normalizeSuitfulCard(card);
   if (normalized === "10") {
     return "T";
   }
-  if (normalized === "BlackJoker") {
+  if (normalized === "BJ") {
     return "B";
   }
-  if (normalized === "RedJoker") {
+  if (normalized === "RJ") {
     return "R";
   }
   if (/^[3456789JQKA2]$/i.test(normalized)) {
     return normalized.toUpperCase();
   }
-  if (/^[SHDC][3456789TJQKA2]$/i.test(normalized)) {
-    return normalized.slice(-1).toUpperCase();
+  if (/^[SHDC](10|[3456789TJQKA2])$/i.test(normalized)) {
+    const rank = normalized.slice(1).toUpperCase();
+    return rank === "10" ? "T" : rank;
   }
   return null;
 }
@@ -141,25 +179,26 @@ export function resolveHintAction(actionTexts: string[], handCards: string[]): s
 }
 
 export function resolveDoudizhuRank(card: string): string {
-  const token = resolveDoudizhuCardToken(card);
-  if (token === "T") {
-    return "10";
-  }
-  if (token === "B") {
+  const normalized = normalizeSuitfulCard(card);
+  if (normalized === "BJ") {
     return "BJ";
   }
-  if (token === "R") {
+  if (normalized === "RJ") {
     return "RJ";
   }
-  return token ?? resolveDoudizhuCardLabel(card);
+  if (/^[SHDC](10|[3456789TJQKA2])$/i.test(normalized)) {
+    const rank = normalized.slice(1).toUpperCase();
+    return rank === "T" ? "10" : rank;
+  }
+  if (normalized === "10") {
+    return "10";
+  }
+  return normalized;
 }
 
 export function resolveDoudizhuSuit(card: string): string {
-  const normalized = resolveDoudizhuCardLabel(card);
-  if (normalized.length === 1 || isDoudizhuJoker(normalized)) {
-    return "";
-  }
-  if (normalized === "10") {
+  const normalized = normalizeSuitfulCard(card);
+  if (!/^[SHDC](10|[3456789TJQKA2])$/i.test(normalized)) {
     return "";
   }
   const suit = normalized.charAt(0).toUpperCase();
@@ -178,6 +217,31 @@ export function resolveDoudizhuSuit(card: string): string {
   return "";
 }
 
+function resolveDoudizhuCardAssetKey(card: string, faceDown: boolean): string | null {
+  if (faceDown) {
+    return "pokerback";
+  }
+  const normalized = normalizeSuitfulCard(card);
+  if (normalized === "BJ") {
+    return "Poker_Joker_B";
+  }
+  if (normalized === "RJ") {
+    return "Poker_Joker_R";
+  }
+  if (/^[SHDC](10|[3456789TJQKA2])$/i.test(normalized)) {
+    return `Poker_${normalized.charAt(0).toUpperCase()}${normalized.slice(1).toUpperCase()}`;
+  }
+  return null;
+}
+
+function resolveDoudizhuCardAsset(card: string, faceDown: boolean): string | null {
+  const assetKey = resolveDoudizhuCardAssetKey(card, faceDown);
+  if (!assetKey) {
+    return null;
+  }
+  return cardAssets[assetKey] ?? null;
+}
+
 interface DoudizhuCardVisualProps {
   card: string;
   faceDown?: boolean;
@@ -185,44 +249,51 @@ interface DoudizhuCardVisualProps {
   selected?: boolean;
   disabled?: boolean;
   ariaLabel?: string;
-  onClick?: () => void;
+  cardIndex?: number;
+  onClick?: MouseEventHandler<HTMLButtonElement>;
 }
 
-export function DoudizhuCardVisual({
+export const DoudizhuCardVisual = memo(function DoudizhuCardVisual({
   card,
   faceDown = false,
   compact = false,
   selected = false,
   disabled = false,
   ariaLabel,
+  cardIndex,
   onClick,
 }: DoudizhuCardVisualProps) {
-  if (faceDown) {
-    return (
-      <div
-        className={`doudizhu-card doudizhu-card--back ${compact ? "is-compact" : ""}`}
-        aria-hidden="true"
-      />
-    );
-  }
-
   const label = resolveDoudizhuCardLabel(card);
-  const className = [
+  const assetSrc = resolveDoudizhuCardAsset(card, faceDown);
+  const className = cx(
     "doudizhu-card",
-    compact ? "is-compact" : "",
-    isDoudizhuJoker(card) ? "doudizhu-card--joker" : "",
+    compact && "is-compact",
+    faceDown && "doudizhu-card--back",
+    isDoudizhuJoker(card) && "doudizhu-card--joker",
     isDoudizhuRed(card) ? "doudizhu-card--red" : "doudizhu-card--black",
-    onClick ? "is-interactive" : "",
-    selected ? "is-selected" : "",
-  ]
-    .filter((value) => value !== "")
-    .join(" ");
-  const content = (
+    onClick && "is-interactive",
+    selected && "is-selected",
+  );
+  const content = assetSrc ? (
+    <>
+      <img className="doudizhu-card__image" src={assetSrc} alt="" aria-hidden="true" />
+      {!faceDown ? (
+        <span className="doudizhu-card__sr-label">
+          {resolveDoudizhuRank(card)}
+          {resolveDoudizhuSuit(card)}
+        </span>
+      ) : null}
+    </>
+  ) : (
     <>
       <span className="doudizhu-card__rank">{resolveDoudizhuRank(card)}</span>
-      <span className="doudizhu-card__suit">{resolveDoudizhuSuit(card) || "•"}</span>
+      <span className="doudizhu-card__suit">{resolveDoudizhuSuit(card)}</span>
     </>
   );
+
+  if (faceDown) {
+    return <div className={className} aria-hidden="true">{content}</div>;
+  }
 
   if (onClick) {
     return (
@@ -232,6 +303,7 @@ export function DoudizhuCardVisual({
         aria-label={ariaLabel ?? `Select card ${label}`}
         aria-pressed={selected}
         disabled={disabled}
+        data-card-index={cardIndex}
         onClick={onClick}
       >
         {content}
@@ -244,4 +316,4 @@ export function DoudizhuCardVisual({
       {content}
     </div>
   );
-}
+});

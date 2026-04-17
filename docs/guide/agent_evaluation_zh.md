@@ -11,10 +11,9 @@ gage-eval 当前支持 AppWorld、SWE-bench Pro、Tau2 与 TerminalBench 四类 
 ## 0. 文档导航
 
 - 项目首页（中文）：[`README_zh.md`](../../README_zh.md)
-- Phase 1 八条 Workflow 运行与扩展指南：[`phase1_8workflow_run_and_extension_guide_zh.md`](phase1_8workflow_run_and_extension_guide_zh.md)
-- Installed-Client Service Contract：[`docs/installed_client_service_contract.md`](../installed_client_service_contract.md)
-- AppWorld 配置：[`config/custom/appworld/`](../../config/custom/appworld/)
-- SWE-bench 配置：[`config/custom/swebench/`](../../config/custom/swebench/)
+- Sample 契约：[`sample_zh.md`](sample_zh.md)
+- AppWorld 配置：[`config/custom/appworld/appworld_official_jsonl.yaml`](../../config/custom/appworld/appworld_official_jsonl.yaml)
+- SWE-bench 配置：[`config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro/swebench_pro_smoke_agent.yaml)
 - Tau2 配置目录：[`config/custom/tau2/`](../../config/custom/tau2/)
 - TerminalBench 配置：[`config/custom/terminal_bench/`](../../config/custom/terminal_bench/)
 
@@ -286,12 +285,12 @@ bash docker/appworld/export_datasets.sh \
 ### 5.3 运行评测（framework_loop）
 
 ```bash
-cd /path/to/GAGE
-.venv/bin/python run.py \
-  --config config/custom/appworld/appworld_official_jsonl_runtime.yaml \
-  --run-id appworld_framework_$(date +%H%M%S) \
-  --output-dir runs \
-  --max-samples 1
+cd gage-eval-main
+export OPENAI_API_KEY=your_key
+python run.py \
+  --config config/custom/appworld/appworld_official_jsonl.yaml \
+  --run-id appworld_official_jsonl_run_$(date +%H%M%S) \
+  --output-dir runs/appworld_official_jsonl
 ```
 
 ### 5.4 运行评测（installed_client）
@@ -299,12 +298,12 @@ cd /path/to/GAGE
 确认本地 Codex proxy 已启动后：
 
 ```bash
-cd /path/to/GAGE
-.venv/bin/python run.py \
-  --config config/custom/appworld/appworld_official_jsonl_runtime_installed_client.yaml \
-  --run-id appworld_installed_$(date +%H%M%S) \
-  --output-dir runs \
-  --max-samples 1
+cd gage-eval-main
+export OPENAI_API_KEY=your_key
+python run.py \
+  --config config/custom/swebench_pro/swebench_pro_smoke_agent.yaml \
+  --run-id swebench_pro_smoke_run_$(date +%H%M%S) \
+  --output-dir runs/swebench_pro_smoke
 ```
 
 ### 5.5 指标与产物

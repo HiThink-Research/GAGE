@@ -281,48 +281,6 @@ GOMOKU_BOARD_CSS = """
     box-sizing: border-box;
 }
 
-/* Move Input */
-#gomoku-move-row {
-  width: 100%;
-  gap: 12px;
-  align-items: center;
-}
-#gomoku-move-input {
-  flex: 1 1 auto;
-}
-#gomoku-move-input textarea,
-#gomoku-move-input input {
-  min-height: 42px;
-  font-size: 14px;
-}
-#gomoku-move-submit {
-  flex: 0 0 auto;
-}
-#gomoku-move-submit button {
-  min-height: 42px;
-  min-width: 120px;
-  font-weight: 600;
-}
-
-/* Finish Button */
-#gomoku-finish-button {
-  background: #555;
-  color: white !important;
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-  margin-top: 10px;
-  width: 100%;
-}
-.finish-pulse {
-  animation: finish-pulse 2s infinite;
-  background-color: #d32f2f !important;
-}
-@keyframes finish-pulse {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(229, 57, 53, 0.7); }
-  70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(229, 57, 53, 0); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(229, 57, 53, 0); }
-}
-
 /* Thinking State Animation */
 @keyframes thinking-pulse-black {
   0% { box-shadow: 0 2px 8px rgba(0,0,0,0.02); border-color: #000; }
@@ -456,11 +414,9 @@ class GomokuBoardRenderer:
         
         return GOMOKU_BOARD_CSS + """
 /* === Global Fixes === */
-/* Hide Gradio error overlays/toasts */
 .toast-wrap,
 .toast,
 .toast-container,
-.gradio-error,
 .error,
 .error-message,
 .error-box,
@@ -470,8 +426,6 @@ class GomokuBoardRenderer:
 [role="alert"],
 [aria-live="assertive"],
 [aria-live="polite"] { display: none !important; }
-/* Prevent layout jitter */
-.gradio-container { overflow-y: scroll !important; }
 
 /* === Layout Containers === */
 #gomoku-layout {
@@ -735,52 +689,7 @@ class GomokuBoardRenderer:
   font-size: 12px; font-weight: 600;
 }
 
-/* === Hidden Controls === */
-#gomoku-move-submit {
-  flex: 0 0 auto;
-  opacity: 0;
-  width: 0;
-  height: 0;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-}
-#gomoku-move-submit button {
-  width: 0;
-  height: 0;
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-}
-#gomoku-finish-button {
-  width: 100%; margin-top: 12px;
-}
-#gomoku-refresh-button {
-  display: none !important;
-}
 """
-
-    def build_interaction_js(
-        self,
-        *,
-        board_container_id: str,
-        move_input_id: str,
-        submit_button_id: str,
-        enable_click: bool,
-        refresh_button_id: str,
-        refresh_interval_ms: int,
-    ) -> str:
-        """Return JS for click-to-move interactions."""
-
-        return build_board_interaction_js(
-            board_container_id,
-            move_input_id,
-            submit_button_id,
-            enable_click=enable_click,
-            refresh_button_id=refresh_button_id,
-            refresh_interval_ms=refresh_interval_ms,
-        )
 
     def render_html(self, *, interactive: bool) -> str:
         """Render the current grid into styled HTML markup."""

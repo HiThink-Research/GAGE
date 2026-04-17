@@ -41,7 +41,13 @@ logger = logging.getLogger(__name__)
 )
 class HuggingFaceDatasetLoader(DatasetLoader):
     def load(self, hub_handle: Optional[DatasetHubHandle], *, trace=None) -> DataSource:
-        return load_hf_hub_dataset(self.spec, hub_handle, trace=trace)
+        return load_hf_hub_dataset(
+            self.spec,
+            hub_handle,
+            trace=trace,
+            registry_lookup=self.registry_lookup,
+            allow_lazy_import=self.allow_asset_lazy_import,
+        )
 
 
 registry.register(
@@ -63,7 +69,14 @@ registry.register(
 )
 
 
-def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle] = None, *, trace=None) -> DataSource:
+def load_hf_hub_dataset(
+    spec: DatasetSpec,
+    hub_handle: Optional[DatasetHubHandle] = None,
+    *,
+    trace=None,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
+) -> DataSource:
     """Download/cache a remote dataset and expose it as a DataSource."""
 
     try:
@@ -137,6 +150,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             records,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -146,6 +161,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             records,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -179,6 +196,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             dataset,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -189,6 +208,8 @@ def load_hf_hub_dataset(spec: DatasetSpec, hub_handle: Optional[DatasetHubHandle
             dataset,
             spec,
             data_path=hub_id,
+            registry_lookup=registry_lookup,
+            allow_lazy_import=allow_lazy_import,
             doc_to_text=doc_to_text,
             doc_to_visual=doc_to_visual,
             doc_to_audio=doc_to_audio,
@@ -407,7 +428,7 @@ def _load_local_dataset(
 
         builder, data_files = _discover_local_data_files(resolved, builder_name=builder_name)
         if builder and data_files:
-            data_files_arg = _build_local_data_files_arg(data_files, split=split)
+            data_files_arg: Any = data_files[0] if len(data_files) == 1 else data_files
             return _load_dataset_with_optional_trust_remote(
                 datasets_module=datasets_module,
                 path=builder,
@@ -539,13 +560,20 @@ def _maybe_apply_bundle(
     spec: DatasetSpec,
     *,
     data_path: str,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
     doc_to_text=None,
     doc_to_visual=None,
     doc_to_audio=None,
     trace=None,
     observability_config=None,
 ):
-    ctx = build_bundle_context(spec, data_path=data_path)
+    ctx = build_bundle_context(
+        spec,
+        data_path=data_path,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if not ctx:
         return dataset
     config = observability_config or get_observability_config()
@@ -571,13 +599,20 @@ def _maybe_apply_preprocess(
     spec: DatasetSpec,
     *,
     data_path: str,
+    registry_lookup=None,
+    allow_lazy_import: bool = True,
     doc_to_text=None,
     doc_to_visual=None,
     doc_to_audio=None,
     trace=None,
     observability_config=None,
 ):
-    ctx = build_preprocess_context(spec, data_path=data_path)
+    ctx = build_preprocess_context(
+        spec,
+        data_path=data_path,
+        registry_lookup=registry_lookup,
+        allow_lazy_import=allow_lazy_import,
+    )
     if not ctx:
         return dataset
     config = observability_config or get_observability_config()

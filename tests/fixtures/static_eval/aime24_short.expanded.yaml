@@ -1,0 +1,53 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+metadata:
+  name: aime24
+datasets:
+- dataset_id: aime24_ds
+  params:
+    preprocess: aime2024_preprocessor
+    preprocess_kwargs: {}
+  hub: huggingface
+  loader: hf_hub
+  hub_params:
+    hub_id: Maxwell-Jia/AIME_2024
+    split: train
+backends:
+- backend_id: openai
+  type: litellm
+  config:
+    provider: openai
+    model: gpt-4.1
+    api_base: https://api.openai.com/v1
+    max_retries: 6
+    streaming: false
+metrics:
+- aime2024_accuracy
+role_adapters:
+- adapter_id: dut_openai
+  role_type: dut_model
+  backend_id: openai
+  capabilities:
+  - chat_completion
+custom:
+  steps:
+  - step: inference
+  - step: auto_eval
+tasks:
+- max_samples: 30
+  task_id: aime24
+  dataset_id: aime24_ds
+  steps:
+  - step: inference
+    adapter_id: dut_openai
+  - step: auto_eval
+  reporting:
+    sinks:
+    - type: console
+    - type: file
+models: []
+agent_backends: []
+sandbox_profiles: []
+mcp_clients: []
+prompts: []
+summary_generators: []

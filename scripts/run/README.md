@@ -1,35 +1,71 @@
 # Run Entrypoints
 
-`scripts/run/` 是运行相关的 canonical 入口目录。
+`scripts/run/` contains the canonical local launchers for GAGE. The wrappers under
+`scripts/oneclick/` still exist for compatibility, but new docs and commands should
+link here.
 
-## 目录
-- `appworld/`：AppWorld 评测和连通性验证。
-- `backends/`：后端 demo、provider matrix 和模板。
-- `arenas/`：VizDoom、PettingZoo、Retro Mario、Mahjong、斗地主等游戏入口。
-- `common/`：共享 env/python/port/browser helper。
+## Layout
 
-## 快速使用
-- 准备环境：`bash scripts/run/prepare_env.sh`
-- dummy echo 冒烟：`bash scripts/run/backends/demos/run_demo_echo.sh`
-- multi-provider demo：`HF_PROVIDER=together HF_MODEL_NAME=Qwen/Qwen2.5-7B-Instruct HF_API_TOKEN=xxx bash scripts/run/backends/demos/run_multi_provider_http_demo.sh`
-- Kimi demo：`OPENAI_API_KEY=xxx bash scripts/run/backends/demos/run_kimi_demo.sh`
-- VizDoom：`bash scripts/run/arenas/vizdoom/run.sh --mode human-vs-llm`
-- PettingZoo：`bash scripts/run/arenas/pettingzoo/run.sh --game boxing --mode dummy`
-- Retro Mario：`bash scripts/run/arenas/retro_mario/run.sh --mode human_ws`
-- Mahjong：`bash scripts/run/arenas/mahjong/run.sh --mode human-vs-ai`
-- 斗地主：`bash scripts/run/arenas/doudizhu/run.sh --mode showdown`
+- `appworld/`: AppWorld evaluation and connectivity checks.
+- `backends/`: provider demos, backend smoke tests, and local templates.
+- `arenas/`: Game Arena launchers for PettingZoo, Retro Mario, ViZDoom, Doudizhu, Mahjong, and Arena Visual artifact helpers.
+- `common/`: shared shell helpers for workspace detection, Python detection, and run directories.
 
-## 本地状态
-- 本地环境变量文件默认读取 `/Users/shuo/code/GAGE/env/scripts/run.env`，其次回退 `/Users/shuo/code/GAGE/env/localenv`。
-- 运行产物默认写到 `/Users/shuo/code/GAGE/runs/`。
-- 自动渲染的临时配置默认写到 `/Users/shuo/code/GAGE/env/scripts/generated/`。
-- 这些文件都不放进 `repo/`。
+## Workspace Defaults
 
-## 常用环境变量
-- `VENV_PATH`：覆盖默认虚拟环境。
-- `OUTPUT_DIR` / `RUNS_DIR`：覆盖运行结果目录。
-- `HF_API_TOKEN` / `HUGGINGFACEHUB_API_TOKEN`：HF provider 与 endpoint 使用。
-- `OPENAI_API_KEY` / `MOONSHOT_API_KEY` / `KIMI_API_KEY` / `LITELLM_API_KEY`：LLM 后端使用。
-- `MAX_SAMPLES` / `CONCURRENCY`：低成本冒烟时常用。
+The shared helper `scripts/run/common/env.sh` resolves local paths in this order:
 
-运行结果通常包含 `summary.json`、`events.jsonl`、`samples/*.json` 或 `samples/*.jsonl`。
+- `GAGE_WORKSPACE_ROOT`: explicit workspace root override.
+- Parent workspace containing `env/.venv`, `env/scripts/run.env`, or `env/localenv`.
+- The repository root as the final fallback.
+
+Runtime outputs are not written back to the repo by default:
+
+- `GAGE_RUNS_DIR`: overrides the run artifact directory.
+- `gage_default_runs_dir`: defaults to `${GAGE_WORKSPACE_ROOT}/runs`.
+- `GAGE_SCRIPT_STATE_DIR`: overrides generated helper state; defaults to `${GAGE_WORKSPACE_ROOT}/env/scripts/generated`.
+- `PYTHON_BIN`: overrides the Python interpreter used by launchers.
+- `VENV_PATH`, `VIRTUAL_ENV`, or `CONDA_PREFIX`: used by `gage_default_python` before falling back to `python` or `python3`.
+
+For the local conda setup used by the Game Arena smoke tests:
+
+```bash
+${HOME}/miniconda3/bin/conda run -n gage-eval python -V
+PYTHON_BIN=${HOME}/miniconda3/envs/gage-eval/bin/python \
+  bash scripts/run/arenas/pettingzoo/run.sh --mode llm_visual --max-samples 1
+```
+
+## Game Arena Launchers
+
+The current Game Arena launchers map CLI modes to `GameKit + arena_visual` YAML files.
+
+| Game | Command | Current modes |
+| --- | --- | --- |
+| PettingZoo Space Invaders | `bash scripts/run/arenas/pettingzoo/run.sh --mode llm_visual_openai` | `dummy`, `dummy_visual`, `binary_stream`, `low_latency`, `llm_headless`, `llm_visual`, `llm_headless_openai`, `llm_visual_openai`, `human_visual`, `double_llm_visual`, `double_llm_visual_openai`, `double_llm_low_latency`, `double_llm_low_latency_openai` |
+| Retro Mario | `bash scripts/run/arenas/retro_mario/run.sh --mode llm_visual_openai` | `dummy`, `llm_headless`, `llm_visual`, `llm_headless_openai`, `llm_visual_openai`, `human_visual` |
+| ViZDoom | `bash scripts/run/arenas/vizdoom/run.sh --mode llm_visual_openai` | `dummy`, `llm_headless`, `llm_visual`, `llm_headless_openai`, `llm_visual_openai`, `human_visual` |
+| Mahjong | `bash scripts/run/arenas/mahjong/run.sh --mode llm_visual_openai` | `dummy`, `dummy_visual`, `llm_headless`, `llm_visual`, `llm_headless_openai`, `llm_visual_openai`, `human_visual`, `human_visual_openai`, `human_acceptance`, `human_acceptance_openai` |
+| Doudizhu | `bash scripts/run/arenas/doudizhu/run.sh --mode llm_visual_openai` | `dummy`, `dummy_visual`, `llm_headless`, `llm_visual`, `llm_headless_openai`, `llm_visual_openai`, `human_visual`, `human_visual_openai`, `human_acceptance`, `human_acceptance_openai` |
+| Arena Visual artifacts | `bash scripts/run/arenas/replay/run_and_open.sh --run-id <run_id>` | Opens the current Arena Visual session artifact for a completed visual run. |
+
+Examples:
+
+```bash
+OPENAI_API_KEY='<your-token-here>' bash scripts/run/arenas/doudizhu/run.sh --mode llm_visual_openai --max-samples 1
+OPENAI_API_KEY='<your-token-here>' bash scripts/run/arenas/mahjong/run.sh --mode human_visual_openai
+bash scripts/run/arenas/vizdoom/run.sh --mode human_visual
+OPENAI_API_KEY='<your-token-here>' bash scripts/run/arenas/retro_mario/run.sh --mode llm_visual_openai --max-samples 1
+```
+
+## Other Common Commands
+
+```bash
+bash scripts/run/prepare_env.sh
+bash scripts/run/backends/demos/run_demo_echo.sh
+HF_PROVIDER=together HF_MODEL_NAME=Qwen/Qwen2.5-7B-Instruct HF_API_TOKEN='<your-token-here>' \
+  bash scripts/run/backends/demos/run_multi_provider_http_demo.sh
+OPENAI_API_KEY='<your-token-here>' bash scripts/run/backends/demos/run_kimi_demo.sh
+```
+
+Run results usually contain `summary.json`, `events.jsonl`, `samples/*.json`, or
+`samples/*.jsonl` under `${GAGE_RUNS_DIR:-${GAGE_WORKSPACE_ROOT}/runs}/<run_id>/`.

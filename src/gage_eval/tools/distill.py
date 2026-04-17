@@ -16,6 +16,7 @@ from typing import Mapping, Sequence
 
 import yaml
 
+from gage_eval.config.loader import RunConfigCompiler, load_pipeline_config_payload
 from gage_eval.config.schema import SchemaValidationError, normalize_pipeline_payload
 
 
@@ -32,18 +33,13 @@ class DistillTaskAnalysis:
     is_monolithic: bool
 
 
-def load_pipeline_payload(path: Path) -> dict:
-    """Load a YAML config into a dictionary.
+def load_pipeline_payload(path: Path, *, run_config_compiler: RunConfigCompiler | None = None) -> dict:
+    """Load and materialize a PipelineConfig payload for distillation."""
 
-    This helper keeps the loader trivial; schema validation is deferred to
-    :func:`analyze_tasks_for_distill`.
-    """
-
-    with path.expanduser().open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise DistillError(f"Config '{path}' must be a mapping at the top level")
-    return data
+    try:
+        return load_pipeline_config_payload(path, run_config_compiler=run_config_compiler)
+    except Exception as exc:
+        raise DistillError(str(exc)) from exc
 
 
 def analyze_tasks_for_distill(payload: dict, *, force_merge: bool = False) -> DistillTaskAnalysis:

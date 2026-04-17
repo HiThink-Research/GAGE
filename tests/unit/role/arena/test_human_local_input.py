@@ -16,6 +16,27 @@ from gage_eval.role.arena.player_drivers.human_local_input import LocalHumanInpu
 from gage_eval.role.arena.types import ArenaObservation
 
 
+def build_scheduler_owned_queued_command_player(*, action_queue: Queue[str]):
+    return LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "queued_command",
+                "tick_interval_ms": 50,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+            },
+        )
+    )
+
+
 def test_local_human_input_driver_preserves_structured_raw_payload_and_metadata() -> None:
     action_queue: Queue[str] = Queue()
     action_queue.put(
@@ -63,6 +84,49 @@ def test_local_human_input_driver_preserves_structured_raw_payload_and_metadata(
         "hold_ticks": 6,
         "source": "arena_visual",
     }
+
+
+def test_local_human_input_driver_uses_observation_hold_ticks_default_when_payload_omits_it() -> None:
+    action_queue: Queue[str] = Queue()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="right",
+                player_id="player_0",
+                sample_id="retro-smoke",
+            )
+        )
+    )
+    driver = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    )
+    player = driver.bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={"action_queue": action_queue},
+        )
+    )
+
+    action = player.next_action(
+        ArenaObservation(
+            board_text="retro frame",
+            legal_moves=("noop", "right"),
+            active_player="player_0",
+            metadata={
+                "action_schema_config": {
+                    "hold_ticks_min": 1,
+                    "hold_ticks_max": 30,
+                    "hold_ticks_default": 10,
+                }
+            },
+        )
+    )
+
+    assert action.metadata["hold_ticks"] == 10
 
 
 def test_local_human_input_driver_reuses_last_stateful_action_until_changed() -> None:
@@ -182,7 +246,7 @@ def test_local_human_input_driver_continuous_state_mode_does_not_sleep_between_t
     assert current_time["value"] == pytest.approx(100.005, abs=1e-9)
 
 
-def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_immediately() -> None:
+def test_local_human_input_driver_scheduler_owned_realtime_consumes_latest_state_once() -> None:
     action_queue = LatestActionMailbox()
     action_queue.put(
         dump_action_payload(
@@ -218,11 +282,168 @@ def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_
         active_player="player_0",
     )
 
-    first_action = player.next_action(observation)
-    second_action = player.next_action(observation)
+    first_action = player.poll_scheduler_owned_action(observation)
+    second_action = player.poll_scheduler_owned_action(observation)
 
+    assert first_action is not None
     assert first_action.move == "right"
-    assert second_action.move == "right"
+    assert second_action is None
+
+
+def test_local_human_input_driver_scheduler_owned_realtime_replays_held_state_until_release() -> None:
+    action_queue = LatestActionMailbox()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="right",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 1, "realtime_input": True},
+            )
+        )
+    )
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "continuous_state",
+                "tick_interval_ms": 16,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+                "command_stale_after_ms": 200,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="retro frame",
+        legal_moves=("noop", "right", "right_jump"),
+        active_player="player_0",
+    )
+
+    first_batch = player.drain_scheduler_owned_actions(observation, max_items=1)
+    replay_batch = player.drain_scheduler_owned_actions(observation, max_items=1)
+
+    assert [action.move for action in first_batch] == ["right"]
+    assert [action.move for action in replay_batch] == ["right"]
+
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="noop",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 2, "realtime_input": True},
+            )
+        )
+    )
+
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+
+
+def test_local_human_input_driver_scheduler_owned_realtime_expires_held_state_after_stale_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    action_queue = LatestActionMailbox()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="right",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 1, "realtime_input": True},
+            )
+        )
+    )
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "continuous_state",
+                "tick_interval_ms": 16,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+                "command_stale_after_ms": 200,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="retro frame",
+        legal_moves=("noop", "right", "right_jump"),
+        active_player="player_0",
+    )
+    current_time = {"value": 100.0}
+    monkeypatch.setattr(
+        human_local_input_module.time,
+        "monotonic",
+        lambda: current_time["value"],
+    )
+
+    assert [action.move for action in player.drain_scheduler_owned_actions(observation, max_items=1)] == [
+        "right"
+    ]
+    current_time["value"] = 100.150
+    assert [action.move for action in player.drain_scheduler_owned_actions(observation, max_items=1)] == [
+        "right"
+    ]
+
+    current_time["value"] = 100.201
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
+
+
+def test_local_human_input_driver_scheduler_owned_realtime_ignores_realtime_noop_state() -> None:
+    action_queue = LatestActionMailbox()
+    action_queue.put(
+        dump_action_payload(
+            build_action_payload(
+                action="noop",
+                player_id="player_0",
+                sample_id="retro-smoke",
+                metadata={"input_seq": 1, "realtime_input": True},
+            )
+        )
+    )
+    player = LocalHumanInputDriver(
+        driver_id="player_driver/human_local_input",
+        family="human",
+    ).bind(
+        PlayerBindingSpec(
+            seat="player_0",
+            player_id="player_0",
+            player_kind="human",
+            driver_id="player_driver/human_local_input",
+            driver_params={
+                "action_queue": action_queue,
+                "input_semantics": "continuous_state",
+                "tick_interval_ms": 16,
+                "timeout_fallback_move": "noop",
+                "scheduler_owned_realtime": True,
+            },
+        )
+    )
+    observation = ArenaObservation(
+        board_text="retro frame",
+        legal_moves=("noop", "right", "right_jump"),
+        active_player="player_0",
+    )
+
+    assert player.poll_scheduler_owned_action(observation) is None
+    assert player.drain_scheduler_owned_actions(observation, max_items=1) == []
 
     action_queue.put(
         dump_action_payload(
@@ -238,6 +459,50 @@ def test_local_human_input_driver_scheduler_owned_realtime_returns_latest_state_
     third_action = player.next_action(observation)
 
     assert third_action.move == "noop"
+
+
+def test_local_human_input_driver_scheduler_owned_queued_command_returns_no_action_for_empty_queue() -> None:
+    action_queue: Queue[str] = Queue()
+    player = build_scheduler_owned_queued_command_player(action_queue=action_queue)
+    observation = ArenaObservation(
+        board_text="realtime frame",
+        legal_moves=("noop", "issue_command"),
+        active_player="player_0",
+    )
+
+    assert player.poll_scheduler_owned_action(observation) is None
+
+
+def test_local_human_input_driver_scheduler_owned_queued_command_drains_fifo_commands() -> None:
+    action_queue: Queue[str] = Queue()
+    action_queue.put(
+        dump_action_payload(build_action_payload(action="bridge_input", player_id="player_0"))
+    )
+    action_queue.put(
+        dump_action_payload(build_action_payload(action="issue_command", player_id="player_0"))
+    )
+
+    player = build_scheduler_owned_queued_command_player(action_queue=action_queue)
+    observation = ArenaObservation(
+        board_text="frame",
+        legal_moves=("bridge_input", "issue_command"),
+        active_player="player_0",
+    )
+
+    drained = player.drain_scheduler_owned_actions(observation=observation, max_items=4)
+
+    assert [action.move for action in drained] == ["bridge_input", "issue_command"]
+
+
+def test_local_human_input_driver_scheduler_owned_queued_command_returns_empty_list_when_queue_is_empty() -> None:
+    player = build_scheduler_owned_queued_command_player(action_queue=Queue())
+    observation = ArenaObservation(
+        board_text="frame",
+        legal_moves=("bridge_input",),
+        active_player="player_0",
+    )
+
+    assert player.drain_scheduler_owned_actions(observation=observation, max_items=4) == []
 
 
 def test_local_human_input_driver_continuous_state_async_waits_for_scheduler_deadline(
@@ -387,8 +652,8 @@ def test_local_human_input_driver_discrete_mode_supports_async_timeout_fallback(
         )
     )
     observation = ArenaObservation(
-        board_text="openra frame",
-        legal_moves=("noop", "bridge_input"),
+        board_text="realtime frame",
+        legal_moves=("noop", "issue_command"),
         active_player="player_0",
     )
 
@@ -405,9 +670,9 @@ def test_local_human_input_driver_discrete_mode_supports_async_timeout_fallback(
     action_queue.put(
         dump_action_payload(
             build_action_payload(
-                action="bridge_input",
+                action="issue_command",
                 player_id="player_0",
-                sample_id="openra-smoke",
+                sample_id="realtime-smoke",
             )
         )
     )
@@ -419,7 +684,7 @@ def test_local_human_input_driver_discrete_mode_supports_async_timeout_fallback(
 
     assert player.has_action() is True
     action = player.pop_action()
-    assert action.move == "bridge_input"
+    assert action.move == "issue_command"
 
     assert player.start_thinking(observation, deadline_ms=50) is True
     assert player.has_action() is False

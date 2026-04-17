@@ -204,8 +204,9 @@ def test_task_orchestrator_persists_inference_only_samples(tmp_path: Path) -> No
     summary = json.loads((cache.run_dir / "summary.json").read_text(encoding="utf-8"))
 
     assert samples_jsonl.exists()
-    records = list(cache.iter_samples())
-    assert len(records) == 4
+    lines = [line for line in samples_jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 4
+    records = [json.loads(line) for line in lines]
     answers = {record["sample"]["id"]: record["model_output"]["answer"] for record in records}
     assert answers["s0"] == "echo-s0"
     assert answers["s1"] == "echo-s1"

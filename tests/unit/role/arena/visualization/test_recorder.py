@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import gage_eval.role.arena.visualization.recorder as recorder_module
 from gage_eval.role.arena.types import GameResult
 from gage_eval.role.arena.visualization.contracts import ControlCommand
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
@@ -69,6 +70,7 @@ def test_visual_session_recorder_persists_timeline_manifest_snapshot_and_markers
             replay_path=str(replay_path),
         ),
     )
+    recorder.update_runtime_metrics(tick_overshoot_ms=1.25, artifact_queue_depth=0)
 
     assert recorder.build_visual_session().lifecycle == "live_ended"
 
@@ -87,6 +89,8 @@ def test_visual_session_recorder_persists_timeline_manifest_snapshot_and_markers
     assert manifest["visualSession"]["gameId"] == "gomoku"
     assert manifest["visualSession"]["scheduling"]["family"] == "turn"
     assert manifest["visualSession"]["timeline"]["eventCount"] == 6
+    assert manifest["visualSession"]["runtimeMetrics"]["tick_overshoot_ms"] == 1.25
+    assert manifest["visualSession"]["summary"]["realtimeMetrics"]["tick_overshoot_ms"] == 1.25
 
     timeline_lines = artifacts.timeline_path.read_text(encoding="utf-8").splitlines()
     assert [json.loads(line)["type"] for line in timeline_lines] == [
@@ -143,6 +147,7 @@ def test_visual_session_recorder_can_update_scheduling_state_without_timeline_ev
         accepts_human_intent=True,
         active_actor_id="player_0",
     )
+    revision_after_scheduling = recorder.current_live_revision()
     recorder.update_runtime_metrics(tick_overshoot_ms=3.5, artifact_queue_depth=0)
 
     session = recorder.build_visual_session()
@@ -151,6 +156,8 @@ def test_visual_session_recorder_can_update_scheduling_state_without_timeline_ev
     assert session.scheduling.phase == "waiting_for_intent"
     assert session.scheduling.accepts_human_intent is True
     assert session.summary["realtimeMetrics"]["tick_overshoot_ms"] == 3.5
+    assert session.runtime_metrics["tick_overshoot_ms"] == 3.5
+    assert recorder.current_live_revision() == revision_after_scheduling
     assert header["lifecycle"] == "initializing"
     assert header["tailSeq"] == 0
 
@@ -183,6 +190,25 @@ def test_visual_session_recorder_drains_enqueued_snapshots_outside_tick_path() -
     assert live_state.snapshot_payloads[0]["snapshot"]["board_text"] == "queued-frame"
 
 
+def test_visual_session_recorder_export_live_state_returns_snapshot_references() -> None:
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-live-state-refs",
+    )
+    recorder.record_snapshot(
+        ts_ms=1001,
+        step=1,
+        tick=1,
+        snapshot={"board_text": "live-frame", "nested": {"value": 1}},
+    )
+
+    live_state = recorder.export_live_state()
+
+    assert live_state.snapshot_payloads[0] is recorder._snapshot_payloads[0]  # noqa: SLF001
+
+
 def test_visual_session_recorder_can_drain_snapshots_in_background() -> None:
     recorder = ArenaVisualSessionRecorder(
         plugin_id="arena.visualization.retro.frame_v1",
@@ -212,6 +238,48 @@ def test_visual_session_recorder_can_drain_snapshots_in_background() -> None:
         assert live_state.snapshot_payloads[0]["snapshot"]["board_text"] == "queued-frame"
     finally:
         recorder.stop_background_snapshot_drain()
+
+
+def test_visual_session_recorder_drops_oldest_pending_snapshot_when_async_queue_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[tuple[str, int]] = []
+
+    class FakeLogger:
+        @staticmethod
+        def warning(message: str, total: int) -> None:
+            warnings.append((message, total))
+
+    monkeypatch.setattr(recorder_module, "logger", FakeLogger())
+    recorder = ArenaVisualSessionRecorder(
+        plugin_id="arena.visualization.retro.frame_v1",
+        game_id="retro_mario",
+        scheduling_family="real_time_tick",
+        session_id="sample-bg-artifacts",
+    )
+    recorder._max_pending_snapshots = 2  # noqa: SLF001
+
+    for tick in range(1, 4):
+        recorder.enqueue_snapshot(
+            ts_ms=1000 + tick,
+            step=tick,
+            tick=tick,
+            snapshot={"board_text": f"queued-frame-{tick}"},
+            snapshot_is_scene_safe=True,
+        )
+
+    assert recorder.pending_snapshot_count() == 2
+    recorder.flush_pending_snapshots()
+    live_state = recorder.export_live_state()
+
+    assert [
+        snapshot["snapshot"]["board_text"]
+        for snapshot in live_state.snapshot_payloads
+    ] == ["queued-frame-2", "queued-frame-3"]
+    assert recorder.build_visual_session().summary["realtimeMetrics"]["dropped_snapshot_count"] == 1
+    assert warnings == [
+        ("ArenaVisualSessionRecorder dropped pending snapshot, total={}", 1)
+    ]
 
 
 def test_visual_session_recorder_persists_seek_snapshot_index(tmp_path: Path) -> None:

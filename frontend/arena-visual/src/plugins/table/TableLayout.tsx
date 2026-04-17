@@ -1,4 +1,12 @@
 import type { VisualScene, VisualSession } from "../../gateway/types";
+import {
+  isRecord,
+  readBoolean,
+  readNumber,
+  readOptionalNumber,
+  readString,
+  readStringArray,
+} from "../../lib/sceneReaders";
 import { resolveMahjongTileAsset } from "../mahjong/mahjongTileAssets";
 
 export interface TableHand {
@@ -91,31 +99,6 @@ interface TableLayoutProps {
   onSubmitAction: (actionText: string) => void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true;
-}
-
-function readNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function readStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map(readString)
-    .filter((item): item is string => item !== null);
-}
-
 function readHand(value: unknown): TableHand {
   if (!isRecord(value)) {
     return {
@@ -169,10 +152,6 @@ function readLastDiscard(value: unknown): TableSceneData["status"]["lastDiscard"
     tile: readString(value.tile),
     isTsumogiri: readBoolean(value.isTsumogiri),
   };
-}
-
-function readOptionalNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function readChatLog(value: unknown): TableChatEntry[] {

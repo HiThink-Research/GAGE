@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping as MappingABC
 from queue import Empty
+from queue import Full
 from queue import Queue
 from threading import Condition, Lock
+import time
 from typing import Any, Mapping, Optional, Sequence
 
 from loguru import logger
@@ -158,16 +160,21 @@ def action_matches_route(
 class ContinuousStateMailbox:
     """Single-consumer mailbox that keeps only the latest unread state snapshot."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, coalesce_window_s: float = 0.008) -> None:
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._latest: str | None = None
         self._latest_input_seq: int | float | None = None
+        self._latest_coalesce_key: str | None = None
+        self._latest_put_monotonic: float = 0.0
+        self._coalesce_window_s = max(0.0, float(coalesce_window_s))
         self._has_unread = False
 
     def put(self, queued_action: Any) -> None:
         normalized = _normalize_mailbox_payload(queued_action)
         next_input_seq = _extract_input_sequence(normalized)
+        next_coalesce_key = _coalesce_payload_key(normalized)
+        now_monotonic = time.monotonic()
         with self._condition:
             if (
                 next_input_seq is not None
@@ -175,7 +182,14 @@ class ContinuousStateMailbox:
                 and next_input_seq < self._latest_input_seq
             ):
                 return
+            if (
+                next_coalesce_key == self._latest_coalesce_key
+                and now_monotonic - self._latest_put_monotonic < self._coalesce_window_s
+            ):
+                return
             self._latest = normalized
+            self._latest_coalesce_key = next_coalesce_key
+            self._latest_put_monotonic = now_monotonic
             if next_input_seq is not None:
                 self._latest_input_seq = next_input_seq
             self._has_unread = True
@@ -212,16 +226,32 @@ LatestActionMailbox = ContinuousStateMailbox
 class PlayerActionMailbox:
     """Track both the latest state snapshot and the ordered command queue for a player."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_command_queue_size: int | None = None,
+        queue_overflow_policy: str | None = None,
+    ) -> None:
         self.latest_mailbox = ContinuousStateMailbox()
-        self.command_queue: Queue[str] = Queue()
+        self.command_queue: Queue[str] = Queue(maxsize=_coerce_queue_max_size(max_command_queue_size))
+        self._queue_overflow_policy = _normalize_queue_overflow_policy(queue_overflow_policy)
+        self._queue_overflow_count = 0
+        self._lock = Lock()
+
+    @property
+    def queue_overflow_count(self) -> int:
+        """Return how many queued command payloads were dropped by overflow policy."""
+
+        with self._lock:
+            return self._queue_overflow_count
 
     def put(self, queued_action: Any) -> None:
         self.latest_mailbox.put(queued_action)
-        self.command_queue.put(_normalize_mailbox_payload(queued_action))
+        self._put_command(_normalize_mailbox_payload(queued_action), block=True)
 
     def put_nowait(self, queued_action: Any) -> None:
-        self.put(queued_action)
+        self.latest_mailbox.put(queued_action)
+        self._put_command(_normalize_mailbox_payload(queued_action), block=False)
 
     def get(self, timeout: float | None = None) -> str:
         return self.command_queue.get(timeout=timeout)
@@ -235,6 +265,35 @@ class PlayerActionMailbox:
     def latest_get_nowait(self) -> str:
         return self.latest_mailbox.get_nowait()
 
+    def _put_command(self, payload: str, *, block: bool) -> None:
+        try:
+            if block and self.command_queue.maxsize <= 0:
+                self.command_queue.put(payload)
+            else:
+                self.command_queue.put_nowait(payload)
+            return
+        except Full:
+            pass
+
+        if self._queue_overflow_policy == "drop_oldest":
+            try:
+                self.command_queue.get_nowait()
+            except Empty:
+                pass
+            try:
+                self.command_queue.put_nowait(payload)
+            except Full:
+                self._record_queue_overflow()
+                return
+            self._record_queue_overflow()
+            return
+
+        self._record_queue_overflow()
+
+    def _record_queue_overflow(self) -> None:
+        with self._lock:
+            self._queue_overflow_count += 1
+
 
 class SampleActionRouter:
     """Route sample-scoped input into player-scoped queues."""
@@ -246,6 +305,8 @@ class SampleActionRouter:
         player_ids: Sequence[str],
         realtime_input_semantics_by_player: Mapping[str, str] | None = None,
         latest_only_player_ids: Sequence[str] = (),
+        max_command_queue_size: int | None = None,
+        queue_overflow_policy: str | None = None,
     ) -> None:
         """Initialize one router for one sample."""
 
@@ -266,7 +327,11 @@ class SampleActionRouter:
             for player_id in normalized_player_ids
         }
         self._player_channels: dict[str, PlayerActionMailbox] = {
-            player_id: PlayerActionMailbox() for player_id in normalized_player_ids
+            player_id: PlayerActionMailbox(
+                max_command_queue_size=max_command_queue_size,
+                queue_overflow_policy=queue_overflow_policy,
+            )
+            for player_id in normalized_player_ids
         }
         self._lock = Lock()
 
@@ -316,6 +381,15 @@ class SampleActionRouter:
         """Route one queued action without blocking."""
 
         self._route_action(queued_action)
+
+    def runtime_diagnostics(self) -> dict[str, int]:
+        """Return runtime counters for human input routing."""
+
+        with self._lock:
+            overflow_count = sum(
+                channels.queue_overflow_count for channels in self._player_channels.values()
+            )
+        return {"queue_overflow_count": overflow_count}
 
     def _route_action(self, queued_action: Any) -> None:
         payload = parse_action_payload(queued_action)
@@ -368,6 +442,20 @@ def _extract_input_sequence(queued_action: Any) -> int | float | None:
     return _coerce_sequence_number(payload.get("input_seq"))
 
 
+def _coalesce_payload_key(queued_action: Any) -> str:
+    payload = dict(parse_action_payload(queued_action))
+    metadata = payload.get("metadata")
+    if isinstance(metadata, Mapping):
+        normalized_metadata = dict(metadata)
+        for volatile_key in ("input_seq", "input_client_ts_ms", "client_ts_ms"):
+            normalized_metadata.pop(volatile_key, None)
+        if normalized_metadata:
+            payload["metadata"] = normalized_metadata
+        else:
+            payload.pop("metadata", None)
+    return dump_action_payload(payload)
+
+
 def _coerce_sequence_number(value: Any) -> int | float | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -416,3 +504,19 @@ def _normalize_realtime_input_semantics(value: Any) -> str:
         normalized = value.get("semantics")
         return _normalize_realtime_input_semantics(normalized)
     return "queued_command"
+
+
+def _normalize_queue_overflow_policy(value: Any) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"drop_newest", "drop_oldest"}:
+            return normalized
+    return "drop_newest"
+
+
+def _coerce_queue_max_size(value: Any) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, normalized)

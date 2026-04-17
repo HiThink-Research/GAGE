@@ -30,6 +30,15 @@
     },
     {
       "kind": "arena_impls",
+      "name": "gymnasium_atari_space_invaders_v1",
+      "module": "gage_eval.game_kits.gymnasium_atari.envs.space_invaders",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/gymnasium_atari/envs/space_invaders.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
       "name": "mahjong_rlcard_v1",
       "module": "gage_eval.game_kits.phase_card_game.mahjong.environment",
       "load_phase": "prepare_only",
@@ -111,10 +120,28 @@
     },
     {
       "kind": "game_kits",
+      "name": "gymnasium_atari",
+      "module": "gage_eval.game_kits.gymnasium_atari.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/gymnasium_atari/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
       "name": "mahjong",
       "module": "gage_eval.game_kits.phase_card_game.mahjong.kit",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "openra",
+      "module": "gage_eval.game_kits.real_time_game.openra.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/openra/kit.py",
       "aliases": [],
       "optional": false
     },
@@ -214,6 +241,15 @@
       "module": "gage_eval.game_kits.phase_card_game.mahjong.parsers.mahjong",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/parsers/mahjong.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "parser_impls",
+      "name": "openra_action_v1",
+      "module": "gage_eval.game_kits.real_time_game.openra.parser",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/openra/parser.py",
       "aliases": [],
       "optional": false
     },
@@ -376,6 +412,15 @@
       "module": "gage_eval.game_kits.phase_card_game.mahjong.visualization",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/phase_card_game/mahjong/visualization.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "visualization_specs",
+      "name": "arena/visualization/openra_rts_v1",
+      "module": "gage_eval.game_kits.real_time_game.openra.visualization",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/real_time_game/openra/visualization.py",
       "aliases": [],
       "optional": false
     },

@@ -3,8 +3,8 @@ import os
 import requests
 import time
 
-# Target directory
-TARGET_DIR = "frontend/rlcard-showdown/src/assets/mahjong"
+# Target directory used by the Arena Visual Mahjong plugin.
+TARGET_DIR = "frontend/arena-visual/src/plugins/mahjong/assets/tiles"
 if not os.path.exists(TARGET_DIR):
     os.makedirs(TARGET_DIR)
 

@@ -48,6 +48,9 @@ class _StubCore:
     def get_perfect_information(self) -> dict[str, Any]:
         return {"hand_cards_with_suit": [["S3"], ["H4"], ["D5"]]}
 
+    def get_public_cards(self) -> Sequence[str]:
+        return ["S7", "H7", "DQ"]
+
     def encode_action(self, action_text: str) -> int:
         normalized = str(action_text).strip().lower()
         if normalized == "pass":
@@ -107,6 +110,7 @@ def test_doudizhu_arena_exposes_get_last_frame(monkeypatch) -> None:
     latest_frame = env.get_last_frame()
     assert latest_frame["observer_player_id"] == "player_0"
     assert "board_text" in latest_frame
+    assert latest_frame["ui_state"]["seen_cards"] == ["S7", "H7", "DQ"]
 
 
 def test_doudizhu_renderers_package_does_not_expose_legacy_renderer() -> None:
@@ -122,9 +126,11 @@ def test_doudizhu_run_scripts_do_not_default_to_legacy_viewer() -> None:
     run_sh = _read_text("scripts/run/arenas/doudizhu/run.sh")
     human_vs_ai = _read_text("scripts/run/arenas/doudizhu/run_human_vs_ai_legacy.sh")
 
-    assert 'MODE="${MODE:-human-vs-ai}"' in run_sh
+    assert 'MODE="${MODE:-llm_visual}"' in run_sh
     assert _LEGACY_RENDERER_SUBSTRING not in run_sh
     assert _LEGACY_VIEWER_NAME not in human_vs_ai
-    assert "frontend/arena-visual" in human_vs_ai
-    assert "VITE_ARENA_GATEWAY_BASE_URL" in human_vs_ai
-    assert "/sessions/${SAMPLE_ID}" in human_vs_ai
+    assert _LEGACY_RENDERER_SUBSTRING not in human_vs_ai
+    assert "--mode human_visual" in human_vs_ai
+    assert "scripts/run/arenas/doudizhu/run.sh" in human_vs_ai
+    assert "VITE_ARENA_GATEWAY_BASE_URL" not in human_vs_ai
+    assert "/sessions/" not in human_vs_ai

@@ -1,4 +1,10 @@
 import type { VisualScene, VisualSession } from "../../gateway/types";
+import {
+  isRecord,
+  readBoolean,
+  readNumber,
+  readString,
+} from "../../lib/sceneReaders";
 
 export interface BoardCell {
   coord: string;
@@ -34,22 +40,6 @@ export interface BoardSceneData {
   };
   players: BoardPlayer[];
   status: BoardStatus;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true;
-}
-
-function readNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function readBoardScene(scene?: VisualScene): BoardSceneData | null {

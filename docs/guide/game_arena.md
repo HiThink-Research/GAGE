@@ -2,227 +2,202 @@
 
 English | [中文](game_arena_zh.md)
 
-Game Arena is GAGE's unified runtime framework for game matches, built on the `arena` role. It covers board games such as Gomoku and Tic-Tac-Toe, as well as ViZDoom, PettingZoo, Retro Mario, OpenRA, Doudizhu, Mahjong, and other match scenarios that need environment-driven execution, action parsing, replay output, and human interaction.
+Game Arena is GAGE's unified runtime for game-based evaluation. The current mainline implementation is centered on GameKit configs, `ArenaRoleAdapter`, structured arena output, and the unified `arena_visual` browser host.
 
-The current core implementation lives in:
+Use this page as the durable overview. For browser operation details, use [Arena Visual Browser Control](game_arena_topics/game_arena_visual_control.md).
 
-- `src/gage_eval/role/adapters/arena.py`
-- `src/gage_eval/evaluation/task_planner.py`
-- `src/gage_eval/evaluation/sample_envelope.py`
+## 1. Current Runtime Shape
 
-## 1. Current Positioning
+Current Game Arena configs use the same pipeline shape as other GAGE tasks:
 
-Arena is better understood as a unified game runtime:
-
-- Upstream, it is still a standard pipeline stage invoked by `TaskPlanner.execute_arena()`.
-- Internally, it assembles the environment, scheduler, players, parser, human input, visualization, and replay output.
-- Downstream, it writes normalized match results back into the sample for `judge`, `auto_eval`, replay tooling, and later processing.
-
-The current implementation covers the following game families:
-
-| Category | `environment.impl` examples | Characteristics |
-| --- | --- | --- |
-| Board games | `gomoku_local_v1`, `tictactoe_v1` | Coordinate moves, Gradio board rendering |
-| FPS / frame-driven games | `vizdoom_env_v1` | Tick/record scheduling, image frames, `websocketRGB` |
-| AEC discrete-action games | `pettingzoo_aec_v1` | Discrete action parsing, rotating agents, replay |
-| Retro games | `retro_env_v1` | Persistent runtime, action mapping, recording and replay |
-| Card / Mahjong games | `doudizhu_rlcard_v1`, `doudizhu_arena_v1`, `mahjong_rlcard_v1` | Formatter/parser/renderer composition and structured outputs |
-
-### 1.1 How the current integrations differ by game
-
-- Gomoku: still the most typical board-style Arena setup. It uses `gomoku_local_v1 + gomoku_v1 + gomoku_board_v1` to build a complete Human-vs-LLM or model-vs-model loop, and remains a good example for coordinate parsing, Gradio board interaction, and basic `turn` scheduling.
-- Tic-Tac-Toe: structurally similar to Gomoku, but lighter. It is often the smallest runnable example for validating the `arena` role, `visualizer`, and `human` player flow.
-- ViZDoom: a frame-driven, discrete-action environment centered on `vizdoom_env_v1 + vizdoom_parser_v1`, tick or record scheduling, frame capture, `websocketRGB` display, and replay.
-- PettingZoo: currently integrated through combinations such as `pettingzoo_aec_v1 + discrete_action_parser_v1`. The focus is discrete actions, rotating agents, image streaming, and replay. The current docs and screenshot use the PettingZoo Atari `space_invaders` example.
-- Retro Mario: integrated through `retro_env_v1` on top of the stable-retro runtime, with emphasis on persistent runtime behavior, action mapping, recording, and `websocketRGB` / replay flows.
-- OpenRA: currently shipped as an RTS-style GameKit with a deterministic stub backend, focused on the `rts` scene contract, structured action intents, browser-hosted human input, and future bridge readiness.
-- Doudizhu / Mahjong: these are better understood through RLCard environments, formatter/parser/renderer composition, structured results, and frontend replay.
-
-## 2. Position in the Pipeline
-
-Arena is not a side path outside the pipeline. It is a standard execution stage in `TaskPlanner`:
+![GameArena runtime core design](../assets/game-arena-runtime-core-design-20260413.png)
 
 ```mermaid
 flowchart LR
-  A["Sample"] --> B["TaskPlanner.execute_arena()"]
-  B --> C["ensure_arena_header()"]
-  C --> D["ArenaRoleAdapter.execute()"]
-  D --> E["GameResult / arena_trace / replay"]
-  E --> F["append_arena_contract()"]
-  F --> G["sample.predict_result[0]"]
-  G --> H["judge / auto_eval / replay tools"]
+  A["PipelineConfig"] --> B["TaskPlanner"]
+  B --> C["ArenaRoleAdapter"]
+  C --> D["GameKit runtime"]
+  C --> E["PlayerDriver / backend / human"]
+  C --> F["Scheduler"]
+  C --> G["arena_visual gateway"]
+  D --> H["GameResult"]
+  F --> H
+  G --> I["browser session + replay artifacts"]
+  H --> J["sample.predict_result[0].arena_trace"]
+  H --> K["sample.predict_result[0].game_arena"]
 ```
 
-The key point here is not "produce one free-form answer", but "produce a structured match result that can keep flowing downstream".
+Board, table, and frame games all write the same visual session contract under:
 
-## 3. Runtime Structure
-
-In one match, the current `ArenaRoleAdapter` dynamically assembles the following parts:
-
-```mermaid
-flowchart TD
-  CFG["role_adapters[].params"] --> ADP["ArenaRoleAdapter"]
-  ADP --> ENV["Environment<br/>arena_impls"]
-  ADP --> SCH["Scheduler<br/>turn / tick / record / simultaneous / multi_timeline"]
-  ADP --> PAR["Parser<br/>parser_impls"]
-  ADP --> PLY["Players<br/>backend / agent / human"]
-  ADP --> VIZ["Gradio Visualizer<br/>optional"]
-  ADP --> HUM["Action Server / Queue<br/>optional"]
-  ADP --> WSRGB["websocketRGB Hub<br/>optional"]
-  ADP --> REC["ReplaySchemaWriter / FrameCaptureRecorder<br/>optional"]
-
-  ENV --> OBS["ArenaObservation"]
-  OBS --> PLY
-  PLY --> SCH
-  SCH --> ENV
-  ENV --> RES["GameResult + arena_trace"]
-  RES --> REC
-  RES --> OUT["predict_result[0] / run artifacts"]
-  HUM --> PLY
-  WSRGB --> HUM
+```text
+runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/
 ```
 
-Two points matter most when reading the current structure:
+The browser route is `/sessions/<sample_id>?run_id=<run_id>`. Runtime data is served by the Python gateway under `/arena_visual/sessions/...` and rendered by the prebuilt `frontend/arena-visual/dist` checked into this repository; regular users do not need a Node/npm environment.
 
-- `Context Provider` still exists, but the current main axis in this guide is `environment + scheduler + players + parser + replay`.
-- `RuleEngine` logic is now embedded inside many concrete environments instead of always appearing as a standalone layer.
+## 2. Supported GameKit Families
 
-## 4. The Configuration Surface That Matters More Now
-
-Looking at current configs, Arena is better understood through these blocks:
-
-| Config block | Responsibility | Common fields |
+| Family | Current configs | Visual shape |
 | --- | --- | --- |
-| `environment` | Select the game environment and runtime mode | `impl`, `env_id`, `display_mode`, `replay` |
-| `scheduler` | Decide how the match advances | `type`, `tick_ms`, `max_turns`, `max_ticks` |
-| `parser` | Turn model output into actions | `impl`, `action_labels`, `coord_scheme` |
-| `players` | Define participant types | `type=backend/agent/human`, `ref`, `timeout_ms` |
-| `visualizer` | Enable Gradio observer or interactive UI | `enabled`, `renderer.impl`, `wait_for_finish` |
-| `human_input` | Enable input queue, action server, and ws_rgb hub | `enabled`, `port`, `ws_port` |
+| Gomoku | `config/custom/gomoku/*_gamekit.yaml` | Board scene |
+| Tic-Tac-Toe | `config/custom/tictactoe/*_gamekit.yaml` | Board scene |
+| Doudizhu | `config/custom/doudizhu/*_gamekit.yaml` | Table scene |
+| Mahjong | `config/custom/mahjong/*_gamekit.yaml` | Table scene |
+| PettingZoo Space Invaders | `config/custom/pettingzoo/space_invaders_*_gamekit.yaml` | Frame scene |
+| Retro Mario | `config/custom/retro_mario/*_gamekit.yaml` | Frame scene |
+| ViZDoom | `config/custom/vizdoom/*_gamekit.yaml` | Frame scene |
 
-Current scheduler support includes:
+LLM configs now come in two families. Existing local configs are kept for internal/local testing. New `*_openai_gamekit.yaml` configs are the user-facing API path and read credentials from the environment:
 
-- `turn`: classic stop-and-wait turns, suitable for Gomoku and Tic-Tac-Toe.
-- `tick`: fixed-interval polling, suitable for real-time or quasi-real-time scenes.
-- `record`: advances on a recording cadence and writes replay-friendly traces.
-- `simultaneous`: multiple players act on the same frame.
-- `multi_timeline`: multiple lanes / timelines advance together.
+```bash
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+# Optional: defaults to gpt-5.4.
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+# Optional: local or hosted OpenAI-compatible endpoint.
+export OPENAI_API_BASE="https://api.openai.com/v1"
+```
 
-## 5. Structured Output Contract
+Use `OPENAI_API_BASE` plus `GAGE_GAME_ARENA_LLM_MODEL` for open-source local models served through an OpenAI-compatible API. No backend YAML edit is required.
 
-Arena writes structured results back into the sample instead of only printing logs.
+Closed-source OpenAI API example:
 
-### 5.1 Sample header
+```bash
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+unset OPENAI_API_BASE
+```
 
-`ensure_arena_header()` writes a header under `sample.metadata.game_arena`, including fields such as:
+Open-source OpenAI-compatible service example:
 
-- `engine_id`
-- `seed`
-- `mode`
-- `players`
-- `start_time_ms`
+```bash
+export OPENAI_API_BASE="http://127.0.0.1:<PORT>/v1"
+export OPENAI_API_KEY="<LOCAL_SERVICE_API_KEY_OR_DUMMY_VALUE>"
+export GAGE_GAME_ARENA_LLM_MODEL="<LOCAL_MODEL_NAME>"
+```
 
-### 5.2 Sample result
+## 3. Configuration Surface
 
-`append_arena_contract()` normalizes Arena output into:
+GameKit configs are organized around `role_adapters[].params`:
 
-- `sample.predict_result[0].arena_trace`
-- `sample.predict_result[0].game_arena`
+| Block | Purpose |
+| --- | --- |
+| `game_kit` / `env` | Select the game family and concrete environment preset. |
+| `runtime_overrides` | Tune board size, realtime cadence, legal moves, frame capture, replay, or backend mode. |
+| `players` | Bind each seat to `dummy`, `llm`, or `human`. |
+| `human_input` | Enable browser-submitted actions and live input queues. |
+| `visualizer` | Enable `arena_visual`, choose the browser port, launch behavior, and media transport. |
 
-Where:
+Common visualizer fields:
 
-- `arena_trace` stores step-level actions, timestamps, legality, timeout details, and related runtime facts.
-- `game_arena` stores the terminal summary such as `winner_player_id`, `termination_reason`, `total_steps`, `final_scores`, and `episode_returns`.
+```yaml
+visualizer:
+  enabled: true
+  mode: arena_visual
+  launch_browser: true
+  live_scene_scheme: http_pull
+  linger_after_finish_s: 15.0
+```
 
-### 5.3 Run artifacts
+Frame-driven games can also use `binary_stream` or `low_latency_channel` when a config explicitly enables that path.
 
-Besides sample fields, Arena may also write:
+## 4. Run Entrypoints
 
-- `replay_path` / `replay_v1_path`
-- `game_log` or `game_log_path`
-- `replay.json`, `events.jsonl`
-- Frame capture directories when frame capture is enabled
+Canonical scripts live under `scripts/run/arenas/`.
 
-That is why the current Arena guide needs to cover both scheduling logic and artifact contracts. A board-only explanation is not enough here.
+```bash
+# PettingZoo Space Invaders OpenAI visual LLM run
+bash scripts/run/arenas/pettingzoo/run.sh --mode llm_visual_openai
 
-## 6. Interaction Modes and Visualization
+# Retro Mario pure-human realtime browser control
+bash scripts/run/arenas/retro_mario/run.sh --mode human_visual
 
-At the moment, Arena has at least two main interaction paths:
+# ViZDoom OpenAI visual LLM run
+bash scripts/run/arenas/vizdoom/run.sh --mode llm_visual_openai
 
-### 6.1 Gradio board interaction
+# Doudizhu OpenAI visual LLM run
+bash scripts/run/arenas/doudizhu/run.sh --mode llm_visual_openai
 
-This is suitable for games with explicit board renderers, such as Gomoku and Tic-Tac-Toe:
+# Mahjong OpenAI visual LLM run
+bash scripts/run/arenas/mahjong/run.sh --mode llm_visual_openai
+```
 
-- Enable it with `visualizer.enabled: true`.
-- Render the board through `renderer_impls`.
-- When a `human` player exists, the UI switches into interactive mode.
+Visual runs write replayable `arena_visual_session/v1` artifacts under the run directory. Browser playback controls use those artifacts through the Arena Visual session page.
 
-### 6.2 `websocketRGB` image-stream interaction
+## 5. Choose a Topic
 
-This is suitable for ViZDoom, PettingZoo, and Retro Mario, where frame streams and image observations matter more.
+Use the topic docs as task-oriented runbooks:
 
-At the code level, the implementation still mostly uses the `ws_rgb` name, while the docs often call it `websocketRGB`. In the current repository, both refer to the same runtime capability:
+| Need | Start Here |
+| --- | --- |
+| Smallest board-game smoke and human coordinate input | [Tic-Tac-Toe Guide](game_arena_topics/game_arena_tictactoe.md) |
+| Larger board coordinates, win-line output, and 15x15 browser runs | [Gomoku Guide](game_arena_topics/game_arena_gomoku.md) |
+| Three-seat card table, legal action text, and chat metadata | [Doudizhu Guide](game_arena_topics/game_arena_doudizhu.md) |
+| Four-seat card table and longer human acceptance runs | [Mahjong Guide](game_arena_topics/game_arena_mahjong.md) |
+| Atari AEC frames, ROM checks, and low-latency media transport | [PettingZoo Atari Guide](game_arena_topics/game_arena_pettingzoo_atari.md) |
+| Stable-retro ROM import and macro keyboard actions | [Retro Mario Guide](game_arena_topics/game_arena_retro_mario.md) |
+| ViZDoom rendering, POV telemetry, and discrete action ids | [ViZDoom Guide](game_arena_topics/game_arena_vizdoom.md) |
+| Shared browser controls, session APIs, input route, and replay artifacts | [Arena Visual Browser Control](game_arena_topics/game_arena_visual_control.md) |
 
-- The environment provides image frames, for example through `get_last_frame()`.
-- `ArenaRoleAdapter` registers a display when `display_mode=websocket/ws`.
-- Human input flows back into `HumanPlayer` through the action queue and the `ws_rgb` viewer.
-- Replay tools can reconstruct a `ws_rgb` display from stored artifacts.
-- The viewer now exposes `in_progress / game_ended / process_ended`: entering `in_progress` means the match is still running, entering `game_ended` means the match is over but replay is still available, and entering `process_ended` means shutdown has been confirmed and the page will disconnect soon.
+## 6. Output Contract
+
+Arena writes structured results back into samples:
+
+- `sample.predict_result[0].arena_trace`: step-level actions, legality, timestamps, retries, scheduler facts, and runtime metadata.
+- `sample.predict_result[0].game_arena`: terminal summary such as winner, reason, total steps, scores, and episode returns.
+- `artifacts.visual_session_ref`: pointer to the `arena_visual_session/v1/manifest.json` sidecar when visual output is enabled.
+
+Typical run output:
+
+```text
+runs/<run_id>/
+  summary.json
+  samples.jsonl
+  replays/<sample_id>/arena_visual_session/v1/
+    manifest.json
+    timeline.jsonl
+    scenes/
+    media/
+```
+
+![GameArena visual data contracts](../assets/game-arena-visual-contracts-design-20260413.png)
 
 ## 7. Visual Examples
 
-### 7.1 Gomoku
+### Gomoku
 
-Gomoku shows the classic board-style interaction. It is a good example for understanding `renderer_impls`, coordinate parsing, and the Human-vs-LLM loop.
+![Gomoku stage](../assets/arena-visual-gomoku-stage-20260409.png)
 
-![Gomoku board](../assets/gomoku.png)
+### Tic-Tac-Toe
 
-### 7.2 Tic-Tac-Toe
+![Tic-Tac-Toe stage](../assets/arena-visual-tictactoe-stage-20260409.png)
 
-Tic-Tac-Toe is the lighter board example and is commonly used as a fast validation target for the Arena main flow and interactive UI.
+### Doudizhu
 
-![Tic-Tac-Toe board](../assets/tictactoe.png)
+![Doudizhu stage](../assets/arena-visual-doudizhu-stage-20260409.png)
 
-### 7.3 ViZDoom
+### Mahjong
 
-ViZDoom is presented here as a full environment integration with image observations, action mapping, scheduling, and replay.
+![Mahjong stage](../assets/arena-visual-mahjong-stage-20260409.png)
 
-![ViZDoom runtime view](../assets/vizdoom.png)
+### PettingZoo Space Invaders
 
-Related topic guides:
+![Space Invaders stage](../assets/arena-visual-space-invaders-stage-20260409.png)
 
-- [ViZDoom Guide](game_arena_topics/game_arena_vizdoom.md)
-- [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)
+### Retro Mario
 
-### 7.4 PettingZoo: Space Invaders
+![Retro Mario stage](../assets/arena-visual-retro-mario-stage-20260409.png)
 
-This screenshot shows `space_invaders` from the PettingZoo Atari family. The current integration style focuses on discrete actions, image streaming, and replay, which makes it a good fit for Atari-like multi-agent or rotating-agent environments.
+### ViZDoom
 
-![PettingZoo Atari Space Invaders runtime view](../assets/pettingzoo-space-invaders.png)
+![ViZDoom stage](../assets/arena-visual-vizdoom-stage-20260409.png)
 
-Related topic guides:
+## 8. Related Docs
 
- - [PettingZoo Atari Guide](game_arena_topics/pettingzoo_atari_run_commands.md)
-- [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)
-
-### 7.5 Retro Mario
-
-This screenshot shows the current stable-retro Mario integration. Like ViZDoom and PettingZoo, it is centered on runtime-driven execution, action mapping, image observation, and replay instead of traditional board rendering.
-
-![Retro Mario runtime view](../assets/mario.png)
-
-Related topic guides:
-
+- [Arena Visual Browser Control](game_arena_topics/game_arena_visual_control.md)
+- [Gomoku Guide](game_arena_topics/game_arena_gomoku.md)
+- [Tic-Tac-Toe Guide](game_arena_topics/game_arena_tictactoe.md)
+- [Doudizhu Guide](game_arena_topics/game_arena_doudizhu.md)
+- [Mahjong Guide](game_arena_topics/game_arena_mahjong.md)
+- [PettingZoo Atari Guide](game_arena_topics/game_arena_pettingzoo_atari.md)
 - [Retro Mario Guide](game_arena_topics/game_arena_retro_mario.md)
-- [OpenRA Guide](game_arena_topics/game_arena_openra.md)
-- [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)
-
-## 8. Topic Entry Points
-
-The current topic guides are better linked from the main guide as a single hub:
-
-- [ViZDoom](game_arena_topics/game_arena_vizdoom.md)
-- [Retro Mario](game_arena_topics/game_arena_retro_mario.md)
-- [PettingZoo](game_arena_topics/pettingzoo_atari_run_commands.md)
-- [Doudizhu Showdown](game_arena_topics/doudizhu_showdown.md)
-- [websocketRGB Runtime and Replay Guide](game_arena_topics/websocketRGB_runtime_replay_guide.md)
+- [ViZDoom Guide](game_arena_topics/game_arena_vizdoom.md)

@@ -10,6 +10,7 @@ from gage_eval.role.arena.replay_paths import resolve_invocation_run_sample_ids
 from gage_eval.game_kits.real_time_game.vizdoom.environment import (
     DEFAULT_ACTION_LABELS,
     ViZDoomArenaEnvironment,
+    ViZDoomEnvConfig,
 )
 
 try:
@@ -239,8 +240,15 @@ class DuelMap01Environment(ViZDoomArenaEnvironment):
             replay_in_env=bool(defaults.get("replay_in_env", True)),
             action_labels=action_labels,
             allow_partial_actions=bool(defaults.get("allow_partial_actions", False)),
-            reset_retry_count=int(defaults.get("reset_retry_count", 1)),
-            death_check_warmup_steps=int(defaults.get("death_check_warmup_steps", 0)),
+            reset_retry_count=int(
+                defaults.get("reset_retry_count", ViZDoomEnvConfig.reset_retry_count)
+            ),
+            death_check_warmup_steps=int(
+                defaults.get(
+                    "death_check_warmup_steps",
+                    ViZDoomEnvConfig.death_check_warmup_steps,
+                )
+            ),
         )
         try:
             environment.reset()

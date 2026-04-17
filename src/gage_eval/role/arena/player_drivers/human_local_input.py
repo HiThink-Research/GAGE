@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from queue import Empty
-from threading import Lock
+from threading import Event, Lock
 import time
 from typing import Any
 
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
+from gage_eval.role.arena.core.errors import PlayerStopRequested
 from gage_eval.role.arena.core.players import BaseBoundPlayer, PlayerBindingSpec
 from gage_eval.role.arena.human_input_protocol import extract_action_text, parse_action_payload
 from gage_eval.role.arena.player_drivers.base import PlayerDriver
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation
+
+_INTERRUPTIBLE_QUEUE_POLL_INTERVAL_S = 0.05
 
 
 class LocalHumanBoundPlayer(BaseBoundPlayer):
@@ -23,6 +26,8 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         input_semantics: str | None = None,
         stateful_actions: bool = False,
         scheduler_owned_realtime: bool = False,
+        action_schema: Mapping[str, Any] | None = None,
+        command_stale_after_ms: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -35,7 +40,15 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         )
         self._uses_continuous_state = self._input_semantics == "continuous_state"
         self._scheduler_owned_realtime = bool(scheduler_owned_realtime)
+        self._action_schema = dict(action_schema or {}) if isinstance(action_schema, Mapping) else {}
+        resolved_stale_after_ms = _coerce_optional_int(command_stale_after_ms)
+        self._command_stale_after_ms = (
+            resolved_stale_after_ms
+            if resolved_stale_after_ms is not None and resolved_stale_after_ms >= 0
+            else None
+        )
         self._last_continuous_payload: dict[str, Any] = {}
+        self._last_continuous_ts_ms: int | None = None
         self._async_lock = Lock()
         self._async_inflight = False
         self._async_observation: ArenaObservation | None = None
@@ -43,13 +56,73 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         self._async_deadline_ms: int | None = None
         self._async_ready_action: ArenaAction | None = None
         self._async_pending_payload: dict[str, Any] = {}
+        self._stop_requested = Event()
 
     def next_action(self, observation: ArenaObservation) -> ArenaAction:
+        if self._stop_requested.is_set():
+            raise PlayerStopRequested(f"Human player '{self.player_id}' stop requested")
         if self._scheduler_owned_realtime:
-            payload = self._read_scheduler_owned_payload()
-            return self._build_action_from_payload(observation, payload)
+            action = self.poll_scheduler_owned_action(observation)
+            if action is not None:
+                return action
+            raise ValueError(f"Human player '{self.player_id}' did not provide an action")
         payload = self._read_action_payload(observation)
         return self._build_action_from_payload(observation, payload)
+
+    def poll_scheduler_owned_action(self, observation: ArenaObservation) -> ArenaAction | None:
+        if not self._scheduler_owned_realtime:
+            return self.next_action(observation)
+        payload = self._read_scheduler_owned_payload()
+        if not payload:
+            return None
+        if self._is_scheduler_owned_realtime_idle_payload(payload):
+            self._clear_continuous_payload()
+            return None
+        return self._build_action_from_payload(observation, payload)
+
+    def drain_scheduler_owned_actions(
+        self,
+        observation: ArenaObservation,
+        *,
+        max_items: int = 1,
+    ) -> list[ArenaAction]:
+        if not self._scheduler_owned_realtime or max_items <= 0:
+            return []
+        if self._uses_continuous_state:
+            payload = self._read_scheduler_owned_payload()
+            if self._is_scheduler_owned_realtime_idle_payload(payload):
+                self._clear_continuous_payload()
+                return []
+            if payload:
+                return [self._build_action_from_payload(observation, payload)]
+            replay_payload = self._resolve_continuous_replay_payload()
+            if not replay_payload:
+                return []
+            return [
+                self._build_action_from_payload(
+                    observation,
+                    replay_payload,
+                    remember_continuous=False,
+                )
+            ]
+
+        queue = self._action_queue
+        if queue is None:
+            return []
+        get_nowait = getattr(queue, "get_nowait", None)
+        if not callable(get_nowait):
+            return []
+
+        drained_actions: list[ArenaAction] = []
+        while len(drained_actions) < max_items:
+            try:
+                queued = get_nowait()
+            except Empty:
+                break
+            drained_actions.append(
+                self._build_action_from_payload(observation, parse_action_payload(queued))
+            )
+        return drained_actions
 
     def start_thinking(
         self,
@@ -57,6 +130,8 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         *,
         deadline_ms: int | None = None,
     ) -> bool:
+        if self._stop_requested.is_set():
+            return False
         if self._action_queue is None:
             return False
         resolved_deadline_ms = _coerce_optional_int(deadline_ms)
@@ -72,6 +147,9 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         return True
 
     def has_action(self) -> bool:
+        if self._stop_requested.is_set():
+            self._clear_async_state()
+            return False
         with self._async_lock:
             ready_action = self._async_ready_action
             observation = self._async_observation
@@ -126,13 +204,9 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             timeout_s = None
             if self._timeout_ms is not None:
                 timeout_s = max(0.0, float(self._timeout_ms) / 1000.0)
-            get = getattr(queue, "get", None)
-            if callable(get):
-                try:
-                    queued = get(timeout=timeout_s) if timeout_s is not None else get()
-                except Empty:
-                    return {}
-                return parse_action_payload(queued)
+            return self._read_interruptible_payload(queue, timeout_s=timeout_s)
+        if self._stop_requested.is_set():
+            raise PlayerStopRequested(f"Human player '{self.player_id}' stop requested")
         return parse_action_payload(input(self._format_prompt(observation)))
 
     def _read_scheduler_owned_payload(self) -> dict[str, Any]:
@@ -143,8 +217,6 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             payload = self._read_latest_queued_payload(queue, timeout_s=None)
             if payload:
                 return payload
-            if self._last_continuous_payload:
-                return dict(self._last_continuous_payload)
             return {}
         get_nowait = getattr(queue, "get_nowait", None)
         if not callable(get_nowait):
@@ -154,6 +226,24 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         except Empty:
             return {}
         return parse_action_payload(queued)
+
+    def _is_scheduler_owned_realtime_idle_payload(self, payload: Mapping[str, Any] | None) -> bool:
+        if not self._scheduler_owned_realtime or not self._uses_continuous_state:
+            return False
+        if not isinstance(payload, Mapping):
+            return False
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, Mapping):
+            return False
+        if not _coerce_optional_bool(metadata.get("realtime_input"), default=False):
+            return False
+        move = self._resolve_move(payload)
+        if not move:
+            return True
+        idle_moves = {"noop"}
+        if self._timeout_fallback_move:
+            idle_moves.add(str(self._timeout_fallback_move).strip())
+        return move in idle_moves
 
     def _read_async_action_payload(self, pending_payload: Mapping[str, Any] | None) -> dict[str, Any]:
         queue = self._action_queue
@@ -263,11 +353,14 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         self,
         observation: ArenaObservation,
         payload: Mapping[str, Any] | None,
+        *,
+        remember_continuous: bool = True,
     ) -> ArenaAction:
         resolved_payload = dict(payload) if isinstance(payload, Mapping) else {}
         if self._uses_continuous_state:
             if resolved_payload:
-                self._last_continuous_payload = dict(resolved_payload)
+                if remember_continuous:
+                    self._remember_continuous_payload(resolved_payload)
             elif self._last_continuous_payload:
                 resolved_payload = dict(self._last_continuous_payload)
         move = self._resolve_move(resolved_payload)
@@ -284,6 +377,19 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
         payload_metadata = resolved_payload.get("metadata") if isinstance(resolved_payload, Mapping) else None
         if isinstance(payload_metadata, Mapping):
             metadata.update(dict(payload_metadata))
+        if "hold_ticks" not in metadata:
+            payload_hold_ticks = _coerce_optional_int(
+                resolved_payload.get("hold_ticks", resolved_payload.get("holdTicks"))
+            )
+            if payload_hold_ticks is not None:
+                metadata["hold_ticks"] = payload_hold_ticks
+        if "hold_ticks" not in metadata:
+            default_hold_ticks = _resolve_default_hold_ticks(
+                observation=observation,
+                action_schema=self._action_schema,
+            )
+            if default_hold_ticks is not None:
+                metadata["hold_ticks"] = default_hold_ticks
         return ArenaAction(
             player=self.player_id,
             move=move,
@@ -311,8 +417,38 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             "Enter exactly one legal move: "
         )
 
+    def request_stop(self) -> None:
+        self._stop_requested.set()
+        self._clear_continuous_payload()
+        self._clear_async_state()
+
     def reset_runtime_state(self) -> None:
+        self._stop_requested.clear()
+        self._clear_continuous_payload()
+        self._clear_async_state()
+
+    def _remember_continuous_payload(self, payload: Mapping[str, Any]) -> None:
+        self._last_continuous_payload = dict(payload)
+        self._last_continuous_ts_ms = _monotonic_ms()
+
+    def _clear_continuous_payload(self) -> None:
         self._last_continuous_payload = {}
+        self._last_continuous_ts_ms = None
+
+    def _resolve_continuous_replay_payload(self) -> dict[str, Any]:
+        if not self._last_continuous_payload:
+            return {}
+        if self._command_stale_after_ms is None:
+            return dict(self._last_continuous_payload)
+        if self._last_continuous_ts_ms is None:
+            return dict(self._last_continuous_payload)
+        age_ms = _monotonic_ms() - self._last_continuous_ts_ms
+        if age_ms > self._command_stale_after_ms:
+            self._clear_continuous_payload()
+            return {}
+        return dict(self._last_continuous_payload)
+
+    def _clear_async_state(self) -> None:
         with self._async_lock:
             self._async_inflight = False
             self._async_observation = None
@@ -320,6 +456,36 @@ class LocalHumanBoundPlayer(BaseBoundPlayer):
             self._async_deadline_ms = None
             self._async_ready_action = None
             self._async_pending_payload = {}
+
+    def _read_interruptible_payload(
+        self,
+        queue: Any,
+        *,
+        timeout_s: float | None,
+    ) -> dict[str, Any]:
+        get = getattr(queue, "get", None)
+        if not callable(get):
+            return {}
+
+        deadline_monotonic = None if timeout_s is None else time.monotonic() + max(0.0, float(timeout_s))
+        while True:
+            if self._stop_requested.is_set():
+                raise PlayerStopRequested(f"Human player '{self.player_id}' stop requested")
+
+            wait_timeout = _INTERRUPTIBLE_QUEUE_POLL_INTERVAL_S
+            if deadline_monotonic is not None:
+                remaining_s = deadline_monotonic - time.monotonic()
+                if remaining_s <= 0:
+                    return {}
+                wait_timeout = min(wait_timeout, remaining_s)
+
+            try:
+                queued = get(timeout=wait_timeout)
+            except Empty:
+                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                    return {}
+                continue
+            return parse_action_payload(queued)
 
 
 class LocalHumanInputDriver(PlayerDriver):
@@ -351,6 +517,12 @@ class LocalHumanInputDriver(PlayerDriver):
                 params.get("scheduler_owned_realtime"),
                 default=False,
             ),
+            action_schema=(
+                params.get("action_schema")
+                if isinstance(params.get("action_schema"), Mapping)
+                else None
+            ),
+            command_stale_after_ms=_coerce_optional_int(params.get("command_stale_after_ms")),
             metadata={"driver_id": self.driver_id, "seat": spec.seat},
         )
 
@@ -375,6 +547,41 @@ def _coerce_optional_bool(value: object, *, default: bool) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _monotonic_ms() -> int:
+    return int(time.monotonic() * 1000.0)
+
+
+def _resolve_default_hold_ticks(
+    *,
+    observation: ArenaObservation,
+    action_schema: Mapping[str, Any],
+) -> int | None:
+    candidates: list[Mapping[str, Any]] = []
+    if action_schema:
+        candidates.append(action_schema)
+    metadata = observation.metadata if isinstance(observation.metadata, Mapping) else {}
+    schema_config = metadata.get("action_schema_config")
+    if isinstance(schema_config, Mapping):
+        candidates.append(schema_config)
+    context = observation.context if isinstance(observation.context, Mapping) else {}
+    context_schema = context.get("action_schema_config")
+    if isinstance(context_schema, Mapping):
+        candidates.append(context_schema)
+    prompt = observation.prompt
+    prompt_payload = prompt.payload if prompt is not None and isinstance(prompt.payload, Mapping) else {}
+    prompt_schema = prompt_payload.get("action_schema_config")
+    if isinstance(prompt_schema, Mapping):
+        candidates.append(prompt_schema)
+
+    for candidate in candidates:
+        default_hold_ticks = _coerce_optional_int(
+            candidate.get("hold_ticks_default", candidate.get("default_hold_ticks"))
+        )
+        if default_hold_ticks is not None:
+            return default_hold_ticks
+    return None
 
 
 def _normalize_input_semantics(

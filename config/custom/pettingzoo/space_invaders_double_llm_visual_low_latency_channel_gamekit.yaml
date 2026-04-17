@@ -44,7 +44,7 @@ role_adapters:
       env: space_invaders
       runtime_overrides:
         backend_mode: real
-        max_cycles: 32
+        max_cycles: 200
         include_raw_obs: true
         use_action_meanings: true
       visualizer:

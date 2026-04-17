@@ -14,7 +14,7 @@ def test_network_bridge_from_config() -> None:
         / "config"
         / "custom"
         / "appworld"
-        / "appworld_agent_demo_runtime.yaml"
+        / "appworld_agent_demo.yaml"
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)

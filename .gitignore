@@ -15,10 +15,14 @@ small_models/gte-large-zh
 # build/
 develop-eggs/
 dist/
+!frontend/arena-visual/dist/
+!frontend/arena-visual/dist/**
 downloads/
 eggs/
 .eggs/
 lib/
+!frontend/arena-visual/src/lib/
+!frontend/arena-visual/src/lib/**
 lib64/
 parts/
 sdist/
@@ -197,6 +201,7 @@ demo_hf_backend.py
 
 # VS Code
 .vscode/
+.obsidian/
 
 /runs/
 node_modules/

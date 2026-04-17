@@ -114,11 +114,15 @@ class SampleLoop:
             if shuffle_artifact_root is not None
             else None
         )
-        env_max_samples = os.environ.get("GAGE_EVAL_MAX_SAMPLES")
+        env_max_samples = _env_int("GAGE_EVAL_MAX_SAMPLES")
         self._max_samples = (
             max_samples
             if max_samples is not None
-            else (int(env_max_samples) if env_max_samples else None)
+            else (
+                env_max_samples
+                if env_max_samples is not None and env_max_samples > 0
+                else None
+            )
         )
         env_threads = os.environ.get("GAGE_EVAL_THREADS")
         default_threads = min(os.cpu_count() or 1, 4)

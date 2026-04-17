@@ -21,6 +21,8 @@ export function VizDoomPlugin({
       submitInput={submitInput}
       mediaSubscribe={mediaSubscribe}
       keyboardControls={VIZDOOM_KEYBOARD_CONTROLS}
+      showStatusLine={false}
+      showViewText={false}
     />
   );
 }

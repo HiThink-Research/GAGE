@@ -3,6 +3,32 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { GlobalControlBar } from "./GlobalControlBar";
 
 describe("GlobalControlBar", () => {
+  it("organizes controls into live mode, transport, and session action groups", () => {
+    render(
+      <GlobalControlBar
+        playbackMode="paused"
+        playbackSpeed={1}
+        scheduling={{
+          family: "turn",
+          phase: "waiting_for_intent",
+          acceptsHumanIntent: true,
+        }}
+        onPause={vi.fn()}
+        onPlayLive={vi.fn()}
+        onReplay={vi.fn()}
+        onSetSpeed={vi.fn()}
+        onStep={vi.fn()}
+        onSeekEnd={vi.fn()}
+        onBackToTail={vi.fn()}
+        onFinish={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Mode")).toBeInTheDocument();
+    expect(screen.getByText("Transport")).toBeInTheDocument();
+    expect(screen.getByText("Session")).toBeInTheDocument();
+  });
+
   it("exposes playback speed, step, end, and back-to-tail controls", () => {
     const onPause = vi.fn();
     const onPlayLive = vi.fn();

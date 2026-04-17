@@ -71,7 +71,11 @@ def materialize_gamekit_config(
 
     with _pushd(REPO_ROOT), patch.dict(
         os.environ,
-        {"GAGE_EVAL_SAVE_DIR": str(resolved_output_dir)},
+        {
+            "GAGE_EVAL_SAVE_DIR": str(resolved_output_dir),
+            "OPENAI_API_KEY": "test-openai-api-key",
+            "GAGE_GAME_ARENA_LLM_MODEL": "test-model",
+        },
         clear=False,
     ):
         build_runtime(

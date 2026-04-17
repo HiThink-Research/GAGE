@@ -13,7 +13,7 @@ def test_appworld_mcp_client_configured() -> None:
         / "config"
         / "custom"
         / "appworld"
-        / "appworld_agent_demo_runtime.yaml"
+        / "appworld_agent_demo.yaml"
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config = PipelineConfig.from_dict(payload)

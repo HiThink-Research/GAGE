@@ -24,7 +24,6 @@ TICTACTOE_BOARD_CSS = """
 .toast-wrap,
 .toast,
 .toast-container,
-.gradio-error,
 .error,
 .error-message,
 .error-box,
@@ -34,7 +33,6 @@ TICTACTOE_BOARD_CSS = """
 [role="alert"],
 [aria-live="assertive"],
 [aria-live="polite"] { display: none !important; }
-.gradio-container { overflow-y: scroll !important; }
 
 /* Layout */
 #gomoku-layout {
@@ -310,48 +308,6 @@ TICTACTOE_BOARD_CSS = """
   font-weight: 700;
 }
 
-/* Hidden Controls */
-#gomoku-move-submit {
-  flex: 0 0 auto;
-  opacity: 0;
-  width: 0;
-  height: 0;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-}
-#gomoku-move-submit button {
-  width: 0;
-  height: 0;
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-}
-#gomoku-finish-button {
-  width: 100%;
-  margin-top: 12px;
-  background: #ffb74d;
-  color: #3a2f26 !important;
-  border-radius: 10px !important;
-  font-weight: 700 !important;
-  border: 2px solid #f6a03a !important;
-}
-.finish-pulse {
-  animation: ttt-finish-pulse 1.8s infinite;
-  background: #ff7043 !important;
-  color: #fff !important;
-  border-color: #ff7043 !important;
-  box-shadow: 0 0 0 0 rgba(255, 112, 67, 0.6);
-}
-@keyframes ttt-finish-pulse {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 112, 67, 0.55); }
-  60% { transform: scale(1.03); box-shadow: 0 0 0 12px rgba(255, 112, 67, 0); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 112, 67, 0); }
-}
-#gomoku-refresh-button {
-  display: none !important;
-}
 """
 
 
@@ -426,27 +382,6 @@ class TicTacToeBoardRenderer:
         """Return CSS for the Tic-Tac-Toe board."""
 
         return TICTACTOE_BOARD_CSS
-
-    def build_interaction_js(
-        self,
-        *,
-        board_container_id: str,
-        move_input_id: str,
-        submit_button_id: str,
-        enable_click: bool,
-        refresh_button_id: str,
-        refresh_interval_ms: int,
-    ) -> str:
-        """Return JS for click-to-move interactions."""
-
-        return build_board_interaction_js(
-            board_container_id,
-            move_input_id,
-            submit_button_id,
-            enable_click=enable_click,
-            refresh_button_id=refresh_button_id,
-            refresh_interval_ms=refresh_interval_ms,
-        )
 
     def render_html(self, *, interactive: bool) -> str:
         """Render the current grid into styled HTML markup."""

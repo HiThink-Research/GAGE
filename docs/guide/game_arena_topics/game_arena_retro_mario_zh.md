@@ -2,251 +2,138 @@
 
 [English](game_arena_retro_mario.md) | 中文
 
-这是当前仓库里 stable-retro Mario 的标准 Game Arena 文档，统一整理了准备步骤、脚本化启动方式、回放方式和关键参数位置。
+Retro Mario 使用 GameKit 实时 retro-platformer 运行时和 Arena Visual 帧场景。它覆盖 macro action、low-latency 浏览器输入、stable-retro 集成和 OpenAI 可视化 LLM 运行。
 
-## 1. 概览
+## 1. 标准文件
 
-Retro Mario 现在已经统一到脚本入口，覆盖以下常见路径：
+| 用途 | 文件 |
+| --- | --- |
+| Dummy headless 冒烟 | `config/custom/retro_mario/retro_mario_dummy_gamekit.yaml` |
+| Human 可视化 | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` |
+| 本地测试 LLM headless | `config/custom/retro_mario/retro_mario_llm_headless_gamekit.yaml` |
+| 本地测试 LLM 可视化 | `config/custom/retro_mario/retro_mario_llm_visual_gamekit.yaml` |
+| OpenAI LLM headless | `config/custom/retro_mario/retro_mario_llm_headless_openai_gamekit.yaml` |
+| OpenAI LLM 可视化 | `config/custom/retro_mario/retro_mario_llm_visual_openai_gamekit.yaml` |
 
-- Dummy + websocketRGB 冒烟验证
-- OpenAI + websocketRGB 实时查看
-- Human + websocketRGB 人类控制
-- Dummy 或 OpenAI 的 headless 运行
+## 2. 前置准备
 
-实际运行行为仍由 YAML 配置决定，但启动和回放入口已经统一收口到 `scripts/run/arenas/retro_mario/`。
-
-## 2. 标准入口文件
-
-| 类型 | 路径 | 用途 |
-| --- | --- | --- |
-| 标准启动脚本 | `scripts/run/arenas/retro_mario/run.sh` | Mario 常见模式的统一启动入口 |
-| 回放脚本 | `scripts/run/arenas/retro_mario/replay.sh` | 通过 `run_id` 回放一局已完成运行 |
-| Dummy websocketRGB 配置 | `config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml` | 最快的实时查看冒烟验证 |
-| Human websocketRGB 配置 | `config/custom/retro_mario/retro_mario_phase1_human_ws.yaml` | 人类手动控制 Mario |
-| OpenAI websocketRGB 配置 | `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml` | API 驱动的实时查看 Demo |
-| OpenAI headless 配置 | `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml` | API 驱动的无界面 Demo |
-| Dummy headless 配置 | `config/custom/retro_mario/retro_mario_phase1_dummy_headless_auto_eval.yaml` | 不依赖 viewer 的离线冒烟测试 |
-| 数据集 | `config/custom/retro_mario/retro_mario_phase1.jsonl` | 默认样本输入 |
-| 环境实现 | `src/gage_eval/role/arena/games/retro/retro_env.py` | 运行时行为和 replay 写出逻辑 |
-| 动作解析器 | `src/gage_eval/role/arena/parsers/retro_action_parser.py` | 解析 `{"move": "...", "hold_ticks": ...}` 动作 |
-
-## 3. 前置准备
-
-运行任何 Mario 配置前，都要先安装 `stable-retro` 并导入 ROM。
+真实 Retro 路径依赖 `requirements.txt` 中的 `stable-retro`。运行真实 backend mode 前，用 `python -m retro.import <rom_save_path>` 导入所需 ROM。Dummy mode 和 `--max-samples 0` 配置检查不需要 ROM。
 
 ```bash
-python -m pip install stable-retro
-python -m retro.import "<rom_save_path>"
+pip install -r requirements.txt
+
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+# 可选：默认模型为 gpt-5.4。
+export GAGE_GAME_ARENA_LLM_MODEL="gpt-5.4"
+# 可选：覆盖为 OpenAI-compatible 服务。
+export OPENAI_API_BASE="https://api.openai.com/v1"
 ```
 
-当前配置使用的游戏 id 是：
+使用官方 OpenAI API 时保留默认 endpoint，或不设置 `OPENAI_API_BASE`。如果要跑通过 OpenAI-compatible API 暴露的开源模型，只需要设置 `OPENAI_API_BASE` 和 `GAGE_GAME_ARENA_LLM_MODEL`，不需要改 YAML backend。
+
+普通运行不需要 Node/npm。只有开发或重建 `frontend/arena-visual` 时才需要 Node/npm；见 [Arena Visual 浏览器控制面](game_arena_visual_control_zh.md#2-后端与前端资源)。
+
+## 3. 快速运行
+
+请在仓库根目录、项目 Python 环境已激活后运行。
+
+```bash
+bash scripts/run/arenas/retro_mario/run.sh --mode dummy --max-samples 1
+```
+
+```bash
+OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>" bash scripts/run/arenas/retro_mario/run.sh --mode llm_visual_openai --max-samples 1
+```
+
+```bash
+bash scripts/run/arenas/retro_mario/run.sh --mode human_visual --max-samples 1
+```
+
+任何 OpenAI 配置都可以先用 `--max-samples 0` 校验配置加载，不执行样本。
+
+## 4. Mode 与 Config 映射
+
+`scripts/run/arenas/retro_mario/run.sh` 会按 `--python-bin`、`PYTHON_BIN`、当前 virtualenv/conda、`python`/`python3` 的顺序选择 Python。脚本调用 `run.py` 前会打印实际 Python、mode、config、输出目录和 run id。
+
+| 入口 | 配置 | 用途 |
+| --- | --- | --- |
+| `dummy` | `config/custom/retro_mario/retro_mario_dummy_gamekit.yaml` | Headless dummy 冒烟。 |
+| `llm_headless` | `config/custom/retro_mario/retro_mario_llm_headless_gamekit.yaml` | 本地测试 LLM 无浏览器。 |
+| `llm_visual` | `config/custom/retro_mario/retro_mario_llm_visual_gamekit.yaml` | 本地测试 LLM 带浏览器。 |
+| `llm_headless_openai` | `config/custom/retro_mario/retro_mario_llm_headless_openai_gamekit.yaml` | OpenAI LLM 无浏览器。 |
+| `llm_visual_openai` | `config/custom/retro_mario/retro_mario_llm_visual_openai_gamekit.yaml` | OpenAI LLM 带浏览器。 |
+| `human_visual` | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` | 人类实时浏览器输入。 |
+
+如果脚本可用，`--config <path>` 始终覆盖脚本内置 mode 映射。
+
+## 5. 浏览器控制
+
+可视化配置使用 `visualizer.mode: arena_visual`。浏览器打开的 session URL 形态如下：
 
 ```text
-SuperMarioBros3-Nes-v0
+http://127.0.0.1:<visual_port>/sessions/<sample_id>?run_id=<run_id>
 ```
 
-如果使用 OpenAI 配置，运行前先设置：
+共享的 command deck、播放控制、utility rail、timeline 和 replay 状态见 [Arena Visual 浏览器控制面](game_arena_visual_control_zh.md)。
 
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-```
+![Retro Mario Arena Visual 画面](../../assets/arena-visual-retro-mario-stage-20260409.png)
 
-可选模型覆盖：
+## 6. 人类输入
 
-```bash
-export RETRO_OPENAI_MODEL="gpt-4o-mini"
-```
+实时键盘状态会映射成 macro move。方向键或 WASD 控制移动，Space/J/Z/C 跳跃，X/K 奔跑，Enter start，Shift/L select。直接 payload 也可以提交 `move`，例如 `noop`、`right`、`right_jump`、`right_run`、`right_run_jump`；需要控制持续时间时可带 `hold_ticks`。
 
-## 4. 启动路径
+## 7. 输出与回放产物
 
-### 4.1 推荐冒烟路径：dummy + websocketRGB
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode dummy_ws \
-  --run-id "retro_mario_dummy_ws_$(date +%Y%m%d_%H%M%S)"
-```
-
-默认实时查看地址：
-
-```text
-http://127.0.0.1:5800/ws_rgb/viewer
-```
-
-标准启动脚本的执行顺序：
-
-1. 选择 Python 解释器。
-2. 按 `--mode` 解析 YAML；如果传了 `--config`，就直接使用显式配置。
-3. 校验配置文件路径。
-4. 对 OpenAI 模式检查 API Key。
-5. 执行 `python run.py --config ...`。
-6. 对 websocket 模式打印 viewer 地址或 human 输入端口提示。
-
-`scripts/run/arenas/retro_mario/run.sh` 当前支持的模式：
-
-- `dummy_ws`
-- `openai_ws`
-- `human_ws`
-- `dummy_headless`
-- `openai_headless`
-
-常用启动参数：
-
-- `--mode`：从上面的模式列表中选择
-- `--config`：显式 YAML 路径，会覆盖脚本内置映射
-- `--run-id`：写入 `runs/` 的运行编号
-- `--output-dir`：输出目录，默认 `runs`
-- `--python-bin`：指定 Python 解释器
-
-常用环境变量：
-
-- `RETRO_WS_RGB_PORT`：websocket 模式的 websocketRGB 端口
-- `OPENAI_API_KEY`：`openai_ws` 和 `openai_headless` 必需
-- `LITELLM_API_KEY`：可作为 OpenAI 模式的回退 key 来源
-- `RETRO_OPENAI_MODEL`：如果配置支持，可作为模型名覆盖
-
-### 4.2 OpenAI + websocketRGB
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode openai_ws \
-  --run-id "retro_mario_openai_ws_$(date +%Y%m%d_%H%M%S)"
-```
-
-这个命令里如果要切换模型或 API，请改这里：
-
-- API Key：启动前先设置 `OPENAI_API_KEY`。`scripts/run/arenas/retro_mario/run.sh` 也接受 `LITELLM_API_KEY`，并会自动同步到 `OPENAI_API_KEY`。
-- `openai_ws` 读取的是 `config/custom/retro_mario/retro_mario_openai_ws_rgb_auto_eval.yaml`；`openai_headless` 读取的是 `config/custom/retro_mario/retro_mario_openai_headless_auto_eval.yaml`。
-- 托管 OpenAI 兼容 API：切换接口地址时改 `backends[0].config.base_url`；切换模型时改 `backends[0].config.model`，或者直接设置 `RETRO_OPENAI_MODEL`。
-- 本地 OpenAI 兼容服务：把 `backends[0].config.base_url` 改成本地服务地址，再把 `backends[0].config.model` 改成服务暴露的模型名。当前这两份配置里 `require_api_key: true`，所以要么保持 `OPENAI_API_KEY` 非空，要么在你确认本地服务不需要鉴权时把这个开关改成 `false`。
-
-### 4.3 Human + websocketRGB
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode human_ws \
-  --run-id "retro_mario_human_ws_$(date +%Y%m%d_%H%M%S)"
-```
-
-当前 human 配置里的默认值：
-
-- Viewer 地址：`http://127.0.0.1:5800/ws_rgb/viewer`
-- 队列输入端口：`human_input.host: 0.0.0.0`，`human_input.port: 8001`
-- 输入 FPS：`human_input.fps: 30`
-
-浏览器侧默认按键别名来自 retro input mapper：
-
-- 移动：`W/A/S/D` 或方向键
-- Jump：`J`、`Space`、`Z`、`C`
-- Run：`K` 或 `X`
-- Select：`L` 或 `Shift`
-- Start：`Enter`
-
-viewer 交互要点：
-
-- 进入 `in_progress`：表示当前对局还在进行，可以继续输入。
-- 进入 `game_ended`：表示当前对局已经结束，可以开始 replay；正常结束和点击 `Terminate Game` 都会进入这个状态。
-- 进入 `process_ended`：表示已经确认结束进程，viewer 很快会断开。
-- 只有在 `game_ended` 时，`Start Replay`、`Step`、`Replay Seek` 才能使用；看完回放后再点 `End Process`。
-
-### 4.4 Headless 路径
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode dummy_headless \
-  --run-id "retro_mario_dummy_headless_$(date +%Y%m%d_%H%M%S)"
-```
-
-如果你只想做离线验证、不需要 websocketRGB，就使用 headless 配置。
-
-OpenAI headless 示例：
-
-```bash
-export OPENAI_API_KEY="<YOUR_KEY>"
-
-bash scripts/run/arenas/retro_mario/run.sh \
-  --mode openai_headless \
-  --run-id "retro_mario_openai_headless_$(date +%Y%m%d_%H%M%S)"
-```
-
-### 4.5 显式配置覆盖
-
-如果你想保留脚本入口，但手动指定 YAML，可以直接用 `--config`：
-
-```bash
-bash scripts/run/arenas/retro_mario/run.sh \
-  --config config/custom/retro_mario/retro_mario_phase1_dummy_ws.yaml \
-  --run-id "retro_mario_custom_$(date +%Y%m%d_%H%M%S)"
-```
-
-## 5. 启动顺序
-
-当前仓库里的 Retro Mario 启动顺序是：
-
-1. 安装 `stable-retro`。
-2. 用 `python -m retro.import` 导入 ROM。
-3. 选择一个标准 `--mode`，或者指定 `--config`。
-4. 只有 OpenAI 模式才需要设置 API Key。
-5. 执行 `scripts/run/arenas/retro_mario/run.sh`。
-6. 对 websocket 模式，在运行中打开 `ws_rgb/viewer`；对局结束后可先在 viewer 中 replay，确认完成后再点 `End Process`；对已有产物，再执行 `scripts/run/arenas/retro_mario/replay.sh <run_id>`。
-
-## 6. 关键参数与修改位置
-
-| 项目 | 修改位置 | 含义 |
-| --- | --- | --- |
-| API Key | Shell 环境变量 `OPENAI_API_KEY` 或 `LITELLM_API_KEY` | OpenAI 模式必需；脚本接受这两个变量 |
-| 启动模式 | `scripts/run/arenas/retro_mario/run.sh --mode` | 选择 `dummy_ws`、`openai_ws`、`human_ws`、`dummy_headless`、`openai_headless` |
-| 自定义配置 | `scripts/run/arenas/retro_mario/run.sh --config` | 跳过脚本内置映射，直接使用指定 YAML |
-| 模型接口地址 | 当前所选 `retro_mario_openai_*.yaml` 里的 `backends[].config.base_url` | 在托管 API 和本地 OpenAI 兼容服务之间切换 |
-| 模型名 | `RETRO_OPENAI_MODEL` 或 `backends[].config.model` | 选择 OpenAI 模型 |
-| API Key 强制校验 | `backends[].config.require_api_key` | 托管 API 建议保持 `true`；只有可信本地服务才建议关闭 |
-| 实时查看端口 | `human_input.ws_port` 或环境变量 `RETRO_WS_RGB_PORT` | websocket 配置的 websocketRGB 端口；脚本会透传这个环境变量 |
-| 显示模式 | `environment.display_mode` | `websocket` 用于实时查看，`headless` 用于离线运行 |
-| 合法动作 | `environment.legal_moves` | 暴露给玩家的动作集合 |
-| 持续帧数 | `environment.action_schema.hold_ticks_*` 和 `parser.hold_ticks_*` | 宏动作持续多久，以及默认值/上下界 |
-| Tick 节奏 | `scheduler.tick_ms` | 主调度器的毫秒级节奏 |
-| Human 输入 FPS | `human_input.fps` | human 模式下输入采样频率 |
-| Replay 模式 | `environment.replay.mode` | 决定写出 `action`、`frame` 或 `both` |
-| Replay 帧采样 | `environment.replay.frame_capture.*` | 控制帧采样步长、格式和帧数上限 |
-| 回放 FPS | `scripts/run/arenas/retro_mario/replay.sh` 的环境变量 `FPS` | 跑后回放的播放速度 |
-| 回放地址 | `scripts/run/arenas/retro_mario/replay.sh` 的环境变量 `HOST` / `PORT` | 回放服务监听地址 |
-| 回放帧数上限 | `scripts/run/arenas/retro_mario/replay.sh` 的环境变量 `MAX_FRAMES` | 限制回放最大帧数 |
-
-补充说明：
-
-- Mario 动作是 JSON，例如 `{"move":"right_run_jump","hold_ticks":6}`。
-- 如果模型没有输出 `hold_ticks`，解析器会补默认值，并限制在配置范围内。
-- `display_mode: websocket` 在运行时会被当成 headless 环境加 websocketRGB 推流，而不是本地窗口渲染。
-
-## 7. 产物与回放
-
-运行产物默认写到：
+可视化运行会同时写出评测输出和可回放的 Arena Visual 产物：
 
 ```text
 runs/<run_id>/
+  summary.json
+  samples.jsonl
+  replays/<sample_id>/
+    replay.json
+    events.jsonl
+    arena_visual_session/v1/
+      manifest.json
+      timeline.jsonl
+      scenes/
+      media/
 ```
 
-可用单个 sample 产物启动回放：
+`sample.predict_result[0].arena_trace` 保存每一步动作、合法性、耗时、重试和 scheduler 元数据。`sample.predict_result[0].game_arena` 保存终局 footer。启用可视化时，`artifacts.visual_session_ref` 指向 `arena_visual_session/v1/manifest.json`。已完成运行的回放也读取同一套 Arena Visual session 产物。
 
-```bash
-bash scripts/run/arenas/retro_mario/replay.sh <run_id>
-```
+## 8. 运行内部契约
 
-常用回放环境变量：
+共享运行契约见 [Arena Visual 浏览器控制面](game_arena_visual_control_zh.md#3-运行契约)。本游戏排查时优先看这些字段：
 
-- `PYTHON_BIN`：回放脚本使用的 Python 解释器
-- `HOST`：监听地址，默认 `127.0.0.1`
-- `PORT`：监听端口，默认 `5800`
-- `FPS`：播放 FPS，默认 `12`
-- `MAX_FRAMES`：最大回放帧数，默认 `0` 表示不限制
-- `AUTO_OPEN`：设为 `1` 时自动打开浏览器
+- `ArenaObservation.view` 携带帧媒体和紧凑文本 telemetry。
+- `legal_actions.items` 来自 `runtime_overrides.legal_moves` 或环境默认 stable macro move。
+- `ArenaAction.raw` 可包含带 `move` 和 `hold_ticks` 的 JSON。
+- `GameResult` 汇总 tick/move count、illegal count、final board text，以及可用的 reward 元数据。
 
-回放地址：
+内置 LLM player 会读取 sample messages，并追加一条由当前 `ArenaObservation` 生成的 user turn：active player、view text、legal moves，以及“只返回一个合法动作”的指令。模型返回值会封装成 `ArenaAction`，再交给 GameKit 环境执行。
 
-```text
-http://127.0.0.1:5800/ws_rgb/viewer
-```
+## 9. 常用参数
 
-启动回放前，建议先确认 sample JSON 里存在 `replay_path` 等 replay 相关字段。
+| 调整项 | 位置 |
+| --- | --- |
+| Backend mode | `runtime_overrides.backend_mode` |
+| 帧步长 | `runtime_overrides.frame_stride` |
+| 回合预算 | `runtime_overrides.max_turns` / `stub_max_ticks` |
+| 观测图 | `runtime_overrides.obs_image` |
+| 合法 macro moves | `runtime_overrides.legal_moves` |
+| 实时画面传输 | `visualizer.live_scene_scheme` |
+
+## 10. 常见排障
+
+| 现象 | 检查项 |
+| --- | --- |
+| OpenAI 配置在 runtime 启动前失败 | 运行任何 `*_openai_gamekit.yaml` 前先 export `OPENAI_API_KEY`。 |
+| 使用了错误模型 | 启动前设置 `GAGE_GAME_ARENA_LLM_MODEL`，或取消该变量以使用文档默认值。 |
+| 依赖导入失败 | 在 `run.py` 或 arena 脚本实际使用的同一个 Python 环境里执行 `pip install -r requirements.txt`。 |
+| 出现 ROM 或桌面/渲染错误 | 见下方本游戏说明；如果在棋盘或牌类游戏里看到 ROM 错误，通常是跑错了帧游戏配置。 |
+| 浏览器一直 loading | 检查控制台打印的 session URL、`visualizer.port`，以及 `runs/<run_id>/replays/<sample_id>/arena_visual_session/v1/manifest.json`。 |
+| 端口被占用 | 调整配置里的 `visualizer.port`，或更换 `--run-id`/输出目录，避免读到旧 session。 |
+| 人类输入无效 | 确认 `human_input.enabled: true`、浏览器 URL 带当前 `run_id`，且当前 active actor 是 human player。 |
+| LLM 返回非法动作 | 以浏览器或 Trace 面板里的 legal move list 为准；配置了 fallback policy 时内置 LLM driver 会按策略兜底。 |
+| ROM 或渲染错误 | 安装 `stable-retro`，用 `python -m retro.import <rom_save_path>` 导入 ROM，并在 human visual 运行时使用兼容桌面渲染环境。 |

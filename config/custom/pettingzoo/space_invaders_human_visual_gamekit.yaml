@@ -4,9 +4,9 @@ kind: PipelineConfig
 metadata:
   name: space_invaders_human_visual_gamekit
   description: >
-    GameArena Space Invaders human-vs-dummy manual smoke config for the arena_visual
+    GameArena Space Invaders single-player manual smoke config for the arena_visual
     web app. The human player occupies pilot_0 and submits actions through the live
-    session action queue while pilot_1 remains deterministic for repeatable browser checks.
+    session action queue while Gymnasium ALE drives the Atari backend directly.
 
 datasets:
   - dataset_id: space_invaders_gamekit_fixture_only
@@ -24,12 +24,34 @@ role_adapters:
   - adapter_id: space_invaders_human_visual_gamekit_arena
     role_type: arena
     params:
-      game_kit: pettingzoo
+      game_kit: gymnasium_atari
       env: space_invaders
       runtime_overrides:
+        scheduler: real_time_tick/default
         backend_mode: real
-        include_raw_obs: true
-        use_action_meanings: true
+        max_cycles: 7200
+        max_steps: 7200
+        max_ticks: 7200
+        env_kwargs:
+          env_id: ALE/SpaceInvaders-v5
+          frameskip: 2
+        action_schema:
+          hold_ticks_min: 1
+          hold_ticks_max: 4
+          hold_ticks_default: 1
+        runtime_binding_policy_config:
+          mode: scheduler_owned_human_realtime
+          activation_scope: pure_human_only
+          input_model: queued_command
+          input_transport: realtime_ws
+          tick_interval_ms: 33
+          frame_output_hz: 30
+          artifact_sampling_mode: async_decimated_live
+          snapshot_persist_stride: 3
+          max_commands_per_tick: 1
+          max_command_queue_size: 128
+          queue_overflow_policy: drop_oldest
+          bridge_stall_timeout_ms: 2000
       human_input:
         enabled: true
         host: 127.0.0.1
@@ -40,13 +62,12 @@ role_adapters:
         launch_browser: true
         mode: arena_visual
         port: 5807
-        live_scene_scheme: http_pull
+        live_scene_scheme: low_latency_channel
         linger_after_finish_s: 15.0
       players:
         - seat: pilot_0
           player_id: pilot_0
           player_kind: human
-        - seat: pilot_1
-          player_id: pilot_1
-          player_kind: dummy
-          actions: ["LEFT", "NOOP"]
+          driver_params:
+            input_semantics: queued_command
+            tick_interval_ms: 33

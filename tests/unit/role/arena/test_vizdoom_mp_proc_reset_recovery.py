@@ -11,6 +11,63 @@ def _make_reset_message(health: float) -> dict[str, Any]:
     return {"done": False, "obs": {"HEALTH": health}}
 
 
+class _FakeConn:
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.closed = False
+
+    def send(self, payload: dict[str, Any]) -> None:
+        self.sent.append(payload)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _GracefulProc:
+    def __init__(self) -> None:
+        self.pid = 1234
+        self._alive = True
+        self.join_calls: list[float | None] = []
+        self.terminate_calls = 0
+        self.kill_calls = 0
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_calls.append(timeout)
+        self._alive = False
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        self._alive = False
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self._alive = False
+
+
+class _StubbornTerminateProc(_GracefulProc):
+    def join(self, timeout: float | None = None) -> None:
+        self.join_calls.append(timeout)
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        self._alive = False
+
+
+class _StubbornKillProc(_GracefulProc):
+    def join(self, timeout: float | None = None) -> None:
+        self.join_calls.append(timeout)
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        self._alive = False
+
+
 def test_reset_restarts_workers_when_stale_state_detected(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = mp_proc_module.ViZDoomMPProcEnvConfig(
         show_automap=False,
@@ -111,3 +168,52 @@ def test_reset_raises_after_exhausting_stale_recovery(monkeypatch: pytest.Monkey
     assert len(dispose_calls) == expected_restarts
     assert env._host_proc is None
     assert env._join_proc is None
+
+
+def test_terminate_process_allows_worker_to_exit_gracefully() -> None:
+    env = mp_proc_module.ViZDoomMPProcEnv(mp_proc_module.ViZDoomMPProcEnvConfig())
+    conn = _FakeConn()
+    proc = _GracefulProc()
+
+    env._terminate_process(proc, conn)
+
+    assert conn.sent == [{"type": "close"}]
+    assert conn.closed is True
+    assert proc.join_calls == [mp_proc_module._WORKER_CLOSE_GRACE_TIMEOUT_S]
+    assert proc.terminate_calls == 0
+    assert proc.kill_calls == 0
+
+
+def test_terminate_process_falls_back_to_forceful_terminate() -> None:
+    env = mp_proc_module.ViZDoomMPProcEnv(mp_proc_module.ViZDoomMPProcEnvConfig())
+    conn = _FakeConn()
+    proc = _StubbornTerminateProc()
+
+    env._terminate_process(proc, conn)
+
+    assert conn.sent == [{"type": "close"}]
+    assert conn.closed is True
+    assert proc.join_calls == [
+        mp_proc_module._WORKER_CLOSE_GRACE_TIMEOUT_S,
+        mp_proc_module._WORKER_FORCE_JOIN_TIMEOUT_S,
+    ]
+    assert proc.terminate_calls == 1
+    assert proc.kill_calls == 0
+
+
+def test_terminate_process_kills_worker_when_terminate_is_insufficient() -> None:
+    env = mp_proc_module.ViZDoomMPProcEnv(mp_proc_module.ViZDoomMPProcEnvConfig())
+    conn = _FakeConn()
+    proc = _StubbornKillProc()
+
+    env._terminate_process(proc, conn)
+
+    assert conn.sent == [{"type": "close"}]
+    assert conn.closed is True
+    assert proc.join_calls == [
+        mp_proc_module._WORKER_CLOSE_GRACE_TIMEOUT_S,
+        mp_proc_module._WORKER_FORCE_JOIN_TIMEOUT_S,
+        mp_proc_module._WORKER_FORCE_JOIN_TIMEOUT_S,
+    ]
+    assert proc.terminate_calls == 1
+    assert proc.kill_calls == 1

@@ -58,6 +58,57 @@ def test_run_mode_minimal_success(monkeypatch, tmp_path):
     assert flags.get("run_called") is True
 
 
+def test_max_samples_zero_validates_manifest_discovered_assets(monkeypatch, tmp_path, capsys):
+    payload = {
+        "datasets": [
+            {
+                "dataset_id": "space_invaders_gamekit_fixture_only",
+                "loader": "jsonl",
+                "params": {"path": "tests/data/pettingzoo_atari_demo.jsonl"},
+            }
+        ],
+        "custom": {"steps": [{"step": "arena", "adapter_id": "arena"}]},
+        "role_adapters": [
+            {
+                "adapter_id": "arena",
+                "role_type": "arena",
+                "params": {
+                    "game_kit": "pettingzoo",
+                    "env": "space_invaders",
+                    "runtime_overrides": {"backend_mode": "dummy"},
+                },
+            }
+        ],
+    }
+    cfg = tmp_path / "pettingzoo.yaml"
+    cfg.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
+    monkeypatch.setattr(gage_run, "_ensure_spawn_start_method", lambda: None)
+    monkeypatch.setattr(gage_run, "_preflight_checks", lambda: None)
+    monkeypatch.setattr(gage_run, "_install_signal_handlers", lambda: None)
+
+    sys.argv = [
+        "run.py",
+        "--config",
+        str(cfg),
+        "--gpus",
+        "0",
+        "--cpus",
+        "1",
+        "--max-samples",
+        "0",
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 0
+    assert "config wiring validated" in captured.out
+    assert "unknown loader" not in captured.err
+    assert "unknown role_type" not in captured.err
+
+
 def test_distill_multi_task_rejected(monkeypatch, tmp_path, capsys):
     cfg = _write_config(tmp_path, tasks=2)
     monkeypatch.setattr(gage_run, "analyze_tasks_for_distill", lambda *a, **k: (_ for _ in ()).throw(DistillError("multi-task config detected")))

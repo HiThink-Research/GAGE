@@ -11,7 +11,6 @@ import { DoudizhuPlugin } from "./doudizhu/DoudizhuPlugin";
 import { GomokuPlugin } from "./gomoku/GomokuPlugin";
 import { MahjongPlugin } from "./mahjong/MahjongPlugin";
 import { PettingZooPlugin } from "./pettingzoo/PettingZooPlugin";
-import { OpenRAPlugin } from "./openra/OpenRAPlugin";
 import { RetroMarioPlugin } from "./retro-mario/RetroMarioPlugin";
 import { TicTacToePlugin } from "./tictactoe/TicTacToePlugin";
 import { VizDoomPlugin } from "./vizdoom/VizDoomPlugin";
@@ -20,6 +19,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.gomoku.board_v1",
     displayName: "Gomoku",
+    operatorHint: "Click a highlighted intersection to submit the next move.",
     manifest: {
       sceneKinds: ["board"],
       supportedObservers: ["player", "global"],
@@ -29,6 +29,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.tictactoe.board_v1",
     displayName: "Tic-Tac-Toe",
+    operatorHint: "Click a highlighted tile to claim the next turn.",
     manifest: {
       sceneKinds: ["board"],
       supportedObservers: ["player", "global"],
@@ -38,24 +39,30 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.doudizhu.table_v1",
     displayName: "Doudizhu",
+    operatorHint: "Use the stage controls and drawer to inspect seats, chat, and trace.",
     manifest: {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
   },
   {
     pluginId: "arena.visualization.mahjong.table_v1",
     displayName: "Mahjong",
+    operatorHint: "Use the stage controls and drawer to inspect seats, events, and trace.",
     manifest: {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
   },
   {
     pluginId: "arena.visualization.pettingzoo.frame_v1",
     displayName: "PettingZoo",
+    operatorHint:
+      "Watch the live frame and use the action controls when the decision window opens.",
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "global"],
@@ -65,6 +72,7 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.vizdoom.frame_v1",
     displayName: "VizDoom",
+    operatorHint: "Keyboard: W or Up moves, A/Left and D/Right turn, Space or J fires.",
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "camera"],
@@ -74,24 +82,18 @@ const KNOWN_PLUGIN_META = [
   {
     pluginId: "arena.visualization.retro_platformer.frame_v1",
     displayName: "Retro Mario",
+    operatorHint:
+      "Keyboard: arrows/WASD move, Space/J/Z jump, X/K run, Enter start, Shift/L select.",
     manifest: {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "camera"],
       acceptsHumanIntent: true,
     },
   },
-  {
-    pluginId: "arena.visualization.openra.rts_v1",
-    displayName: "OpenRA",
-    manifest: {
-      sceneKinds: ["rts"],
-      supportedObservers: ["player", "spectator", "camera"],
-      acceptsHumanIntent: true,
-    },
-  },
 ] as const satisfies ReadonlyArray<{
   pluginId: string;
   displayName: string;
+  operatorHint?: string;
   manifest: GamePluginManifest;
 }>;
 
@@ -182,13 +184,6 @@ const frameInputInterpreter = createInputInterpreter<FrameDeviceEvent>(
   }),
 );
 
-const openraInputInterpreter = createInputInterpreter<FrameDeviceEvent>(
-  ({ playerId, actionPayload }) => ({
-    playerId,
-    action: actionPayload,
-  }),
-);
-
 const KNOWN_PLUGINS = new Map<string, AnyArenaPluginDefinition>([
   [
     "arena.visualization.gomoku.board_v1",
@@ -244,14 +239,6 @@ const KNOWN_PLUGINS = new Map<string, AnyArenaPluginDefinition>([
       ...KNOWN_PLUGIN_META[6],
       render: RetroMarioPlugin,
       inputInterpreter: frameInputInterpreter,
-    }),
-  ],
-  [
-    "arena.visualization.openra.rts_v1",
-    createPlugin({
-      ...KNOWN_PLUGIN_META[7],
-      render: OpenRAPlugin,
-      inputInterpreter: openraInputInterpreter,
     }),
   ],
 ]);

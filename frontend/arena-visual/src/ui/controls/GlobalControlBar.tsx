@@ -52,93 +52,112 @@ export function GlobalControlBar({
 }: GlobalControlBarProps) {
   return (
     <section className="control-bar" aria-label="Playback controls">
-      <div className="control-bar__buttons">
-        <button
-          type="button"
-          className={playbackMode === "live_tail" ? "control-chip is-active" : "control-chip"}
-          disabled={disabled || controlAvailability?.playLiveDisabled}
-          onClick={onPlayLive}
-        >
-          Live tail
-        </button>
-        <button
-          type="button"
-          className={playbackMode === "paused" ? "control-chip is-active" : "control-chip"}
-          disabled={disabled || controlAvailability?.pauseDisabled}
-          onClick={onPause}
-        >
-          Pause
-        </button>
-        <button
-          type="button"
-          className={playbackMode === "replay_playing" ? "control-chip is-active" : "control-chip"}
-          disabled={disabled || controlAvailability?.replayDisabled}
-          onClick={onReplay}
-        >
-          Replay
-        </button>
-        {onRestart ? (
-          <button
-            type="button"
-            className="control-chip"
-            disabled={disabled || controlAvailability?.restartDisabled}
-            onClick={onRestart}
-          >
-            {restartLabel}
-          </button>
-        ) : null}
-        {([0.5, 1, 2] as const).map((speed) => (
-          <button
-            key={speed}
-            type="button"
-            className={playbackSpeed === speed ? "control-chip is-active" : "control-chip"}
-            disabled={disabled || controlAvailability?.speedDisabled}
-            onClick={() => onSetSpeed(speed)}
-          >
-            {speed}x
-          </button>
-        ))}
-        <button
-          type="button"
-          className="control-chip"
-          disabled={disabled || controlAvailability?.stepBackwardDisabled}
-          onClick={() => onStep(-1)}
-        >
-          Step -1
-        </button>
-        <button
-          type="button"
-          className="control-chip"
-          disabled={disabled || controlAvailability?.stepForwardDisabled}
-          onClick={() => onStep(1)}
-        >
-          Step +1
-        </button>
-        <button
-          type="button"
-          className="control-chip"
-          disabled={disabled || controlAvailability?.seekEndDisabled}
-          onClick={onSeekEnd}
-        >
-          End
-        </button>
-        <button
-          type="button"
-          className="control-chip"
-          disabled={disabled || controlAvailability?.backToTailDisabled}
-          onClick={onBackToTail}
-        >
-          Back to tail
-        </button>
-        {onFinish ? (
-          <button
-            type="button"
-            className="control-chip"
-            disabled={disabled || controlAvailability?.finishDisabled}
-            onClick={onFinish}
-          >
-            {finishLabel}
-          </button>
+      <div className="control-bar__groups">
+        <div className="control-bar__group">
+          <span className="control-bar__group-label">Mode</span>
+          <div className="control-bar__buttons">
+            <button
+              type="button"
+              className={playbackMode === "live_tail" ? "control-chip is-active" : "control-chip"}
+              disabled={disabled || controlAvailability?.playLiveDisabled}
+              onClick={onPlayLive}
+            >
+              Live tail
+            </button>
+            <button
+              type="button"
+              className={playbackMode === "paused" ? "control-chip is-active" : "control-chip"}
+              disabled={disabled || controlAvailability?.pauseDisabled}
+              onClick={onPause}
+            >
+              Pause
+            </button>
+            <button
+              type="button"
+              className={playbackMode === "replay_playing" ? "control-chip is-active" : "control-chip"}
+              disabled={disabled || controlAvailability?.replayDisabled}
+              onClick={onReplay}
+            >
+              Replay
+            </button>
+            <button
+              type="button"
+              className="control-chip"
+              disabled={disabled || controlAvailability?.backToTailDisabled}
+              onClick={onBackToTail}
+            >
+              Back to tail
+            </button>
+          </div>
+        </div>
+
+        <div className="control-bar__group">
+          <span className="control-bar__group-label">Transport</span>
+          <div className="control-bar__buttons">
+            {([0.5, 1, 2] as const).map((speed) => (
+              <button
+                key={speed}
+                type="button"
+                className={playbackSpeed === speed ? "control-chip is-active" : "control-chip"}
+                disabled={disabled || controlAvailability?.speedDisabled}
+                onClick={() => onSetSpeed(speed)}
+              >
+                {speed}x
+              </button>
+            ))}
+            <button
+              type="button"
+              className="control-chip"
+              disabled={disabled || controlAvailability?.stepBackwardDisabled}
+              onClick={() => onStep(-1)}
+            >
+              Step -1
+            </button>
+            <button
+              type="button"
+              className="control-chip"
+              disabled={disabled || controlAvailability?.stepForwardDisabled}
+              onClick={() => onStep(1)}
+            >
+              Step +1
+            </button>
+            <button
+              type="button"
+              className="control-chip"
+              disabled={disabled || controlAvailability?.seekEndDisabled}
+              onClick={onSeekEnd}
+            >
+              End
+            </button>
+          </div>
+        </div>
+
+        {onRestart || onFinish ? (
+          <div className="control-bar__group">
+            <span className="control-bar__group-label">Session</span>
+            <div className="control-bar__buttons">
+              {onRestart ? (
+                <button
+                  type="button"
+                  className="control-chip"
+                  disabled={disabled || controlAvailability?.restartDisabled}
+                  onClick={onRestart}
+                >
+                  {restartLabel}
+                </button>
+              ) : null}
+              {onFinish ? (
+                <button
+                  type="button"
+                  className="control-chip"
+                  disabled={disabled || controlAvailability?.finishDisabled}
+                  onClick={onFinish}
+                >
+                  {finishLabel}
+                </button>
+              ) : null}
+            </div>
+          </div>
         ) : null}
       </div>
       <div className="control-bar__status">

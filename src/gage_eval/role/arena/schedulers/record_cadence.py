@@ -23,6 +23,10 @@ class RecordCadenceScheduler(Scheduler):
         while not session.should_stop():
             observation = session.observe()
             decision = session.decide_current_player(observation)
+            if decision is None:
+                if session.should_stop():
+                    break
+                raise RuntimeError("RecordCadenceScheduler received no decision for a live turn")
             session.apply(decision)
             session.capture_output_tick()
             session.advance()

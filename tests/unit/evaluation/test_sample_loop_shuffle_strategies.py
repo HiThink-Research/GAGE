@@ -14,6 +14,17 @@ def _trace(run_id: str) -> ObservabilityTrace:
 
 
 @pytest.mark.fast
+def test_sample_loop_env_max_samples_zero_is_treated_as_unbounded(monkeypatch) -> None:
+    monkeypatch.setenv("GAGE_EVAL_MAX_SAMPLES", "0")
+    samples = [{"id": f"s{idx}"} for idx in range(3)]
+    loop = SampleLoop(samples)
+
+    selected = [sample["id"] for _, sample in loop._iter_samples(_trace("max-samples-zero"))]
+
+    assert selected == ["s0", "s1", "s2"]
+
+
+@pytest.mark.fast
 def test_sample_loop_auto_shuffle_selects_reservoir_for_streaming_max_samples() -> None:
     loop = SampleLoop(
         ({"id": f"s{idx}"} for idx in range(10)),

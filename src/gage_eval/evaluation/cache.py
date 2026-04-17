@@ -303,12 +303,6 @@ def _json_default(obj: Any) -> Any:
     return str(obj)
 
 
-def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:
-    """Serialize one root journal payload into a human-readable JSON object."""
-
-    return json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
-
-
 def _iter_json_objects(path: Path) -> Iterator[Dict[str, Any]]:
     """Iterate one file containing consecutive pretty-printed JSON objects."""
 
@@ -328,6 +322,12 @@ def _iter_json_objects(path: Path) -> Iterator[Dict[str, Any]]:
         if isinstance(payload, dict):
             yield payload
         index = next_index
+
+
+def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:
+    """Serializes one root journal payload into a single JSONL entry."""
+
+    return json.dumps(payload, ensure_ascii=False, default=_json_default)
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:

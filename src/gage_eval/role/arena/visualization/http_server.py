@@ -25,6 +25,7 @@ from gage_eval.role.arena.visualization.live_session import (
     ArenaVisualLiveRegistry,
     ArenaVisualLiveSessionSource,
 )
+from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 
 ManifestResolver = Callable[[str, str | None], str | Path | None]
 ActionSubmitter = Callable[[str, str | None, dict[str, Any]], ActionIntentReceipt]
@@ -197,6 +198,7 @@ def build_session_manifest_resolver(base_dir: str | Path) -> ManifestResolver:
 
 class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
     server_version = "GAGEArenaVisualServer/1.0"
+    protocol_version = "HTTP/1.1"
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -270,7 +272,14 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - match base signature
-        logger.debug("ArenaVisualServer {}", format % args)
+        message = format % args
+        if _should_suppress_access_log(
+            command=getattr(self, "command", None),
+            path=getattr(self, "path", None),
+            message=message,
+        ):
+            return
+        logger.debug("ArenaVisualServer {}", message)
 
     def _handle_session(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
         params = parse_qs(parsed_url.query)
@@ -384,57 +393,87 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
-        last_revision = live_source.current_live_revision()
         current_after_seq = after_seq
+        last_loaded_revision: int | None = None
         last_session_payload: str | None = None
+        last_safe_session_payload: dict[str, object] | None = None
+        last_session_lifecycle = "live_running"
+        timeline_backlog_pending = True
         while True:
+            current_revision = live_source.current_live_revision()
+            revision_changed = (
+                last_loaded_revision is None or current_revision != last_loaded_revision
+            )
+            safe_session_payload = last_safe_session_payload
+            serialized_session_payload = last_session_payload
+            page = None
             try:
-                session = live_source.load_session(observer=observer)
-                page = live_source.page_timeline(after_seq=current_after_seq, limit=50)
+                if revision_changed:
+                    session = live_source.load_session(observer=observer)
+                    session_payload = session.to_dict()
+                    safe_session_payload = to_scene_json_safe(session_payload)
+                    serialized_session_payload = json.dumps(
+                        safe_session_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    last_session_lifecycle = session.lifecycle
+                    last_loaded_revision = current_revision
+                if revision_changed or timeline_backlog_pending:
+                    page = live_source.page_timeline(after_seq=current_after_seq, limit=50)
             except Exception:
                 logger.exception("Failed to stream live session updates for {}", session_id)
                 break
-            session_payload = session.to_dict()
-            serialized_session_payload = json.dumps(session_payload, ensure_ascii=False, sort_keys=True)
-            timeline_payload = {
-                "sessionId": session_id,
-                "afterSeq": page.after_seq,
-                "nextAfterSeq": page.next_after_seq,
-                "limit": page.limit,
-                "hasMore": page.has_more,
-                "events": [event.to_dict() for event in page.events],
-            }
-            has_session_delta = serialized_session_payload != last_session_payload
-            has_timeline_delta = bool(page.events)
+            timeline_payload = None
+            has_session_delta = (
+                revision_changed and serialized_session_payload != last_session_payload
+            )
+            has_timeline_delta = False
+            if page is not None:
+                timeline_payload = {
+                    "sessionId": session_id,
+                    "afterSeq": page.after_seq,
+                    "nextAfterSeq": page.next_after_seq,
+                    "limit": page.limit,
+                    "hasMore": page.has_more,
+                    "events": [event.to_dict() for event in page.events],
+                }
+                has_timeline_delta = bool(page.events)
+                timeline_backlog_pending = bool(page.has_more)
+            else:
+                timeline_backlog_pending = False
             if has_session_delta or has_timeline_delta:
-                if page.next_after_seq is not None:
+                if page is not None and page.next_after_seq is not None:
                     current_after_seq = page.next_after_seq
                 payload = {
-                    "session": session_payload,
+                    "session": safe_session_payload,
                     "timeline": timeline_payload,
                 }
                 try:
                     self._send_sse_event("delta", payload)
                 except (BrokenPipeError, ConnectionResetError, TimeoutError):
                     break
-                last_session_payload = serialized_session_payload
+                if has_session_delta and serialized_session_payload is not None:
+                    last_session_payload = serialized_session_payload
+                    last_safe_session_payload = safe_session_payload
             else:
                 try:
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError, TimeoutError):
                     break
+            if timeline_backlog_pending:
+                continue
 
             try:
                 next_revision = live_source.wait_for_live_revision(
-                    after_revision=last_revision,
+                    after_revision=current_revision,
                     timeout_s=_LIVE_UPDATE_STREAM_WAIT_TIMEOUT_S,
                 )
             except Exception:
                 break
-            if next_revision <= last_revision and session.lifecycle != "live_running":
+            if next_revision <= current_revision and last_session_lifecycle != "live_running":
                 break
-            last_revision = max(last_revision, next_revision)
 
     def _handle_scene(self, session_id: str, parsed_url, *, run_id: str | None) -> None:
         params = parse_qs(parsed_url.query)
@@ -818,7 +857,8 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _send_json(self, payload: Mapping[str, Any], *, status: HTTPStatus) -> None:
-        body = json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
+        safe_payload = to_scene_json_safe(dict(payload))
+        body = json.dumps(safe_payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -842,7 +882,7 @@ class ArenaVisualRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_sse_event(self, event_type: str, payload: Mapping[str, Any]) -> None:
-        data = json.dumps(dict(payload), ensure_ascii=False)
+        data = json.dumps(to_scene_json_safe(dict(payload)), ensure_ascii=False)
         self.wfile.write(f"event: {event_type}\n".encode("utf-8"))
         self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
         self.wfile.flush()
@@ -1023,6 +1063,34 @@ class ArenaVisualHTTPServer:
         self._server.server_close()
         if self._thread is not None:
             self._thread.join(timeout=2)
+
+
+def _should_suppress_access_log(*, command: Any, path: Any, message: str) -> bool:
+    normalized_command = str(command or "").strip().upper()
+    normalized_path = str(path or "").strip()
+    if normalized_command not in {"GET", "HEAD"}:
+        return False
+    if normalized_path == "":
+        return False
+    status_code = _extract_access_log_status_code(message)
+    if status_code is None or status_code >= 500:
+        return False
+    return (
+        normalized_path == "/"
+        or normalized_path.startswith("/sessions/")
+        or normalized_path.startswith("/assets/")
+        or normalized_path.startswith("/arena_visual/sessions/")
+    )
+
+
+def _extract_access_log_status_code(message: str) -> int | None:
+    parts = str(message).rsplit(" ", 2)
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[-2])
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_media_content(*, manifest_path: Path, media_url: str | None) -> tuple[bytes, str | None]:

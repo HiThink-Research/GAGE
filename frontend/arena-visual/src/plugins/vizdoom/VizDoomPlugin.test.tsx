@@ -10,7 +10,7 @@ const FRAME_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAGUlEQVR4nGNkaGBgYGBg+M8ABYwMjAyMDAwAAB0vAQx0J7s8AAAAAElFTkSuQmCC";
 
 describe("VizDoomPlugin", () => {
-  it("renders a non-blank frame, overlay badges, and disables frame actions when input is closed", async () => {
+  it("renders a non-blank frame without high-frequency text under the viewport and disables frame actions when input is closed", async () => {
     const submitInput = vi.fn().mockResolvedValue(undefined);
 
     render(
@@ -60,9 +60,9 @@ describe("VizDoomPlugin", () => {
       expect(screen.getByTestId("frame-surface-image")).toHaveAttribute("src", FRAME_DATA_URL),
     );
     expect(screen.getByRole("heading", { name: /vizdoom frame/i })).toBeInTheDocument();
-    expect(screen.getByText("Reward")).toBeInTheDocument();
-    expect(screen.getByText("0.75")).toBeInTheDocument();
-    expect(screen.getByText("Tick 17. Legal actions: 0, 1, 2, 3, 4")).toBeInTheDocument();
+    expect(screen.queryByTestId("frame-status-line")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Legal actions:/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("frame-keyboard-hint")).toHaveTextContent("Space or J fires");
 
     const fireButton = screen.getByRole("button", { name: /fire/i });
     expect(fireButton).toBeDisabled();

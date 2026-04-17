@@ -1442,7 +1442,9 @@ def _project_doudizhu_table(
             }
         )
 
-    center_cards = _normalize_string_list(public_state.get("seen_cards"))
+    center_cards = _normalize_doudizhu_card_collection(ui_state.get("seen_cards"))
+    if not center_cards:
+        center_cards = _normalize_string_list(public_state.get("seen_cards"))
     move_history = ui_state.get("move_history")
     if not isinstance(move_history, Sequence) or isinstance(move_history, (str, bytes)):
         move_history = public_state.get("trace")

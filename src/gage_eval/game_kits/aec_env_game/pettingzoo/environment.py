@@ -5,7 +5,8 @@ from __future__ import annotations
 import base64
 import importlib
 import io
-from dataclasses import replace
+import json
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
@@ -25,6 +26,16 @@ try:
     from PIL import Image
 except Exception:  # pragma: no cover - optional dependency
     Image = None
+
+
+@dataclass(frozen=True)
+class ActionSchema:
+    """Defines macro-action hold tick constraints for AEC frame controls."""
+
+    hold_ticks_min: int = 1
+    hold_ticks_max: int = 1
+    default_hold_ticks: int = 1
+
 
 @registry.asset(
     "arena_impls",
@@ -61,6 +72,8 @@ class PettingZooAecArenaEnvironment:
         replay_output_dir: Optional[str] = None,
         run_id: Optional[str] = None,
         sample_id: Optional[str] = None,
+        action_schema: Optional[Dict[str, Any]] = None,
+        auto_noop_player_ids: Optional[Sequence[str]] = None,
     ) -> None:
         """Initialize the PettingZoo adapter.
 
@@ -88,6 +101,9 @@ class PettingZooAecArenaEnvironment:
             replay_output_dir: Optional replay root override.
             run_id: Optional run id for canonical replay layout.
             sample_id: Optional sample id for canonical replay layout.
+            action_schema: Optional hold tick constraints for macro actions.
+            auto_noop_player_ids: Player ids whose AEC turns may be advanced with NOOP
+                while applying another player's held action.
         """
 
         _ = (
@@ -127,6 +143,12 @@ class PettingZooAecArenaEnvironment:
         self._replay_output_dir = str(replay_output_dir) if replay_output_dir else None
         self._run_id = str(run_id) if run_id else None
         self._sample_id = str(sample_id) if sample_id else None
+        self._action_schema = self._build_action_schema(action_schema)
+        self._auto_noop_player_ids = {
+            str(player_id)
+            for player_id in auto_noop_player_ids or ()
+            if str(player_id).strip()
+        }
 
         if env is not None:
             self._env = env
@@ -230,6 +252,8 @@ class PettingZooAecArenaEnvironment:
             metadata["obs_shape"] = getattr(obs, "shape", None)
         if isinstance(info, dict):
             metadata["info"] = info
+        metadata["action_schema_config"] = self._action_schema_config()
+        metadata["action_schema"] = self._format_action_schema(legal_moves)
         self._update_last_frame(
             observer_player_id=player_id,
             board_text=board_text,
@@ -248,7 +272,11 @@ class PettingZooAecArenaEnvironment:
         legal_actions: Dict[str, Any] = {"items": list(legal_moves)}
         if action_mask is not None:
             legal_actions["mask"] = action_mask
-        context = {"mode": "turn", "step": self._move_count}
+        context = {
+            "mode": "turn",
+            "step": self._move_count,
+            "action_schema_config": self._action_schema_config(),
+        }
         prompt = self._prompt_builder.build(
             env_id=str(self._env_id or ""),
             active_player=player_id,
@@ -309,9 +337,14 @@ class PettingZooAecArenaEnvironment:
             except ValueError as exc:
                 return self._handle_illegal(action, reason=str(exc) or "illegal_action")
 
-        # STEP 2: Advance the environment and record the step.
-        self._env.step(resolved_action)
-        self._maybe_render()
+        # STEP 2: Advance the environment for the requested hold duration.
+        hold_ticks = self._resolve_action_hold_ticks(action)
+        executed_ticks, auto_noop_steps = self._execute_held_action(
+            agent_id=agent_id,
+            player_id=player_id,
+            resolved_action=resolved_action,
+            hold_ticks=hold_ticks,
+        )
         self._move_count += 1
         self._last_move = None if resolved_action is None else self._codec.decode(resolved_action)
         self._move_log.append(
@@ -324,6 +357,8 @@ class PettingZooAecArenaEnvironment:
                 "reward": transition.get("reward"),
                 "termination": termination,
                 "truncation": truncation,
+                "hold_ticks": max(1, executed_ticks),
+                "auto_noop_steps": auto_noop_steps,
             }
         )
         self._refresh_last_frame()
@@ -526,7 +561,18 @@ class PettingZooAecArenaEnvironment:
         return labels
 
     def _capture_last(self) -> tuple[Any, float, bool, bool, Dict[str, Any]]:
-        obs, reward, termination, truncation, info = self._env.last()
+        agent = getattr(self._env, "agent_selection", None)
+        if agent is None or not hasattr(self._env, "observe"):
+            obs, reward, termination, truncation, info = self._env.last()
+        else:
+            obs = self._env.observe(agent)
+            reward = _mapping_get(getattr(self._env, "rewards", None), agent, 0.0)
+            termination = _mapping_get(getattr(self._env, "terminations", None), agent, False)
+            truncation = _mapping_get(getattr(self._env, "truncations", None), agent, False)
+            info = _mapping_get(getattr(self._env, "infos", None), agent, {})
+        reward = _coerce_reward(reward)
+        if not isinstance(info, dict):
+            info = {}
         transition = {
             "observation": obs,
             "reward": reward,
@@ -570,6 +616,174 @@ class PettingZooAecArenaEnvironment:
             return list(mask)
         except TypeError:
             return None
+
+    def _execute_held_action(
+        self,
+        *,
+        agent_id: str,
+        player_id: str,
+        resolved_action: Any,
+        hold_ticks: int,
+    ) -> tuple[int, int]:
+        """Execute one macro action across AEC cycles."""
+
+        if resolved_action is None:
+            self._env.step(None)
+            self._maybe_render()
+            return 1, 0
+
+        executed_ticks = 0
+        auto_noop_steps = 0
+        while executed_ticks < hold_ticks:
+            current_agent = getattr(self._env, "agent_selection", None)
+            current_agent_id = str(current_agent) if current_agent is not None else ""
+            if current_agent_id and current_agent_id != agent_id:
+                break
+
+            self._env.step(resolved_action)
+            self._maybe_render()
+            executed_ticks += 1
+            if self._is_terminal_state():
+                break
+
+            auto_noop_steps += self._advance_auto_noop_agents(
+                target_agent_id=agent_id,
+                action_player_id=player_id,
+            )
+            if self._is_terminal_state():
+                break
+
+            next_agent = getattr(self._env, "agent_selection", None)
+            if next_agent is not None and str(next_agent) != agent_id:
+                break
+
+        return max(1, executed_ticks), auto_noop_steps
+
+    def _advance_auto_noop_agents(
+        self,
+        *,
+        target_agent_id: str,
+        action_player_id: str,
+    ) -> int:
+        """Advance configured auto players with NOOP until target agent returns."""
+
+        if not self._auto_noop_player_ids or action_player_id in self._auto_noop_player_ids:
+            return 0
+
+        auto_steps = 0
+        max_auto_steps = max(1, len(self._player_ids))
+        while auto_steps < max_auto_steps:
+            active_agent = getattr(self._env, "agent_selection", None)
+            if active_agent is None:
+                return auto_steps
+            active_agent_id = str(active_agent)
+            if active_agent_id == target_agent_id:
+                return auto_steps
+
+            active_player_id = self._agent_to_player.get(active_agent_id, active_agent_id)
+            if active_player_id not in self._auto_noop_player_ids:
+                return auto_steps
+
+            noop_action = (
+                None
+                if self._is_agent_done(active_agent_id)
+                else self._resolve_noop_action(active_agent_id)
+            )
+            self._env.step(noop_action)
+            self._maybe_render()
+            auto_steps += 1
+            if self._is_terminal_state():
+                return auto_steps
+
+        return auto_steps
+
+    def _resolve_noop_action(self, agent_id: str) -> int:
+        action_space = self._action_space(agent_id)
+        try:
+            return self._codec.encode("NOOP", action_space=action_space)
+        except ValueError:
+            return self._codec.encode(0, action_space=action_space)
+
+    def _is_agent_done(self, agent_id: str) -> bool:
+        return bool(
+            _mapping_get(getattr(self._env, "terminations", None), agent_id, False)
+            or _mapping_get(getattr(self._env, "truncations", None), agent_id, False)
+        )
+
+    def _resolve_action_hold_ticks(self, action: ArenaAction) -> int:
+        metadata = action.metadata if isinstance(action.metadata, dict) else {}
+        candidate = metadata.get("hold_ticks")
+        if candidate is None:
+            candidate = self._extract_hold_ticks_from_raw(action.raw)
+        if candidate is None:
+            hold_ticks = self._action_schema.default_hold_ticks
+        else:
+            try:
+                hold_ticks = int(candidate)
+            except (TypeError, ValueError):
+                hold_ticks = self._action_schema.default_hold_ticks
+        return max(
+            self._action_schema.hold_ticks_min,
+            min(self._action_schema.hold_ticks_max, hold_ticks),
+        )
+
+    @staticmethod
+    def _extract_hold_ticks_from_raw(raw: Any) -> Optional[int]:
+        if not isinstance(raw, str):
+            return None
+        stripped = raw.strip()
+        if not stripped or not stripped.startswith("{"):
+            return None
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("hold_ticks")
+        if value is None:
+            value = payload.get("holdTicks")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _build_action_schema(action_schema: Optional[Dict[str, Any]]) -> ActionSchema:
+        if not action_schema:
+            return ActionSchema()
+        hold_ticks_min = int(action_schema.get("hold_ticks_min", 1) or 1)
+        default_hold_ticks = int(action_schema.get("hold_ticks_default", 1) or 1)
+        hold_ticks_max = int(
+            action_schema.get("hold_ticks_max", default_hold_ticks) or default_hold_ticks
+        )
+        hold_ticks_min = max(1, hold_ticks_min)
+        hold_ticks_max = max(hold_ticks_min, hold_ticks_max)
+        default_hold_ticks = max(hold_ticks_min, min(hold_ticks_max, default_hold_ticks))
+        return ActionSchema(
+            hold_ticks_min=hold_ticks_min,
+            hold_ticks_max=hold_ticks_max,
+            default_hold_ticks=default_hold_ticks,
+        )
+
+    def _action_schema_config(self) -> dict[str, int]:
+        return {
+            "hold_ticks_min": int(self._action_schema.hold_ticks_min),
+            "hold_ticks_max": int(self._action_schema.hold_ticks_max),
+            "hold_ticks_default": int(self._action_schema.default_hold_ticks),
+        }
+
+    def _format_action_schema(self, legal_moves: Sequence[str]) -> str:
+        legal_hint = ", ".join(str(move) for move in legal_moves) or "none"
+        return (
+            '{ "move": "<legal_move>", "hold_ticks": <int> }\n'
+            f"legal_move must be one of: {legal_hint}\n"
+            f"hold_ticks range: {self._action_schema.hold_ticks_min}-"
+            f"{self._action_schema.hold_ticks_max} "
+            f"(default {self._action_schema.default_hold_ticks})."
+        )
 
     def _resolve_frame_rgb(self, obs: Any) -> Optional[Any]:
         """Resolve RGB observation payload used by live frame image streaming."""
@@ -787,6 +1001,8 @@ class PettingZooAecArenaEnvironment:
             metadata["obs_shape"] = getattr(obs, "shape", None)
         if isinstance(info, dict):
             metadata["info"] = info
+        metadata["action_schema_config"] = self._action_schema_config()
+        metadata["action_schema"] = self._format_action_schema(legal_moves)
         legal_actions: Dict[str, Any] = {"items": list(legal_moves)}
         if action_mask is not None:
             legal_actions["mask"] = list(action_mask)
@@ -858,3 +1074,29 @@ class PettingZooAecArenaEnvironment:
             if candidate != player:
                 return candidate
         return None
+
+
+def _coerce_reward(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        item = getattr(value, "item", None)
+        if callable(item):
+            try:
+                return float(item())
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
+def _mapping_get(mapping: Any, key: Any, default: Any) -> Any:
+    if not isinstance(mapping, dict):
+        return default
+    if key in mapping:
+        return mapping[key]
+    text_key = str(key)
+    if text_key in mapping:
+        return mapping[text_key]
+    return default

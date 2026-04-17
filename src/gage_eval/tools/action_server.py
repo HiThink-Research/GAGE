@@ -307,19 +307,155 @@ class ActionRequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802 - match BaseHTTPRequestHandler signature
-        length = int(self.headers.get("Content-Length", "0") or 0)
-        body = self.rfile.read(length) if length > 0 else b""
-        self._send_dispatch_response(
-            *_dispatch_action_server_request(
+        parsed = urlparse(self.path)
+        if parsed.path == "/tournament/action":
+            action_payload = self._extract_action_payload(parsed)
+            if not action_payload.get("action"):
+                self._send_json({"error": "Missing action"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            queue_server: Optional[ActionQueueServer] = getattr(  # type: ignore[attr-defined]
                 self.server,
-                method="POST",
-                path=self.path,
-                body=body,
+                "action_server_ref",
+                None,
             )
-        )
+            if queue_server is not None and queue_server.has_action_routes():
+                if not action_payload.get("sample_id"):
+                    self._send_json({"error": "missing_sample_id"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                if not action_payload.get("player_id"):
+                    self._send_json({"error": "missing_player_id"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+
+            queue: Optional[Any] = None
+            error: Optional[str] = None
+            if queue_server is not None:
+                queue, error = queue_server.resolve_action_queue(action_payload.get("sample_id"))
+            else:
+                queue = getattr(self.server, "action_queue", None)  # type: ignore[attr-defined]
+            if queue is None:
+                status = HTTPStatus.BAD_REQUEST if error == "missing_sample_id" else HTTPStatus.NOT_FOUND
+                if error is None:
+                    status = HTTPStatus.INTERNAL_SERVER_ERROR
+                    error = "action_queue_not_available"
+                self._send_json({"error": error}, status=status)
+                return
+
+            queue.put(dump_action_payload(action_payload))
+            self._send_json({"status": "queued"}, status=HTTPStatus.OK)
+            return
+
+        if parsed.path == "/tournament/chat":
+            chat_text, player_id = self._extract_chat(parsed)
+            if not chat_text:
+                self._send_json({"error": "Missing chat"}, status=HTTPStatus.BAD_REQUEST)
+                return
+
+            chat_queue: Optional[Queue[dict[str, str]]] = getattr(  # type: ignore[attr-defined]
+                self.server,
+                "chat_queue",
+                None,
+            )
+            if chat_queue is None:
+                self._send_json({"error": "Chat queue not available"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+
+            payload = {"text": str(chat_text)}
+            if player_id:
+                payload["player_id"] = str(player_id)
+            chat_queue.put(payload)
+            self._send_json({"status": "queued"}, status=HTTPStatus.OK)
+            return
+
+        self._send_json({"error": "Not Found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - match base signature
         logger.debug("ActionServer {}", format % args)
+
+    def _extract_action_payload(self, parsed_url) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw_body = self.rfile.read(length) if length > 0 else b""
+        body_text = raw_body.decode("utf-8", errors="ignore").strip()
+        if body_text:
+            payload = self._try_parse_json(body_text)
+            if isinstance(payload, dict):
+                return build_action_payload(
+                    action=payload.get("action") or payload.get("move"),
+                    player_id=(
+                        payload.get("player_id")
+                        or payload.get("playerId")
+                        or payload.get("player")
+                        or payload.get("player_idx")
+                        or payload.get("playerIdx")
+                    ),
+                    sample_id=payload.get("sample_id") or payload.get("sampleId"),
+                    raw=payload.get("raw"),
+                    source="action_server",
+                    run_id=payload.get("run_id") or payload.get("runId"),
+                    task_id=payload.get("task_id") or payload.get("taskId"),
+                    display_id=payload.get("display_id") or payload.get("displayId"),
+                    chat=payload.get("chat"),
+                    metadata=payload.get("metadata"),
+                )
+            return build_action_payload(
+                action=body_text,
+                raw=body_text,
+                source="action_server",
+            )
+
+        params = parse_qs(parsed_url.query)
+        return build_action_payload(
+            action=_first_param(params, "action") or _first_param(params, "move"),
+            player_id=(
+                _first_param(params, "player_id")
+                or _first_param(params, "playerId")
+                or _first_param(params, "player_idx")
+                or _first_param(params, "playerIdx")
+            ),
+            sample_id=_first_param(params, "sample_id") or _first_param(params, "sampleId"),
+            source="action_server",
+        )
+
+    def _extract_chat(self, parsed_url) -> tuple[str, Optional[str]]:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw_body = self.rfile.read(length) if length > 0 else b""
+        body_text = raw_body.decode("utf-8", errors="ignore").strip()
+        if body_text:
+            payload = self._try_parse_json(body_text)
+            if isinstance(payload, dict):
+                chat = payload.get("chat") or payload.get("text") or payload.get("message")
+                player_id = (
+                    payload.get("player_id")
+                    or payload.get("playerId")
+                    or payload.get("player")
+                    or payload.get("player_idx")
+                    or payload.get("playerIdx")
+                )
+                return (str(chat).strip() if chat else "", str(player_id) if player_id else None)
+            return (body_text, None)
+
+        params = parse_qs(parsed_url.query)
+        chat = (
+            _first_param(params, "chat")
+            or _first_param(params, "text")
+            or _first_param(params, "message")
+        )
+        player_id = (
+            _first_param(params, "player_id")
+            or _first_param(params, "playerId")
+            or _first_param(params, "player_idx")
+            or _first_param(params, "playerIdx")
+        )
+        return (str(chat).strip() if chat else "", str(player_id) if player_id else None)
+
+    def _try_parse_json(self, text: str) -> Optional[dict[str, Any]]:
+        if not text.startswith("{"):
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
 
     def _send_cors_headers(self) -> None:
         allow_origin = getattr(self.server, "allow_origin", "*")  # type: ignore[attr-defined]
@@ -364,18 +500,11 @@ class ActionQueueServer:
         self._chat_queue: Queue[dict[str, str]] = Queue()
         self._action_routes: dict[str, Any] = {}
         self._route_lock = Lock()
-        try:
-            self._server = HTTPServer((self._host, self._port), ActionRequestHandler)
-        except PermissionError:
-            fallback_port = self._port if self._port > 0 else _allocate_in_process_port()
-            self._server = _InProcessHTTPServer(self._host, fallback_port)
-            _ensure_in_process_opener_installed()
-            logger.warning(
-                "Socket bind is unavailable for {}:{}, using in-process action server transport.",
-                self._host,
-                self._port,
-            )
-        _configure_server(self._server, action_server=self)
+        self._server = HTTPServer((self._host, self._port), ActionRequestHandler)
+        setattr(self._server, "action_queue", self._queue)
+        setattr(self._server, "chat_queue", self._chat_queue)
+        setattr(self._server, "allow_origin", self._allow_origin)
+        setattr(self._server, "action_server_ref", self)
         self._thread: Optional[Thread] = None
 
     @property

@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import type { ArenaPluginRenderProps } from "../sdk/contracts";
 import {
   readTableActionTexts,
@@ -25,21 +26,25 @@ export function DoudizhuPlugin({
 
   const actionTexts = readTableActionTexts(scene);
   const resolvedActorId = resolveTableActorId(session, scene, tableScene);
+  const handleSubmitAction = useCallback(
+    (actionText: string) => {
+      if (!resolvedActorId) {
+        return;
+      }
+      void submitInput({
+        playerId: resolvedActorId,
+        actionText,
+      });
+    },
+    [resolvedActorId, submitInput],
+  );
 
   return (
     <DoudizhuTable
       tableScene={tableScene}
       actionTexts={actionTexts}
       canSubmitActions={session.scheduling.acceptsHumanIntent}
-      onSubmitAction={(actionText) => {
-        if (!resolvedActorId) {
-          return;
-        }
-        void submitInput({
-          playerId: resolvedActorId,
-          actionText,
-        });
-      }}
+      onSubmitAction={handleSubmitAction}
     />
   );
 }

@@ -54,3 +54,4 @@ def test_retro_mario_gamekit_runs_dummy_match_end_to_end(
     assert replay_path.parent.name == str(sample["id"])
     assert output["arena_trace"]
     assert sample["predict_result"][0]["arena_trace"] == list(output["arena_trace"])
+

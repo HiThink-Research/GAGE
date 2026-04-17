@@ -1,9 +1,26 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { VisualScene, VisualSession } from "../../gateway/types";
+import {
+  isRecord,
+  readNumber,
+  readOptionalNumber,
+  readString,
+} from "../../lib/sceneReaders";
 import { useMediaSource } from "../sdk/useMediaSource";
 import type { ArenaMediaSubscriber } from "../sdk/contracts";
 import type { ActionIntent } from "../sdk/input";
-import type { FrameActionDescriptor, FrameKeyboardControls } from "./contracts";
+import type {
+  FrameActionDescriptor,
+  FrameKeyboardControls,
+  FrameOptimisticOffset,
+} from "./contracts";
 import { normalizeKeyboardKey } from "./keyboardControls";
 import { LowLatencyFrameCanvas, resolveLowLatencyStreamUrl } from "./LowLatencyFrameCanvas";
 
@@ -16,6 +33,15 @@ interface FrameBadge {
   kind: string;
   label: string;
   value: string;
+}
+
+interface FrameBounds {
+  width: number;
+  height: number;
+}
+
+interface FrameMeasurementCandidate extends FrameBounds {
+  top: number;
 }
 
 interface FrameSceneData {
@@ -51,22 +77,19 @@ interface FrameSurfaceProps {
   mediaSubscribe: ArenaMediaSubscriber;
   keyboardControls?: FrameKeyboardControls;
   presentation?: "default" | "immersive";
+  showStatusLine?: boolean;
+  showViewText?: boolean;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+interface ScenePrimaryMediaRef {
+  transport?: string;
+  url?: string | null;
 }
 
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null;
-}
-
-function readNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function readNullableNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+interface KeyboardDispatchOptions {
+  force?: boolean;
+  phase?: "press" | "heartbeat" | "release";
+  releasedHoldTicks?: number;
 }
 
 function readViewport(value: unknown): FrameViewport | null {
@@ -123,7 +146,7 @@ export function readFrameScene(scene?: VisualScene): FrameSceneData | null {
       step: readNumber(status.step),
       moveCount: readNumber(status.moveCount),
       lastMove: readString(status.lastMove),
-      reward: readNullableNumber(status.reward),
+      reward: readOptionalNumber(status.reward),
     },
     viewText: isRecord(view) ? readString(view.text) : null,
     overlays: readOverlays(scene),
@@ -218,11 +241,137 @@ function resolveCanvasClassName(fit: string): string {
     : "frame-surface__canvas frame-surface__canvas--contain";
 }
 
+function isAbsoluteMediaUrl(url: string): boolean {
+  return /^(https?:\/\/|data:|blob:)/i.test(url);
+}
+
+function resolveDirectFrameImageSrc(ref: ScenePrimaryMediaRef | null | undefined): string | null {
+  if (!ref) {
+    return null;
+  }
+  if (ref.transport === "low_latency_channel" || ref.transport === "binary_stream") {
+    return null;
+  }
+  if (typeof ref.url !== "string" || ref.url.trim() === "") {
+    return null;
+  }
+  return isAbsoluteMediaUrl(ref.url) ? ref.url : null;
+}
+
+export function fitViewportWithinBounds(
+  viewport: FrameViewport,
+  bounds: FrameBounds,
+): FrameBounds | null {
+  if (
+    viewport.width <= 0 ||
+    viewport.height <= 0 ||
+    bounds.width <= 0 ||
+    bounds.height <= 0
+  ) {
+    return null;
+  }
+
+  const scale = Math.min(bounds.width / viewport.width, bounds.height / viewport.height);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return null;
+  }
+
+  return {
+    width: viewport.width * scale,
+    height: viewport.height * scale,
+  };
+}
+
+export function resolveImmersiveViewportBounds(
+  viewport: FrameViewport,
+  candidates: FrameMeasurementCandidate[],
+  options: {
+    windowHeight: number;
+    fullscreenActive: boolean;
+  },
+): FrameBounds | null {
+  const fullscreenBottomInset = options.fullscreenActive ? 0 : 32;
+  let bestBounds: FrameBounds | null = null;
+  let bestArea = 0;
+
+  for (const candidate of candidates) {
+    const stageTop = Math.max(0, candidate.top);
+    const visibleHeight = Math.max(
+      0,
+      options.windowHeight - stageTop - fullscreenBottomInset,
+    );
+    const boundedHeight = Math.min(candidate.height, visibleHeight);
+    const nextBounds = fitViewportWithinBounds(viewport, {
+      width: candidate.width,
+      height: boundedHeight,
+    });
+    if (!nextBounds) {
+      continue;
+    }
+    const nextArea = nextBounds.width * nextBounds.height;
+    if (nextArea <= bestArea) {
+      continue;
+    }
+    bestBounds = nextBounds;
+    bestArea = nextArea;
+  }
+
+  return bestBounds;
+}
+
+function readMeasurementCandidate(element: HTMLElement | null): FrameMeasurementCandidate | null {
+  if (!element) {
+    return null;
+  }
+  const rect = element.getBoundingClientRect();
+  return {
+    width: rect.width,
+    height: rect.height,
+    top: rect.top,
+  };
+}
+
+function collectImmersiveMeasurementCandidates(
+  element: HTMLElement,
+): FrameMeasurementCandidate[] {
+  const candidates: FrameMeasurementCandidate[] = [];
+  const seen = new Set<HTMLElement>();
+
+  const appendCandidate = (candidateElement: HTMLElement | null) => {
+    if (!candidateElement || seen.has(candidateElement)) {
+      return;
+    }
+    seen.add(candidateElement);
+    const candidate = readMeasurementCandidate(candidateElement);
+    if (!candidate) {
+      return;
+    }
+    candidates.push(candidate);
+  };
+
+  appendCandidate(element);
+  appendCandidate(element.parentElement);
+  appendCandidate(element.closest(".session-stage__surface"));
+  appendCandidate(element.closest(".session-stage"));
+
+  return candidates;
+}
+
 function resolveViewportStyle(
   viewport: FrameViewport | null,
   presentation: "default" | "immersive",
+  fittedViewport: FrameBounds | null = null,
 ): CSSProperties {
   if (presentation === "immersive") {
+    if (viewport && fittedViewport) {
+      return {
+        width: `${fittedViewport.width}px`,
+        height: `${fittedViewport.height}px`,
+        maxWidth: "100%",
+        maxHeight: "100%",
+        aspectRatio: `${viewport.width} / ${viewport.height}`,
+      };
+    }
     if (!viewport) {
       return {
         width: "100%",
@@ -230,7 +379,7 @@ function resolveViewportStyle(
       };
     }
     return {
-      width: "100%",
+      width: "auto",
       maxWidth: "100%",
       aspectRatio: `${viewport.width} / ${viewport.height}`,
     };
@@ -250,6 +399,77 @@ function resolveViewportStyle(
   };
 }
 
+function resolveImmersiveCanvasStyle(): CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    maxHeight: "none",
+  };
+}
+
+function resolveImmersiveImageStyle(fit: string): CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    maxHeight: "none",
+    objectFit: fit === "cover" ? "cover" : "contain",
+  };
+}
+
+function clampHoldTicks(value: number, controls: FrameKeyboardControls): number {
+  const min = Math.max(1, Math.round(controls.holdTicksMin ?? 1));
+  const max = Math.max(min, Math.round(controls.holdTicksMax ?? value));
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function resolveReleasedHoldTicks(durationMs: number, controls: FrameKeyboardControls): number {
+  const tickMs = Math.max(1, Number(controls.holdTickMs ?? 16));
+  return clampHoldTicks(durationMs / tickMs, controls);
+}
+
+function resolveKeyboardHoldTicks(
+  controls: FrameKeyboardControls,
+  options: KeyboardDispatchOptions,
+): number | null {
+  if (options.phase === "release" && options.releasedHoldTicks !== undefined) {
+    return clampHoldTicks(options.releasedHoldTicks, controls);
+  }
+  if (options.phase === "heartbeat" && controls.heartbeatHoldTicks !== undefined) {
+    return clampHoldTicks(controls.heartbeatHoldTicks, controls);
+  }
+  if ((options.phase === "press" || options.phase === undefined) && controls.initialHoldTicks !== undefined) {
+    return clampHoldTicks(controls.initialHoldTicks, controls);
+  }
+  return null;
+}
+
+function mergeFrameStyle(
+  baseStyle: CSSProperties | undefined,
+  optimisticStyle: CSSProperties | undefined,
+): CSSProperties | undefined {
+  if (!baseStyle && !optimisticStyle) {
+    return undefined;
+  }
+  return {
+    ...(baseStyle ?? {}),
+    ...(optimisticStyle ?? {}),
+  };
+}
+
+function resolveOptimisticFrameStyle(
+  controls: FrameKeyboardControls | undefined,
+  offset: FrameOptimisticOffset,
+): CSSProperties | undefined {
+  if (!controls?.resolveOptimisticOffset) {
+    return undefined;
+  }
+  return {
+    transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
+    transition: "transform 80ms ease-out",
+    willChange: "transform",
+  };
+}
+
 export function FrameSurface({
   gameLabel,
   session,
@@ -258,20 +478,31 @@ export function FrameSurface({
   mediaSubscribe,
   keyboardControls,
   presentation = "default",
+  showStatusLine = true,
+  showViewText = true,
 }: FrameSurfaceProps) {
+  const rootRef = useRef<HTMLElement | null>(null);
   const isImmersive = presentation === "immersive";
   const frameScene = readFrameScene(scene);
-  const actionDescriptors = readFrameActions(scene);
+  const actionDescriptors = useMemo(() => readFrameActions(scene), [scene]);
+  const [immersiveViewportBounds, setImmersiveViewportBounds] = useState<FrameBounds | null>(null);
+  const [observedViewport, setObservedViewport] = useState<FrameViewport | null>(null);
   const pressedKeysRef = useRef<Set<string>>(new Set());
+  const pressedKeyStartedAtRef = useRef<Map<string, number>>(new Map());
   const lastKeyboardDispatchRef = useRef<string | null>(null);
+  const lastKeyboardActionTsByIdRef = useRef<Map<string, number>>(new Map());
+  const keyboardNoopSeedRef = useRef<string | null>(null);
   const keyboardInputSequenceRef = useRef(0);
-  const primaryMediaId = scene?.media?.primary?.mediaId;
+  const [optimisticOffset, setOptimisticOffset] = useState<FrameOptimisticOffset>({ x: 0, y: 0 });
+  const primaryMediaRef = scene?.media?.primary;
+  const primaryMediaId = primaryMediaRef?.mediaId;
   const mediaState = useMediaSource({
     sessionId: session.sessionId,
     mediaId: primaryMediaId ?? "",
     subscribe: mediaSubscribe,
   });
   const resolvedActorId = frameScene ? resolveFrameActorId(session, scene, frameScene) : null;
+  const effectiveViewport = frameScene?.frame.viewport ?? observedViewport;
   const canSubmitActions =
     frameScene !== null && session.scheduling.acceptsHumanIntent && resolvedActorId !== null;
   const keyboardSceneToken =
@@ -298,7 +529,18 @@ export function FrameSurface({
     submitInput,
   };
 
-  function dispatchKeyboardAction(pressedKeys: ReadonlySet<string>): void {
+  function updateOptimisticOffset(nextOffset: FrameOptimisticOffset): void {
+    setOptimisticOffset((currentOffset) =>
+      currentOffset.x === nextOffset.x && currentOffset.y === nextOffset.y
+        ? currentOffset
+        : nextOffset,
+    );
+  }
+
+  function dispatchKeyboardAction(
+    pressedKeys: ReadonlySet<string>,
+    options: KeyboardDispatchOptions = {},
+  ): void {
     const context = keyboardDispatchContextRef.current;
     if (
       !context.keyboardControls ||
@@ -316,41 +558,94 @@ export function FrameSurface({
       if (pressedKeys.size === 0) {
         lastKeyboardDispatchRef.current = null;
       }
+      if (context.keyboardControls.resolveOptimisticOffset) {
+        updateOptimisticOffset({ x: 0, y: 0 });
+      }
       return;
+    }
+    const nowMs = performance.now();
+    const throttleMs = context.keyboardControls.resolveActionThrottleMs?.(actionDescriptor) ?? 0;
+    if (throttleMs > 0) {
+      const lastSubmittedAt = lastKeyboardActionTsByIdRef.current.get(actionDescriptor.id);
+      if (
+        lastSubmittedAt !== undefined &&
+        nowMs - lastSubmittedAt < throttleMs
+      ) {
+        return;
+      }
     }
     const pressedKeysToken = [...pressedKeys].sort().join(",");
     const dispatchToken = `${context.keyboardSceneToken}:${context.resolvedActorId}:${actionDescriptor.id}:${pressedKeysToken}`;
-    if (lastKeyboardDispatchRef.current === dispatchToken) {
+    if (!options.force && lastKeyboardDispatchRef.current === dispatchToken) {
       return;
     }
     lastKeyboardDispatchRef.current = dispatchToken;
+    if (throttleMs > 0) {
+      lastKeyboardActionTsByIdRef.current.set(actionDescriptor.id, nowMs);
+    }
     keyboardInputSequenceRef.current += 1;
+    const timedHoldTicks = resolveKeyboardHoldTicks(context.keyboardControls, options);
     const actionPayload = isRecord(actionDescriptor.payload)
       ? {
           ...actionDescriptor.payload,
+          ...(timedHoldTicks !== null ? { hold_ticks: timedHoldTicks } : {}),
           metadata: {
             ...(isRecord(actionDescriptor.payload.metadata) ? actionDescriptor.payload.metadata : {}),
             input_seq: keyboardInputSequenceRef.current,
+            input_client_ts_ms: Date.now(),
             realtime_input: true,
           },
         }
       : actionDescriptor.payload;
-    void context.submitInput({
-      playerId: context.resolvedActorId,
-      actionPayload,
-    })
-      .catch(() => {});
+    if (context.keyboardControls.resolveOptimisticOffset) {
+      updateOptimisticOffset(context.keyboardControls.resolveOptimisticOffset(pressedKeys));
+    }
+    try {
+      const submitted = context.submitInput({
+        playerId: context.resolvedActorId,
+        actionPayload,
+      });
+      void Promise.resolve(submitted).catch(() => {});
+    } catch {
+      return;
+    }
   }
+
+  useEffect(() => {
+    setObservedViewport(null);
+  }, [primaryMediaId]);
+
+  useEffect(() => {
+    updateOptimisticOffset({ x: 0, y: 0 });
+  }, [keyboardSceneToken]);
 
   useEffect(() => {
     if (!keyboardControls) {
       pressedKeysRef.current = new Set();
+      pressedKeyStartedAtRef.current = new Map();
       lastKeyboardDispatchRef.current = null;
+      keyboardNoopSeedRef.current = null;
+      updateOptimisticOffset({ x: 0, y: 0 });
       return;
     }
+    const controls = keyboardControls;
     const watchedKeys = new Set(
-      keyboardControls.watchedKeys.map((key) => normalizeKeyboardKey(key)),
+      controls.watchedKeys.map((key) => normalizeKeyboardKey(key)),
     );
+
+    function resetKeyboardState(): void {
+      const hadPressedKeys = pressedKeysRef.current.size > 0;
+      pressedKeysRef.current = new Set();
+      pressedKeyStartedAtRef.current = new Map();
+      lastKeyboardDispatchRef.current = null;
+      updateOptimisticOffset({ x: 0, y: 0 });
+      if (hadPressedKeys) {
+        dispatchKeyboardAction(new Set(), {
+          force: true,
+          phase: "release",
+        });
+      }
+    }
 
     function handleKeyDown(event: KeyboardEvent) {
       const normalizedKey = normalizeKeyboardKey(event.key);
@@ -363,7 +658,8 @@ export function FrameSurface({
       pressedKeysRef.current = nextPressedKeys;
       event.preventDefault();
       if (nextPressedKeys.size !== sizeBefore) {
-        dispatchKeyboardAction(nextPressedKeys);
+        pressedKeyStartedAtRef.current.set(normalizedKey, performance.now());
+        dispatchKeyboardAction(nextPressedKeys, { phase: "press" });
       }
     }
 
@@ -377,17 +673,143 @@ export function FrameSurface({
       pressedKeysRef.current = nextPressedKeys;
       event.preventDefault();
       if (hadKey) {
-        dispatchKeyboardAction(nextPressedKeys);
+        const startedAt = pressedKeyStartedAtRef.current.get(normalizedKey);
+        pressedKeyStartedAtRef.current.delete(normalizedKey);
+        const releasedHoldTicks =
+          startedAt === undefined
+            ? undefined
+            : resolveReleasedHoldTicks(performance.now() - startedAt, controls);
+        if (nextPressedKeys.size === 0) {
+          dispatchKeyboardAction(nextPressedKeys, {
+            phase: "release",
+            releasedHoldTicks,
+          });
+        } else {
+          dispatchKeyboardAction(nextPressedKeys, {
+            phase: "press",
+          });
+        }
       }
+    }
+
+    function handleWindowBlur() {
+      resetKeyboardState();
+    }
+
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        resetKeyboardState();
+      }
+    }
+
+    const noopSeedToken =
+      canSubmitActions && resolvedActorId ? `${session.sessionId}:${resolvedActorId}` : null;
+    if (
+      noopSeedToken !== null &&
+      keyboardNoopSeedRef.current !== noopSeedToken &&
+      pressedKeysRef.current.size === 0
+    ) {
+      dispatchKeyboardAction(new Set(), { force: true, phase: "release" });
+      keyboardNoopSeedRef.current = noopSeedToken;
     }
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const heartbeatMs = controls.heartbeatMs;
+    const heartbeatTimer =
+      heartbeatMs !== undefined && heartbeatMs > 0
+        ? window.setInterval(() => {
+            dispatchKeyboardAction(new Set(pressedKeysRef.current), {
+              force: true,
+              phase: "heartbeat",
+            });
+          }, Math.max(1, heartbeatMs))
+        : null;
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleWindowBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer);
+      }
     };
   }, [actionDescriptors, canSubmitActions, keyboardControls, keyboardSceneToken, resolvedActorId, submitInput]);
+
+  useLayoutEffect(() => {
+    if (!isImmersive || !effectiveViewport) {
+      setImmersiveViewportBounds(null);
+      return;
+    }
+    const viewport = effectiveViewport;
+
+    const element = rootRef.current;
+    if (!element) {
+      setImmersiveViewportBounds(null);
+      return;
+    }
+
+    let frameId = 0;
+
+    const measure = () => {
+      const windowHeight =
+        window.innerHeight ||
+        document.documentElement.clientHeight ||
+        element.getBoundingClientRect().height;
+      const nextBounds = resolveImmersiveViewportBounds(
+        viewport,
+        collectImmersiveMeasurementCandidates(element),
+        {
+          windowHeight,
+          fullscreenActive: Boolean(document.fullscreenElement),
+        },
+      );
+
+      setImmersiveViewportBounds((currentBounds) => {
+        if (!nextBounds) {
+          return null;
+        }
+        if (
+          currentBounds &&
+          Math.abs(currentBounds.width - nextBounds.width) < 0.5 &&
+          Math.abs(currentBounds.height - nextBounds.height) < 0.5
+        ) {
+          return currentBounds;
+        }
+        return nextBounds;
+      });
+    };
+
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measure);
+    };
+
+    scheduleMeasure();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        scheduleMeasure();
+      });
+      resizeObserver.observe(element);
+      if (element.parentElement) {
+        resizeObserver.observe(element.parentElement);
+      }
+    }
+
+    window.addEventListener("resize", scheduleMeasure);
+    document.addEventListener("fullscreenchange", scheduleMeasure);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      document.removeEventListener("fullscreenchange", scheduleMeasure);
+    };
+  }, [effectiveViewport?.height, effectiveViewport?.width, isImmersive]);
 
   if (!frameScene) {
     return (
@@ -402,9 +824,26 @@ export function FrameSurface({
   const actorLabel = formatFrameActorLabel(session, resolvedActorId);
   const imageClassName = resolveImageClassName(frameScene.frame.fit);
   const canvasClassName = resolveCanvasClassName(frameScene.frame.fit);
-  const imageSrc = typeof mediaState?.src === "string" ? mediaState.src : null;
-  const lowLatencyStreamUrl = resolveLowLatencyStreamUrl(mediaState?.ref?.url, mediaState?.ref?.transport);
-  const viewportStyle = resolveViewportStyle(frameScene.frame.viewport, presentation);
+  const directImageSrc = resolveDirectFrameImageSrc(primaryMediaRef);
+  const imageSrc =
+    directImageSrc ??
+    (typeof mediaState?.src === "string"
+      ? mediaState.src
+      : null);
+  const lowLatencyStreamUrl = resolveLowLatencyStreamUrl(
+    mediaState?.ref?.url ?? primaryMediaRef?.url,
+    mediaState?.ref?.transport ?? primaryMediaRef?.transport,
+  );
+  const viewportStyle = resolveViewportStyle(
+    effectiveViewport,
+    presentation,
+    immersiveViewportBounds,
+  );
+  const immersiveCanvasStyle = isImmersive ? resolveImmersiveCanvasStyle() : undefined;
+  const immersiveImageStyle = isImmersive
+    ? resolveImmersiveImageStyle(frameScene.frame.fit)
+    : undefined;
+  const optimisticFrameStyle = resolveOptimisticFrameStyle(keyboardControls, optimisticOffset);
 
   return (
     <section
@@ -415,6 +854,7 @@ export function FrameSurface({
         .filter((value) => value !== "")
         .join(" ")}
       data-testid="frame-surface-root"
+      ref={rootRef}
     >
       {!isImmersive ? (
         <>
@@ -438,7 +878,23 @@ export function FrameSurface({
           <LowLatencyFrameCanvas
             altText={frameScene.frame.altText}
             className={canvasClassName}
+            onFrameSizeChange={(size) => {
+              setObservedViewport((current) => {
+                if (
+                  current &&
+                  current.width === size.width &&
+                  current.height === size.height
+                ) {
+                  return current;
+                }
+                return {
+                  width: size.width,
+                  height: size.height,
+                };
+              });
+            }}
             streamUrl={lowLatencyStreamUrl}
+            style={mergeFrameStyle(immersiveCanvasStyle, optimisticFrameStyle)}
           />
         ) : imageSrc ? (
           <img
@@ -446,32 +902,41 @@ export function FrameSurface({
             className={imageClassName}
             data-testid="frame-surface-image"
             src={imageSrc}
+            onLoad={(event) => {
+              const target = event.currentTarget;
+              const width = target.naturalWidth || target.width;
+              const height = target.naturalHeight || target.height;
+              if (width <= 0 || height <= 0) {
+                return;
+              }
+              setObservedViewport((current) => {
+                if (
+                  current &&
+                  current.width === width &&
+                  current.height === height
+                ) {
+                  return current;
+                }
+                return { width, height };
+              });
+            }}
+            style={mergeFrameStyle(immersiveImageStyle, optimisticFrameStyle)}
           />
         ) : (
           <div className="frame-surface__fallback">Loading frame...</div>
         )}
-
-        {frameScene.overlays.length > 0 ? (
-          <div className="frame-surface__overlay-strip">
-            {frameScene.overlays.map((overlay) => (
-              <div
-                className="frame-surface__overlay-badge"
-                key={`${overlay.kind}:${overlay.label}:${overlay.value}`}
-              >
-                <span>{overlay.label}</span>
-                <strong>{overlay.value}</strong>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </div>
 
       {!isImmersive ? (
         <>
-          <p className="frame-surface__status-line" data-testid="frame-status-line">
-            {formatStatusLine(frameScene)}
-          </p>
-          {frameScene.viewText ? <p className="frame-surface__view-text">{frameScene.viewText}</p> : null}
+          {showStatusLine ? (
+            <p className="frame-surface__status-line" data-testid="frame-status-line">
+              {formatStatusLine(frameScene)}
+            </p>
+          ) : null}
+          {showViewText && frameScene.viewText ? (
+            <p className="frame-surface__view-text">{frameScene.viewText}</p>
+          ) : null}
           {keyboardControls ? (
             <p className="frame-surface__keyboard-hint" data-testid="frame-keyboard-hint">
               {keyboardControls.hint}

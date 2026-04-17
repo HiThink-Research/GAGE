@@ -18,11 +18,13 @@ describe("resolveArenaPlugin", () => {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
     "arena.visualization.mahjong.table_v1": {
       sceneKinds: ["table"],
       supportedObservers: ["global", "spectator", "camera", "player"],
       acceptsHumanIntent: true,
+      layoutMode: "wide-stage",
     },
     "arena.visualization.pettingzoo.frame_v1": {
       sceneKinds: ["frame"],
@@ -37,11 +39,6 @@ describe("resolveArenaPlugin", () => {
     "arena.visualization.retro_platformer.frame_v1": {
       sceneKinds: ["frame"],
       supportedObservers: ["player", "camera"],
-      acceptsHumanIntent: true,
-    },
-    "arena.visualization.openra.rts_v1": {
-      sceneKinds: ["rts"],
-      supportedObservers: ["player", "spectator", "camera"],
       acceptsHumanIntent: true,
     },
   } as const;

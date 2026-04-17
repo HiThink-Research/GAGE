@@ -71,6 +71,51 @@ def test_runtime_binding_resolver_defaults_single_env_kit_without_explicit_env(f
     assert resolved.resource_spec == {"env_id": "gomoku_standard"}
 
 
+def test_runtime_binding_resolver_parses_scheduler_owned_queued_command_v1_policy() -> None:
+    runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
+    registry_module = importlib.import_module("gage_eval.game_kits.registry")
+
+    sample = ArenaSample(
+        game_kit="retro_platformer",
+        env="retro_mario",
+        players=(
+            {
+                "seat": "player_0",
+                "player_id": "player_0",
+                "player_kind": "human",
+                "driver_params": {
+                    "input_semantics": "queued_command",
+                    "tick_interval_ms": 50,
+                    "timeout_ms": 50,
+                },
+            },
+        ),
+        runtime_overrides={
+            "runtime_binding_policy_config": {
+                "mode": "scheduler_owned_human_realtime",
+                "activation_scope": "pure_human_only",
+                "input_model": "queued_command",
+                "input_transport": "realtime_ws",
+                "tick_interval_ms": 50,
+                "max_commands_per_tick": 4,
+                "max_command_queue_size": 128,
+                "bridge_stall_timeout_ms": 2000,
+            }
+        },
+    )
+
+    resolved = runtime_binding.RuntimeBindingResolver(game_kits=registry_module.GameKitRegistry()).resolve(
+        sample
+    )
+
+    profile = resolved.runtime_profile.realtime_human_control
+    assert profile is not None
+    assert profile.max_commands_per_tick == 4
+    assert profile.max_command_queue_size == 128
+    assert profile.bridge_stall_timeout_ms == 2000
+    assert profile.fallback_move is None
+
+
 @pytest.mark.parametrize(
     ("config_relpath", "expected_driver_params"),
     [
@@ -79,8 +124,8 @@ def test_runtime_binding_resolver_defaults_single_env_kit_without_explicit_env(f
                 {
                     "input_semantics": "continuous_state",
                     "stateful_actions": True,
-                    "tick_interval_ms": 16,
-                    "timeout_ms": 16,
+                    "tick_interval_ms": 18,
+                    "timeout_ms": 18,
                     "timeout_fallback_move": "noop",
                 },
             ),
@@ -95,11 +140,12 @@ def test_runtime_binding_resolver_defaults_single_env_kit_without_explicit_env(f
                 },
             ),
             (
-                "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
+                "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
                 {
-                    "input_semantics": "queued_command",
-                    "tick_interval_ms": 50,
-                    "timeout_ms": 50,
+                    "input_semantics": "continuous_state",
+                    "stateful_actions": True,
+                    "tick_interval_ms": 18,
+                    "timeout_ms": 18,
                     "timeout_fallback_move": "noop",
                 },
             ),
@@ -138,12 +184,14 @@ def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
         "expected_tick_ms",
         "expected_pure_human",
         "expected_low_latency",
+        "expected_websocket",
     ),
     [
         (
-            "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
-            "continuous_state",
-            16,
+            "config/custom/pettingzoo/space_invaders_human_visual_gamekit.yaml",
+            "queued_command",
+            33,
+            True,
             True,
             True,
         ),
@@ -153,11 +201,13 @@ def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
             16,
             False,
             False,
+            False,
         ),
         (
-            "config/custom/openra/openra_ra_skirmish_native_pure_human_visual.yaml",
-            "queued_command",
-            50,
+            "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
+            "continuous_state",
+            18,
+            True,
             True,
             True,
         ),
@@ -169,6 +219,7 @@ def test_runtime_binding_resolver_builds_realtime_runtime_profile_from_config(
     expected_tick_ms: int,
     expected_pure_human: bool,
     expected_low_latency: bool,
+    expected_websocket: bool,
 ) -> None:
     runtime_binding = importlib.import_module("gage_eval.game_kits.runtime_binding")
     registry_module = importlib.import_module("gage_eval.game_kits.registry")
@@ -193,7 +244,7 @@ def test_runtime_binding_resolver_builds_realtime_runtime_profile_from_config(
     assert resolved.runtime_profile.tick_interval_ms == expected_tick_ms
     assert resolved.runtime_profile.pure_human_realtime is expected_pure_human
     assert resolved.runtime_profile.supports_low_latency_realtime_input is expected_low_latency
-    assert resolved.runtime_profile.supports_realtime_input_websocket is expected_low_latency
+    assert resolved.runtime_profile.supports_realtime_input_websocket is expected_websocket
 
     human_profile = resolved.runtime_profile.human_realtime_inputs[0]
     assert human_profile.player_id == resolved.player_bindings[0].player_id

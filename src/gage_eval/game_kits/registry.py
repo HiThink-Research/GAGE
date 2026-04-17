@@ -13,6 +13,7 @@ from gage_eval.game_kits.aec_env_game.pettingzoo.visualization import (
     VISUALIZATION_SPEC_ID as PETTINGZOO_VISUALIZATION_SPEC_ID,
 )
 from gage_eval.game_kits.content import DEFAULT_GAME_CONTENT_ASSET, DEFAULT_GAME_KIT
+from gage_eval.game_kits.gymnasium_atari.kit import build_gymnasium_atari_game_kit
 from gage_eval.game_kits.board_game.gomoku.kit import build_gomoku_game_kit
 from gage_eval.game_kits.board_game.gomoku.visualization import (
     VISUALIZATION_SPEC as GOMOKU_VISUALIZATION_SPEC,
@@ -288,6 +289,13 @@ def register_runtime_assets(*, registry_target=None) -> None:
         build_pettingzoo_game_kit,
         desc="GameArena PettingZoo kit",
         tags=("gamekit", "aec_env_game", "pettingzoo"),
+    )
+    target.register(
+        "game_kits",
+        "gymnasium_atari",
+        build_gymnasium_atari_game_kit,
+        desc="GameArena Gymnasium Atari kit",
+        tags=("gamekit", "gymnasium", "atari"),
     )
     target.register(
         "game_kits",

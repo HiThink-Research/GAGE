@@ -6,10 +6,57 @@ from types import SimpleNamespace
 from gage_eval.evaluation.sample_envelope import append_arena_contract, ensure_arena_header
 from gage_eval.role.arena.core.game_session import GameSession
 from gage_eval.role.arena.core.types import ArenaSample
-from gage_eval.role.arena.output.writer import ArenaOutputWriter
+from gage_eval.role.arena.output.writer import ArenaOutputWriter, _build_footer_contract
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.adapters.arena import ArenaRoleAdapter
 from gage_eval.role.arena.types import GameResult
+
+
+def test_arena_output_footer_counts_duplicate_step_trace_entries() -> None:
+    result = GameResult(
+        winner="doom_alpha",
+        result="win",
+        reason="p0_win",
+        move_count=3,
+        illegal_move_count=0,
+        final_board="",
+        move_log=[],
+    )
+    trace = [
+        {"step_index": 0, "player_id": "doom_alpha"},
+        {"step_index": 0, "player_id": "doom_beta"},
+        {"step_index": 1, "player_id": "doom_alpha"},
+        {"step_index": 1, "player_id": "doom_beta"},
+        {"step_index": 2, "player_id": "doom_alpha"},
+        {"step_index": 2, "player_id": "doom_beta"},
+    ]
+
+    footer = _build_footer_contract(result, trace)
+
+    assert footer is not None
+    assert footer["total_steps"] == len(trace)
+
+
+def test_arena_output_footer_uses_trace_length_when_move_count_is_short() -> None:
+    result = GameResult(
+        winner=None,
+        result="terminated",
+        reason="user_finish",
+        move_count=2,
+        illegal_move_count=0,
+        final_board="",
+        move_log=[],
+    )
+    trace = [
+        {"step_index": 0, "player_id": "player_0"},
+        {"step_index": 1, "player_id": "player_0"},
+        {"step_index": 2, "player_id": "player_0"},
+    ]
+
+    footer = _build_footer_contract(result, trace)
+
+    assert footer is not None
+    assert footer["total_steps"] == len(trace)
 
 
 def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample(
@@ -134,6 +181,7 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample(
     assert serialized["tick"] == 3
     assert serialized["step"] == 3
     assert serialized["arena_trace"][0]["player_id"] == "Black"
+    assert serialized["result"]["arena_trace"][0]["player_id"] == "Black"
     assert serialized["header"]["scheduler"] == "turn/default"
     assert serialized["trace"][0]["step_index"] == 0
     assert serialized["footer"]["winner_player_id"] == "Black"
@@ -168,6 +216,7 @@ def test_arena_output_writer_emits_contract_fields_and_bridges_to_sample(
     assert sample["metadata"]["game_arena"]["scheduler"] == "turn/default"
     assert entry["trace"][0]["player_id"] == "Black"
     assert entry["arena_trace"][0]["player_id"] == "Black"
+    assert entry["result"]["arena_trace"][0]["player_id"] == "Black"
     assert entry["game_arena"]["winner_player_id"] == "Black"
     assert entry["game_arena"]["termination_reason"] == "five_in_row"
     assert entry["game_arena"]["total_steps"] == 3
@@ -221,3 +270,62 @@ def test_arena_output_writer_serializes_support_and_resource_failures() -> None:
         "resource_lifecycle_error"
     )
     assert serialized["game_context"]["resource_errors"][0]["operation"] == "close"
+
+
+def test_arena_output_writer_adds_structured_final_board_for_json_payloads() -> None:
+    session = GameSession(
+        sample=ArenaSample(game_kit="doudizhu", env="classic_3p"),
+        final_result=GameResult(
+            winner="landlord",
+            result="win",
+            reason="terminal",
+            move_count=4,
+            illegal_move_count=0,
+            final_board='{"winner":"landlord","public_state":{"phase":"play"}}',
+            move_log=[{"index": 1, "player": "landlord", "move": "3"}],
+        ),
+    )
+
+    output = ArenaOutputWriter().finalize(session)
+    serialized = ArenaRoleAdapter._serialize_gamearena_value(output)
+
+    assert serialized["result"]["final_board"] == (
+        '{"winner":"landlord","public_state":{"phase":"play"}}'
+    )
+    assert serialized["result"]["final_board_structured"] == {
+        "winner": "landlord",
+        "public_state": {"phase": "play"},
+    }
+
+
+def test_arena_output_writer_adds_structured_final_board_for_sectioned_text() -> None:
+    session = GameSession(
+        sample=ArenaSample(game_kit="mahjong", env="riichi_4p"),
+        final_result=GameResult(
+            winner="east",
+            result="win",
+            reason="terminal",
+            move_count=5,
+            illegal_move_count=0,
+            final_board=(
+                "Public State:\n"
+                '{"discard_lanes":{"east":["B1"]}}\n\n'
+                "Private State:\n"
+                '{"self_hand":["B2","B3"]}\n\n'
+                "Legal Moves (preview): Chi, Peng\n\n"
+                "Chat Log:\n"
+                '[{"player_id":"east","text":"ready"}]'
+            ),
+            move_log=[{"index": 1, "player": "east", "move": "B1"}],
+        ),
+    )
+
+    output = ArenaOutputWriter().finalize(session)
+    serialized = ArenaRoleAdapter._serialize_gamearena_value(output)
+
+    assert serialized["result"]["final_board_structured"] == {
+        "public_state": {"discard_lanes": {"east": ("B1",)}},
+        "private_state": {"self_hand": ("B2", "B3")},
+        "legal_moves_preview": ("Chi", "Peng"),
+        "chat_log": ({"player_id": "east", "text": "ready"},),
+    }

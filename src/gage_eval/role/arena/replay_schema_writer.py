@@ -360,8 +360,36 @@ def _extract_meta(entry: Mapping[str, Any]) -> dict[str, Any]:
         "coord",
         "raw",
     }
-    metadata = {str(key): value for key, value in entry.items() if key not in known_keys}
+    metadata = {
+        str(key): _normalize_replay_json_value(value)
+        for key, value in entry.items()
+        if key not in known_keys
+    }
     return metadata
+
+
+def _normalize_replay_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _normalize_replay_json_value(item())
+        except Exception:
+            pass
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        try:
+            return _normalize_replay_json_value(tolist())
+        except Exception:
+            pass
+    if isinstance(value, Mapping):
+        return {str(key): _normalize_replay_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_normalize_replay_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_replay_json_value(item) for item in value]
+    return value
 
 
 def _resolve_recording_mode(action_count: int, frame_count: int) -> str:

@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 
+import { cx } from "../../lib/cx";
 import type { TableSceneData, TableSeat } from "../table/TableLayout";
 import { DoudizhuActionComposer } from "./DoudizhuActionComposer";
 import { DoudizhuCardVisual } from "./doudizhuCards";
@@ -59,17 +60,23 @@ function resolvePortrait(role: string | null): string | null {
     return portraitAssets.Landlord_wName ?? portraitAssets.Landlord ?? null;
   }
   if (role === "peasant") {
-    return portraitAssets.Peasant_wName ?? portraitAssets.Pleasant ?? null;
+    return portraitAssets.Peasant_wName ?? portraitAssets.Peasant ?? portraitAssets.Pleasant ?? null;
   }
   return portraitAssets.Player ?? null;
 }
 
 function renderMaskedHand(maskedCount: number, compact: boolean) {
-  const previewCount = Math.max(maskedCount, 0);
+  const visibleCount = Math.max(0, Math.floor(maskedCount));
   return (
     <div className="doudizhu-hand doudizhu-hand--masked">
-      <div className={`doudizhu-hand__cards doudizhu-hand__cards--masked ${compact ? "is-compact" : ""}`}>
-        {Array.from({ length: previewCount }, (_, index) => (
+      <div
+        className={cx(
+          "doudizhu-hand__cards",
+          "doudizhu-hand__cards--masked",
+          compact && "is-compact",
+        )}
+      >
+        {Array.from({ length: visibleCount }, (_, index) => (
           <DoudizhuCardVisual key={`masked-${index}`} card="Back" faceDown={true} compact={compact} />
         ))}
       </div>
@@ -85,7 +92,7 @@ function renderVisibleCards(cards: string[], compact: boolean) {
     return <p className="doudizhu-hand__caption">No cards</p>;
   }
   return (
-    <div className={`doudizhu-hand__cards ${compact ? "is-compact" : ""}`}>
+    <div className={cx("doudizhu-hand__cards", compact && "is-compact")}>
       {cards.map((card, index) => (
         <DoudizhuCardVisual key={`${card}-${index}`} card={card} compact={compact} />
       ))}
@@ -106,7 +113,7 @@ function renderSeatPlayed(seat: TableSeat) {
   );
 }
 
-function DoudizhuSeat({
+const DoudizhuSeat = memo(function DoudizhuSeat({
   seat,
   anchor,
   handContent,
@@ -118,14 +125,12 @@ function DoudizhuSeat({
   chatBubbleText?: string;
 }) {
   const compact = anchor !== "bottom";
-  const className = [
+  const className = cx(
     "doudizhu-seat",
     `doudizhu-seat--${anchor}`,
-    seat.isActive ? "is-active" : "",
-    seat.isObserver ? "is-observer" : "",
-  ]
-    .filter((value) => value !== "")
-    .join(" ");
+    seat.isActive && "is-active",
+    seat.isObserver && "is-observer",
+  );
   const portrait = resolvePortrait(seat.role);
 
   return (
@@ -136,6 +141,11 @@ function DoudizhuSeat({
     >
       <header className="doudizhu-seat__header">
         <div className="doudizhu-seat__identity">
+          {chatBubbleText ? (
+            <p className="doudizhu-seat__bubble" data-testid={`doudizhu-seat-${anchor}-bubble`}>
+              {chatBubbleText}
+            </p>
+          ) : null}
           {portrait ? (
             <img
               className="doudizhu-seat__portrait"
@@ -154,12 +164,6 @@ function DoudizhuSeat({
         </div>
       </header>
 
-      {chatBubbleText ? (
-        <p className="doudizhu-seat__bubble" data-testid={`doudizhu-seat-${anchor}-bubble`}>
-          {chatBubbleText}
-        </p>
-      ) : null}
-
       <div className="doudizhu-seat__played">{renderSeatPlayed(seat)}</div>
 
       <div data-testid={`doudizhu-seat-${anchor}-hand`} className="doudizhu-seat__hand">
@@ -174,7 +178,7 @@ function DoudizhuSeat({
       </div>
     </article>
   );
-}
+});
 
 export function DoudizhuTable({
   tableScene,
@@ -182,34 +186,49 @@ export function DoudizhuTable({
   canSubmitActions,
   onSubmitAction,
 }: DoudizhuTableProps) {
-  const bottomSeat = resolveSeatById(tableScene, "bottom");
-  const leftSeat = resolveSeatById(tableScene, "left");
-  const rightSeat = resolveSeatById(tableScene, "right");
-  const latestSeatChats = resolveLatestSeatChatMap(tableScene);
-  const activePlayerLabel = resolvePlayerLabel(tableScene, tableScene.status.activePlayerId);
-  const landlordLabel = resolvePlayerLabel(tableScene, tableScene.status.landlordId);
-  const privateViewLabel = resolvePlayerLabel(
-    tableScene,
-    tableScene.status.privateViewPlayerId ?? tableScene.status.observerPlayerId,
+  const bottomSeat = useMemo(() => resolveSeatById(tableScene, "bottom"), [tableScene]);
+  const leftSeat = useMemo(() => resolveSeatById(tableScene, "left"), [tableScene]);
+  const rightSeat = useMemo(() => resolveSeatById(tableScene, "right"), [tableScene]);
+  const latestSeatChats = useMemo(() => resolveLatestSeatChatMap(tableScene), [tableScene]);
+  const activePlayerLabel = useMemo(
+    () => resolvePlayerLabel(tableScene, tableScene.status.activePlayerId),
+    [tableScene],
   );
+  const landlordLabel = useMemo(
+    () => resolvePlayerLabel(tableScene, tableScene.status.landlordId),
+    [tableScene],
+  );
+  const privateViewLabel = useMemo(
+    () =>
+      resolvePlayerLabel(
+        tableScene,
+        tableScene.status.privateViewPlayerId ?? tableScene.status.observerPlayerId,
+      ),
+    [tableScene],
+  );
+  const bottomHandContent = useMemo(() => {
+    if (!bottomSeat) {
+      return null;
+    }
+    if (bottomSeat.hand.isVisible && canSubmitActions) {
+      return (
+        <DoudizhuActionComposer
+          handCards={bottomSeat.hand.cards}
+          actionTexts={actionTexts}
+          canSubmitActions={canSubmitActions}
+          onSubmitAction={onSubmitAction}
+        />
+      );
+    }
+    if (bottomSeat.hand.isVisible) {
+      return <div className="doudizhu-hand">{renderVisibleCards(bottomSeat.hand.cards, false)}</div>;
+    }
+    return renderMaskedHand(bottomSeat.hand.maskedCount, false);
+  }, [actionTexts, bottomSeat, canSubmitActions, onSubmitAction]);
 
   if (!bottomSeat || !leftSeat || !rightSeat) {
     return null;
   }
-
-  const bottomHandContent =
-    bottomSeat.hand.isVisible && canSubmitActions ? (
-      <DoudizhuActionComposer
-        handCards={bottomSeat.hand.cards}
-        actionTexts={actionTexts}
-        canSubmitActions={canSubmitActions}
-        onSubmitAction={onSubmitAction}
-      />
-    ) : bottomSeat.hand.isVisible ? (
-      <div className="doudizhu-hand">{renderVisibleCards(bottomSeat.hand.cards, false)}</div>
-    ) : (
-      renderMaskedHand(bottomSeat.hand.maskedCount, false)
-    );
 
   return (
     <section className="doudizhu-stage" data-testid="doudizhu-stage">
@@ -264,8 +283,8 @@ export function DoudizhuTable({
             <p className="doudizhu-center__history-label">Recent plays</p>
             {tableScene.table.center.history.length > 0 ? (
               <div className="doudizhu-center__history">
-                {tableScene.table.center.history.map((entry) => (
-                  <span key={entry} className="doudizhu-center__history-chip">
+                {tableScene.table.center.history.map((entry, index) => (
+                  <span key={`${entry}-${index}`} className="doudizhu-center__history-chip">
                     {entry}
                   </span>
                 ))}

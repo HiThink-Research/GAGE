@@ -7,6 +7,17 @@ from gage_eval.role.arena.replay_schema_writer import ReplaySchemaWriter
 from gage_eval.role.arena.types import GameResult
 
 
+class _ScalarLike:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def item(self) -> float:
+        return float(self.value)
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
 def _build_result(*, replay_path: str | None = None) -> GameResult:
     return GameResult(
         winner="player_0",
@@ -163,3 +174,27 @@ def test_replay_schema_writer_surfaces_visual_session_ref_in_artifacts(tmp_path:
     assert payload["artifacts"]["visual_session_ref"].endswith(
         "arena_visual_session/v1/manifest.json"
     )
+
+
+def test_replay_schema_writer_preserves_scalar_like_reward_as_json_number(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "run_scalar_reward"
+    writer = ReplaySchemaWriter(run_dir=run_dir, sample_id="sample_scalar_reward")
+    replay_path = writer.write(
+        scheduler_type="turn",
+        result=_build_result(),
+        move_log=[
+            {
+                "index": 1,
+                "player": "player_0",
+                "move": "FIRE",
+                "reward": _ScalarLike(5.0),
+            }
+        ],
+        arena_trace=None,
+    )
+
+    replay_file = Path(replay_path)
+    event = json.loads((replay_file.parent / "events.jsonl").read_text(encoding="utf-8").splitlines()[0])
+
+    assert event["meta"]["reward"] == 5.0
+    assert isinstance(event["meta"]["reward"], float)

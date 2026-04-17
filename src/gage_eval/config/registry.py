@@ -160,7 +160,7 @@ class ConfigRegistry:
                 source=f"dataset:{spec.dataset_id}.loader",
             )
             loader_cls = lookup.get("dataset_loaders", loader_name)
-        loader = loader_cls(spec)
+        loader = loader_cls(spec, registry_view=lookup)
         return loader.load(hub_handle, trace=trace)
 
     def resolve_role_adapter(

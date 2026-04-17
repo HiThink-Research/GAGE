@@ -43,4 +43,3 @@ class BoardRenderer(Protocol):
         refresh_interval_ms: int,
     ) -> str:
         """Return JS for click-to-move interactions."""
-

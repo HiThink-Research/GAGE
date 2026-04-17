@@ -28,6 +28,13 @@ if str(SRC_ROOT) not in sys.path:
 
 import gage_eval  # noqa: F401 - auto-discovery happens on import
 from gage_eval.config import build_default_registry
+from gage_eval.config.loader import (
+    expand_env as _loader_expand_env,
+    load_pipeline_config_payload,
+    load_pre_smart_defaults_payload,
+    load_yaml_mapping,
+)
+from gage_eval.config.loader_cli import CLIIntent, apply_cli_final_overrides, parse_metric_ids_csv
 from gage_eval.tools.distill import DistillError, analyze_tasks_for_distill
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
@@ -94,6 +101,20 @@ def parse_args() -> argparse.Namespace:
         help="Skip the judge step by removing it from custom.steps at runtime.",
     )
     parser.add_argument(
+        "--show-expanded-config",
+        action="store_true",
+        help="Print the smart-default-expanded PipelineConfig payload and exit.",
+    )
+    parser.add_argument(
+        "--no-smart-defaults",
+        action="store_true",
+        help="Disable smart defaults when loading PipelineConfig YAML.",
+    )
+    parser.add_argument(
+        "--backend-id",
+        help="Override the static DUT backend used for inference binding.",
+    )
+    parser.add_argument(
         "--distill",
         "-d",
         action="store_true",
@@ -140,23 +161,12 @@ def parse_args() -> argparse.Namespace:
 
 def _apply_cli_metric_filter(payload: dict, metric_ids_csv: str) -> None:
     """Filter payload metrics by metric_id (in-place)."""
-    wanted = {m.strip() for m in (metric_ids_csv or "").split(",") if m.strip()}
-    if not wanted:
-        return
-    metrics = payload.get("metrics") or []
-    if isinstance(metrics, list):
-        payload["metrics"] = [m for m in metrics if isinstance(m, dict) and m.get("metric_id") in wanted]
+    apply_cli_final_overrides(payload, CLIIntent(metric_ids=parse_metric_ids_csv(metric_ids_csv)))
 
 
 def _apply_cli_skip_judge(payload: dict) -> None:
-    """Remove judge step from payload custom.steps (in-place)."""
-    custom = payload.get("custom")
-    if not isinstance(custom, dict):
-        return
-    steps = custom.get("steps")
-    if not isinstance(steps, list):
-        return
-    custom["steps"] = [s for s in steps if not (isinstance(s, dict) and s.get("step") == "judge")]
+    """Remove judge steps from payload custom and task steps (in-place)."""
+    apply_cli_final_overrides(payload, CLIIntent(skip_judge=True))
 
 
 def _normalize_version_tag(version: str) -> str:
@@ -183,43 +193,20 @@ def _ensure_spawn_start_method() -> None:
 
 
 def load_config(path: Path) -> dict:
-    if not path.exists():
-        raise FileNotFoundError(f"Config file '{path}' not found")
-    with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Config '{path}' must be a mapping at the top level")
-    return _expand_env(data)
-
-
-_ENV_PATTERN = re.compile(r"^\$\{([^}:]+)(?::-(.*))?\}$")
+    return _loader_expand_env(load_yaml_mapping(path))
 
 
 def _expand_env(value):
-    """Recursively expand ${VAR:-default} in YAML configs and cast simple numbers."""
+    return _loader_expand_env(value)
 
-    if isinstance(value, dict):
-        return {k: _expand_env(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_expand_env(v) for v in value]
-    if isinstance(value, str):
-        match = _ENV_PATTERN.match(value.strip())
-        if not match:
-            return value
-        var, default = match.group(1), match.group(2)
-        resolved = os.getenv(var, default if default is not None else "")
-        # NOTE: Attempt to cast pure numeric strings to int/float to avoid type
-        # errors in downstream comparisons (for example: max_samples).
-        if isinstance(resolved, str) and resolved.strip():
-            try:
-                return int(resolved)
-            except ValueError:
-                try:
-                    return float(resolved)
-                except ValueError:
-                    return resolved
-        return resolved
-    return value
+
+def _build_cli_intent(args: argparse.Namespace) -> CLIIntent:
+    return CLIIntent(
+        backend_id=args.backend_id,
+        max_samples=args.max_samples,
+        skip_judge=args.skip_judge,
+        metric_ids=parse_metric_ids_csv(args.metric_ids),
+    )
 
 
 class _LiteralDumper(yaml.SafeDumper):
@@ -242,11 +229,38 @@ def _str_representer(dumper: yaml.SafeDumper, data: str):
 _LiteralDumper.add_representer(str, _str_representer)
 
 
+def _yaml_dump(data: dict, *, sort_keys: bool = False) -> str:
+    content = yaml.dump(
+        data,
+        Dumper=_LiteralDumper,
+        sort_keys=sort_keys,
+        allow_unicode=True,
+        default_flow_style=False,
+    )
+    return _insert_top_level_spacing(content)
+
+
+_EMPTY_EXPANDED_CONFIG_DISPLAY_SECTIONS = {
+    "models",
+    "agent_backends",
+    "sandbox_profiles",
+    "mcp_clients",
+    "prompts",
+    "summary_generators",
+}
+
+
+def _hide_empty_expanded_config_sections(payload: dict) -> dict:
+    display_payload = dict(payload)
+    for key in _EMPTY_EXPANDED_CONFIG_DISPLAY_SECTIONS:
+        if display_payload.get(key) == []:
+            display_payload.pop(key)
+    return display_payload
+
+
 def _write_yaml(data: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = yaml.dump(data, Dumper=_LiteralDumper, sort_keys=False, allow_unicode=True, default_flow_style=False)
-    content = _insert_top_level_spacing(content)
-    path.write_text(content, encoding="utf-8")
+    path.write_text(_yaml_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def _dedupe_path(path: Path) -> Path:
@@ -1053,13 +1067,39 @@ def _apply_cli_max_samples_override(payload: dict, max_samples: int) -> None:
             hub_params["limit"] = max_samples
 
 
-def _validate_config_wiring(config: PipelineConfig) -> list[str]:
+def _validate_config_wiring(
+    config: PipelineConfig,
+    *,
+    registry=None,
+    run_id: str = "validate",
+) -> list[str]:
     """Validate config references without loading data or running the pipeline."""
 
+    from gage_eval.registry import registry as global_asset_registry
+
+    runtime_registry_context = None
+    asset_registry = global_asset_registry
+    if registry is not None:
+        try:
+            runtime_registry_context = registry.prepare_runtime_registry_context(
+                config,
+                run_id=run_id,
+            )
+            asset_registry = runtime_registry_context.view
+        except Exception as exc:
+            return [f"Registry discovery failed: {exc}"]
+
+    try:
+        return _validate_config_wiring_with_registry(config, asset_registry)
+    finally:
+        if runtime_registry_context is not None:
+            runtime_registry_context.close()
+
+
+def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry) -> list[str]:
     import importlib
 
     from gage_eval.metrics.registry import MetricRegistry
-    from gage_eval.registry import registry as asset_registry
 
     errors: list[str] = []
     dataset_ids = {spec.dataset_id for spec in config.datasets}
@@ -1110,7 +1150,7 @@ def _validate_config_wiring(config: PipelineConfig) -> list[str]:
         if spec.prompt_id and spec.prompt_id not in prompt_ids:
             errors.append(f"RoleAdapter '{spec.adapter_id}' references missing prompt_id '{spec.prompt_id}'")
 
-    metric_registry = MetricRegistry()
+    metric_registry = MetricRegistry(registry_view=asset_registry)
     for spec in config.metrics:
         try:
             metric_registry.build_metric(spec)
@@ -1127,6 +1167,7 @@ def _validate_config_wiring(config: PipelineConfig) -> list[str]:
 def main() -> None:
     wall_clock_start = time.perf_counter()
     args = parse_args()
+    cli_intent = _build_cli_intent(args)
     if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
         os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
 
@@ -1138,9 +1179,39 @@ def main() -> None:
             sys.exit(1)
         sys.exit(0)
 
+    if args.show_expanded_config:
+        try:
+            config_path = Path(args.config).expanduser()
+            if args.no_smart_defaults:
+                payload = load_pre_smart_defaults_payload(
+                    config_path,
+                    run_config_compiler=_compile_run_config,
+                )
+            else:
+                payload = load_pipeline_config_payload(
+                    config_path,
+                    cli_intent=cli_intent,
+                    smart_defaults=True,
+                    run_config_compiler=_compile_run_config,
+                )
+        except Exception as exc:
+            print(f"[gage-eval] failed to expand config: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(_yaml_dump(_hide_empty_expanded_config_sections(payload), sort_keys=False))
+        sys.exit(0)
+
     if args.distill:
         builtin_name = args.builtin_name
-        config_payload = load_config(Path(args.config).expanduser())
+        try:
+            config_payload = load_pipeline_config_payload(
+                Path(args.config).expanduser(),
+                cli_intent=cli_intent,
+                smart_defaults=not args.no_smart_defaults,
+                run_config_compiler=_compile_run_config,
+            )
+        except Exception as exc:
+            print(f"[gage-eval][distill] {exc}", file=sys.stderr)
+            sys.exit(1)
         if not builtin_name and args.distill_output:
             # NOTE: If distill_output is provided without builtin_name, use the last
             # path component as the template name.
@@ -1202,36 +1273,27 @@ def main() -> None:
     if args.model_path:
         os.environ["VLLM_NATIVE_MODEL_PATH"] = args.model_path
     _install_signal_handlers()
-    config_payload = load_config(Path(args.config).expanduser())
     config_source_desc = args.config
-    raw_kind = (config_payload.get("kind") or "").lower()
-    if raw_kind == "runconfig":
-        try:
-            compiled_payload, template_path = _compile_run_config(config_payload)
-        except Exception as exc:
-            print(f"[gage-eval][runconfig] {exc}", file=sys.stderr)
-            sys.exit(1)
-        if args.max_samples is not None:
-            _apply_cli_max_samples_override(compiled_payload, args.max_samples)
-        if args.metric_ids:
-            _apply_cli_metric_filter(compiled_payload, args.metric_ids)
-        if args.skip_judge:
-            _apply_cli_skip_judge(compiled_payload)
-        config = PipelineConfig.from_dict(compiled_payload)
-        config_source_desc = f"{args.config} (template: {template_path})"
-    else:
-        if args.max_samples is not None:
-            _apply_cli_max_samples_override(config_payload, args.max_samples)
-        if args.metric_ids:
-            _apply_cli_metric_filter(config_payload, args.metric_ids)
-        if args.skip_judge:
-            _apply_cli_skip_judge(config_payload)
-        config = PipelineConfig.from_dict(config_payload)
+    try:
+        materialized = load_pipeline_config_payload(
+            Path(args.config).expanduser(),
+            cli_intent=cli_intent,
+            smart_defaults=not args.no_smart_defaults,
+            run_config_compiler=_compile_run_config,
+        )
+    except Exception as exc:
+        print(f"[gage-eval] failed to load config: {exc}", file=sys.stderr)
+        sys.exit(1)
+    config = PipelineConfig.from_dict(materialized)
 
     registry = build_default_registry()
 
     if args.max_samples == 0:
-        errors = _validate_config_wiring(config)
+        errors = _validate_config_wiring(
+            config,
+            registry=registry,
+            run_id=args.run_id or f"validate-{int(time.time() * 1000)}",
+        )
         if errors:
             for err in errors:
                 print(f"[gage-eval][validate] {err}", file=sys.stderr)

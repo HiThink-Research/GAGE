@@ -11,14 +11,14 @@ import time
 import webbrowser
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Lock
-from typing import TYPE_CHECKING
-from typing import Any, Mapping
+from threading import Lock, RLock
+from typing import Any, Mapping, Sequence
 
 from loguru import logger
 
+from gage_eval.role.arena.core.errors import PlayerStopRequested
 from gage_eval.role.arena.core.invocation import GameArenaInvocationContext
-from gage_eval.role.arena.core.players import BoundPlayer
+from gage_eval.role.arena.core.players import BoundPlayer, PlayerBindingSpec
 from gage_eval.role.arena.core.types import ArenaSample
 from gage_eval.role.arena.human_input_protocol import SampleActionRouter
 from gage_eval.role.arena.schedulers._scheduler_utils import (
@@ -33,6 +33,7 @@ from gage_eval.role.arena.schedulers._scheduler_utils import (
 from gage_eval.role.arena.support.context import SupportContext
 from gage_eval.role.arena.support.hooks import SupportHook
 from gage_eval.role.arena.types import ArenaAction, GameResult
+from gage_eval.role.arena.visualization.contracts import ObserverRef
 from gage_eval.role.arena.visualization.recorder import ArenaVisualSessionRecorder
 from gage_eval.role.arena.visualization.artifacts import to_scene_json_safe
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
@@ -46,11 +47,20 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     Image = None
 
-if TYPE_CHECKING:
-    from gage_eval.tools.ws_rgb_server import DisplayRegistration, WsRgbHubServer
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency
+    np = None
 
 _LIVE_MEDIA_INLINE_SCHEMES = {"binary_stream", "low_latency_channel"}
 _REALTIME_INLINE_SNAPSHOT_TARGET_MS = 250
+_FRAME_DATA_URL_BUFFER_POOL_MAX = 16
+_FRAME_DATA_URL_BUFFER_POOL: list[io.BytesIO] = []
+_FRAME_DATA_URL_BUFFER_POOL_LOCK = Lock()
+_FRAME_ARRAY_POOL_MAX = 16
+_FRAME_ARRAY_POOL: dict[tuple[tuple[int, ...], str], list[object]] = {}
+_FRAME_ARRAY_POOL_LOCK = Lock()
+_WEBP_FALLBACK_LOGGED = False
 
 
 @dataclass
@@ -64,6 +74,7 @@ class GameSession:
     visualization_spec: object | None = None
     resources: object | None = None
     max_steps: int = 256
+    max_ticks: int | None = None
     final_result: object | None = None
     tick: int = 0
     step: int = 0
@@ -95,6 +106,8 @@ class GameSession:
     _latest_live_frame_version: int = field(default=0, init=False, repr=False)
     _last_realtime_snapshot_ts_ms: int = field(default=0, init=False, repr=False)
     _last_input_age_ms: float | None = field(default=None, init=False, repr=False)
+    _realtime_observation_dirty: bool = field(default=True, init=False, repr=False)
+    _environment_lock: RLock = field(default_factory=RLock, init=False, repr=False)
     _stop_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     @classmethod
@@ -133,6 +146,7 @@ class GameSession:
             visualization_spec=getattr(resolved, "visualization_spec", None),
             resources=resources,
             max_steps=_resolve_max_steps(sample=sample, resolved=resolved),
+            max_ticks=_resolve_max_tick_budget(sample=sample, resolved=resolved),
             invocation_context=invocation_context,
             visual_recorder=_build_visual_recorder(
                 sample=sample,
@@ -148,11 +162,14 @@ class GameSession:
 
     def should_stop(self) -> bool:
         self._consume_requested_restart()
-        if self._stop_requested:
+        with self._stop_lock:
+            stop_requested = self._stop_requested
+            stop_reason = self._stop_reason
+        if stop_requested:
             if self.final_result is None:
                 self.final_result = self._build_result(
                     result="terminated",
-                    reason=self._stop_reason or "user_finish",
+                    reason=stop_reason or "user_finish",
                 )
             return True
         if self.final_result is not None:
@@ -162,7 +179,11 @@ class GameSession:
         if self.step >= self.max_steps:
             self.final_result = self._build_result(result="max_steps", reason="max_steps")
             return True
-        return bool(self.environment.is_terminal())
+        if self.max_ticks is not None and self.tick >= self.max_ticks:
+            self.final_result = self._build_result(result="max_ticks", reason="max_ticks")
+            return True
+        with self._environment_lock:
+            return bool(self.environment.is_terminal())
 
     def request_stop(
         self,
@@ -176,6 +197,8 @@ class GameSession:
             if self.final_result is None:
                 self.final_result = self._build_result(result=result, reason=reason)
             environment = self.environment
+            players = tuple(self.player_specs)
+        _best_effort_stop_players(players)
         _best_effort_stop_environment(environment)
         return self.final_result
 
@@ -191,8 +214,9 @@ class GameSession:
         self._consume_requested_restart()
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
-        player_id = str(self.environment.get_active_player())
-        observation = self.environment.observe(player_id)
+        with self._environment_lock:
+            player_id = str(self.environment.get_active_player())
+            observation = self.environment.observe(player_id)
         workflow = self.observation_workflow
         if workflow is not None:
             observation = workflow.build(observation, self)
@@ -202,6 +226,7 @@ class GameSession:
         )
         observation = support_context.payload.get("observation", observation)
         self._last_observation = observation
+        self._realtime_observation_dirty = False
         self._current_trace_entry = make_trace_entry(
             step_index=self.step,
             player_id=player_id,
@@ -218,17 +243,58 @@ class GameSession:
             self._record_visual_decision_window_open(player_id=player_id, observation=observation)
         return observation
 
-    def decide_current_player(self, observation) -> ArenaAction:
+    def observe_scheduler_owned_realtime_tick(self):
+        """Return the cached realtime observation when it is still valid for input draining."""
+
+        if not self._uses_scheduler_owned_human_realtime():
+            return self.observe()
+        self._consume_requested_restart()
+        if self._last_observation is not None and not self._realtime_observation_dirty:
+            player_id = getattr(self._last_observation, "active_player", None)
+            if player_id in (None, "") and self.environment is not None:
+                with self._environment_lock:
+                    player_id = str(self.environment.get_active_player())
+            player_id = str(player_id or "")
+            self._set_visual_scheduling_state(
+                phase="waiting_for_intent",
+                player_id=player_id or None,
+                accepts_human_intent=bool(player_id and self._is_human_player(player_id)),
+            )
+            return self._last_observation
+        return self.observe()
+
+    def decide_current_player(self, observation) -> ArenaAction | None:
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
-        player_id = str(self.environment.get_active_player())
+        with self._environment_lock:
+            player_id = str(self.environment.get_active_player())
         before_context = self._run_support_hook(
             SupportHook.BEFORE_DECIDE,
             {"observation": observation, "player_id": player_id},
         )
         observation = before_context.payload.get("observation", observation)
         player = self._require_player(player_id)
-        action = player.next_action(observation)
+        try:
+            if self._uses_scheduler_owned_human_realtime():
+                poll_scheduler_owned_action = getattr(player, "poll_scheduler_owned_action", None)
+                if callable(poll_scheduler_owned_action):
+                    action = poll_scheduler_owned_action(observation)
+                    if action is None:
+                        self._current_trace_entry = None
+                        self._last_input_age_ms = None
+                        return None
+                else:
+                    action = player.next_action(observation)
+            else:
+                action = player.next_action(observation)
+        except PlayerStopRequested:
+            with self._stop_lock:
+                stop_requested = self._stop_requested
+            if stop_requested:
+                self._current_trace_entry = None
+                self._last_input_age_ms = None
+                return None
+            raise
         after_context = self._run_support_hook(
             SupportHook.AFTER_DECIDE,
             {
@@ -254,6 +320,63 @@ class GameSession:
             )
         return resolved_action
 
+    def drain_scheduler_owned_current_player_actions(
+        self,
+        observation,
+        *,
+        max_items: int,
+    ) -> list[ArenaAction]:
+        """Drain queued scheduler-owned realtime actions for the active player."""
+
+        if not self._uses_scheduler_owned_human_realtime():
+            action = self.decide_current_player(observation)
+            return [] if action is None else [action]
+        if self.environment is None:
+            raise RuntimeError("Game session environment is not initialized")
+
+        with self._environment_lock:
+            player_id = str(self.environment.get_active_player())
+        player = self._require_player(player_id)
+        drain_actions = getattr(player, "drain_scheduler_owned_actions", None)
+        if not callable(drain_actions):
+            action = self.decide_current_player(observation)
+            return [] if action is None else [action]
+
+        before_context = self._run_support_hook(
+            SupportHook.BEFORE_DECIDE,
+            {"observation": observation, "player_id": player_id},
+        )
+        observation = before_context.payload.get("observation", observation)
+
+        try:
+            resolved_max_items = max(1, int(max_items))
+            drained_actions = drain_actions(observation, max_items=resolved_max_items)
+            raw_actions = [] if drained_actions is None else list(drained_actions)[:resolved_max_items]
+        except PlayerStopRequested:
+            with self._stop_lock:
+                stop_requested = self._stop_requested
+            if stop_requested:
+                self._current_trace_entry = None
+                self._last_input_age_ms = None
+                return []
+            raise
+
+        actions: list[ArenaAction] = []
+        for raw_action in raw_actions:
+            if raw_action is None:
+                continue
+            resolved_action = self._resolve_decided_action(
+                observation=observation,
+                player_id=player_id,
+                action=raw_action,
+            )
+            actions.append(resolved_action)
+
+        if not actions:
+            self._current_trace_entry = None
+            self._last_input_age_ms = None
+        return actions
+
     def apply(self, action: ArenaAction) -> None:
         if self.environment is None:
             raise RuntimeError("Game session environment is not initialized")
@@ -272,7 +395,9 @@ class GameSession:
         trace_entry["t_action_submitted_ms"] = wall_clock_ms()
         trace_entry["retry_count"] = infer_retry_count(action)
         trace_entry["is_action_legal"] = infer_legality(action)
-        result = self.environment.apply(action)
+        with self._environment_lock:
+            result = self.environment.apply(action)
+        self._realtime_observation_dirty = True
         if result is not None:
             self.final_result = result
         after_context = self._run_support_hook(
@@ -308,30 +433,125 @@ class GameSession:
         self.arena_trace.append(finalized_trace_entry)
         self._current_trace_entry = None
 
-    def advance(self) -> None:
-        delta = self._resolve_progress_delta()
-        self.tick += delta
-        self.step += delta
+    def tick_realtime_idle(self, *, frames: int = 1) -> bool:
+        """Drive a scheduler-owned realtime environment by noop frames."""
+
         if not self._uses_scheduler_owned_human_realtime():
+            return False
+        if self.environment is None:
+            return False
+        tick_idle = getattr(self.environment, "tick_idle", None)
+        if not callable(tick_idle):
+            return False
+
+        move = "noop"
+        control_profile = self._realtime_human_control_profile()
+        configured_fallback = (
+            getattr(control_profile, "fallback_move", None)
+            if control_profile is not None
+            else None
+        )
+        if configured_fallback:
+            move = str(configured_fallback)
+
+        with self._environment_lock:
+            result = tick_idle(frames=frames, move=move)
+        if result is not None:
+            self.final_result = result
+        return True
+
+    def advance(
+        self,
+        *,
+        decision_taken: bool | None = None,
+        tick_delta: int | None = None,
+        step_delta: int | None = None,
+    ) -> None:
+        if decision_taken is None:
+            decision_taken = self._current_trace_entry is None
+        uses_scheduler_owned = self._uses_scheduler_owned_human_realtime()
+        needs_step_delta = decision_taken or not uses_scheduler_owned
+        needs_progress_delta = tick_delta is None or (step_delta is None and needs_step_delta)
+        delta = self._resolve_progress_delta() if needs_progress_delta else 1
+        resolved_tick_delta = delta if tick_delta is None else max(0, int(tick_delta))
+        resolved_step_delta = delta if step_delta is None else max(0, int(step_delta))
+        if uses_scheduler_owned and not decision_taken:
+            self.tick += resolved_tick_delta
+        else:
+            self.tick += resolved_tick_delta
+            self.step += resolved_step_delta
+        if not uses_scheduler_owned:
             self._record_visual_snapshot()
-        if self.final_result is None and self.environment is not None and self.environment.is_terminal():
+        if self.final_result is None and self.environment is not None:
+            with self._environment_lock:
+                is_terminal = self.environment.is_terminal()
+            if not is_terminal:
+                return
             self.final_result = self._build_result(result="completed", reason="completed")
 
     def capture_output_tick(self) -> None:
         """Hook for schedulers that capture per-tick output on the v2 path."""
         if not self._uses_scheduler_owned_human_realtime():
             return None
+        frame_version_before = self._latest_live_frame_version
         frame_payload = self._capture_realtime_live_frame()
-        if self._should_record_realtime_snapshot():
+        frame_captured = self._latest_live_frame_version != frame_version_before
+        snapshot_persisted = self._should_record_realtime_snapshot()
+        inline_media = (
+            self._should_include_inline_snapshot_media() if snapshot_persisted else False
+        )
+        self._log_realtime_snapshot_diagnostic(
+            frame_captured=frame_captured,
+            frame_payload=frame_payload,
+            snapshot_persisted=snapshot_persisted,
+            inline_media=inline_media,
+        )
+        if snapshot_persisted:
             self._capture_realtime_snapshot(frame_payload=frame_payload)
         return None
+
+    def _log_realtime_snapshot_diagnostic(
+        self,
+        *,
+        frame_captured: bool,
+        frame_payload: Mapping[str, Any] | None,
+        snapshot_persisted: bool,
+        inline_media: bool,
+    ) -> None:
+        if not _realtime_snapshot_diagnostics_enabled():
+            return
+        if snapshot_persisted and frame_captured:
+            disposition = "both"
+        elif snapshot_persisted:
+            disposition = "persisted"
+        elif frame_captured:
+            disposition = "frame_captured"
+        else:
+            disposition = "neither"
+        logger.debug(
+            "realtime_snapshot_diagnostic disposition={} tick={} step={} "
+            "persisted={} frame_captured={} frame_available={} inline_media={} "
+            "snapshot_stride={} inline_stride={} live_frame_version={}",
+            disposition,
+            self.tick,
+            self.step,
+            snapshot_persisted,
+            frame_captured,
+            frame_payload is not None,
+            inline_media,
+            self._resolve_snapshot_persist_stride(),
+            self._resolve_inline_snapshot_stride(),
+            self._latest_live_frame_version,
+        )
 
     def ensure_result(self) -> object | None:
         if self.final_result is not None:
             return self.final_result
         if self.environment is None:
             return None
-        if self.environment.is_terminal():
+        with self._environment_lock:
+            is_terminal = self.environment.is_terminal()
+        if is_terminal:
             self.final_result = self._build_result(result="completed", reason="completed")
         return self.final_result
 
@@ -369,6 +589,7 @@ class GameSession:
         self._visualization_linger_s = _resolve_linger_seconds(visualizer_config)
         self._visualization_launch_browser = bool(visualizer_config.get("launch_browser", False))
         self._visualization_live_scene_scheme = _resolve_live_scene_scheme(visualizer_config)
+        self._configure_visual_capabilities()
         if self._visualization_mode == "arena_visual":
             from gage_eval.role.arena.visualization.live_session import ArenaVisualFinishGate
 
@@ -400,6 +621,7 @@ class GameSession:
                         live_scene_scheme=self._visualization_live_scene_scheme,
                         finish_gate=self._visualization_finish_gate,
                         live_frame_supplier=self.get_live_frame_payload,
+                        observer_live_frame_supplier=self.get_live_frame_payload_for_observer,
                         stop_callback=self.request_stop,
                         restart_callback=self.request_restart,
                     )
@@ -500,9 +722,10 @@ class GameSession:
     def _build_result(self, *, result: str, reason: str | None) -> object | None:
         if self.environment is None:
             return None
-        builder = getattr(self.environment, "build_result", None)
-        if callable(builder):
-            return builder(result=result, reason=reason)
+        with self._environment_lock:
+            builder = getattr(self.environment, "build_result", None)
+            if callable(builder):
+                return builder(result=result, reason=reason)
         return {
             "winner": None,
             "result": result,
@@ -565,11 +788,12 @@ class GameSession:
     def _resolve_progress_delta(self) -> int:
         if self.environment is None:
             return 1
-        resolver = getattr(self.environment, "consume_session_progress_delta", None)
-        if not callable(resolver):
-            return 1
         try:
-            delta = int(resolver())
+            with self._environment_lock:
+                resolver = getattr(self.environment, "consume_session_progress_delta", None)
+                if not callable(resolver):
+                    return 1
+                delta = int(resolver())
         except Exception:
             return 1
         return max(0, delta)
@@ -584,6 +808,27 @@ class GameSession:
                 t_obs_ready_ms=now_ms,
             )
         return self._current_trace_entry
+
+    def _resolve_decided_action(
+        self,
+        *,
+        observation: object,
+        player_id: str,
+        action: ArenaAction,
+    ) -> ArenaAction:
+        after_context = self._run_support_hook(
+            SupportHook.AFTER_DECIDE,
+            {
+                "observation": observation,
+                "player_id": player_id,
+                "action": action.move,
+                "action_object": action,
+            },
+        )
+        updated_action = after_context.payload.get("action", action.move)
+        resolved_action = self._coerce_action(action, updated_action)
+        self._last_input_age_ms = _resolve_input_age_ms(resolved_action)
+        return resolved_action
 
     @staticmethod
     def _resolve_illegal_reason(result: object | None) -> str | None:
@@ -641,14 +886,46 @@ class GameSession:
             )
 
     def get_live_frame_payload(self) -> Mapping[str, Any] | None:
-        return self._latest_live_frame_payload
+        return self._refresh_live_frame_buffer()
+
+    def get_live_frame_payload_for_observer(
+        self,
+        observer: ObserverRef | None = None,
+    ) -> Mapping[str, Any] | None:
+        with self._environment_lock:
+            payload = _load_environment_frame_payload_for_observer(
+                self.environment,
+                observer=observer,
+            )
+            if payload is not None:
+                return payload
+            return self._refresh_live_frame_buffer()
 
     def _refresh_live_frame_buffer(self) -> Mapping[str, Any] | None:
+        with self._environment_lock:
+            return self._refresh_live_frame_buffer_locked()
+
+    def _refresh_live_frame_buffer_locked(self) -> Mapping[str, Any] | None:
         frame_payload = _load_environment_frame_payload(self.environment)
         if frame_payload is not None:
-            self._latest_live_frame_version += 1
             ts_ms = wall_clock_ms()
-            normalized_frame_payload = dict(frame_payload)
+            normalized_frame_payload = _enrich_live_frame_payload_with_observation(
+                frame_payload,
+                self._last_observation,
+            )
+            if (
+                self._latest_live_frame_payload is not None
+                and not _live_frame_payload_changed(
+                    previous=self._latest_live_frame_payload,
+                    current=normalized_frame_payload,
+                )
+            ):
+                retained_frame_payload = dict(self._latest_live_frame_payload)
+                retained_frame_payload["_live_frame_ts_ms"] = ts_ms
+                self._latest_live_frame_payload = retained_frame_payload
+                self._latest_live_frame_ts_ms = ts_ms
+                return retained_frame_payload
+            self._latest_live_frame_version += 1
             normalized_frame_payload["_live_frame_version"] = self._latest_live_frame_version
             normalized_frame_payload["_live_frame_ts_ms"] = ts_ms
             self._latest_live_frame_payload = normalized_frame_payload
@@ -659,9 +936,10 @@ class GameSession:
         return frame_payload
 
     def _capture_realtime_live_frame(self) -> Mapping[str, Any] | None:
-        if self._should_refresh_live_frame_buffer():
-            return self._refresh_live_frame_buffer()
-        return self._latest_live_frame_payload
+        with self._environment_lock:
+            if self._should_refresh_live_frame_buffer():
+                return self._refresh_live_frame_buffer_locked()
+            return self._latest_live_frame_payload
 
     def _should_refresh_live_frame_buffer(self) -> bool:
         if self.final_result is not None:
@@ -681,6 +959,13 @@ class GameSession:
             return True
         if self._last_realtime_snapshot_ts_ms <= 0:
             return True
+        if self._artifact_sampling_mode() in {"sync_every_tick", "async_every_tick"}:
+            return True
+        if self._uses_async_decimated_live_artifacts():
+            stride = self._resolve_snapshot_persist_stride()
+            if stride <= 1:
+                return True
+            return self._resolve_inline_snapshot_cadence_index() % stride == 0
         now_ms = wall_clock_ms()
         return now_ms - self._last_realtime_snapshot_ts_ms >= self._resolve_realtime_snapshot_interval_ms()
 
@@ -710,13 +995,35 @@ class GameSession:
         return getattr(runtime_profile, "realtime_human_control", None)
 
     def _uses_async_decimated_live_artifacts(self) -> bool:
+        return self._artifact_sampling_mode() == "async_decimated_live"
+
+    def _uses_async_live_artifacts(self) -> bool:
+        return self._artifact_sampling_mode() in {
+            "async_decimated_live",
+            "async_every_tick",
+        }
+
+    def _artifact_sampling_mode(self) -> str:
         control_profile = self._realtime_human_control_profile()
         if control_profile is None:
-            return False
-        return (
-            str(getattr(control_profile, "artifact_sampling_mode", "") or "").strip()
-            == "async_decimated_live"
-        )
+            return ""
+        return str(getattr(control_profile, "artifact_sampling_mode", "") or "").strip()
+
+    def _resolve_snapshot_persist_stride(self) -> int:
+        control_profile = self._realtime_human_control_profile()
+        if control_profile is None:
+            return 1
+        for attr_name in ("snapshot_persist_stride", "artifact_sampling_stride"):
+            value = getattr(control_profile, attr_name, None)
+            try:
+                stride = int(value)
+            except (TypeError, ValueError):
+                continue
+            if stride > 0:
+                return stride
+        if self._uses_async_decimated_live_artifacts():
+            return 3
+        return 1
 
     def _flush_pending_visual_snapshots(self) -> int:
         recorder = self.visual_recorder
@@ -877,7 +1184,7 @@ class GameSession:
             "result": _visual_payload_snapshot(self.final_result),
         }
         ts_ms = wall_clock_ms()
-        if self._uses_async_decimated_live_artifacts():
+        if self._uses_async_live_artifacts():
             enqueue_snapshot = getattr(recorder, "enqueue_snapshot", None)
             if callable(enqueue_snapshot):
                 enqueue_snapshot(
@@ -1103,10 +1410,14 @@ class GameSession:
 
     def _restart_live_round(self) -> None:
         environment = self.environment
-        reset = getattr(environment, "reset", None)
-        if not callable(reset):
-            return
-        reset_observation = reset()
+        with self._environment_lock:
+            reset = getattr(environment, "reset", None)
+            if not callable(reset):
+                return
+            reset_observation = reset()
+            self._latest_live_frame_payload = None
+            self._latest_live_frame_ts_ms = None
+            self._latest_live_frame_version = 0
         self.final_result = None
         self.tick = 0
         self.step = 0
@@ -1114,9 +1425,7 @@ class GameSession:
         self.support_errors.clear()
         self._current_trace_entry = None
         self._last_observation = reset_observation
-        self._latest_live_frame_payload = None
-        self._latest_live_frame_ts_ms = None
-        self._latest_live_frame_version = 0
+        self._realtime_observation_dirty = True
         self._last_realtime_snapshot_ts_ms = 0
         self._last_input_age_ms = None
         self._finalized = False
@@ -1141,7 +1450,7 @@ class GameSession:
         if recorder is None:
             return
         start_background_snapshot_drain = getattr(recorder, "start_background_snapshot_drain", None)
-        if self._uses_async_decimated_live_artifacts() and callable(start_background_snapshot_drain):
+        if self._uses_async_live_artifacts() and callable(start_background_snapshot_drain):
             start_background_snapshot_drain()
         extra_capabilities = dict(getattr(recorder, "extra_capabilities", {}) or {})
         if self._supports_live_restart():
@@ -1197,12 +1506,22 @@ class GameSession:
             return True
         if self.final_result is not None:
             return True
-        if self.step <= 1:
+        cadence_index = self._resolve_inline_snapshot_cadence_index()
+        if cadence_index <= 1:
             return True
         stride = self._resolve_inline_snapshot_stride()
         if stride <= 1:
             return True
-        return self.step % stride == 0
+        return cadence_index % stride == 0
+
+    def _resolve_inline_snapshot_cadence_index(self) -> int:
+        recorder = self.visual_recorder
+        if (
+            self._uses_scheduler_owned_human_realtime()
+            or str(getattr(recorder, "scheduling_family", "") or "") == "real_time_tick"
+        ):
+            return int(self.tick)
+        return int(self.step)
 
     def _resolve_inline_snapshot_stride(self) -> int:
         if not self._should_strip_inline_media_from_live_trace():
@@ -1214,8 +1533,24 @@ class GameSession:
             normalized_tick_ms = 0
         if normalized_tick_ms <= 0:
             return 1
-        stride = round(self._resolve_realtime_snapshot_interval_ms() / float(normalized_tick_ms))
-        return max(1, int(stride))
+        stride = round(_REALTIME_INLINE_SNAPSHOT_TARGET_MS / float(normalized_tick_ms))
+        tick_stride = max(1, int(stride))
+        if not self._uses_async_decimated_live_artifacts():
+            return tick_stride
+        snapshot_stride = max(1, self._resolve_snapshot_persist_stride())
+        if snapshot_stride <= 1:
+            return tick_stride
+        snapshot_multiple = max(1, round(float(tick_stride) / float(snapshot_stride)))
+        return max(snapshot_stride, int(snapshot_multiple) * snapshot_stride)
+
+    def max_scheduler_owned_actions_per_tick(self) -> int:
+        control_profile = self._realtime_human_control_profile()
+        value = getattr(control_profile, "max_commands_per_tick", None)
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return 1
+        return max(1, normalized)
 
 
 class _VisualizationDisplayAdapter:
@@ -1321,16 +1656,30 @@ def _unregister_ws_rgb_display(ws_hub: object, *, display_id: str) -> None:
 
 def _resolve_max_steps(*, sample: ArenaSample, resolved) -> int:
     runtime_overrides = sample.runtime_overrides or {}
-    for key in ("max_steps", "max_turns", "max_ticks"):
+    for key in ("max_decisions", "max_steps", "max_turns"):
         value = runtime_overrides.get(key)
         if value is not None:
             return max(1, int(value))
     defaults = getattr(resolved.scheduler, "defaults", {}) or {}
-    for key in ("max_steps", "max_turns", "max_ticks"):
+    for key in ("max_decisions", "max_steps", "max_turns"):
         value = defaults.get(key)
         if value is not None:
             return max(1, int(value))
     return 256
+
+
+def _resolve_max_tick_budget(*, sample: ArenaSample, resolved) -> int | None:
+    runtime_overrides = sample.runtime_overrides or {}
+    explicit_tick_budget = runtime_overrides.get("max_ticks")
+    if explicit_tick_budget is not None:
+        return max(1, int(explicit_tick_budget))
+    if any(runtime_overrides.get(key) is not None for key in ("max_decisions", "max_steps", "max_turns")):
+        return None
+    defaults = getattr(resolved.scheduler, "defaults", {}) or {}
+    default_tick_budget = defaults.get("max_ticks")
+    if default_tick_budget is not None:
+        return max(1, int(default_tick_budget))
+    return None
 
 
 def _build_visual_recorder(
@@ -1465,6 +1814,9 @@ def _inject_realtime_driver_params(bindings, *, runtime_profile) -> tuple[Player
             fallback_move = getattr(realtime_control, "fallback_move", None)
             if fallback_move not in (None, "") and "timeout_fallback_move" not in driver_params:
                 driver_params["timeout_fallback_move"] = str(fallback_move)
+            command_stale_after_ms = getattr(realtime_control, "command_stale_after_ms", None)
+            if command_stale_after_ms is not None and "command_stale_after_ms" not in driver_params:
+                driver_params["command_stale_after_ms"] = int(command_stale_after_ms)
         updated.append(replace(binding, driver_params=driver_params))
     return tuple(updated)
 
@@ -1490,10 +1842,13 @@ def _prepare_human_action_routing(
         return invocation_context, None, None
 
     player_input_semantics = _collect_human_realtime_input_semantics(resolved)
+    realtime_control = getattr(getattr(resolved, "runtime_profile", None), "realtime_human_control", None)
     action_router = SampleActionRouter(
         sample_id=sample_id,
         player_ids=human_player_ids,
         realtime_input_semantics_by_player=player_input_semantics,
+        max_command_queue_size=getattr(realtime_control, "max_command_queue_size", None),
+        queue_overflow_policy=getattr(realtime_control, "queue_overflow_policy", None),
     )
     action_server = _ensure_action_server(service_hub, invocation_context=invocation_context)
     if action_server is not None:
@@ -1822,6 +2177,22 @@ def _normalize_frame_payload(payload: object) -> dict[str, Any]:
     return {"board_text": str(payload)}
 
 
+def _live_frame_payload_changed(*, previous: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    return _strip_live_frame_ephemera(previous) != _strip_live_frame_ephemera(current)
+
+
+def _strip_live_frame_ephemera(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _strip_live_frame_ephemera(item)
+            for key, item in value.items()
+            if str(key) not in {"_live_frame_version", "_live_frame_ts_ms", "timestamp_ms"}
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_strip_live_frame_ephemera(item) for item in value]
+    return value
+
+
 def _visual_payload_snapshot(
     payload: object | None,
     *,
@@ -1851,6 +2222,22 @@ def _build_visual_snapshot_observation(
     observation: dict[str, Any] = {}
     if isinstance(fallback_snapshot, Mapping):
         observation.update(dict(fallback_snapshot))
+
+    for key in (
+        "public_state",
+        "private_state",
+        "ui_state",
+        "player_ids",
+        "player_names",
+        "chat_log",
+        "viewport",
+    ):
+        structured_value = _visual_payload_snapshot(
+            frame_payload.get(key),
+            include_inline_media=include_inline_frame_image,
+        )
+        if structured_value is not None:
+            observation[key] = structured_value
 
     active_player = (
         _string_or_none(frame_payload.get("active_player_id"))
@@ -1945,6 +2332,145 @@ def _load_environment_frame_payload(environment: object | None) -> Mapping[str, 
     return payload
 
 
+def _load_environment_frame_payload_for_observer(
+    environment: object | None,
+    *,
+    observer: ObserverRef | None = None,
+) -> Mapping[str, Any] | None:
+    if environment is None or observer is None:
+        return None
+    if observer.observer_kind != "player" or not observer.observer_id.strip():
+        return None
+
+    observe = getattr(environment, "observe", None)
+    if not callable(observe):
+        return None
+
+    active_player: str | None = None
+    get_active_player = getattr(environment, "get_active_player", None)
+    if callable(get_active_player):
+        try:
+            resolved_active_player = get_active_player()
+        except Exception:
+            resolved_active_player = None
+        if resolved_active_player is not None:
+            active_player = str(resolved_active_player).strip() or None
+
+    observer_observation = None
+    try:
+        observer_observation = observe(observer.observer_id)
+    except Exception:
+        return None
+
+    payload = _load_environment_frame_payload(environment)
+    if payload is not None:
+        payload = _enrich_live_frame_payload_with_observation(payload, observer_observation)
+
+    if active_player is not None and active_player != observer.observer_id:
+        try:
+            observe(active_player)
+        except Exception:
+            pass
+
+    return payload
+
+
+def _enrich_live_frame_payload_with_observation(
+    frame_payload: Mapping[str, Any],
+    observation: object | None,
+) -> dict[str, Any]:
+    enriched = dict(frame_payload)
+    if observation is None:
+        return enriched
+
+    observation_snapshot = _visual_payload_snapshot(
+        observation,
+        include_inline_media=False,
+    )
+    if not isinstance(observation_snapshot, Mapping):
+        observation_snapshot = {}
+
+    active_player = (
+        _string_or_none(enriched.get("active_player_id"))
+        or _string_or_none(enriched.get("actor"))
+        or _string_or_none(enriched.get("active_player"))
+    )
+    if active_player is None:
+        active_player = _string_or_none(
+            _observation_context_value(
+                observation,
+                observation_snapshot,
+                "active_player",
+                "activePlayerId",
+            )
+        )
+        if active_player is not None:
+            enriched["active_player"] = active_player
+
+    if not _has_live_frame_legal_actions(enriched):
+        legal_actions = _observation_context_value(
+            observation,
+            observation_snapshot,
+            "legal_actions",
+            "legalActions",
+        )
+        if isinstance(legal_actions, Mapping):
+            enriched["legal_actions"] = dict(legal_actions)
+        else:
+            legal_moves = _coerce_string_sequence(
+                _observation_context_value(
+                    observation,
+                    observation_snapshot,
+                    "legal_moves",
+                    "legalMoves",
+                    "legal_actions_items",
+                )
+            )
+            if legal_moves:
+                enriched["legal_moves"] = legal_moves
+                enriched["legal_actions"] = {"items": legal_moves}
+
+    metadata = _merge_snapshot_mapping(
+        _observation_context_value(observation, observation_snapshot, "metadata"),
+        enriched.get("metadata"),
+    )
+    if active_player is not None:
+        metadata.setdefault("player_id", active_player)
+    if metadata:
+        enriched["metadata"] = metadata
+
+    return enriched
+
+
+def _observation_context_value(
+    observation: object,
+    observation_snapshot: Mapping[str, Any],
+    *names: str,
+) -> object | None:
+    for name in names:
+        if name in observation_snapshot:
+            return observation_snapshot[name]
+        try:
+            value = getattr(observation, name)
+        except Exception:
+            continue
+        if callable(value):
+            try:
+                return value()
+            except Exception:
+                continue
+        return value
+    return None
+
+
+def _has_live_frame_legal_actions(frame_payload: Mapping[str, Any]) -> bool:
+    legal_actions = frame_payload.get("legal_actions")
+    if isinstance(legal_actions, Mapping):
+        items = legal_actions.get("items")
+        return isinstance(items, Sequence) and not isinstance(items, (str, bytes))
+    return bool(_coerce_string_sequence(frame_payload.get("legal_moves")))
+
+
 def _merge_snapshot_mapping(primary: object | None, secondary: object | None) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     if isinstance(primary, Mapping):
@@ -1979,6 +2505,13 @@ def _coerce_int(value: object | None) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _realtime_snapshot_diagnostics_enabled() -> bool:
+    value = os.environ.get("GAGE_REALTIME_SNAPSHOT_DIAGNOSTICS")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _string_or_none(value: object | None) -> str | None:
@@ -2033,18 +2566,91 @@ def _resolve_frame_image_payload(
 def _encode_frame_data_url(frame: object) -> str | None:
     if Image is None:
         return None
+    global _WEBP_FALLBACK_LOGGED
+    buffer = _borrow_frame_data_url_buffer()
+    pooled_frame: object | None = None
+    image_frame = frame
     try:
-        image = Image.fromarray(frame)
+        image_frame, pooled_frame = _borrow_frame_array(frame)
+        image = Image.fromarray(image_frame)
         if image.mode not in {"RGB", "RGBA", "L"}:
             image = image.convert("RGB")
         elif image.mode == "RGBA":
             image = image.convert("RGB")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
+        try:
+            image.save(buffer, format="WEBP", lossless=False, quality=95)
+            mime_type = "image/webp"
+        except Exception:
+            if not _WEBP_FALLBACK_LOGGED:
+                logger.warning(
+                    "WebP encoder unavailable; falling back to PNG. Install libwebp for better realtime frame encoding."
+                )
+                _WEBP_FALLBACK_LOGGED = True
+            buffer.seek(0)
+            buffer.truncate(0)
+            image.save(buffer, format="PNG", optimize=True)
+            mime_type = "image/png"
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     except Exception:
         return None
-    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    finally:
+        _return_frame_array(pooled_frame)
+        _return_frame_data_url_buffer(buffer)
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _borrow_frame_data_url_buffer() -> io.BytesIO:
+    with _FRAME_DATA_URL_BUFFER_POOL_LOCK:
+        if _FRAME_DATA_URL_BUFFER_POOL:
+            buffer = _FRAME_DATA_URL_BUFFER_POOL.pop()
+        else:
+            buffer = io.BytesIO()
+    buffer.seek(0)
+    buffer.truncate(0)
+    return buffer
+
+
+def _return_frame_data_url_buffer(buffer: io.BytesIO) -> None:
+    buffer.seek(0)
+    buffer.truncate(0)
+    with _FRAME_DATA_URL_BUFFER_POOL_LOCK:
+        if len(_FRAME_DATA_URL_BUFFER_POOL) < _FRAME_DATA_URL_BUFFER_POOL_MAX:
+            _FRAME_DATA_URL_BUFFER_POOL.append(buffer)
+
+
+def _borrow_frame_array(frame: object) -> tuple[object, object | None]:
+    if np is None:
+        return frame, None
+    try:
+        source = np.asarray(frame)
+    except Exception:
+        return frame, None
+    if source.dtype != np.uint8 or source.ndim not in {2, 3}:
+        return frame, None
+    if source.ndim == 3 and source.shape[2] not in {1, 3, 4}:
+        return frame, None
+    key = (tuple(int(dim) for dim in source.shape), str(source.dtype))
+    with _FRAME_ARRAY_POOL_LOCK:
+        pool = _FRAME_ARRAY_POOL.get(key)
+        target = pool.pop() if pool else None
+    if target is None:
+        target = np.empty(source.shape, dtype=source.dtype)
+    try:
+        np.copyto(target, source, casting="no")
+    except Exception:
+        _return_frame_array((key, target))
+        return frame, None
+    return target, (key, target)
+
+
+def _return_frame_array(pooled_frame: object | None) -> None:
+    if pooled_frame is None:
+        return
+    key, target = pooled_frame
+    with _FRAME_ARRAY_POOL_LOCK:
+        pool = _FRAME_ARRAY_POOL.setdefault(key, [])
+        if len(pool) < _FRAME_ARRAY_POOL_MAX:
+            pool.append(target)
 
 
 def _build_display_id(
@@ -2108,6 +2714,24 @@ def _best_effort_stop_environment(environment: object | None) -> None:
             closer()
         except Exception:
             logger.debug("Arena live stop failed to close environment cleanly", exc_info=True)
+
+
+def _best_effort_stop_players(players: Sequence[object] | None) -> None:
+    if not players:
+        return
+    for player in players:
+        for method_name in ("request_stop", "cancel_pending", "stop"):
+            stopper = getattr(player, method_name, None)
+            if not callable(stopper):
+                continue
+            try:
+                stopper()
+            except Exception:
+                logger.debug(
+                    "Arena live stop failed to interrupt player runtime cleanly",
+                    exc_info=True,
+                )
+            break
 
 
 def _maybe_open_browser(viewer_url: str, *, enabled: bool) -> None:
