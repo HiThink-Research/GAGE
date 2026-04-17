@@ -30,6 +30,15 @@
     },
     {
       "kind": "arena_impls",
+      "name": "gymnasium_atari_space_invaders_v1",
+      "module": "gage_eval.game_kits.gymnasium_atari.envs.space_invaders",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/gymnasium_atari/envs/space_invaders.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "arena_impls",
       "name": "mahjong_rlcard_v1",
       "module": "gage_eval.game_kits.phase_card_game.mahjong.environment",
       "load_phase": "prepare_only",
@@ -106,6 +115,15 @@
       "module": "gage_eval.game_kits.board_game.gomoku.kit",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/game_kits/board_game/gomoku/kit.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "game_kits",
+      "name": "gymnasium_atari",
+      "module": "gage_eval.game_kits.gymnasium_atari.kit",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/game_kits/gymnasium_atari/kit.py",
       "aliases": [],
       "optional": false
     },

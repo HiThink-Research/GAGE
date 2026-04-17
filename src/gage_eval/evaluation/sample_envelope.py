@@ -221,12 +221,8 @@ def _build_arena_footer(
         footer_source.get("total_steps", footer_source.get("move_count")),
         _coerce_int(result.get("move_count"), len(trace_steps)),
     )
-    if (
-        not explicit_total_steps
-        and trace_steps
-        and len(trace_steps) != total_steps
-    ):
-        total_steps = len(trace_steps)
+    if not explicit_total_steps and trace_steps:
+        total_steps = max(total_steps, len(trace_steps))
     winner = (
         _coerce_optional_str(footer_source.get("winner_player_id"))
         or _coerce_optional_str(footer_source.get("winner"))

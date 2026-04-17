@@ -9,6 +9,7 @@ from typing import Sequence
 
 import yaml
 
+from gage_eval.config.loader import load_pipeline_config_payload, materialize_pipeline_config_payload
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.task_plan import build_task_plan_specs
 from gage_eval.tools.distill import calculate_definition_digest
@@ -48,6 +49,7 @@ def _validate_builtin_template(payload: dict, *, materialize_runtime: bool = Fal
 
     pipeline_payload = {"api_version": "gage/v1alpha1", "kind": "PipelineConfig"}
     pipeline_payload.update(definition)
+    pipeline_payload = materialize_pipeline_config_payload(pipeline_payload, source_path=None)
     config = PipelineConfig.from_dict(pipeline_payload)
     build_task_plan_specs(config)
 
@@ -71,6 +73,7 @@ def validate_config(path: Path, *, materialize_runtime: bool = False) -> None:
         print(f"[gage-eval] ✓ (BuiltinTemplate) {path}")
         return
 
+    payload = load_pipeline_config_payload(path)
     config = PipelineConfig.from_dict(payload)
     build_task_plan_specs(config)
     if materialize_runtime:

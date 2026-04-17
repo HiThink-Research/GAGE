@@ -124,8 +124,8 @@ def test_runtime_binding_resolver_parses_scheduler_owned_queued_command_v1_polic
                 {
                     "input_semantics": "continuous_state",
                     "stateful_actions": True,
-                    "tick_interval_ms": 16,
-                    "timeout_ms": 16,
+                    "tick_interval_ms": 18,
+                    "timeout_ms": 18,
                     "timeout_fallback_move": "noop",
                 },
             ),
@@ -144,8 +144,8 @@ def test_runtime_binding_resolver_parses_scheduler_owned_queued_command_v1_polic
                 {
                     "input_semantics": "continuous_state",
                     "stateful_actions": True,
-                    "tick_interval_ms": 16,
-                    "timeout_ms": 16,
+                    "tick_interval_ms": 18,
+                    "timeout_ms": 18,
                     "timeout_fallback_move": "noop",
                 },
             ),
@@ -206,7 +206,7 @@ def test_runtime_binding_resolver_preserves_human_driver_params_from_config(
         (
             "config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml",
             "continuous_state",
-            16,
+            18,
             True,
             True,
             True,
