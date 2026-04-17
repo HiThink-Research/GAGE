@@ -11,7 +11,7 @@
 
 📧 **Contact:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
 
-[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Game Arena](docs/guide/game_arena.md) · [Arena Visual Control](docs/guide/game_arena_topics/game_arena_visual_control.md) · [Agent Eval](docs/guide/agent_evaluation.md) · [Benchmark](docs/guide/benchmark.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Smart Defaults](docs/guide/smart_defaults.md) · [Game Arena](docs/guide/game_arena.md) · [Arena Visual Control](docs/guide/game_arena_topics/game_arena_visual_control.md) · [Agent Eval](docs/guide/agent_evaluation.md) · [Benchmark](docs/guide/benchmark.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
 
 </div>
 

@@ -83,6 +83,7 @@ def test_game_session_realtime_live_snapshots_throttle_inline_frame_images_for_q
                 input_transport="realtime_ws",
                 frame_output_hz=20,
                 artifact_sampling_mode="async_decimated_live",
+                snapshot_persist_stride=1,
                 fallback_move="noop",
             ),
         ),
