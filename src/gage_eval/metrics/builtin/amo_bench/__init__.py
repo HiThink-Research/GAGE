@@ -108,8 +108,8 @@ def _pred_extractor(pred: str, answer_type: str) -> str:
     if answer_type in ["number", "variable", "set"]:
         pred_extract = pred_extract.replace(r"\,", "")
         pred_extract = pred_extract.replace(r"\;", "")
-        pred_extract = pred_extract.replace("\ ", " ")
-        pred_extract = pred_extract.replace("\;", ";")
+        pred_extract = pred_extract.replace(r"\ ", " ")
+        pred_extract = pred_extract.replace(r"\;", ";")
         pred_extract = pred_extract.replace("\n", " ")
     
     if answer_type in ["number", "variable"]:

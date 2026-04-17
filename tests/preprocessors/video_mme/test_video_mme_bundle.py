@@ -40,7 +40,10 @@ class VideoMMEBundleTests(unittest.TestCase):
         sample = {"video_id": "abc123", "question": "What?"}
         result = bundle.provide(sample)
         self.assertIsNotNone(result)
-        self.assertEqual(result["local_video_path"], str(self.video_dir / "abc123.mp4"))
+        self.assertEqual(
+            Path(result["local_video_path"]).resolve(),
+            (self.video_dir / "abc123.mp4").resolve(),
+        )
 
     def test_provide_does_not_set_path_for_missing_video(self) -> None:
         bundle = VideoMMEBundle(video_dir=str(self.video_dir))
@@ -56,7 +59,10 @@ class VideoMMEBundleTests(unittest.TestCase):
         sample = {"videoID": "def456", "question": "What?"}
         result = bundle.provide(sample)
         self.assertIsNotNone(result)
-        self.assertEqual(result["local_video_path"], str(self.video_dir / "def456.mp4"))
+        self.assertEqual(
+            Path(result["local_video_path"]).resolve(),
+            (self.video_dir / "def456.mp4").resolve(),
+        )
 
     def test_provide_does_not_set_path_when_no_id(self) -> None:
         bundle = VideoMMEBundle(video_dir=str(self.video_dir))
