@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from gage_eval.registry.utils import ensure_async, run_sync
 from gage_eval.role.agent.backends.base import AgentBackend, normalize_agent_output
@@ -160,22 +161,59 @@ def _extract_tool_calls_from_answer(answer: Any) -> List[Dict[str, Any]]:
     if not isinstance(answer, str) or not answer.strip():
         return []
     calls: List[Dict[str, Any]] = []
+    calls.extend(_extract_xml_function_calls(answer))
     for raw_payload in _iter_tool_call_payloads(answer):
-        parsed = _try_parse_json(raw_payload)
-        call = _normalize_text_tool_call(parsed)
-        if call:
-            calls.append(call)
+        parsed = _parse_tool_payload(raw_payload)
+        calls.extend(_normalize_text_tool_calls(parsed))
+        if not calls:
+            calls.extend(_parse_pythonic_tool_calls(raw_payload))
     return calls
 
 
 def _iter_tool_call_payloads(answer: str) -> List[str]:
-    tagged = re.findall(r"<tool_call>\s*(.*?)\s*</tool_call>", answer, flags=re.DOTALL | re.IGNORECASE)
-    if tagged:
-        return tagged
+    payloads: List[str] = []
+    for tag in ("tool_call", "tool_calls", "function_call", "function_calls"):
+        payloads.extend(
+            re.findall(
+                rf"<{tag}>\s*(.*?)\s*</{tag}>",
+                answer,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+        )
+    payloads.extend(
+        re.findall(
+            r"\[TOOL_CALLS\]\s*(.*?)(?:\[/TOOL_CALLS\]|$)",
+            answer,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    )
+    payloads.extend(
+        re.findall(
+            r"```(?:json|tool_calls?|function_calls?)?\s*(.*?)```",
+            answer,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    )
     stripped = answer.strip()
-    if stripped.startswith("{") and stripped.endswith("}"):
-        return [stripped]
-    return []
+    if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
+        payloads.append(stripped)
+    return [payload for payload in payloads if payload.strip()]
+
+
+def _parse_tool_payload(raw: str) -> Any:
+    stripped = raw.strip()
+    parsed = _try_parse_json(stripped)
+    if parsed is not None:
+        return parsed
+    balanced = _extract_balanced_json(stripped)
+    if balanced is not None:
+        parsed = _try_parse_json(balanced)
+        if parsed is not None:
+            return parsed
+    try:
+        return ast.literal_eval(stripped)
+    except Exception:
+        return None
 
 
 def _try_parse_json(raw: str) -> Any:
@@ -185,28 +223,160 @@ def _try_parse_json(raw: str) -> Any:
         return None
 
 
-def _normalize_text_tool_call(payload: Any) -> Optional[Dict[str, Any]]:
+def _normalize_text_tool_calls(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        calls: List[Dict[str, Any]] = []
+        for item in payload:
+            calls.extend(_normalize_text_tool_calls(item))
+        return calls
     if not isinstance(payload, dict):
-        return None
+        return []
     tool_calls = payload.get("tool_calls")
     if isinstance(tool_calls, list) and tool_calls:
-        first = tool_calls[0]
-        return dict(first) if isinstance(first, dict) else None
+        return [
+            normalized
+            for call in tool_calls
+            for normalized in _normalize_text_tool_calls(call)
+        ]
+    if isinstance(payload.get("function"), dict):
+        function = payload["function"]
+        name = function.get("name")
+        arguments = function.get("arguments", {})
+        if not name:
+            return []
+        return [_build_openai_tool_call(name, arguments, call_id=payload.get("id"))]
     function_call = payload.get("function_call")
     if isinstance(function_call, dict):
         payload = function_call
-    name = payload.get("name")
-    arguments = payload.get("arguments", {})
+    name = payload.get("name") or payload.get("tool_name") or payload.get("function_name")
+    arguments = payload.get("arguments", payload.get("parameters", payload.get("args", {})))
     if not name:
-        return None
+        return []
+    return [_build_openai_tool_call(name, arguments, call_id=payload.get("id"))]
+
+
+def _build_openai_tool_call(name: Any, arguments: Any, *, call_id: Any = None) -> Dict[str, Any]:
     return {
-        "id": str(payload.get("id") or "call_0"),
+        "id": str(call_id or "call_0"),
         "type": "function",
         "function": {
             "name": str(name),
             "arguments": arguments,
         },
     }
+
+
+def _extract_balanced_json(text: str) -> Optional[str]:
+    starts = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
+    if not starts:
+        return None
+    start = min(starts)
+    opener = text[start]
+    closer = "}" if opener == "{" else "]"
+    depth = 0
+    in_string = False
+    escape = False
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return None
+
+
+def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    function_blocks = re.findall(
+        r"<function(?:\s+name=\"([^\"]+)\"|=([A-Za-z_][\w.-]*))>\s*(.*?)\s*</function>",
+        answer,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for quoted_name, equals_name, body in function_blocks:
+        name = quoted_name or equals_name
+        if not name:
+            continue
+        parsed_body = _parse_tool_payload(body)
+        if isinstance(parsed_body, dict):
+            arguments = parsed_body.get("arguments", parsed_body)
+        else:
+            arguments = _extract_xml_parameters(body)
+        calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+    return calls
+
+
+def _extract_xml_parameters(body: str) -> Dict[str, Any]:
+    arguments: Dict[str, Any] = {}
+    parameter_blocks = re.findall(
+        r"<parameter(?:\s+name=\"([^\"]+)\"|=([A-Za-z_][\w.-]*))>\s*(.*?)\s*</parameter>",
+        body,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for quoted_name, equals_name, value in parameter_blocks:
+        name = quoted_name or equals_name
+        if not name:
+            continue
+        parsed_value = _parse_tool_payload(value)
+        arguments[name] = parsed_value if parsed_value is not None else value.strip()
+    return arguments
+
+
+def _parse_pythonic_tool_calls(raw: str) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    for expression in _iter_pythonic_call_expressions(raw):
+        try:
+            node = ast.parse(expression, mode="eval")
+        except SyntaxError:
+            continue
+        call = node.body
+        if not isinstance(call, ast.Call):
+            continue
+        name = _pythonic_call_name(call.func)
+        if not name:
+            continue
+        arguments: Dict[str, Any] = {}
+        for idx, arg in enumerate(call.args):
+            arguments[f"arg{idx}"] = _literal_ast_value(arg)
+        for keyword in call.keywords:
+            if keyword.arg:
+                arguments[keyword.arg] = _literal_ast_value(keyword.value)
+        calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+    return calls
+
+
+def _iter_pythonic_call_expressions(raw: str) -> Iterable[str]:
+    for line in raw.splitlines():
+        stripped = line.strip().rstrip(",")
+        if re.match(r"^[A-Za-z_][\w.]*\s*\(.*\)$", stripped):
+            yield stripped
+
+
+def _pythonic_call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _pythonic_call_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return ""
+
+
+def _literal_ast_value(node: ast.AST) -> Any:
+    try:
+        return ast.literal_eval(node)
+    except Exception:
+        return ast.unparse(node) if hasattr(ast, "unparse") else None
 
 
 def _resolve_force_tool_choice_mode(value: Any) -> str:
