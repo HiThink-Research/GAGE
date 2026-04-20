@@ -115,6 +115,31 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
         self.assertEqual(out["prompt"], "True")
         self.assertEqual(out["chat_template_kwargs"], {"enable_thinking": True})
 
+    def test_tools_are_passed_to_chat_template(self):
+        backend = make_backend({"model_path": "repo", "use_chat_template": "auto"})
+        observed = {}
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, **kwargs):
+                observed["tools"] = kwargs.get("tools")
+                return "templated_with_tools"
+
+        tools = [{"type": "function", "function": {"name": "respond", "parameters": {}}}]
+        backend._tokenizer = FakeTokenizer()
+        out = backend.prepare_inputs(
+            {
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": tools,
+                "tool_choice": "required",
+            }
+        )
+
+        self.assertEqual(out["prompt"], "templated_with_tools")
+        self.assertEqual(out["tools"], tools)
+        self.assertEqual(out["tool_choice"], "required")
+        self.assertEqual(out["chat_template_kwargs"]["tools"], tools)
+        self.assertEqual(observed["tools"], tools)
+
     def test_init_tokenizer_falls_back_to_model_path(self):
         backend = make_backend({"model_path": "repo"})
         # Patch transformers.AutoTokenizer

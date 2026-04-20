@@ -230,6 +230,8 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         ctx = normalize_request_payload(payload, request_prefix="vllm")
         chat_template_kwargs = dict(getattr(self, "_resolved_thinking_kwargs", {}) or {})
         chat_template_kwargs.update(ctx.chat_template_kwargs or {})
+        if ctx.tools and "tools" not in chat_template_kwargs:
+            chat_template_kwargs["tools"] = ctx.tools
         prepared: Dict[str, Any] = {
             "sample": ctx.sample,
             "messages": ctx.messages or [],
@@ -242,6 +244,8 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             "sampling_params": ctx.sampling_params or {},
             "sample_n": max(int(ctx.sample_n or 1), 1),
             "request_id": ctx.request_id,
+            "tools": ctx.tools or [],
+            "tool_choice": ctx.tool_choice,
         }
         prepared.update(ctx.chat_meta)
 

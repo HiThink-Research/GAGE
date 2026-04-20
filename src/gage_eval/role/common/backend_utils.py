@@ -597,6 +597,9 @@ def maybe_tokenize_messages(
 
     has_multimodal = ChatTemplateMixin.detect_multimodal(prepared)
     render_messages = messages if has_multimodal else normalize_fn(messages)
+    chat_template_kwargs = prepared.get("chat_template_kwargs")
+    if not isinstance(chat_template_kwargs, dict):
+        chat_template_kwargs = {}
 
     chat_template_fn = None
     if has_multimodal and processor and hasattr(processor, "apply_chat_template"):
@@ -626,14 +629,34 @@ def maybe_tokenize_messages(
         rendered = None
         tokenized = None
         try:
-            rendered = chat_template_fn(render_messages, tokenize=False, add_generation_prompt=True)
-            tokenized = chat_template_fn(render_messages, tokenize=True, add_generation_prompt=True)
+            rendered = chat_template_fn(
+                render_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **chat_template_kwargs,
+            )
+            tokenized = chat_template_fn(
+                render_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                **chat_template_kwargs,
+            )
         except Exception:
             if not has_multimodal:
                 return prompt, inputs, {}
             sanitized_messages = _strip_non_text(messages)
-            rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
-            tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
+            rendered = chat_template_fn(
+                sanitized_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **chat_template_kwargs,
+            )
+            tokenized = chat_template_fn(
+                sanitized_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                **chat_template_kwargs,
+            )
 
         if isinstance(tokenized, list):
             first = tokenized[0] if tokenized else []
