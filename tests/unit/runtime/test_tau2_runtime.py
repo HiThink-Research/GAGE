@@ -44,7 +44,7 @@ def test_tau2_runtime_basic_flow(tmp_path: Path, monkeypatch) -> None:
     init_output = runtime.initialize_task(sample)
 
     assert init_output["messages"]
-    assert len(sample["messages"]) == 2
+    assert len(sample["messages"]) == 1  # synthetic greeting filtered; DUT sees only user_message
 
     respond_out = runtime.exec_tool("respond", {"message": "hello"})
     assert respond_out["user_message"] == "user_response"
@@ -214,3 +214,68 @@ def test_resolve_agent_usage_cost_prefers_total_tokens() -> None:
     assert _resolve_agent_usage_cost({"prompt_tokens": 4, "completion_tokens": 6}) == 10.0
     assert _resolve_agent_usage_cost({"input_tokens": 3, "output_tokens": 7}) == 10.0
     assert _resolve_agent_usage_cost({"cost_usd": 0.25, "total_tokens": 99}) == 0.25
+
+
+def test_tau2_runtime_resolves_openai_http_user_simulator() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "Qwen/Qwen2.5-72B-Instruct",
+            "base_url": "http://localhost:8000/v1",
+            "model_args": {"temperature": 0.0, "api_key": "dummy"},
+        },
+    )
+
+    assert resolved["model"] == "openai/Qwen/Qwen2.5-72B-Instruct"
+    assert resolved["model_args"]["api_base"] == "http://localhost:8000/v1"
+    assert resolved["model_args"]["api_key"] == "dummy"
+    assert resolved["model_args"]["temperature"] == 0.0
+
+
+def test_tau2_runtime_openai_http_preserves_existing_openai_prefix() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "openai/my-model",
+            "model_args": {"api_base": "http://localhost:8000/v1"},
+        },
+    )
+
+    assert resolved["model"] == "openai/my-model"
+
+
+def test_tau2_runtime_openai_http_reads_api_base_from_model_args() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "my-model",
+            "model_args": {"api_base": "http://vllm-host:8000/v1"},
+        },
+    )
+
+    assert resolved["model_args"]["api_base"] == "http://vllm-host:8000/v1"
+
+
+def test_tau2_runtime_openai_http_does_not_strip_v1_from_api_base() -> None:
+    normalized = _normalize_tau2_user_model_args(
+        model="openai/Qwen2.5-72B-Instruct",
+        model_args={"api_base": "http://localhost:8000/v1"},
+    )
+
+    assert normalized["api_base"] == "http://localhost:8000/v1"
+
+
+def test_tau2_runtime_openai_http_applies_env_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("TAU2_USER_BASE_URL", "http://env-host:9000/v1")
+    monkeypatch.setenv("TAU2_USER_MODEL", "my-env-model")
+
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={"type": "openai_http"},
+    )
+
+    assert resolved["model"] == "openai/my-env-model"
+    assert resolved["model_args"]["api_base"] == "http://env-host:9000/v1"

@@ -14,10 +14,6 @@ benchmark_configs:
 
 custom:
   steps:
-    - step: support
-      adapter_id: tau2_bootstrap
-    - step: support
-      adapter_id: tau2_toolchain
     - step: inference
       adapter_id: tau2_agent
     - step: judge
@@ -83,30 +79,6 @@ sandbox_profiles:
       respond_tool_name: respond
 
 role_adapters:
-  - adapter_id: tau2_bootstrap
-    role_type: context_provider
-    params:
-      implementation: tau2_bootstrap
-
-  - adapter_id: tau2_toolchain
-    role_type: toolchain
-    params:
-      tools:
-        - type: function
-          function:
-            name: respond
-            description: Send a message to the user and receive the user's reply.
-            parameters:
-              type: object
-              properties:
-                message:
-                  type: string
-                  description: Message text to send to the user.
-              required:
-                - message
-          x-gage:
-            final_answer_from: final_answer
-
   - adapter_id: tau2_agent
     role_type: dut_agent
     backend_id: tau2_openai_http
@@ -144,10 +116,6 @@ tasks:
   - task_id: tau2_retail_base
     dataset_id: tau2_retail_base
     steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
       - step: inference
         adapter_id: tau2_agent
       - step: judge

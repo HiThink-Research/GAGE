@@ -1,24 +1,17 @@
 api_version: gage/v1
 kind: PipelineConfig
+
 metadata:
-  name: tau2_telecom_base
-  description: Tau2 telecom base split (local runtime)
+  name: tau2_telecom_ollama_full
+  description: Tau2 telecom - both DUT agent and user simulator use local Ollama.
 
 benchmark_configs:
   tau2:
     user_simulator:
       type: litellm
-      model: ${TAU2_USER_MODEL:-gpt-4.1}
+      model: ${TAU2_USER_MODEL:-ollama_chat/qwen3-vl:2b-instruct}
       model_args:
         temperature: ${TAU2_USER_TEMPERATURE:-0.0}
-
-custom:
-  steps:
-    - step: inference
-      adapter_id: tau2_agent
-    - step: judge
-      adapter_id: tau2_judge
-    - step: auto_eval
 
 prompts:
   - prompt_id: dut/tau2@v1
@@ -48,16 +41,16 @@ datasets:
       preprocess: tau2_preprocessor
 
 backends:
-  - backend_id: tau2_openai_http
+  - backend_id: tau2_ollama_http
     type: openai_http
     config:
-      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
-      require_api_key: true
+      base_url: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}
+      model: ${OLLAMA_MODEL:-qwen3-vl:2b-instruct}
+      api_key: ${OLLAMA_API_KEY:-dummy}
+      require_api_key: false
       max_retries: 6
       generation_parameters:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
-
 
 agent_runtimes:
   - agent_runtime_id: tau2_framework_loop
@@ -81,7 +74,7 @@ sandbox_profiles:
 role_adapters:
   - adapter_id: tau2_agent
     role_type: dut_agent
-    backend_id: tau2_openai_http
+    backend_id: tau2_ollama_http
     agent_runtime_id: tau2_framework_loop
     prompt_id: dut/tau2@v1
     sandbox:
@@ -113,7 +106,7 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: tau2_telecom_base
+  - task_id: tau2_telecom_ollama_full
     dataset_id: tau2_telecom_base
     steps:
       - step: inference
@@ -127,4 +120,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_telecom_base_summary.json
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_telecom_ollama_full_summary.json

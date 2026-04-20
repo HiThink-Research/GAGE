@@ -73,6 +73,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._agent_cost_total: Optional[float] = None
         self._user_cost_total: float = 0.0
         self._user_simulator_config: Optional[Dict[str, Any]] = None
+        self._synthetic_prefix_len: int = 0
 
     def start(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # STEP 1: Merge runtime configs and validate tau2 availability.
@@ -210,6 +211,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         if not message_history:
             first_assistant = _build_default_greeting()
             trajectory.append(first_assistant)
+            self._synthetic_prefix_len = 1
             user_message, user_state = user_sim.generate_next_message(
                 first_assistant, user_state
             )
@@ -233,9 +235,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         # STEP 3: Prepare sample payload updates (messages + tools + metadata).
         tools_schema = [tool.openai_schema for tool in env.get_tools()]
         tools_schema = tools_schema + [_build_respond_tool_schema(self._respond_tool_name)]
-        sample_messages = [
-            msg for msg in (_tau2_to_gage_message(m) for m in trajectory) if msg
-        ]
+        sample_messages = self._build_agent_visible_messages(trajectory)
         _update_tau2_metadata(sample, env)
         sample["messages"] = sample_messages
         sample["tools"] = tools_schema
@@ -246,6 +246,10 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             "tools_schema": tools_schema,
             "metadata": sample.get("metadata"),
         }
+
+    def _build_agent_visible_messages(self, trajectory: List[Any]) -> List[Dict[str, Any]]:
+        visible = trajectory[self._synthetic_prefix_len:]
+        return [msg for msg in (_tau2_to_gage_message(m) for m in visible) if msg]
 
     def exec_tool(self, name: str, arguments: Any) -> Dict[str, Any]:
         if not self._running:
@@ -451,17 +455,32 @@ def _resolve_tau2_user_simulator_runtime_config(
     The preferred config surface is the Tau2 kit-owned
     `benchmark_configs.tau2.user_simulator`. Legacy `runtime_configs.user_model`
     keys remain accepted for older sandbox profiles.
+
+    Supported types:
+        litellm (default): LiteLLM-routed model string (e.g. ``gpt-4.1``,
+            ``ollama_chat/qwen3-vl:2b-instruct``).
+        openai: Direct OpenAI API via LiteLLM — same as litellm for OpenAI
+            models, makes intent explicit.
+        openai_http: OpenAI-compatible HTTP endpoint (e.g. a vLLM server).
+            Normalises the model string to ``openai/<model>`` for LiteLLM
+            routing and reads ``base_url`` / ``api_base`` / ``TAU2_USER_BASE_URL``
+            as the endpoint.
     """
 
     user_simulator = (
         override if isinstance(override, dict) else runtime_configs.get("user_simulator")
     )
     if isinstance(user_simulator, dict):
+        sim_type = (user_simulator.get("type") or "litellm").lower()
         model = user_simulator.get("model")
         model_args = user_simulator.get("model_args") or {}
         if not isinstance(model_args, dict):
             model_args = {}
         model_args = _apply_tau2_user_temperature_default(model_args)
+        if sim_type == "openai_http":
+            model, model_args = _apply_openai_http_user_sim_config(
+                user_simulator, model, model_args
+            )
         return {
             "model": model or os.environ.get("TAU2_USER_MODEL") or "gpt-4.1",
             "model_args": model_args,
@@ -477,6 +496,34 @@ def _resolve_tau2_user_simulator_runtime_config(
         model_args = {}
     model_args = _apply_tau2_user_temperature_default(model_args)
     return {"model": model, "model_args": model_args}
+
+
+def _apply_openai_http_user_sim_config(
+    cfg: Dict[str, Any],
+    model: Optional[str],
+    model_args: Dict[str, Any],
+) -> tuple[Optional[str], Dict[str, Any]]:
+    """Normalise openai_http user simulator: prefix model and populate api_base.
+
+    Unlike ollama_chat models, the ``/v1`` suffix in api_base is preserved
+    because the OpenAI SDK and LiteLLM both expect it for custom endpoints.
+    """
+    resolved_args = dict(model_args)
+    api_base = (
+        resolved_args.get("api_base")
+        or cfg.get("base_url")
+        or os.environ.get("TAU2_USER_BASE_URL")
+    )
+    if api_base:
+        resolved_args["api_base"] = str(api_base)
+    if "api_key" not in resolved_args:
+        api_key = cfg.get("api_key") or os.environ.get("TAU2_USER_API_KEY")
+        if api_key:
+            resolved_args["api_key"] = str(api_key)
+    resolved_model = model or os.environ.get("TAU2_USER_MODEL")
+    if resolved_model and not resolved_model.startswith("openai/"):
+        resolved_model = f"openai/{resolved_model}"
+    return resolved_model, resolved_args
 
 
 def _apply_tau2_user_temperature_default(model_args: Dict[str, Any]) -> Dict[str, Any]:

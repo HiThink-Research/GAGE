@@ -273,6 +273,8 @@ def install_tau2_stub(monkeypatch, *, data_dir: Path, force_user_tool_call: bool
         def __init__(self, tools: Optional[list[Tool]] = None, instructions: Optional[str] = None, llm=None, llm_args=None):
             self.tools = tools or []
             self.instructions = instructions or ""
+            self.llm = llm
+            self.llm_args = llm_args
             self._force_tool_call = force_user_tool_call
 
         def get_init_state(self, message_history: Optional[list[Any]] = None) -> UserState:

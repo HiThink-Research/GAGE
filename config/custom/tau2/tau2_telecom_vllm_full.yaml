@@ -1,24 +1,32 @@
 api_version: gage/v1
 kind: PipelineConfig
-metadata:
-  name: tau2_telecom_base
-  description: Tau2 telecom base split (local runtime)
 
+metadata:
+  name: tau2_telecom_vllm_full
+  description: >
+    Tau2 telecom - both DUT agent and user simulator call OpenAI-compatible
+    vLLM HTTP servers.  Set TAU2_AGENT_BASE_URL / TAU2_AGENT_MODEL for the
+    agent endpoint and TAU2_USER_BASE_URL / TAU2_USER_MODEL for the user
+    simulator endpoint.  The two endpoints may be the same server.
+
+# User simulator: calls a vLLM server that exposes an OpenAI-compatible API.
+# LiteLLM routes requests via the openai/ prefix + api_base.
+#
+# Required env vars:
+#   TAU2_USER_BASE_URL   e.g. http://localhost:8000/v1
+#   TAU2_USER_MODEL      e.g. Qwen/Qwen2.5-72B-Instruct
+# Optional:
+#   TAU2_USER_API_KEY    defaults to "dummy" (vLLM ignores it by default)
+#   TAU2_USER_TEMPERATURE
 benchmark_configs:
   tau2:
     user_simulator:
-      type: litellm
-      model: ${TAU2_USER_MODEL:-gpt-4.1}
+      type: openai_http
+      model: ${TAU2_USER_MODEL:?set TAU2_USER_MODEL to the vLLM model name}
+      base_url: ${TAU2_USER_BASE_URL:?set TAU2_USER_BASE_URL to the vLLM /v1 endpoint}
       model_args:
         temperature: ${TAU2_USER_TEMPERATURE:-0.0}
-
-custom:
-  steps:
-    - step: inference
-      adapter_id: tau2_agent
-    - step: judge
-      adapter_id: tau2_judge
-    - step: auto_eval
+        api_key: ${TAU2_USER_API_KEY:-dummy}
 
 prompts:
   - prompt_id: dut/tau2@v1
@@ -47,17 +55,25 @@ datasets:
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
+# DUT agent backend: OpenAI-compatible vLLM HTTP server.
+#
+# Required env vars:
+#   TAU2_AGENT_BASE_URL  e.g. http://localhost:8001/v1
+#   TAU2_AGENT_MODEL     e.g. Qwen/Qwen2.5-72B-Instruct
+# Optional:
+#   TAU2_AGENT_API_KEY   defaults to "dummy"
+#   TAU2_AGENT_TEMPERATURE
 backends:
-  - backend_id: tau2_openai_http
+  - backend_id: tau2_vllm_http
     type: openai_http
     config:
-      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
-      require_api_key: true
+      base_url: ${TAU2_AGENT_BASE_URL:?set TAU2_AGENT_BASE_URL to the vLLM /v1 endpoint}
+      model: ${TAU2_AGENT_MODEL:?set TAU2_AGENT_MODEL to the vLLM model name}
+      api_key: ${TAU2_AGENT_API_KEY:-dummy}
+      require_api_key: false
       max_retries: 6
       generation_parameters:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
-
 
 agent_runtimes:
   - agent_runtime_id: tau2_framework_loop
@@ -81,7 +97,7 @@ sandbox_profiles:
 role_adapters:
   - adapter_id: tau2_agent
     role_type: dut_agent
-    backend_id: tau2_openai_http
+    backend_id: tau2_vllm_http
     agent_runtime_id: tau2_framework_loop
     prompt_id: dut/tau2@v1
     sandbox:
@@ -113,7 +129,7 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: tau2_telecom_base
+  - task_id: tau2_telecom_vllm_full
     dataset_id: tau2_telecom_base
     steps:
       - step: inference
@@ -127,4 +143,4 @@ tasks:
         - type: console
         - type: file
           params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_telecom_base_summary.json
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_telecom_vllm_full_summary.json

@@ -64,6 +64,30 @@ def test_tau2_user_simulator_config_materializes_outside_sandbox_profile() -> No
     assert "user_simulator" not in profiles["tau2_local"]["runtime_configs"]
 
 
+def test_tau2_all_subsets_base_drops_legacy_support_steps() -> None:
+    config = _load_config(
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "tau2"
+        / "tau2_all_subsets_base.yaml"
+    )
+
+    adapter_ids = {spec.adapter_id for spec in config.role_adapters}
+    assert "tau2_bootstrap" not in adapter_ids
+    assert "tau2_toolchain" not in adapter_ids
+
+    dut_agent = next(spec for spec in config.role_adapters if spec.adapter_id == "tau2_agent")
+    assert dut_agent.agent_runtime_id == "tau2_framework_loop"
+
+    task_ids = {task.task_id for task in config.tasks}
+    assert task_ids == {"tau2_airline_base", "tau2_retail_base", "tau2_telecom_base"}
+
+    for task in config.tasks:
+        step_types = [s.step_type for s in task.steps]
+        assert "support" not in step_types
+
+
 def test_terminal_and_skillsbench_runtime_smokes_parse() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
     terminal = _load_config(base / "terminal_bench" / "terminal_bench_smoke_runtime.yaml")
