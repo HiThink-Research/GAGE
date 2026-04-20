@@ -317,9 +317,11 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
         sampling_params = prepared["sampling_params"]
         base_request_id = prepared.get("request_id") or resolve_request_id(prepared, prefix="vllm")
         outputs = []
+        raw_outputs = []
         for idx in range(sample_n):
             rid = base_request_id if sample_n == 1 else f"{base_request_id}_{idx}"
             result = self._generate_one(prepared, sampling_params, rid)
+            raw_outputs.append(result)
             outputs.append(self._convert_output(result, output_type))
         return finalize_backend_result(
             prepared,
@@ -328,6 +330,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             batch_path=batch_path,
             backend_tag="vllm_backend",
             cfg_tokenizer_path=self._cfg_tokenizer_path,
+            raw_outputs=raw_outputs,
         )
 
     def _generate_one(self, prepared: Dict[str, Any], sampling_params: Any, request_id: str) -> Any:

@@ -11,6 +11,8 @@ import re
 import uuid
 import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import asdict, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -99,6 +101,7 @@ def finalize_backend_result(
     batch_path: str,
     backend_tag: str,
     cfg_tokenizer_path: Any = None,
+    raw_outputs: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """Normalize backend output shape with metadata from prepared inputs."""
 
@@ -106,12 +109,71 @@ def finalize_backend_result(
         result = {"answer": outputs, "_backend": backend_tag, "_sample_n": sample_n, "_batch_path": batch_path}
     else:
         result = {"answer": outputs[0] if outputs else "", "_backend": backend_tag, "_batch_path": batch_path}
+    if raw_outputs is not None:
+        result["raw_response"] = _normalize_raw_response(raw_outputs, sample_n=sample_n)
     attach_template_metadata(prepared, result, cfg_tokenizer_path=cfg_tokenizer_path)
     if prepared.get("prompt_meta"):
         result["prompt_meta"] = prepared["prompt_meta"]
     if prepared.get("cache_namespace"):
         result["cache_namespace"] = prepared["cache_namespace"]
     return result
+
+
+def _normalize_raw_response(raw_outputs: List[Any], *, sample_n: int) -> Any:
+    if sample_n > 1:
+        return _to_json_safe(raw_outputs)
+    if raw_outputs:
+        return _to_json_safe(raw_outputs[0])
+    return None
+
+
+def _to_json_safe(value: Any, *, _seen: Optional[set[int]] = None) -> Any:
+    """Convert backend-native response objects into JSON-friendly data."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Enum):
+        return _to_json_safe(value.value, _seen=_seen)
+
+    if _seen is None:
+        _seen = set()
+    object_id = id(value)
+    if object_id in _seen:
+        return {"object_type": f"{value.__class__.__module__}.{value.__class__.__qualname__}", "cycle": True}
+    _seen.add(object_id)
+
+    if isinstance(value, dict):
+        return {str(key): _to_json_safe(item, _seen=_seen) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_to_json_safe(item, _seen=_seen) for item in value]
+    if is_dataclass(value):
+        return _to_json_safe(asdict(value), _seen=_seen)
+
+    for method_name in ("model_dump", "to_dict", "dict"):
+        method = getattr(value, method_name, None)
+        if callable(method):
+            try:
+                return _to_json_safe(method(), _seen=_seen)
+            except Exception:
+                pass
+
+    try:
+        attrs = vars(value)
+    except TypeError:
+        attrs = None
+    if isinstance(attrs, dict) and attrs:
+        payload = {str(key): _to_json_safe(item, _seen=_seen) for key, item in attrs.items()}
+        payload.setdefault("object_type", f"{value.__class__.__module__}.{value.__class__.__qualname__}")
+        return payload
+
+    return {
+        "object_type": f"{value.__class__.__module__}.{value.__class__.__qualname__}",
+        "repr": repr(value),
+    }
 
 
 def run_coroutine_threadsafe_with_timeout(
