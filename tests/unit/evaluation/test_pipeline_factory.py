@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from gage_eval.config.pipeline_config import (
-    AgentBackendSpec,
     BackendSpec,
     CustomPipelineSpec,
     CustomPipelineStep,
@@ -24,9 +23,9 @@ class _RegistryStub:
         _ = config
         return {"model_backend": object()}
 
-    def materialize_agent_backends(self, config, *, backends):
-        _ = config, backends
-        return {"agent_backend": object()}
+    def materialize_agent_runtimes(self, config):
+        _ = config
+        return {}
 
     def materialize_sandbox_profiles(self, config):
         _ = config
@@ -58,14 +57,6 @@ def test_pipeline_factory_registers_global_backends_on_role_manager() -> None:
                 config={"model": "qwen/qwen3.5-9b"},
             ),
         ),
-        agent_backends=(
-            AgentBackendSpec(
-                agent_backend_id="agent_backend",
-                type="model_backend",
-                backend_id="model_backend",
-                config={},
-            ),
-        ),
     )
     role_manager = RoleManager(
         ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=2)])
@@ -81,4 +72,3 @@ def test_pipeline_factory_registers_global_backends_on_role_manager() -> None:
     )
 
     assert role_manager.get_backend("model_backend") is not None
-    assert role_manager.get_agent_backend("agent_backend") is not None

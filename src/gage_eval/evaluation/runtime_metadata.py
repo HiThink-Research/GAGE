@@ -18,6 +18,7 @@ class RuntimeMetadataSnapshot:
     schema_version: int
     pipeline_id: Optional[str]
     backends: tuple[dict[str, Any], ...]
+    agent_runtimes: tuple[dict[str, Any], ...]
     models: tuple[dict[str, Any], ...]
     role_adapters: tuple[dict[str, Any], ...]
     summary_generators: tuple[str, ...]
@@ -54,6 +55,7 @@ def build_runtime_metadata_snapshot(config: PipelineConfig) -> RuntimeMetadataSn
             }
             for spec in (config.backends or [])
         ),
+        agent_runtimes=tuple(spec.to_dict() for spec in (config.agent_runtimes or [])),
         models=tuple(
             {
                 "model_id": spec.model_id,
@@ -96,6 +98,8 @@ def record_runtime_metadata(cache_store: EvalCache, snapshot: RuntimeMetadataSna
     cache_store.set_metadata("runtime_metadata_schema_version", snapshot.schema_version)
     if snapshot.backends:
         cache_store.set_metadata("backends", [dict(entry) for entry in snapshot.backends])
+    if snapshot.agent_runtimes:
+        cache_store.set_metadata("agent_runtimes", [dict(entry) for entry in snapshot.agent_runtimes])
     if snapshot.models:
         cache_store.set_metadata("models", [dict(entry) for entry in snapshot.models])
     if snapshot.role_adapters:

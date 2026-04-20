@@ -7,11 +7,21 @@ from gage_eval.config.pipeline_config import PipelineConfig
 def test_pipeline_config_parses_agent_sections():
     payload = {
         "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
-        "agent_backends": [
+        "backends": [
             {
-                "agent_backend_id": "agent_main",
-                "type": "agent_class",
-                "config": {"agent_class": "tests.unit.config.test_pipeline_config:DummyAgent"},
+                "backend_id": "agent_model",
+                "type": "dummy",
+                "config": {"responses": ["done"]},
+            }
+        ],
+        "agent_runtimes": [
+            {
+                "agent_runtime_id": "demo_runtime",
+                "benchmark_kit_id": "terminal_bench",
+                "scheduler_type": "framework_loop",
+                "sandbox_profile_id": "demo",
+                "resource_policy": {"resource_kind": "docker", "lifecycle": "per_sample"},
+                "verifier_binding_id": "terminal_bench_native",
             }
         ],
         "sandbox_profiles": [
@@ -33,16 +43,18 @@ def test_pipeline_config_parses_agent_sections():
             {
                 "adapter_id": "dut_agent_main",
                 "role_type": "dut_agent",
-                "agent_backend_id": "agent_main",
+                "backend_id": "agent_model",
+                "agent_runtime_id": "demo_runtime",
             }
         ],
         "custom": {"steps": [{"step": "inference", "adapter_id": "dut_agent_main"}]},
     }
     config = PipelineConfig.from_dict(payload)
-    assert config.agent_backends[0].agent_backend_id == "agent_main"
+    assert config.agent_runtimes[0].agent_runtime_id == "demo_runtime"
     assert config.sandbox_profiles[0].sandbox_id == "demo"
     assert config.mcp_clients[0].mcp_client_id == "mcp1"
-    assert config.role_adapters[0].agent_backend_id == "agent_main"
+    assert config.role_adapters[0].backend_id == "agent_model"
+    assert config.role_adapters[0].agent_runtime_id == "demo_runtime"
 
 
 @pytest.mark.fast

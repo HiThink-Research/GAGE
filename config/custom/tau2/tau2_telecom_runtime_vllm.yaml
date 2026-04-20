@@ -1,8 +1,9 @@
 api_version: gage/v1
 kind: PipelineConfig
+
 metadata:
-  name: tau2_retail_base
-  description: Tau2 retail base split (local runtime)
+  name: tau2_telecom_runtime_vllm
+  description: Tau2 telecom runtime-owned config targeting an in-process vLLM backend.
 
 benchmark_configs:
   tau2:
@@ -11,18 +12,6 @@ benchmark_configs:
       model: ${TAU2_USER_MODEL:-gpt-4.1}
       model_args:
         temperature: ${TAU2_USER_TEMPERATURE:-0.0}
-
-custom:
-  steps:
-    - step: support
-      adapter_id: tau2_bootstrap
-    - step: support
-      adapter_id: tau2_toolchain
-    - step: inference
-      adapter_id: tau2_agent
-    - step: judge
-      adapter_id: tau2_judge
-    - step: auto_eval
 
 prompts:
   - prompt_id: dut/tau2@v1
@@ -40,10 +29,10 @@ prompts:
       include_existing: true
 
 datasets:
-  - dataset_id: tau2_retail_base
+  - dataset_id: tau2_telecom_base
     loader: tau2_tasks
     params:
-      domain: retail
+      domain: telecom
       task_split: base
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
@@ -52,14 +41,19 @@ datasets:
       preprocess: tau2_preprocessor
 
 backends:
-  - backend_id: tau2_openai_http
-    type: openai_http
+  - backend_id: tau2_vllm
+    type: vllm
     config:
-      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
-      require_api_key: true
-      max_retries: 6
-      generation_parameters:
+      model_path: ${VLLM_MODEL_PATH:?set VLLM_MODEL_PATH}
+      trust_remote_code: true
+      tokenizer_trust_remote_code: true
+      force_tokenize_prompt: true
+      tensor_parallel_size: ${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      pipeline_parallel_size: ${VLLM_PIPELINE_PARALLEL_SIZE:-1}
+      max_model_len: ${VLLM_MAX_MODEL_LEN:-8192}
+      max_tokens: ${TAU2_AGENT_MAX_TOKENS:-512}
+      request_timeout: ${VLLM_REQUEST_TIMEOUT:-300}
+      sampling_params:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
 
 
@@ -83,33 +77,9 @@ sandbox_profiles:
       respond_tool_name: respond
 
 role_adapters:
-  - adapter_id: tau2_bootstrap
-    role_type: context_provider
-    params:
-      implementation: tau2_bootstrap
-
-  - adapter_id: tau2_toolchain
-    role_type: toolchain
-    params:
-      tools:
-        - type: function
-          function:
-            name: respond
-            description: Send a message to the user and receive the user's reply.
-            parameters:
-              type: object
-              properties:
-                message:
-                  type: string
-                  description: Message text to send to the user.
-              required:
-                - message
-          x-gage:
-            final_answer_from: final_answer
-
   - adapter_id: tau2_agent
     role_type: dut_agent
-    backend_id: tau2_openai_http
+    backend_id: tau2_vllm
     agent_runtime_id: tau2_framework_loop
     prompt_id: dut/tau2@v1
     sandbox:
@@ -119,7 +89,7 @@ role_adapters:
       force_tool_choice: first_turn
       max_turns: ${TAU2_MAX_TURNS:-200}
 
-  - adapter_id: tau2_judge
+  - adapter_id: tau2_runtime_judge
     role_type: judge_extend
     params:
       implementation: tau2_eval
@@ -141,22 +111,12 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: tau2_retail_base
-    dataset_id: tau2_retail_base
+  - task_id: tau2_telecom_runtime_vllm
+    dataset_id: tau2_telecom_base
     steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
       - step: inference
         adapter_id: tau2_agent
       - step: judge
-        adapter_id: tau2_judge
+        adapter_id: tau2_runtime_judge
       - step: auto_eval
     concurrency: 1
-    reporting:
-      sinks:
-        - type: console
-        - type: file
-          params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_retail_base_summary.json

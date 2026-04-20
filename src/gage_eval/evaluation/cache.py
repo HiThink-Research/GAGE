@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -220,7 +221,12 @@ class EvalCache:
 
     @staticmethod
     def _sanitize_sample_id(sample_id: str) -> str:
-        return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
+        safe_id = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
+        if len(safe_id.encode("utf-8")) <= 180:
+            return safe_id
+        digest = hashlib.sha256(str(sample_id).encode("utf-8")).hexdigest()[:16]
+        prefix = _truncate_utf8(safe_id, max_bytes=160)
+        return f"{prefix}_{digest}"
 
     def _get_writer(self, namespace: str) -> BufferedResultWriter:
         with self._writer_lock:
@@ -328,6 +334,15 @@ def _serialize_jsonl_entry(payload: Mapping[str, Any]) -> str:
     """Serializes one root journal payload into a single JSONL entry."""
 
     return json.dumps(payload, ensure_ascii=False, default=_json_default)
+
+
+def _truncate_utf8(value: str, *, max_bytes: int) -> str:
+    """Truncate text without splitting a UTF-8 code point."""
+
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore").rstrip("_")
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:

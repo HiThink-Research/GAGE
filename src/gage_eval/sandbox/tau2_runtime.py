@@ -8,6 +8,7 @@ exec_tool/get_state/initialize_task rather than BaseSandbox.exec().
 from __future__ import annotations
 
 import copy
+import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -71,6 +72,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._domain: Optional[str] = None
         self._agent_cost_total: Optional[float] = None
         self._user_cost_total: float = 0.0
+        self._user_simulator_config: Optional[Dict[str, Any]] = None
 
     def start(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # STEP 1: Merge runtime configs and validate tau2 availability.
@@ -130,6 +132,22 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
     def is_alive(self, timeout_s: float | None = None) -> bool:
         return self._running
 
+    def configure_user_simulator(self, user_simulator_config: Any) -> None:
+        """Configure the Tau2 user simulator model surface.
+
+        Args:
+            user_simulator_config: Either a LiteLLM-compatible model string or a
+                mapping with `model` and `model_args`.
+        """
+
+        if isinstance(user_simulator_config, dict):
+            self._user_simulator_config = dict(user_simulator_config)
+        elif user_simulator_config is not None:
+            self._user_simulator_config = {
+                "model": str(user_simulator_config),
+                "model_args": {},
+            }
+
     def initialize_task(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Initialize tau2 task state and return initial messages/tools."""
 
@@ -145,13 +163,15 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._start_time = _now()
 
         user_tools = _safe_get_user_tools(env)
+        user_simulator_config = _resolve_tau2_user_simulator_runtime_config(
+            self._runtime_configs,
+            override=self._user_simulator_config,
+        )
         user_sim = _build_tau2_user_simulator(
             tools=user_tools,
             instructions=str(task.user_scenario),
-            model=self._runtime_configs.get("user_model")
-            or self._runtime_configs.get("user_llm"),
-            model_args=self._runtime_configs.get("user_model_args")
-            or self._runtime_configs.get("user_llm_args"),
+            model=user_simulator_config.get("model"),
+            model_args=user_simulator_config.get("model_args"),
             seed=self._seed,
         )
         self._user = user_sim
@@ -419,6 +439,55 @@ def _build_tau2_user_simulator(
         except Exception:
             pass
     return user
+
+
+def _resolve_tau2_user_simulator_runtime_config(
+    runtime_configs: Dict[str, Any],
+    *,
+    override: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Resolve Tau2 user simulator model configuration.
+
+    The preferred config surface is the Tau2 kit-owned
+    `benchmark_configs.tau2.user_simulator`. Legacy `runtime_configs.user_model`
+    keys remain accepted for older sandbox profiles.
+    """
+
+    user_simulator = (
+        override if isinstance(override, dict) else runtime_configs.get("user_simulator")
+    )
+    if isinstance(user_simulator, dict):
+        model = user_simulator.get("model")
+        model_args = user_simulator.get("model_args") or {}
+        if not isinstance(model_args, dict):
+            model_args = {}
+        model_args = _apply_tau2_user_temperature_default(model_args)
+        return {
+            "model": model or os.environ.get("TAU2_USER_MODEL") or "gpt-4.1",
+            "model_args": model_args,
+        }
+
+    model = (
+        runtime_configs.get("user_model")
+        or os.environ.get("TAU2_USER_MODEL")
+        or "gpt-4.1"
+    )
+    model_args = runtime_configs.get("user_model_args") or {}
+    if not isinstance(model_args, dict):
+        model_args = {}
+    model_args = _apply_tau2_user_temperature_default(model_args)
+    return {"model": model, "model_args": model_args}
+
+
+def _apply_tau2_user_temperature_default(model_args: Dict[str, Any]) -> Dict[str, Any]:
+    resolved = dict(model_args)
+    if "temperature" in resolved:
+        return resolved
+    if os.environ.get("TAU2_USER_TEMPERATURE") is not None:
+        resolved["temperature"] = float(os.environ["TAU2_USER_TEMPERATURE"])
+    else:
+        resolved["temperature"] = 0.0
+    return resolved
 
 
 def _normalize_tau2_user_model_args(

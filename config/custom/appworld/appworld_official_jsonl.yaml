@@ -34,13 +34,16 @@ backends:
       require_api_key: true
       max_retries: 6        
 
-agent_backends:
-  - agent_backend_id: agent_model_main
-    type: model_backend
-    backend_id: gpt52_openai_http
-    config:
-      # Force tool calls early so AppWorld actions are exercised in the demo.
-      force_tool_choice: first_turn
+
+agent_runtimes:
+  - agent_runtime_id: appworld_framework_loop
+    benchmark_kit_id: appworld
+    scheduler_type: framework_loop
+    sandbox_profile_id: appworld_local
+    resource_policy:
+      resource_kind: docker
+      lifecycle: per_sample
+    verifier_binding_id: appworld_verifier
 
 sandbox_profiles:
   - sandbox_id: appworld_local
@@ -150,13 +153,15 @@ role_adapters:
 
   - adapter_id: dut_agent_main
     role_type: dut_agent
-    agent_backend_id: agent_model_main
+    backend_id: gpt52_openai_http
+    agent_runtime_id: appworld_framework_loop
     prompt_id: dut/appworld@v1
     sandbox:
       sandbox_id: appworld_local
       # Create an isolated container per task.
       lifecycle: per_task
     params:
+      force_tool_choice: first_turn
       # Safety net for runaway tool loops.
       max_turns: 120
       pre_hooks:

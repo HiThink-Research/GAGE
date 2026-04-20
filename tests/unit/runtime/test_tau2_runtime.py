@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from gage_eval.agent_eval_kits.tau2.runtime import Tau2RuntimeEntry
 from gage_eval.sandbox.protocols import (
     StateQueryProtocol,
     TaskInitProtocol,
@@ -14,6 +16,7 @@ from gage_eval.sandbox.tau2_runtime import (
     Tau2Runtime,
     _normalize_tau2_user_model_args,
     _resolve_agent_usage_cost,
+    _resolve_tau2_user_simulator_runtime_config,
     _termination_reason,
 )
 from tests._support.stubs.tau2_stub import STOP, install_tau2_stub
@@ -119,6 +122,77 @@ def test_tau2_runtime_normalizes_ollama_chat_api_base() -> None:
     assert normalized == {
         "api_base": "http://127.0.0.1:11434",
         "api_key": "dummy",
+    }
+
+
+def test_tau2_runtime_prefers_user_simulator_config_over_legacy_user_model() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {
+            "user_model": "legacy-model",
+            "user_model_args": {"temperature": 0.5},
+            "user_simulator": {
+                "model": "gpt-4.1",
+                "model_args": {"temperature": 0.0},
+            },
+        }
+    )
+
+    assert resolved == {"model": "gpt-4.1", "model_args": {"temperature": 0.0}}
+
+
+def test_tau2_runtime_prefers_kit_user_simulator_override() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {
+            "user_model": "legacy-model",
+            "user_model_args": {"temperature": 0.5},
+        },
+        override={
+            "model": "openai/gpt-4.1",
+            "model_args": {"api_base": "https://api.openai.com/v1"},
+        },
+    )
+
+    assert resolved == {
+        "model": "openai/gpt-4.1",
+        "model_args": {
+            "api_base": "https://api.openai.com/v1",
+            "temperature": 0.0,
+        },
+    }
+
+
+def test_tau2_kit_configures_user_simulator_before_initialize() -> None:
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.configured = None
+
+        def configure_user_simulator(self, user_simulator) -> None:
+            self.configured = user_simulator
+
+        def initialize_task(self, _sample):
+            return {"messages": [], "tools_schema": [], "metadata": {}}
+
+    runtime = FakeRuntime()
+    provider = SimpleNamespace(get_handle=lambda: SimpleNamespace(sandbox=runtime))
+    session = SimpleNamespace(
+        benchmark_config={
+            "user_simulator": {
+                "model": "gpt-4.1",
+                "model_args": {"temperature": 0.0},
+            }
+        }
+    )
+
+    Tau2RuntimeEntry().bootstrap(
+        session=session,
+        sample={"id": "sample-1"},
+        payload={},
+        sandbox_provider=provider,
+    )
+
+    assert runtime.configured == {
+        "model": "gpt-4.1",
+        "model_args": {"temperature": 0.0},
     }
 
 

@@ -35,7 +35,7 @@ def test_show_expanded_config_prints_yaml_without_runtime_preflight(monkeypatch,
     assert expanded["tasks"][0]["steps"][0] == {"step": "inference", "adapter_id": "dut_openai"}
     for key in (
         "models",
-        "agent_backends",
+        "agent_runtimes",
         "sandbox_profiles",
         "mcp_clients",
         "prompts",

@@ -115,9 +115,14 @@ _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
 }
 
 
-def resolve_agent_runtime_spec(agent_runtime_id: str) -> AgentRuntimeSpec:
+def resolve_agent_runtime_spec(
+    agent_runtime_id: str,
+    runtime_specs: dict[str, AgentRuntimeSpec] | None = None,
+) -> AgentRuntimeSpec:
     """Resolve the declared runtime spec from the builtin runtime catalog."""
 
+    if runtime_specs and agent_runtime_id in runtime_specs:
+        return runtime_specs[agent_runtime_id]
     if agent_runtime_id not in _BUILTIN_RUNTIME_SPECS:
         raise KeyError(f"Unknown agent runtime '{agent_runtime_id}'")
     spec = _BUILTIN_RUNTIME_SPECS[agent_runtime_id]
@@ -130,11 +135,13 @@ def compile_agent_runtime_plan(
     *,
     agent_runtime_id: str,
     sandbox_config: dict[str, Any] | None = None,
+    runtime_specs: dict[str, AgentRuntimeSpec] | None = None,
+    benchmark_config: dict[str, Any] | None = None,
 ) -> CompiledRuntimePlan:
     """Compile a runtime plan from the builtin runtime catalog and benchmark kit."""
 
     # STEP 1: Resolve the runtime spec and benchmark kit.
-    runtime_spec = resolve_agent_runtime_spec(agent_runtime_id)
+    runtime_spec = resolve_agent_runtime_spec(agent_runtime_id, runtime_specs=runtime_specs)
     benchmark_kit = load_benchmark_kit(runtime_spec.benchmark_kit_id)
     diagnostics: list[dict[str, Any]] = []
     if runtime_spec.scheduler_type == "installed_client" and not runtime_spec.client_id:
@@ -192,6 +199,7 @@ def compile_agent_runtime_plan(
         "scheduler_type": runtime_spec.scheduler_type,
         "resource_plan": resource_plan,
         "artifact_policy": artifact_policy,
+        "benchmark_config": benchmark_config or {},
     }
     cache_key = hashlib.md5(
         json.dumps(cache_key_payload, sort_keys=True, default=str).encode("utf-8")
@@ -206,6 +214,7 @@ def compile_agent_runtime_plan(
         resource_plan=resource_plan,
         artifact_policy=artifact_policy,
         cache_key=cache_key,
+        benchmark_config=dict(benchmark_config or {}),
         compile_diagnostics=diagnostics,
     )
 

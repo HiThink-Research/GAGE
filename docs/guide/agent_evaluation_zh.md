@@ -426,7 +426,7 @@ cd /path/to/GAGE
 
 - 指标：`tau2_reward`、`tau2_pass`、`tau2_pass_hat_k`、`tau2_agent_cost`、`tau2_user_cost`
 - 汇总：`tau2_summary` 在 `summary.json` 中输出 `pass_hat_k` 与分域统计
-- User Simulator 通过 LiteLLM 调用模型，请确保 `TAU2_USER_MODEL` 所需 API Key 已配置
+- User Simulator 通过 LiteLLM 调用模型，请确保 `TAU2_USER_MODEL` 所需 API Key 已配置。推荐通过 `benchmark_configs.tau2.user_simulator.model` 和 `model_args` 配置；默认模型为 `gpt-4.1`。如果要和 DUT 共用后端，显式填写相同的 LiteLLM model string 与 args。
 
 Tau2 多试次 / seed 最佳实践：
 

@@ -46,4 +46,5 @@ class CompiledRuntimePlan:
     resource_plan: dict[str, Any]
     artifact_policy: dict[str, Any]
     cache_key: str
+    benchmark_config: dict[str, Any] = field(default_factory=dict)
     compile_diagnostics: list[dict[str, Any]] = field(default_factory=list)

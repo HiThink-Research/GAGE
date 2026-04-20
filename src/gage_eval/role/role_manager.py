@@ -75,7 +75,6 @@ class RoleManager:
         self._auto_pool = AutoPoolPlanner()
         self._adapters: Dict[str, Any] = {}
         self._backends: Dict[str, Any] = {}
-        self._agent_backends: Dict[str, Any] = {}
         self._role_pools: Dict[str, BasePool] = {}
         self._pool_plans: Dict[str, PoolAssemblyPlan] = {}
         self._route_templates: Dict[str, RuntimeRouteTemplate] = {}
@@ -169,12 +168,6 @@ class RoleManager:
 
     def get_backend(self, backend_id: str) -> Any | None:
         return self._backends.get(str(backend_id))
-
-    def register_agent_backend(self, agent_backend_id: str, backend: Any) -> None:
-        self._agent_backends[str(agent_backend_id)] = backend
-
-    def get_agent_backend(self, agent_backend_id: str) -> Any | None:
-        return self._agent_backends.get(str(agent_backend_id))
 
     def update_concurrency_hint(self, value: Optional[int]) -> None:
         if value is None:

@@ -137,6 +137,7 @@ class AgentRuntimeSessionFactory:
             benchmark_kit_id=plan.runtime_spec.benchmark_kit_id,
             scheduler_type=plan.runtime_spec.scheduler_type,
             client_id=plan.runtime_spec.client_id,
+            benchmark_config=dict(plan.benchmark_config or {}),
             artifact_layout=layout,
         )
 

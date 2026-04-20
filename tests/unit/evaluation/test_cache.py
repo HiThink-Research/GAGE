@@ -22,6 +22,18 @@ def test_eval_cache_root_journal_uses_json_default(tmp_path: Path) -> None:
 
 
 @pytest.mark.io
+def test_eval_cache_truncates_long_legacy_sample_filenames(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="long-filename")
+    sample_id = "tau2_" + ("very_long_sample_id_" * 20)
+
+    target = cache.write_sample(sample_id, {"value": 1}, namespace="judge")
+
+    assert target.exists()
+    assert len(target.name.encode("utf-8")) <= 255
+    assert json.loads(target.read_text(encoding="utf-8"))["sample_id"] == sample_id
+
+
+@pytest.mark.io
 def test_eval_cache_root_journal_handles_concurrent_writes(tmp_path: Path) -> None:
     cache = EvalCache(base_dir=str(tmp_path), run_id="concurrent")
     total_writes = 32

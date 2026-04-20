@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from gage_eval.agent_eval_kits.tau2.units import build_tau2_prompt_context
 
 
@@ -24,6 +26,7 @@ class Tau2RuntimeEntry:
         initializer = getattr(runtime, "initialize_task", None)
         if not callable(initializer):
             raise RuntimeError("tau2 initialize_task is unavailable")
+        _configure_user_simulator(runtime, session)
         initialize_result = initializer(sample)
         prompt_context = build_tau2_prompt_context(sample, initialize_result)
         return {
@@ -32,3 +35,16 @@ class Tau2RuntimeEntry:
             "benchmark_state": {"initialize_result": initialize_result},
             "scheduler_state": {},
         }
+
+
+def _configure_user_simulator(runtime: Any, session: Any) -> None:
+    benchmark_config = getattr(session, "benchmark_config", None)
+    if not isinstance(benchmark_config, dict):
+        return
+    user_simulator = benchmark_config.get("user_simulator")
+    if user_simulator is None:
+        return
+    configure = getattr(runtime, "configure_user_simulator", None)
+    if not callable(configure):
+        return
+    configure(user_simulator)

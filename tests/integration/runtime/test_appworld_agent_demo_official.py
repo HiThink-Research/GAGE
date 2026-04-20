@@ -77,8 +77,6 @@ def test_appworld_demo_with_streamable_http(
         return stub.requester(method, payload)
 
     monkeypatch.setattr(appworld_runtime_module.requests, "post", fake_post)
-    payload["agent_backends"][0]["type"] = "agent_class"
-    payload["agent_backends"][0]["config"] = {"agent_class": DemoAgent, "method": "run"}
     payload["backends"][0]["type"] = "dummy"
     payload["backends"][0]["config"] = {"responses": ["ok"]}
     payload["mcp_clients"][0]["endpoint"] = "http://stub"
