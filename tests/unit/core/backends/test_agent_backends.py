@@ -206,6 +206,28 @@ def test_model_backend_extracts_tool_calls():
 
 
 @pytest.mark.fast
+def test_model_backend_extracts_tagged_text_tool_call():
+    class TaggedToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    '{"name": "respond", "arguments": {"message": "hello"}}\n'
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": TaggedToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert "raw_answer" in result
+    assert result["tool_calls"][0]["type"] == "function"
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"message": "hello"}
+
+
+@pytest.mark.fast
 def test_model_backend_ainvoke_reuses_running_thread() -> None:
     wrapped_backend = AsyncDummyModelBackend()
     backend = ModelBackend({"backend": wrapped_backend})

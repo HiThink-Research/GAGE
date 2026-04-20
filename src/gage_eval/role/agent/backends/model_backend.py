@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from typing import Any, Dict, List, Optional
 
 from gage_eval.registry.utils import ensure_async, run_sync
@@ -94,8 +96,13 @@ async def _call_backend_async(backend: Any, request: Dict[str, Any]) -> Any:
 def _normalize_backend_response(response: Any) -> Dict[str, Any]:
     result = normalize_agent_output(response)
     tool_calls = _extract_tool_calls(response)
+    if not tool_calls:
+        tool_calls = _extract_tool_calls_from_answer(result.get("answer"))
     if tool_calls:
         result["tool_calls"] = tool_calls
+        if isinstance(result.get("answer"), str):
+            result["raw_answer"] = result.get("answer")
+            result["answer"] = ""
     return result
 
 
@@ -147,6 +154,59 @@ def _extract_from_message(message: Any) -> List[Dict[str, Any]]:
             }
         ]
     return []
+
+
+def _extract_tool_calls_from_answer(answer: Any) -> List[Dict[str, Any]]:
+    if not isinstance(answer, str) or not answer.strip():
+        return []
+    calls: List[Dict[str, Any]] = []
+    for raw_payload in _iter_tool_call_payloads(answer):
+        parsed = _try_parse_json(raw_payload)
+        call = _normalize_text_tool_call(parsed)
+        if call:
+            calls.append(call)
+    return calls
+
+
+def _iter_tool_call_payloads(answer: str) -> List[str]:
+    tagged = re.findall(r"<tool_call>\s*(.*?)\s*</tool_call>", answer, flags=re.DOTALL | re.IGNORECASE)
+    if tagged:
+        return tagged
+    stripped = answer.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return [stripped]
+    return []
+
+
+def _try_parse_json(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def _normalize_text_tool_call(payload: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        first = tool_calls[0]
+        return dict(first) if isinstance(first, dict) else None
+    function_call = payload.get("function_call")
+    if isinstance(function_call, dict):
+        payload = function_call
+    name = payload.get("name")
+    arguments = payload.get("arguments", {})
+    if not name:
+        return None
+    return {
+        "id": str(payload.get("id") or "call_0"),
+        "type": "function",
+        "function": {
+            "name": str(name),
+            "arguments": arguments,
+        },
+    }
 
 
 def _resolve_force_tool_choice_mode(value: Any) -> str:
