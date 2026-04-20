@@ -123,7 +123,7 @@ class AgentLoop:
                 raw_output = _invoke_backend_sync(self._backend, backend_payload)
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 output = normalize_agent_output(raw_output)
-                usage = output.get("usage") or usage
+                usage = _merge_usage(usage, output.get("usage"))
                 artifacts = output.get("artifacts") or artifacts
                 tool_calls = _extract_tool_calls(output)
                 if tool_calls:
@@ -347,7 +347,7 @@ class AgentLoop:
                 raw_output = await _invoke_backend_async(self._backend, backend_payload)
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 output = normalize_agent_output(raw_output)
-                usage = output.get("usage") or usage
+                usage = _merge_usage(usage, output.get("usage"))
                 artifacts = output.get("artifacts") or artifacts
                 tool_calls = _extract_tool_calls(output)
                 if tool_calls:
@@ -541,6 +541,31 @@ def _resolve_effective_tool_choice(
     if force_mode == "first_turn" and turn_index <= 1 and tool_choice in (None, "auto"):
         return "required"
     return tool_choice
+
+
+def _merge_usage(
+    current: Optional[Dict[str, Any]],
+    new_usage: Any,
+) -> Optional[Dict[str, Any]]:
+    """Accumulate per-turn usage payloads into a run-level total."""
+
+    if not isinstance(new_usage, dict):
+        return current
+    if current is None:
+        return dict(new_usage)
+
+    merged = dict(current)
+    for key, value in new_usage.items():
+        current_value = merged.get(key)
+        if _is_usage_number(current_value) and _is_usage_number(value):
+            merged[key] = current_value + value
+        elif key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _is_usage_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _requires_tool_call(tool_choice: Optional[Any], tools: List[Dict[str, Any]]) -> bool:

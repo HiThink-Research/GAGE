@@ -68,6 +68,28 @@ class AsyncBackend:
         return {"answer": "done"}
 
 
+class UsageBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "run_shell", "arguments": "{\"command\": \"ls\"}"},
+                    }
+                ],
+            }
+        return {
+            "answer": "done",
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        }
+
+
 class FakeSandbox:
     def __init__(self, runtime_configs=None, resources=None):
         self.runtime_configs = runtime_configs or {}
@@ -116,6 +138,36 @@ def test_agent_loop_tool_call_flow():
     assert len(result["agent_trace"]) == 2
     assert result["agent_trace"][0]["trace_role"] == "tool"
     assert result["agent_trace"][1]["trace_role"] == "assistant"
+
+
+@pytest.mark.fast
+def test_agent_loop_accumulates_usage_across_turns():
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    loop = AgentLoop(
+        backend=UsageBackend(),
+        tool_router=ToolRouter(),
+        max_turns=3,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+
+    provider.release()
+    assert result["usage"] == {
+        "prompt_tokens": 8,
+        "completion_tokens": 3,
+        "total_tokens": 11,
+    }
 
 
 @pytest.mark.fast

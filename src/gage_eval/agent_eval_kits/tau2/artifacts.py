@@ -70,17 +70,17 @@ def _build_trajectory_payload(
     scheduler_output: Mapping[str, Any],
     runtime_state: Mapping[str, Any],
 ) -> dict[str, Any]:
-    agent_trace = scheduler_output.get("agent_trace")
-    if isinstance(agent_trace, list) and agent_trace:
-        return {
-            "source": "agent_trace",
-            "events": agent_trace,
-        }
     messages = runtime_state.get("messages")
     if isinstance(messages, list):
         return {
             "source": "runtime_state.messages",
             "events": messages,
+        }
+    agent_trace = scheduler_output.get("agent_trace")
+    if isinstance(agent_trace, list) and agent_trace:
+        return {
+            "source": "agent_trace",
+            "events": agent_trace,
         }
     return {
         "source": "unavailable",

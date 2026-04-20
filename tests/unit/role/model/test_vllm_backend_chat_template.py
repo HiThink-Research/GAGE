@@ -1,5 +1,7 @@
+import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +27,10 @@ def make_backend(config, model=None):
     finally:
         VLLMBackend.load_model = orig_load
     return backend
+
+
+def _run_coroutine_inline(loop, coro, **kwargs):
+    return asyncio.run(coro)
 
 
 class VLLMBackendChatTemplateTests(unittest.TestCase):
@@ -162,7 +168,7 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
         self.assertIsInstance(tok, DummyTokenizer)
         self.assertEqual(called.get("name"), "repo")
 
-    def test_force_tokenize_normalizes_dict_prompt_token_ids(self):
+    def test_force_tokenize_renders_prompt_without_adding_prompt_token_ids(self):
         backend = make_backend({"model_path": "repo", "force_tokenize_prompt": True})
 
         class FakeTokenizer:
@@ -175,7 +181,7 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
         payload = {"messages": [{"role": "user", "content": "hi"}]}
         out = backend.prepare_inputs(payload)
         self.assertEqual(out["prompt"], "templated_with_ids")
-        self.assertEqual(out["inputs"]["prompt_token_ids"], [101, 102, 103])
+        self.assertNotIn("prompt_token_ids", out["inputs"])
 
     def test_generate_normalizes_dict_prompt_token_ids_from_inputs(self):
         class RecordingModel(DummyModel):
@@ -199,7 +205,11 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
             },
         }
 
-        backend._generate_one(prepared, sampling_params={"temperature": 0.0}, request_id="req_1")
+        with patch(
+            "gage_eval.role.model.backends.vllm_backend.run_coroutine_threadsafe_with_timeout",
+            side_effect=_run_coroutine_inline,
+        ):
+            backend._generate_one(prepared, sampling_params={"temperature": 0.0}, request_id="req_1")
 
         self.assertIsNotNone(model.last_kwargs)
         self.assertTrue(model.last_args)
@@ -208,6 +218,29 @@ class VLLMBackendChatTemplateTests(unittest.TestCase):
         self.assertNotIn("input_ids", prompt_input)
         self.assertEqual(model.last_kwargs["sampling_params"], {"temperature": 0.0})
         self.assertEqual(model.last_kwargs["request_id"], "req_1")
+
+    def test_generate_records_usage_from_vllm_token_ids(self):
+        class UsageModel(DummyModel):
+            def generate(self, *args, **kwargs):
+                return SimpleNamespace(
+                    prompt_token_ids=[1, 2, 3],
+                    outputs=[SimpleNamespace(text="hello", token_ids=[4, 5])],
+                )
+
+        backend = make_backend({"model_path": "repo"}, model=UsageModel())
+        prepared = backend.prepare_inputs({"prompt": "hello"})
+
+        with patch(
+            "gage_eval.role.model.backends.vllm_backend.run_coroutine_threadsafe_with_timeout",
+            side_effect=_run_coroutine_inline,
+        ):
+            result = backend.generate(prepared)
+
+        self.assertEqual(result["answer"], "hello")
+        self.assertEqual(
+            result["usage"],
+            {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        )
 
     def test_refresh_engine_mm_support_accepts_engine_before_model_assignment(self):
         backend = object.__new__(VLLMBackend)

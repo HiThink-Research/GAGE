@@ -54,8 +54,8 @@ def test_persist_tau2_artifacts_exports_state_trajectory_and_cost(tmp_path: Path
     trajectory_payload = json.loads((tmp_path / "sample" / "artifacts" / "tau2_trajectory.json").read_text())
     cost_payload = json.loads((tmp_path / "sample" / "artifacts" / "tau2_cost.json").read_text())
 
-    assert trajectory_payload["source"] == "agent_trace"
-    assert trajectory_payload["events"] == [{"tool_name": "respond"}]
+    assert trajectory_payload["source"] == "runtime_state.messages"
+    assert trajectory_payload["events"] == [{"role": "assistant", "content": "done"}]
     assert cost_payload == {
         "agent_cost": 0.1,
         "user_cost": 0.0,

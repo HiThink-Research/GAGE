@@ -327,6 +327,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             result = self._generate_one(prepared, sampling_params, rid)
             raw_outputs.append(result)
             outputs.append(self._convert_output(result, output_type))
+        usage = _extract_vllm_usage(raw_outputs)
         return finalize_backend_result(
             prepared,
             outputs,
@@ -335,6 +336,7 @@ class VLLMBackend(EngineBackend, ChatTemplateMixin):
             backend_tag="vllm_backend",
             cfg_tokenizer_path=self._cfg_tokenizer_path,
             raw_outputs=raw_outputs,
+            usage=usage,
         )
 
     def _generate_one(self, prepared: Dict[str, Any], sampling_params: Any, request_id: str) -> Any:
@@ -1014,3 +1016,49 @@ def _strip_sample_n_params(sampling_base: Dict[str, Any]) -> Dict[str, Any]:
     stripped.pop("n", None)
     stripped.pop("num_samples", None)
     return stripped
+
+
+def _extract_vllm_usage(raw_outputs: List[Any]) -> Optional[Dict[str, int]]:
+    """Extract OpenAI-style token usage from vLLM RequestOutput objects."""
+
+    prompt_tokens = 0
+    completion_tokens = 0
+    saw_usage = False
+    for raw_output in raw_outputs:
+        prompt_ids = normalize_prompt_token_ids(_read_attr_or_key(raw_output, "prompt_token_ids"))
+        prompt_count = _count_token_ids(prompt_ids)
+        if prompt_count is not None:
+            prompt_tokens += prompt_count
+            saw_usage = True
+
+        outputs = _read_attr_or_key(raw_output, "outputs")
+        if isinstance(outputs, (list, tuple)):
+            for output in outputs:
+                output_count = _count_token_ids(_read_attr_or_key(output, "token_ids"))
+                if output_count is not None:
+                    completion_tokens += output_count
+                    saw_usage = True
+
+    if not saw_usage:
+        return None
+    return {
+        "prompt_tokens": int(prompt_tokens),
+        "completion_tokens": int(completion_tokens),
+        "total_tokens": int(prompt_tokens + completion_tokens),
+    }
+
+
+def _read_attr_or_key(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _count_token_ids(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return 1
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    return None

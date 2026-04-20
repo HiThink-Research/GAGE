@@ -102,6 +102,7 @@ def finalize_backend_result(
     backend_tag: str,
     cfg_tokenizer_path: Any = None,
     raw_outputs: Optional[List[Any]] = None,
+    usage: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Normalize backend output shape with metadata from prepared inputs."""
 
@@ -111,6 +112,8 @@ def finalize_backend_result(
         result = {"answer": outputs[0] if outputs else "", "_backend": backend_tag, "_batch_path": batch_path}
     if raw_outputs is not None:
         result["raw_response"] = _normalize_raw_response(raw_outputs, sample_n=sample_n)
+    if usage is not None:
+        result["usage"] = usage
     attach_template_metadata(prepared, result, cfg_tokenizer_path=cfg_tokenizer_path)
     if prepared.get("prompt_meta"):
         result["prompt_meta"] = prepared["prompt_meta"]
@@ -569,7 +572,7 @@ def maybe_tokenize_messages(
     cache_suffix: str = "-chat_template",
     normalize_fn=normalize_messages_safe,
 ) -> Tuple[str, Any, Dict[str, Any]]:
-    """Generate prompt_token_ids using tokenizer/processor if needed.
+    """Render messages with backend chat templates while preserving explicit token ids.
 
     Returns: (new_prompt, new_inputs, meta_updates).
     """
@@ -627,17 +630,10 @@ def maybe_tokenize_messages(
     try:
         sanitized_messages = messages
         rendered = None
-        tokenized = None
         try:
             rendered = chat_template_fn(
                 render_messages,
                 tokenize=False,
-                add_generation_prompt=True,
-                **chat_template_kwargs,
-            )
-            tokenized = chat_template_fn(
-                render_messages,
-                tokenize=True,
                 add_generation_prompt=True,
                 **chat_template_kwargs,
             )
@@ -651,33 +647,12 @@ def maybe_tokenize_messages(
                 add_generation_prompt=True,
                 **chat_template_kwargs,
             )
-            tokenized = chat_template_fn(
-                sanitized_messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                **chat_template_kwargs,
-            )
-
-        if isinstance(tokenized, list):
-            first = tokenized[0] if tokenized else []
-            token_ids = first if isinstance(first, (list, tuple)) else tokenized
-        else:
-            # Handle transformers BatchEncoding / dict-like outputs
-            if hasattr(tokenized, "__getitem__") and "input_ids" in tokenized:
-                token_ids = tokenized["input_ids"]
-                # BatchEncoding may return nested list for batch dimension
-                if isinstance(token_ids, list) and token_ids and isinstance(token_ids[0], list):
-                    token_ids = token_ids[0]
-            else:
-                token_ids = tokenized
 
         new_prompt = str(rendered) if rendered else prompt
         if not isinstance(inputs, dict):
             inputs = {}
         new_inputs = dict(inputs)
         new_inputs["prompt"] = new_prompt
-        if token_ids is not None:
-            new_inputs["prompt_token_ids"] = token_ids
 
         meta = {
             "template_source": "model",
