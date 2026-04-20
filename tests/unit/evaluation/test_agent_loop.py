@@ -28,6 +28,28 @@ class FakeBackend:
         return {"answer": "done"}
 
 
+class PlainThenToolBackend:
+    def __init__(self):
+        self.calls = 0
+        self.payloads = []
+
+    def invoke(self, payload):
+        self.calls += 1
+        self.payloads.append(dict(payload))
+        if self.calls == 1:
+            return {"answer": "I can help, please check your settings."}
+        if self.calls == 2:
+            return {
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "run_shell", "arguments": "{\"command\": \"ls\"}"},
+                    }
+                ]
+            }
+        return {"answer": "done"}
+
+
 class AsyncBackend:
     def __init__(self):
         self.calls = 0
@@ -94,6 +116,42 @@ def test_agent_loop_tool_call_flow():
     assert len(result["agent_trace"]) == 2
     assert result["agent_trace"][0]["trace_role"] == "tool"
     assert result["agent_trace"][1]["trace_role"] == "assistant"
+
+
+@pytest.mark.fast
+def test_agent_loop_retries_when_required_tool_call_is_missing() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = PlainThenToolBackend()
+    backend._force_tool_choice_mode = "first_turn"
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=4,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        tool_choice="auto",
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+
+    provider.release()
+    assert result["answer"] == "done"
+    assert backend.calls == 3
+    assert backend.payloads[0]["tool_choice"] == "required"
+    assert backend.payloads[1]["tool_choice"] == "required"
+    assert result["agent_trace"][0]["status"] == "retry_required_tool_call"
+    assert result["agent_trace"][0]["output"]["error"] == "required_tool_call_missing"
+    assert result["agent_trace"][1]["trace_role"] == "tool"
+    assert result["agent_trace"][2]["trace_role"] == "assistant"
 
 
 @pytest.mark.fast
