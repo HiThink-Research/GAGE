@@ -259,6 +259,20 @@ def test_tau2_runtime_openai_http_reads_api_base_from_model_args() -> None:
     assert resolved["model_args"]["api_base"] == "http://vllm-host:8000/v1"
 
 
+def test_tau2_runtime_openai_http_reads_base_url_from_model_args() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "my-model",
+            "model_args": {"base_url": "http://vllm-host:8000/v1"},
+        },
+    )
+
+    assert resolved["model_args"]["api_base"] == "http://vllm-host:8000/v1"
+    assert "base_url" not in resolved["model_args"]
+
+
 def test_tau2_runtime_openai_http_does_not_strip_v1_from_api_base() -> None:
     normalized = _normalize_tau2_user_model_args(
         model="openai/Qwen2.5-72B-Instruct",
@@ -279,3 +293,22 @@ def test_tau2_runtime_openai_http_applies_env_base_url(monkeypatch) -> None:
 
     assert resolved["model"] == "openai/my-env-model"
     assert resolved["model_args"]["api_base"] == "http://env-host:9000/v1"
+
+
+def test_tau2_runtime_openai_http_preserves_tool_choice_auto_override() -> None:
+    # tool_choice in model_args gets passed as **llm_args to tau2's generate(),
+    # which has tool_choice as a named parameter and keeps OpenAI-compatible
+    # tool calling explicit for user-simulator endpoints.
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "my-model",
+            "model_args": {
+                "api_base": "http://localhost:8000/v1",
+                "tool_choice": "auto",
+            },
+        },
+    )
+
+    assert resolved["model_args"]["tool_choice"] == "auto"

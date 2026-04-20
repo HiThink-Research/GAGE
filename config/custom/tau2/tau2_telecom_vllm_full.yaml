@@ -17,6 +17,18 @@ metadata:
 # Optional:
 #   TAU2_USER_API_KEY    defaults to "dummy" (vLLM ignores it by default)
 #   TAU2_USER_TEMPERATURE
+#
+# IMPORTANT - vLLM server flags for tool calling:
+#   The tau2 user simulator sends tool_choice="auto" when user tools are
+#   present.  vLLM rejects this unless the server is started with:
+#     --enable-auto-tool-choice
+#     --tool-call-parser <parser>   # hermes | mistral | llama3_json | etc.
+#   Example:
+#     vllm serve Qwen/Qwen2.5-72B-Instruct \
+#       --enable-auto-tool-choice --tool-call-parser hermes
+#
+#   This config keeps tool calling enabled. Start the user-simulator server
+#   with tool-calling support instead of disabling tool use in the client.
 benchmark_configs:
   tau2:
     user_simulator:

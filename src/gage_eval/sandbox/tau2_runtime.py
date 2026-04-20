@@ -510,8 +510,10 @@ def _apply_openai_http_user_sim_config(
     """
     resolved_args = dict(model_args)
     api_base = (
-        resolved_args.get("api_base")
+        resolved_args.pop("base_url", None)
+        or resolved_args.get("api_base")
         or cfg.get("base_url")
+        or cfg.get("api_base")
         or os.environ.get("TAU2_USER_BASE_URL")
     )
     if api_base:
