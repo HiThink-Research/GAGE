@@ -251,6 +251,25 @@ python run.py \
   --output-dir runs/tau2_all_subsets_base
 ```
 
+Run telecom domain with a local vLLM model (config: [`config/custom/tau2/tau2_telecom_runtime_vllm.yaml`](../../config/custom/tau2/tau2_telecom_runtime_vllm.yaml)):
+
+```bash
+cd gage-eval-main
+export VLLM_MODEL_PATH=/path/to/your/model      # required
+export TAU2_DATA_DIR=/path/to/tau2-data
+export OPENAI_API_KEY=your_key                  # for the default gpt-4.1 user simulator
+# export TAU2_USER_MODEL=gpt-4.1               # override user simulator model
+# export VLLM_MAX_MODEL_LEN=8192
+# export VLLM_TENSOR_PARALLEL_SIZE=1
+python run.py \
+  --config config/custom/tau2/tau2_telecom_runtime_vllm.yaml \
+  --run-id tau2_vllm_$(date +%H%M%S) \
+  --output-dir runs \
+  --max-samples 1
+```
+
+> **User simulator note:** The user simulator (`TAU2_USER_MODEL`, default `gpt-4.1`) must be a capable model. Do not reuse the DUT model as the user simulator — a small or vision-only model will loop on device diagnostics instead of acting as a customer.
+
 ### 4.5 Metrics and Outputs
 
 - Metrics: `tau2_reward`, `tau2_pass`, `tau2_pass_hat_k`, `tau2_agent_cost`, `tau2_user_cost`.
