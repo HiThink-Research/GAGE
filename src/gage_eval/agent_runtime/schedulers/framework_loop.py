@@ -20,6 +20,7 @@ class FrameworkLoopScheduler:
         tool_router,
         prompt_renderer=None,
         max_turns: int = 8,
+        tool_call_retry_budget: int = 3,
         pre_hooks=None,
         post_hooks=None,
     ) -> None:
@@ -27,6 +28,7 @@ class FrameworkLoopScheduler:
         self._tool_router = tool_router
         self._prompt_renderer = prompt_renderer
         self._max_turns = max_turns
+        self._tool_call_retry_budget = tool_call_retry_budget
         self._pre_hooks = pre_hooks
         self._post_hooks = post_hooks
         self._failure_mapper = FailureMapper()
@@ -170,6 +172,7 @@ class FrameworkLoopScheduler:
             backend=self._backend,
             tool_router=self._tool_router,
             max_turns=self._max_turns,
+            tool_call_retry_budget=self._tool_call_retry_budget,
             pre_hooks=self._pre_hooks,
             post_hooks=self._post_hooks,
         )

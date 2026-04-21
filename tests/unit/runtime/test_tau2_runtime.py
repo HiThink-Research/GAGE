@@ -68,6 +68,35 @@ def test_tau2_runtime_user_tools_and_stop(tmp_path: Path, monkeypatch) -> None:
     assert (term.value if hasattr(term, "value") else str(term)) == "user_stop"
 
 
+def test_tau2_runtime_get_state_tracks_termination_detail(tmp_path: Path, monkeypatch) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    sample = _build_sample()
+    runtime.initialize_task(sample)
+
+    assert runtime.get_state().get("termination_detail") is None
+
+
+def test_tau2_runtime_initialize_task_resets_per_task_state(tmp_path: Path, monkeypatch) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    runtime.initialize_task(_build_sample())
+    runtime.mark_agent_exhausted("no_tool_call_from_agent")
+
+    runtime.initialize_task(_build_sample(domain="telecom"))
+    state = runtime.get_state()
+    assert state["termination_reason"] is None
+    assert state["termination_detail"] is None
+    assert len(state["messages"]) == 2
+
+    response = runtime.exec_tool("respond", {"message": "hello"})
+    assert response.get("final_answer") != "simulation_terminated"
+
+
 def test_tau2_runtime_satisfies_protocols(tmp_path: Path, monkeypatch) -> None:
     """Tau2Runtime satisfies all three tool-protocol runtime contracts."""
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
@@ -77,6 +106,31 @@ def test_tau2_runtime_satisfies_protocols(tmp_path: Path, monkeypatch) -> None:
     assert isinstance(runtime, ToolExecutionProtocol)
     assert isinstance(runtime, StateQueryProtocol)
     assert isinstance(runtime, TaskInitProtocol)
+
+
+@pytest.mark.parametrize("initial_reason", ["user_stop", "max_steps"])
+def test_tau2_runtime_mark_agent_exhausted_no_override(initial_reason: str) -> None:
+    runtime = Tau2Runtime()
+    runtime._termination_reason = _termination_reason(initial_reason)
+    runtime._termination_detail = "already_terminated"
+
+    runtime.mark_agent_exhausted("tool_call_retry_budget")
+
+    state = runtime.get_state()
+    term = state["termination_reason"]
+    assert (term.value if hasattr(term, "value") else str(term)) == initial_reason
+    assert state["termination_detail"] == "already_terminated"
+
+
+def test_tau2_runtime_mark_agent_exhausted_sets_agent_error_reason_and_detail() -> None:
+    runtime = Tau2Runtime()
+
+    runtime.mark_agent_exhausted("no_tool_call_from_agent")
+
+    state = runtime.get_state()
+    term = state["termination_reason"]
+    assert (term.value if hasattr(term, "value") else str(term)) == "agent_error"
+    assert state["termination_detail"] == "no_tool_call_from_agent"
 
 
 def test_tau2_runtime_exec_reports_protocol_mismatch(

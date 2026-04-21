@@ -103,7 +103,7 @@ def load_tau2_split(path: Path) -> Optional[dict[str, list[str]]]:
 def resolve_tau2_termination_reason(
     reason: Any,
     *,
-    fallback: str = "too_many_errors",
+    fallback: Optional[str] = None,
 ) -> Any:
     """Resolve a termination reason against the installed tau2 enum surface.
 
@@ -129,7 +129,11 @@ def resolve_tau2_termination_reason(
     if isinstance(reason, TerminationReason):
         return reason
 
-    normalized = _normalize_reason_value(reason) or fallback
+    normalized = _normalize_reason_value(reason)
+    if normalized is None:
+        if fallback is None:
+            return None
+        normalized = fallback
     resolved = _match_termination_reason(TerminationReason, normalized)
     if resolved is not None:
         return resolved
@@ -161,12 +165,18 @@ def _match_termination_reason(enum_type: Any, candidate: str) -> Optional[Any]:
     return None
 
 
-def _fallback_reason_candidates(reason: str, fallback: str) -> list[str]:
-    candidates = [fallback]
-    if reason in {"agent_error", "user_error"}:
-        candidates.extend(["too_many_errors", "max_steps", "agent_stop", "user_stop"])
-    else:
-        candidates.extend(["too_many_errors", "max_steps", "agent_stop", "user_stop"])
+def _fallback_reason_candidates(
+    reason: Optional[str], fallback: Optional[str]
+) -> list[str]:
+    candidates: list[str] = []
+    if fallback is not None:
+        text = str(fallback).strip()
+        if text:
+            candidates.append(text)
+
+    if reason not in {"agent_error", "user_error"}:
+        return candidates
+    candidates.extend(["too_many_errors", "max_steps", "agent_stop", "user_stop"])
     ordered: list[str] = []
     for candidate in candidates:
         text = str(candidate).strip()

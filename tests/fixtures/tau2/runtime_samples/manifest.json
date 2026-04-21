@@ -1,0 +1,25 @@
+{
+  "source_root": "agent-eval/0421/tau/samples/runtime/tau2_telecom_vllm_full",
+  "fixtures": [
+    {
+      "file": "0421_tau_plain_text_missing_tool_response.txt",
+      "description": "Real first assistant response that did not call any tool in the failed 2026-04-21 run.",
+      "source": "agent-eval/0421/tau/samples/runtime/tau2_telecom_vllm_full/telecom_[mobile_data_issue]airplane_mode_on|data_mode_off[PERSONA:None]__trial_0/runtime_metadata.json",
+      "source_field": "scheduler_result.agent_output.agent_trace[0].output.answer",
+      "sha256": "f89bf4ce851161eaaecf6422050846734192bbdf4a86c47c5da11abb82b44ea4"
+    },
+    {
+      "file": "0421_tau_harmony_xml_respond_response.txt",
+      "description": "Real assistant response containing a harmony-style XML respond tool call from the failed 2026-04-21 run.",
+      "source": "agent-eval/0421/tau/samples/runtime/tau2_telecom_vllm_full/telecom_[mobile_data_issue]airplane_mode_on|bad_network_preference[PERSONA:Hard]__trial_0/runtime_metadata.json",
+      "source_field": "scheduler_result.agent_output.agent_trace[1].output.answer",
+      "sha256": "cc2cdb7ef85836d36293a7335c480aea847c3f861e34583d7cbde421f50bb530"
+    },
+    {
+      "file": "0421_tau_old_failed_cost.json",
+      "description": "Original failed cost artifact documenting the old too_many_errors classification.",
+      "source": "agent-eval/0421/tau/samples/runtime/tau2_telecom_vllm_full/telecom_[mobile_data_issue]airplane_mode_on|data_mode_off[PERSONA:None]__trial_0/artifacts/tau2_cost.json",
+      "sha256": "d9506014332ebf7f26781fbbeaf452dc1a86b588ea9dc822721fcf524f0bc734"
+    }
+  ]
+}

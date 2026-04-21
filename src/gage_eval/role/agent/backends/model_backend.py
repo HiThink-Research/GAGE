@@ -32,12 +32,12 @@ class ModelBackend(AgentBackend):
     def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = _call_backend_sync(self._backend, request)
-        return _normalize_backend_response(response)
+        return _normalize_backend_response(response, request.get("tools"))
 
     async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = await _call_backend_async(self._backend, request)
-        return _normalize_backend_response(response)
+        return _normalize_backend_response(response, request.get("tools"))
 
 
 def _build_backend_request(
@@ -94,17 +94,63 @@ async def _call_backend_async(backend: Any, request: Dict[str, Any]) -> Any:
     raise RuntimeError("model_backend_missing_invoke")
 
 
-def _normalize_backend_response(response: Any) -> Dict[str, Any]:
+def _normalize_backend_response(response: Any, tools: Any = None) -> Dict[str, Any]:
     result = normalize_agent_output(response)
     tool_calls = _extract_tool_calls(response)
     if not tool_calls:
         tool_calls = _extract_tool_calls_from_answer(result.get("answer"))
+        if tools:
+            tool_calls = _filter_tool_calls_by_schema(tool_calls, tools)
     if tool_calls:
         result["tool_calls"] = tool_calls
         if isinstance(result.get("answer"), str):
             result["raw_answer"] = result.get("answer")
             result["answer"] = ""
     return result
+
+
+def _filter_tool_calls_by_schema(
+    tool_calls: List[Dict[str, Any]], tools: Any
+) -> List[Dict[str, Any]]:
+    if not tool_calls:
+        return []
+    allowed_names = _extract_tool_names(tools)
+    if not allowed_names:
+        return []
+    return [
+        call
+        for call in tool_calls
+        if _tool_call_name(call) in allowed_names
+    ]
+
+
+def _extract_tool_names(tools: Any) -> set[str]:
+    if isinstance(tools, dict):
+        tools = (tools,)
+    if not isinstance(tools, (list, tuple)):
+        return set()
+    names: set[str] = set()
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function_name = tool.get("function", {}).get("name") if isinstance(tool.get("function"), dict) else None
+        name = function_name if function_name else tool.get("name")
+        if isinstance(name, str):
+            stripped = name.strip()
+            if stripped:
+                names.add(stripped)
+    return names
+
+
+def _tool_call_name(tool_call: Dict[str, Any]) -> Optional[str]:
+    function = tool_call.get("function")
+    if isinstance(function, dict):
+        name = function.get("name")
+    else:
+        name = tool_call.get("name")
+    if isinstance(name, str):
+        return name.strip()
+    return None
 
 
 def _raise_if_active_event_loop() -> None:

@@ -74,6 +74,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._user_cost_total: float = 0.0
         self._user_simulator_config: Optional[Dict[str, Any]] = None
         self._synthetic_prefix_len: int = 0
+        self._termination_detail: Optional[str] = None
 
     def start(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # STEP 1: Merge runtime configs and validate tau2 availability.
@@ -151,6 +152,14 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
 
     def initialize_task(self, sample: Dict[str, Any]) -> Dict[str, Any]:
         """Initialize tau2 task state and return initial messages/tools."""
+        self._trajectory = []
+        self._termination_reason = None
+        self._termination_detail = None
+        self._step_count = 0
+        self._error_count = 0
+        self._agent_cost_total = None
+        self._user_cost_total = 0.0
+        self._synthetic_prefix_len = 0
 
         # STEP 1: Build the tau2 task + environment + user simulator.
         task = _build_tau2_task(sample)
@@ -272,6 +281,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             "domain": self._domain,
             "messages": list(self._trajectory),
             "termination_reason": self._termination_reason,
+            "termination_detail": self._termination_detail,
             "user_cost": self._user_cost_total,
             "agent_cost": self._agent_cost_total,
             "start_time": self._start_time,
@@ -367,6 +377,12 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             if _is_user_stop(current):
                 break
         return current
+
+    def mark_agent_exhausted(self, detail: str) -> None:
+        if self._termination_reason is not None:
+            return
+        self._termination_reason = _termination_reason("agent_error")
+        self._termination_detail = detail
 
     def _maybe_terminate(self) -> None:
         if self._termination_reason is not None:
@@ -684,7 +700,7 @@ def _is_agent_stop(content: Optional[str]) -> bool:
 
 
 def _termination_reason(reason: str) -> Any:
-    return resolve_tau2_termination_reason(reason, fallback="too_many_errors")
+    return resolve_tau2_termination_reason(reason)
 
 
 def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:

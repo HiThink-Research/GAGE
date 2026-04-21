@@ -99,6 +99,10 @@ def _build_cost_payload(
             "termination_reason",
             scheduler_output.get("termination_reason"),
         ),
+        "termination_detail": runtime_state.get(
+            "termination_detail",
+            scheduler_output.get("termination_detail", ""),
+        ),
     }
 
 
@@ -119,14 +123,27 @@ def _normalize_runtime_state(
     normalized["user_cost"] = _coerce_cost(
         runtime_state.get("user_cost", scheduler_output.get("user_cost"))
     )
+    normalized["termination_detail"] = _normalize_termination_detail(
+        runtime_state.get(
+            "termination_detail",
+            scheduler_output.get("termination_detail"),
+        )
+    )
     return normalized
 
 
 def _normalize_termination_reason(value: Any) -> str:
-    resolved = resolve_tau2_termination_reason(value, fallback="too_many_errors")
+    resolved = resolve_tau2_termination_reason(value)
     raw_value = getattr(resolved, "value", resolved)
     text = str(raw_value or "").strip()
-    return text or "too_many_errors"
+    return text or ""
+
+
+def _normalize_termination_detail(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
 
 
 def _coerce_cost(value: Any) -> float:

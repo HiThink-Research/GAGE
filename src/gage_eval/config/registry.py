@@ -242,6 +242,7 @@ class ConfigRegistry:
                     installed_client_override=None,
                     prompt_renderer=adapter_kwargs.get("prompt_renderer"),
                     max_turns=int(adapter_kwargs.get("max_turns", 8)),
+                    tool_call_retry_budget=adapter_kwargs.get("tool_call_retry_budget", 3),
                     pre_hooks=adapter_kwargs.get("pre_hooks"),
                     post_hooks=adapter_kwargs.get("post_hooks"),
                     mcp_clients=mcp_clients,

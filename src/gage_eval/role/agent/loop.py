@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 
@@ -26,12 +26,14 @@ class AgentLoop:
         tool_router: ToolRouter,
         *,
         max_turns: int = 8,
+        tool_call_retry_budget: int = 3,
         pre_hooks: Optional[Sequence[Any]] = None,
         post_hooks: Optional[Sequence[Any]] = None,
     ) -> None:
         self._backend = backend
         self._tool_router = tool_router
         self._max_turns = max(1, int(max_turns))
+        self._tool_call_retry_budget = max(1, int(tool_call_retry_budget))
         self._pre_hooks = build_hook_chain(pre_hooks)
         self._post_hooks = build_hook_chain(post_hooks)
 
@@ -89,6 +91,9 @@ class AgentLoop:
             usage: Optional[Dict[str, Any]] = None
             artifacts = []
             required_tool_retry_active = False
+            required_tool_retry_count = 0
+            loop_exit_reason: Optional[str] = None
+            observability_events: List[Dict[str, Any]] = []
             logger.debug(
                 "AgentLoop start max_turns={} messages={} tools={}",
                 self._max_turns,
@@ -127,6 +132,7 @@ class AgentLoop:
                 artifacts = output.get("artifacts") or artifacts
                 tool_calls = _extract_tool_calls(output)
                 if tool_calls:
+                    required_tool_retry_count = 0
                     required_tool_retry_active = False
                     logger.info(
                         "AgentLoop turn {} tool_calls={} names={}",
@@ -202,8 +208,10 @@ class AgentLoop:
                         "AgentLoop turn {} required tool call but backend returned plain answer",
                         turn,
                     )
+                    required_tool_retry_count += 1
                     trace_output = _build_agent_output_payload(output, answer)
                     trace_output["error"] = "required_tool_call_missing"
+                    trace_output["retry_count"] = required_tool_retry_count
                     agent_trace.append(
                         _build_trace_step(
                             step_index,
@@ -217,7 +225,35 @@ class AgentLoop:
                             turn_index=turn,
                         )
                     )
+                    observability_events.append(
+                        {
+                            "event": "agent_retry_missing_tool_call",
+                            "payload": {
+                                "turn_index": turn,
+                                "consecutive_retries": required_tool_retry_count,
+                                "answer_preview": (answer or "")[:120],
+                                "has_tool_call_tag": _contains_tag(answer, "tool_call"),
+                                "has_function_tag": _contains_tag(answer, "function"),
+                                "backend_has_raw_response": "raw_response" in output,
+                            },
+                        }
+                    )
                     step_index += 1
+                    if required_tool_retry_count >= self._tool_call_retry_budget:
+                        loop_exit_reason = "tool_call_retry_budget"
+                        observability_events.append(
+                            {
+                                "event": "agent_loop_exhausted",
+                                "payload": {
+                                    "reason": loop_exit_reason,
+                                    "turn_index": turn,
+                                    "consecutive_retries": required_tool_retry_count,
+                                    "budget": self._tool_call_retry_budget,
+                                },
+                            }
+                        )
+                        answer = ""
+                        break
                     messages.append({"role": "assistant", "content": answer})
                     messages.append(_build_required_tool_retry_message())
                     required_tool_retry_active = True
@@ -239,12 +275,27 @@ class AgentLoop:
                     )
                 )
                 break
+            else:
+                if loop_exit_reason is None:
+                    loop_exit_reason = "max_turns"
+                    observability_events.append(
+                        {
+                            "event": "agent_loop_exhausted",
+                            "payload": {
+                                "reason": loop_exit_reason,
+                                "turn_index": self._max_turns,
+                                "max_turns": self._max_turns,
+                            },
+                        }
+                    )
             # STEP 4: Return loop output
             return {
                 "answer": answer,
                 "agent_trace": agent_trace,
                 "usage": usage,
                 "artifacts": artifacts,
+                "loop_exit_reason": loop_exit_reason,
+                "observability_events": observability_events,
             }
         except BaseException as exc:
             main_error = exc
@@ -313,6 +364,9 @@ class AgentLoop:
             usage: Optional[Dict[str, Any]] = None
             artifacts = []
             required_tool_retry_active = False
+            required_tool_retry_count = 0
+            loop_exit_reason: Optional[str] = None
+            observability_events: List[Dict[str, Any]] = []
             logger.debug(
                 "AgentLoop start max_turns={} messages={} tools={}",
                 self._max_turns,
@@ -351,6 +405,7 @@ class AgentLoop:
                 artifacts = output.get("artifacts") or artifacts
                 tool_calls = _extract_tool_calls(output)
                 if tool_calls:
+                    required_tool_retry_count = 0
                     required_tool_retry_active = False
                     logger.info(
                         "AgentLoop turn {} tool_calls={} names={}",
@@ -426,8 +481,23 @@ class AgentLoop:
                         "AgentLoop turn {} required tool call but backend returned plain answer",
                         turn,
                     )
+                    required_tool_retry_count += 1
                     trace_output = _build_agent_output_payload(output, answer)
                     trace_output["error"] = "required_tool_call_missing"
+                    trace_output["retry_count"] = required_tool_retry_count
+                    observability_events.append(
+                        {
+                            "event": "agent_retry_missing_tool_call",
+                            "payload": {
+                                "turn_index": turn,
+                                "consecutive_retries": required_tool_retry_count,
+                                "answer_preview": (answer or "")[:120],
+                                "has_tool_call_tag": _contains_tag(answer, "tool_call"),
+                                "has_function_tag": _contains_tag(answer, "function"),
+                                "backend_has_raw_response": "raw_response" in output,
+                            },
+                        }
+                    )
                     agent_trace.append(
                         _build_trace_step(
                             step_index,
@@ -442,6 +512,21 @@ class AgentLoop:
                         )
                     )
                     step_index += 1
+                    if required_tool_retry_count >= self._tool_call_retry_budget:
+                        loop_exit_reason = "tool_call_retry_budget"
+                        observability_events.append(
+                            {
+                                "event": "agent_loop_exhausted",
+                                "payload": {
+                                    "reason": loop_exit_reason,
+                                    "turn_index": turn,
+                                    "consecutive_retries": required_tool_retry_count,
+                                    "budget": self._tool_call_retry_budget,
+                                },
+                            }
+                        )
+                        answer = ""
+                        break
                     messages.append({"role": "assistant", "content": answer})
                     messages.append(_build_required_tool_retry_message())
                     required_tool_retry_active = True
@@ -463,12 +548,27 @@ class AgentLoop:
                     )
                 )
                 break
+            else:
+                if loop_exit_reason is None:
+                    loop_exit_reason = "max_turns"
+                    observability_events.append(
+                        {
+                            "event": "agent_loop_exhausted",
+                            "payload": {
+                                "reason": loop_exit_reason,
+                                "turn_index": self._max_turns,
+                                "max_turns": self._max_turns,
+                            },
+                        }
+                    )
             # STEP 4: Return loop output
             return {
                 "answer": answer,
                 "agent_trace": agent_trace,
                 "usage": usage,
                 "artifacts": artifacts,
+                "loop_exit_reason": loop_exit_reason,
+                "observability_events": observability_events,
             }
         except BaseException as exc:
             main_error = exc
@@ -624,6 +724,13 @@ def _resolve_tool_final_answer(tool_result: Dict[str, Any]) -> str:
     if isinstance(final_answer, str) and final_answer.strip():
         return final_answer
     return ""
+
+
+def _contains_tag(value: Any, tag: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    needle = f"<{tag}"
+    return needle in value.lower()
 
 
 def _build_tool_registry(tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

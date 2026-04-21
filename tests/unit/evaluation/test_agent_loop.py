@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -48,6 +49,46 @@ class PlainThenToolBackend:
                 ]
             }
         return {"answer": "done"}
+
+
+class PlainToolLoopBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        if self.calls == 1:
+            return {"answer": "I need a tool"}
+        if self.calls == 2:
+            return {
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "run_shell", "arguments": "{\"command\": \"ls\"}"},
+                    }
+                ]
+            }
+        return {"answer": "done"}
+
+
+class RetryBudgetExceededBackend:
+    def __init__(self):
+        self.calls = 0
+        self.tool_choice_required_payloads: list[Any] = []
+
+    def invoke(self, payload):
+        self.calls += 1
+        self.tool_choice_required_payloads.append(payload.get("tool_choice"))
+        return {"answer": "please call a tool", "raw_response": {"content": "please"}}
+
+
+class AsyncRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, payload):
+        self.calls += 1
+        return {"answer": "please call a tool", "raw_response": {"content": "please"}}
 
 
 class AsyncBackend:
@@ -207,6 +248,144 @@ def test_agent_loop_retries_when_required_tool_call_is_missing() -> None:
 
 
 @pytest.mark.fast
+def test_agent_loop_retries_until_budget_exhausted() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = RetryBudgetExceededBackend()
+    backend._force_tool_choice_mode = "always"
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=10,
+        tool_call_retry_budget=3,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        tool_choice="required",
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+    provider.release()
+
+    assert backend.calls == 3
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert result["answer"] == ""
+    assert len(result["agent_trace"]) == 3
+    assert result["agent_trace"][0]["status"] == "retry_required_tool_call"
+    assert result["agent_trace"][1]["status"] == "retry_required_tool_call"
+    assert result["agent_trace"][2]["status"] == "retry_required_tool_call"
+    assert result["agent_trace"][0]["output"]["retry_count"] == 1
+    assert result["agent_trace"][1]["output"]["retry_count"] == 2
+    assert result["agent_trace"][2]["output"]["retry_count"] == 3
+    events = result["observability_events"]
+    missing_retry_events = [event for event in events if event.get("event") == "agent_retry_missing_tool_call"]
+    assert len(missing_retry_events) == 3
+    assert all(
+        event["payload"]["answer_preview"] == "please call a tool"
+        for event in missing_retry_events
+    )
+    assert all(
+        event["payload"]["has_tool_call_tag"] is False and event["payload"]["has_function_tag"] is False
+        for event in missing_retry_events
+    )
+    assert all(
+        event["payload"]["backend_has_raw_response"] is True for event in missing_retry_events
+    )
+    assert any(event.get("event") == "agent_loop_exhausted" for event in events)
+    exhausted = [event for event in events if event.get("event") == "agent_loop_exhausted"][0]
+    assert exhausted["payload"]["reason"] == "tool_call_retry_budget"
+    assert exhausted["payload"]["consecutive_retries"] == 3
+    assert exhausted["payload"]["budget"] == 3
+    assert not any(
+        event.get("event") == "agent_loop_exhausted" and event["payload"].get("reason") == "max_turns"
+        for event in events
+    )
+    assert all(tc == "required" for tc in backend.tool_choice_required_payloads[:3])
+
+
+@pytest.mark.fast
+def test_agent_loop_retries_clear_after_tool_call() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = PlainToolLoopBackend()
+    backend._force_tool_choice_mode = "first_turn"
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=5,
+        tool_call_retry_budget=2,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        tool_choice="auto",
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+    provider.release()
+
+    assert backend.calls == 3
+    assert result["loop_exit_reason"] is None
+    assert len(result["agent_trace"]) == 3
+
+
+@pytest.mark.fast
+def test_agent_loop_retries_by_max_turns_when_budget_not_hit() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = RetryBudgetExceededBackend()
+    backend._force_tool_choice_mode = "always"
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=10,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        tool_choice="required",
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+    provider.release()
+
+    assert backend.calls == 2
+    assert result["loop_exit_reason"] == "max_turns"
+    assert len(result["observability_events"]) == 3
+    retry_missing_events = [
+        event
+        for event in result["observability_events"]
+        if event.get("event") == "agent_retry_missing_tool_call"
+    ]
+    exhausted = [event for event in result["observability_events"] if event["event"] == "agent_loop_exhausted"][
+        0
+    ]
+    assert len(retry_missing_events) == 2
+    assert exhausted["event"] == "agent_loop_exhausted"
+    assert exhausted["payload"]["reason"] == "max_turns"
+
+
+@pytest.mark.fast
 def test_agent_loop_async_tool_call_flow() -> None:
     manager = SandboxManager()
     manager.register_runtime("fake", FakeSandbox)
@@ -233,6 +412,45 @@ def test_agent_loop_async_tool_call_flow() -> None:
     assert len(result["agent_trace"]) == 2
     assert result["agent_trace"][0]["trace_role"] == "tool"
     assert result["agent_trace"][1]["trace_role"] == "assistant"
+
+
+@pytest.mark.fast
+def test_agent_loop_async_retries_until_budget_exhausted() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = AsyncRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=10,
+        tool_call_retry_budget=2,
+    )
+    result = asyncio.run(
+        loop.arun(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+            sandbox_config={"runtime": "fake"},
+            sandbox_provider=provider,
+            tool_choice="required",
+        )
+    )
+    provider.release()
+
+    assert backend.calls == 2
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert result["answer"] == ""
+    assert len(result["agent_trace"]) == 2
+    assert result["agent_trace"][0]["output"]["retry_count"] == 1
+    assert result["agent_trace"][1]["output"]["retry_count"] == 2
+    events = result["observability_events"]
+    assert any(event["event"] == "agent_loop_exhausted" for event in events)
+    exhausted = [event for event in events if event["event"] == "agent_loop_exhausted"][0]
+    assert exhausted["payload"]["reason"] == "tool_call_retry_budget"
 
 
 @pytest.mark.fast

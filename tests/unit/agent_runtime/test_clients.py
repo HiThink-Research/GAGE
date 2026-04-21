@@ -290,8 +290,8 @@ def test_runtime_executor_reuses_payload_sandbox_provider_without_resource_reacq
 def test_compile_runtime_plan_rejects_installed_client_without_client_id(monkeypatch) -> None:
     original = resolver_module.resolve_agent_runtime_spec
 
-    def _resolve(agent_runtime_id: str):
-        spec = original(agent_runtime_id)
+    def _resolve(agent_runtime_id: str, **kwargs):
+        spec = original(agent_runtime_id, **kwargs)
         if agent_runtime_id != "terminal_bench_installed_client":
             return spec
         return replace(spec, client_id=None)
@@ -338,6 +338,47 @@ def test_build_executor_rejects_unknown_installed_client_id() -> None:
         )
 
     assert "Unknown installed client" in str(exc_info.value)
+
+
+def test_build_compiled_runtime_executor_passes_tool_call_retry_budget_to_framework_loop_scheduler(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_framework_loop")
+
+    class _CapturingFrameworkLoopScheduler:
+        def __init__(
+            self,
+            backend=None,
+            tool_router=None,
+            prompt_renderer=None,
+            max_turns: int = 8,
+            tool_call_retry_budget: int = 3,
+            pre_hooks=None,
+            post_hooks=None,
+        ) -> None:
+            captured["backend"] = backend
+            captured["tool_call_retry_budget"] = tool_call_retry_budget
+            captured["max_turns"] = max_turns
+
+        async def arun(self, **kwargs):
+            raise RuntimeError("not expected to be executed")
+
+    monkeypatch.setattr(
+        resolver_module,
+        "FrameworkLoopScheduler",
+        _CapturingFrameworkLoopScheduler,
+    )
+
+    _ = build_compiled_runtime_executor(
+        compiled_plan=plan,
+        agent_backend=object(),
+        max_turns=6,
+        tool_call_retry_budget=8,
+    )
+
+    assert captured["tool_call_retry_budget"] == 8
+    assert captured["max_turns"] == 6
 
 
 def test_dut_agent_runtime_executor_mode_does_not_require_agent_backend() -> None:

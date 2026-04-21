@@ -10,6 +10,7 @@ from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.pipeline.steps._backend_error import raise_for_backend_error
 from gage_eval.pipeline.steps._role_borrow import borrow_role_with_optional_context
 from gage_eval.pipeline.steps.base import SampleStep
+from gage_eval.pipeline.steps.observability_events import emit_observability_events
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
 from gage_eval.sandbox.provider import SandboxProvider
@@ -63,6 +64,7 @@ class InferenceStep(SampleStep):
             output=output,
             trace=trace,
         )
+        emit_observability_events(trace, sample, output)
         trace.emit("inference_end", payload={"adapter_id": self._adapter_id})
         logger.debug("Inference step finished adapter_id={}", self._adapter_id)
         return output
