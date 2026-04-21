@@ -60,7 +60,7 @@ role_adapters:
       sandbox_id: swebench_runtime
       lifecycle: per_sample
     params:
-      max_turns: 40
+      max_turns: 100
 
   - adapter_id: swebench_runtime_judge
     role_type: judge_extend

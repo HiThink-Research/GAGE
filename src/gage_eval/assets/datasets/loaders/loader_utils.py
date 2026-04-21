@@ -198,12 +198,14 @@ def _resolve_registered_preprocessor(
     try:
         preprocessor_cls = lookup.get("dataset_preprocessors", name)
     except KeyError:
-        if not allow_lazy_import:
-            return None
-        import_dataset_asset_module("dataset_preprocessors", name, registry_lookup=lookup)
-        try:
-            preprocessor_cls = lookup.get("dataset_preprocessors", name)
-        except KeyError:
+        preprocessor_cls = _resolve_preprocessor_fallback(name)
+        if preprocessor_cls is None and allow_lazy_import:
+            import_dataset_asset_module("dataset_preprocessors", name, registry_lookup=lookup)
+            try:
+                preprocessor_cls = lookup.get("dataset_preprocessors", name)
+            except KeyError:
+                preprocessor_cls = _resolve_preprocessor_fallback(name)
+        if preprocessor_cls is None:
             return None
     preprocessor = preprocessor_cls(**kwargs)
     return _PreprocessorAdapter(preprocessor)

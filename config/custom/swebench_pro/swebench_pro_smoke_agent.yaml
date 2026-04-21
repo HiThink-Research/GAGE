@@ -155,7 +155,7 @@ role_adapters:
       # Agent interacts with the same per-sample sandbox.
       lifecycle: per_sample
     params:
-      max_turns: 40
+      max_turns: 100
       # Tools are injected via the toolchain support step.
 
   - adapter_id: swebench_toolchain
