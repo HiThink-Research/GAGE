@@ -242,7 +242,7 @@ def _yaml_dump(data: dict, *, sort_keys: bool = False) -> str:
 
 _EMPTY_EXPANDED_CONFIG_DISPLAY_SECTIONS = {
     "models",
-    "agent_backends",
+    "agent_runtimes",
     "sandbox_profiles",
     "mcp_clients",
     "prompts",

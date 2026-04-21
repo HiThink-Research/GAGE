@@ -29,7 +29,11 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     datasets = _ensure_list(data.get("datasets"), "datasets", errors)
     models = _ensure_list(data.get("models"), "models", errors)
     backends = _ensure_list(data.get("backends"), "backends", errors)
-    agent_backends = _ensure_list(data.get("agent_backends"), "agent_backends", errors)
+    agent_runtimes = _ensure_list(data.get("agent_runtimes"), "agent_runtimes", errors)
+    if "agent_backends" in data:
+        errors.append(
+            "'agent_backends' has been removed; declare 'agent_runtimes' and bind adapters with 'agent_runtime_id'"
+        )
     sandbox_profiles = _ensure_list(data.get("sandbox_profiles"), "sandbox_profiles", errors)
     mcp_clients = _ensure_list(data.get("mcp_clients"), "mcp_clients", errors)
     prompts = _ensure_list(data.get("prompts"), "prompts", errors)
@@ -54,7 +58,8 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     dataset_ids = _ensure_unique(datasets, "dataset_id", "dataset", errors)
     model_ids = _ensure_unique(models, "model_id", "model", errors)
     backend_ids = _ensure_unique(backends, "backend_id", "backend", errors)
-    agent_backend_ids = _ensure_unique(agent_backends, "agent_backend_id", "agent backend", errors)
+    agent_runtime_ids = _ensure_unique(agent_runtimes, "agent_runtime_id", "agent runtime", errors)
+    _validate_agent_runtimes(agent_runtimes, errors)
     _normalize_sandbox_profile_ids(sandbox_profiles, errors)
     _ensure_unique(sandbox_profiles, "sandbox_id", "sandbox profile", errors)
     mcp_client_ids = _ensure_unique(mcp_clients, "mcp_client_id", "mcp client", errors)
@@ -62,7 +67,15 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     adapter_ids = _ensure_unique(role_adapters, "adapter_id", "role adapter", errors)
     metric_ids = _ensure_unique(metrics, "metric_id", "metric", errors, allow_str=True)
 
-    _validate_role_bindings(role_adapters, backend_ids, agent_backend_ids, prompt_ids, mcp_client_ids, errors)
+    _validate_role_bindings(
+        role_adapters,
+        backend_ids,
+        agent_runtimes,
+        agent_runtime_ids,
+        prompt_ids,
+        mcp_client_ids,
+        errors,
+    )
     _validate_steps(custom, adapter_ids=adapter_ids, errors=errors)
     _validate_tasks(
         tasks=tasks,
@@ -80,7 +93,7 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["datasets"] = datasets
     data["models"] = models
     data["backends"] = backends
-    data["agent_backends"] = agent_backends
+    data["agent_runtimes"] = agent_runtimes
     data["sandbox_profiles"] = sandbox_profiles
     data["mcp_clients"] = mcp_clients
     data["prompts"] = prompts
@@ -139,16 +152,38 @@ def _normalize_sandbox_profile_ids(items: List[dict], errors: List[str]) -> None
             item["sandbox_id"] = template_name
 
 
+def _validate_agent_runtimes(agent_runtimes: List[dict], errors: List[str]) -> None:
+    valid_scheduler_types = {"installed_client", "framework_loop", "acp_client"}
+    for runtime in agent_runtimes:
+        if not isinstance(runtime, dict):
+            errors.append("agent runtime entries must be dictionaries")
+            continue
+        runtime_id = runtime.get("agent_runtime_id", "<unknown>")
+        if not runtime.get("benchmark_kit_id"):
+            errors.append(f"agent runtime '{runtime_id}' must declare 'benchmark_kit_id'")
+        scheduler_type = runtime.get("scheduler_type")
+        if scheduler_type not in valid_scheduler_types:
+            errors.append(
+                f"agent runtime '{runtime_id}' must declare scheduler_type in {sorted(valid_scheduler_types)}"
+            )
+
+
 def _validate_role_bindings(
     role_adapters: List[dict],
     backend_ids: List[str],
-    agent_backend_ids: List[str],
+    agent_runtimes: List[dict],
+    agent_runtime_ids: List[str],
     prompt_ids: List[str],
     mcp_client_ids: List[str],
     errors: List[str],
 ) -> None:
     backend_set = set(backend_ids)
-    agent_backend_set = set(agent_backend_ids)
+    agent_runtime_set = set(agent_runtime_ids)
+    runtime_by_id = {
+        runtime.get("agent_runtime_id"): runtime
+        for runtime in agent_runtimes
+        if isinstance(runtime, dict) and runtime.get("agent_runtime_id")
+    }
     prompt_set = set(prompt_ids)
     mcp_client_set = set(mcp_client_ids)
     for adapter in role_adapters:
@@ -161,9 +196,15 @@ def _validate_role_bindings(
         mcp_client_id = adapter.get("mcp_client_id")
         role_type = adapter.get("role_type")
         adapter_id = adapter.get("adapter_id", "<unknown>")
+        runtime = runtime_by_id.get(agent_runtime_id)
+        scheduler_type = runtime.get("scheduler_type") if isinstance(runtime, dict) else None
         if backend_id and backend_id not in backend_set:
             errors.append(
                 f"role adapter '{adapter_id}' references unknown backend '{backend_id}'"
+            )
+        if agent_runtime_id and agent_runtime_id not in agent_runtime_set:
+            errors.append(
+                f"role adapter '{adapter_id}' references unknown agent runtime '{agent_runtime_id}'"
             )
         if inline_backend is not None:
             if not isinstance(inline_backend, dict):
@@ -174,28 +215,27 @@ def _validate_role_bindings(
                 errors.append(
                     f"role adapter '{adapter_id}' inline backend missing required field 'type'"
                 )
-        if agent_backend_id and agent_backend_id not in agent_backend_set:
+        if agent_backend_id:
             errors.append(
-                f"role adapter '{adapter_id}' references unknown agent backend '{agent_backend_id}'"
+                f"role adapter '{adapter_id}' declares removed field 'agent_backend_id'; use 'agent_runtime_id'"
             )
         if inline_agent_backend is not None:
-            if not isinstance(inline_agent_backend, dict):
+            errors.append(
+                f"role adapter '{adapter_id}' declares removed field 'agent_backend'; use 'backend'"
+            )
+        if _is_installed_client_dut_agent(role_type=role_type, scheduler_type=scheduler_type):
+            if backend_id:
                 errors.append(
-                    f"role adapter '{adapter_id}' inline agent backend must be a mapping with 'type'/'config'"
+                    f"role adapter '{adapter_id}' uses installed_client runtime '{agent_runtime_id}' and must not declare 'backend_id'"
                 )
-            elif not inline_agent_backend.get("type"):
+            if inline_backend is not None:
                 errors.append(
-                    f"role adapter '{adapter_id}' inline agent backend missing required field 'type'"
+                    f"role adapter '{adapter_id}' uses installed_client runtime '{agent_runtime_id}' and must not declare inline 'backend'"
                 )
-        if _is_installed_client_dut_agent(role_type=role_type, agent_runtime_id=agent_runtime_id):
-            if agent_backend_id:
-                errors.append(
-                    f"role adapter '{adapter_id}' uses installed_client runtime '{agent_runtime_id}' and must not declare 'agent_backend_id'"
-                )
-            if inline_agent_backend is not None:
-                errors.append(
-                    f"role adapter '{adapter_id}' uses installed_client runtime '{agent_runtime_id}' and must not declare inline 'agent_backend'"
-                )
+        if role_type == "dut_agent" and scheduler_type == "framework_loop" and not (backend_id or inline_backend):
+            errors.append(
+                f"role adapter '{adapter_id}' uses framework_loop runtime '{agent_runtime_id}' and must declare 'backend_id'"
+            )
         if prompt_id and prompt_id not in prompt_set:
             if not _prompt_id_in_registry(prompt_id):
                 errors.append(
@@ -228,12 +268,10 @@ def _prompt_id_in_registry(prompt_id: str) -> bool:
         return False
 
 
-def _is_installed_client_dut_agent(*, role_type: Any, agent_runtime_id: Any) -> bool:
+def _is_installed_client_dut_agent(*, role_type: Any, scheduler_type: Any) -> bool:
     if role_type != "dut_agent":
         return False
-    if not isinstance(agent_runtime_id, str):
-        return False
-    return "installed_client" in agent_runtime_id
+    return scheduler_type == "installed_client"
 
 
 def _validate_steps(

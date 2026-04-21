@@ -1,0 +1,65 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: openra_ra_skirmish_native_pure_human_visual
+  description: >
+    Native OpenRA Red Alert skirmish manual-play config. Exposes only one human
+    seat to arena_visual, keeps the real engine running in realtime, and does
+    not inject dummy demo actions.
+
+datasets:
+  - dataset_id: openra_gamekit_fixture_only
+    loader: jsonl
+    params:
+      path: tests/data/Test_OpenRA.jsonl
+      streaming: false
+
+custom:
+  steps:
+    - step: arena
+      adapter_id: openra_ra_skirmish_native_pure_human_visual_arena
+
+role_adapters:
+  - adapter_id: openra_ra_skirmish_native_pure_human_visual_arena
+    role_type: arena
+    params:
+      game_kit: openra
+      env: ra_skirmish_1v1
+      runtime_overrides:
+        backend_mode: native
+        max_decisions: 7200
+        native_step_interval_s: 0.05
+        native_frame_rate_hz: 20.0
+        native_startup_orders:
+          - option fog False
+          - option explored True
+        runtime_binding_policy_config:
+          mode: scheduler_owned_human_realtime
+          activation_scope: pure_human_only
+          input_model: queued_command
+          input_transport: realtime_ws
+          tick_interval_ms: 50
+          frame_output_hz: 20
+          artifact_sampling_mode: async_decimated_live
+          fallback_move: noop
+      human_input:
+        enabled: true
+        host: 127.0.0.1
+        port: 0
+      visualizer:
+        enabled: true
+        title: GAGE OpenRA Native Pure Human Arena Visual
+        launch_browser: true
+        mode: arena_visual
+        live_scene_scheme: low_latency_channel
+        linger_after_finish_s: 120.0
+      players:
+        - seat: player_0
+          player_id: player_0
+          player_kind: human
+          driver_params:
+            input_semantics: queued_command
+            tick_interval_ms: 50
+            timeout_ms: 50
+            timeout_fallback_move: noop

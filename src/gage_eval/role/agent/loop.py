@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 
@@ -26,12 +26,14 @@ class AgentLoop:
         tool_router: ToolRouter,
         *,
         max_turns: int = 8,
+        tool_call_retry_budget: int = 3,
         pre_hooks: Optional[Sequence[Any]] = None,
         post_hooks: Optional[Sequence[Any]] = None,
     ) -> None:
         self._backend = backend
         self._tool_router = tool_router
         self._max_turns = max(1, int(max_turns))
+        self._tool_call_retry_budget = max(1, int(tool_call_retry_budget))
         self._pre_hooks = build_hook_chain(pre_hooks)
         self._post_hooks = build_hook_chain(post_hooks)
 
@@ -88,6 +90,10 @@ class AgentLoop:
             answer = ""
             usage: Optional[Dict[str, Any]] = None
             artifacts = []
+            required_tool_retry_active = False
+            required_tool_retry_count = 0
+            loop_exit_reason: Optional[str] = None
+            observability_events: List[Dict[str, Any]] = []
             logger.debug(
                 "AgentLoop start max_turns={} messages={} tools={}",
                 self._max_turns,
@@ -104,10 +110,16 @@ class AgentLoop:
                     len(messages),
                     len(tools or []),
                 )
+                effective_tool_choice = _resolve_effective_tool_choice(
+                    backend=self._backend,
+                    tool_choice="required" if required_tool_retry_active else tool_choice,
+                    tools=tools or [],
+                    turn_index=turn,
+                )
                 backend_payload = {
                     "messages": messages,
                     "tools": tools or [],
-                    "tool_choice": tool_choice,
+                    "tool_choice": effective_tool_choice,
                     "turn_index": turn,
                     "runtime_handle": runtime_handle,
                     "metadata": effective_metadata,
@@ -116,10 +128,12 @@ class AgentLoop:
                 raw_output = _invoke_backend_sync(self._backend, backend_payload)
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 output = normalize_agent_output(raw_output)
-                usage = output.get("usage") or usage
+                usage = _merge_usage(usage, output.get("usage"))
                 artifacts = output.get("artifacts") or artifacts
                 tool_calls = _extract_tool_calls(output)
                 if tool_calls:
+                    required_tool_retry_count = 0
+                    required_tool_retry_active = False
                     logger.info(
                         "AgentLoop turn {} tool_calls={} names={}",
                         turn,
@@ -189,6 +203,62 @@ class AgentLoop:
                         break
                     continue
                 answer = output.get("answer") or ""
+                if _requires_tool_call(effective_tool_choice, tools or []):
+                    logger.warning(
+                        "AgentLoop turn {} required tool call but backend returned plain answer",
+                        turn,
+                    )
+                    required_tool_retry_count += 1
+                    trace_output = _build_agent_output_payload(output, answer)
+                    trace_output["error"] = "required_tool_call_missing"
+                    trace_output["retry_count"] = required_tool_retry_count
+                    agent_trace.append(
+                        _build_trace_step(
+                            step_index,
+                            trace_role="assistant",
+                            name="agent_response",
+                            input_payload=None,
+                            output_payload=trace_output,
+                            status="retry_required_tool_call",
+                            latency_ms=elapsed_ms,
+                            usage=usage,
+                            turn_index=turn,
+                        )
+                    )
+                    observability_events.append(
+                        {
+                            "event": "agent_retry_missing_tool_call",
+                            "payload": {
+                                "turn_index": turn,
+                                "consecutive_retries": required_tool_retry_count,
+                                "answer_preview": (answer or "")[:120],
+                                "has_tool_call_tag": _contains_tag(answer, "tool_call"),
+                                "has_function_tag": _contains_tag(answer, "function"),
+                                "backend_has_raw_response": "raw_response" in output,
+                            },
+                        }
+                    )
+                    step_index += 1
+                    if required_tool_retry_count >= self._tool_call_retry_budget:
+                        loop_exit_reason = "tool_call_retry_budget"
+                        observability_events.append(
+                            {
+                                "event": "agent_loop_exhausted",
+                                "payload": {
+                                    "reason": loop_exit_reason,
+                                    "turn_index": turn,
+                                    "consecutive_retries": required_tool_retry_count,
+                                    "budget": self._tool_call_retry_budget,
+                                },
+                            }
+                        )
+                        answer = ""
+                        break
+                    messages.append({"role": "assistant", "content": answer})
+                    messages.append(_build_required_tool_retry_message())
+                    required_tool_retry_active = True
+                    answer = ""
+                    continue
                 logger.info("AgentLoop turn {} completed answer_len={}", turn, len(answer))
                 trace_output = _build_agent_output_payload(output, answer)
                 agent_trace.append(
@@ -205,12 +275,27 @@ class AgentLoop:
                     )
                 )
                 break
+            else:
+                if loop_exit_reason is None:
+                    loop_exit_reason = "max_turns"
+                    observability_events.append(
+                        {
+                            "event": "agent_loop_exhausted",
+                            "payload": {
+                                "reason": loop_exit_reason,
+                                "turn_index": self._max_turns,
+                                "max_turns": self._max_turns,
+                            },
+                        }
+                    )
             # STEP 4: Return loop output
             return {
                 "answer": answer,
                 "agent_trace": agent_trace,
                 "usage": usage,
                 "artifacts": artifacts,
+                "loop_exit_reason": loop_exit_reason,
+                "observability_events": observability_events,
             }
         except BaseException as exc:
             main_error = exc
@@ -278,6 +363,10 @@ class AgentLoop:
             answer = ""
             usage: Optional[Dict[str, Any]] = None
             artifacts = []
+            required_tool_retry_active = False
+            required_tool_retry_count = 0
+            loop_exit_reason: Optional[str] = None
+            observability_events: List[Dict[str, Any]] = []
             logger.debug(
                 "AgentLoop start max_turns={} messages={} tools={}",
                 self._max_turns,
@@ -294,10 +383,16 @@ class AgentLoop:
                     len(messages),
                     len(tools or []),
                 )
+                effective_tool_choice = _resolve_effective_tool_choice(
+                    backend=self._backend,
+                    tool_choice="required" if required_tool_retry_active else tool_choice,
+                    tools=tools or [],
+                    turn_index=turn,
+                )
                 backend_payload = {
                     "messages": messages,
                     "tools": tools or [],
-                    "tool_choice": tool_choice,
+                    "tool_choice": effective_tool_choice,
                     "turn_index": turn,
                     "runtime_handle": runtime_handle,
                     "metadata": effective_metadata,
@@ -306,10 +401,12 @@ class AgentLoop:
                 raw_output = await _invoke_backend_async(self._backend, backend_payload)
                 elapsed_ms = (time.perf_counter() - start) * 1000.0
                 output = normalize_agent_output(raw_output)
-                usage = output.get("usage") or usage
+                usage = _merge_usage(usage, output.get("usage"))
                 artifacts = output.get("artifacts") or artifacts
                 tool_calls = _extract_tool_calls(output)
                 if tool_calls:
+                    required_tool_retry_count = 0
+                    required_tool_retry_active = False
                     logger.info(
                         "AgentLoop turn {} tool_calls={} names={}",
                         turn,
@@ -379,6 +476,62 @@ class AgentLoop:
                         break
                     continue
                 answer = output.get("answer") or ""
+                if _requires_tool_call(effective_tool_choice, tools or []):
+                    logger.warning(
+                        "AgentLoop turn {} required tool call but backend returned plain answer",
+                        turn,
+                    )
+                    required_tool_retry_count += 1
+                    trace_output = _build_agent_output_payload(output, answer)
+                    trace_output["error"] = "required_tool_call_missing"
+                    trace_output["retry_count"] = required_tool_retry_count
+                    observability_events.append(
+                        {
+                            "event": "agent_retry_missing_tool_call",
+                            "payload": {
+                                "turn_index": turn,
+                                "consecutive_retries": required_tool_retry_count,
+                                "answer_preview": (answer or "")[:120],
+                                "has_tool_call_tag": _contains_tag(answer, "tool_call"),
+                                "has_function_tag": _contains_tag(answer, "function"),
+                                "backend_has_raw_response": "raw_response" in output,
+                            },
+                        }
+                    )
+                    agent_trace.append(
+                        _build_trace_step(
+                            step_index,
+                            trace_role="assistant",
+                            name="agent_response",
+                            input_payload=None,
+                            output_payload=trace_output,
+                            status="retry_required_tool_call",
+                            latency_ms=elapsed_ms,
+                            usage=usage,
+                            turn_index=turn,
+                        )
+                    )
+                    step_index += 1
+                    if required_tool_retry_count >= self._tool_call_retry_budget:
+                        loop_exit_reason = "tool_call_retry_budget"
+                        observability_events.append(
+                            {
+                                "event": "agent_loop_exhausted",
+                                "payload": {
+                                    "reason": loop_exit_reason,
+                                    "turn_index": turn,
+                                    "consecutive_retries": required_tool_retry_count,
+                                    "budget": self._tool_call_retry_budget,
+                                },
+                            }
+                        )
+                        answer = ""
+                        break
+                    messages.append({"role": "assistant", "content": answer})
+                    messages.append(_build_required_tool_retry_message())
+                    required_tool_retry_active = True
+                    answer = ""
+                    continue
                 logger.info("AgentLoop turn {} completed answer_len={}", turn, len(answer))
                 trace_output = _build_agent_output_payload(output, answer)
                 agent_trace.append(
@@ -395,12 +548,27 @@ class AgentLoop:
                     )
                 )
                 break
+            else:
+                if loop_exit_reason is None:
+                    loop_exit_reason = "max_turns"
+                    observability_events.append(
+                        {
+                            "event": "agent_loop_exhausted",
+                            "payload": {
+                                "reason": loop_exit_reason,
+                                "turn_index": self._max_turns,
+                                "max_turns": self._max_turns,
+                            },
+                        }
+                    )
             # STEP 4: Return loop output
             return {
                 "answer": answer,
                 "agent_trace": agent_trace,
                 "usage": usage,
                 "artifacts": artifacts,
+                "loop_exit_reason": loop_exit_reason,
+                "observability_events": observability_events,
             }
         except BaseException as exc:
             main_error = exc
@@ -456,6 +624,71 @@ def _extract_tool_calls(output: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+def _resolve_effective_tool_choice(
+    *,
+    backend: Any,
+    tool_choice: Optional[Any],
+    tools: List[Dict[str, Any]],
+    turn_index: int,
+) -> Optional[Any]:
+    """Resolve the tool choice enforced by the agent backend wrapper."""
+
+    if not tools:
+        return tool_choice
+    force_mode = str(getattr(backend, "_force_tool_choice_mode", "never") or "never")
+    if force_mode == "always" and tool_choice in (None, "auto"):
+        return "required"
+    if force_mode == "first_turn" and turn_index <= 1 and tool_choice in (None, "auto"):
+        return "required"
+    return tool_choice
+
+
+def _merge_usage(
+    current: Optional[Dict[str, Any]],
+    new_usage: Any,
+) -> Optional[Dict[str, Any]]:
+    """Accumulate per-turn usage payloads into a run-level total."""
+
+    if not isinstance(new_usage, dict):
+        return current
+    if current is None:
+        return dict(new_usage)
+
+    merged = dict(current)
+    for key, value in new_usage.items():
+        current_value = merged.get(key)
+        if _is_usage_number(current_value) and _is_usage_number(value):
+            merged[key] = current_value + value
+        elif key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _is_usage_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _requires_tool_call(tool_choice: Optional[Any], tools: List[Dict[str, Any]]) -> bool:
+    if not tools:
+        return False
+    if isinstance(tool_choice, str):
+        return tool_choice.strip().lower() == "required"
+    if isinstance(tool_choice, dict):
+        return bool(tool_choice)
+    return False
+
+
+def _build_required_tool_retry_message() -> Dict[str, Any]:
+    return {
+        "role": "user",
+        "content": (
+            "Your previous response did not call a tool. You must call exactly one "
+            "available tool now. If you need to speak to the user, call the respond "
+            "tool instead of returning plain text."
+        ),
+    }
+
+
 def _build_tool_message(tool_call: Dict[str, Any], output: Any) -> Dict[str, Any]:
     tool_call_id = tool_call.get("id")
     tool_name = tool_call.get("name")
@@ -491,6 +724,13 @@ def _resolve_tool_final_answer(tool_result: Dict[str, Any]) -> str:
     if isinstance(final_answer, str) and final_answer.strip():
         return final_answer
     return ""
+
+
+def _contains_tag(value: Any, tag: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    needle = f"<{tag}"
+    return needle in value.lower()
 
 
 def _build_tool_registry(tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

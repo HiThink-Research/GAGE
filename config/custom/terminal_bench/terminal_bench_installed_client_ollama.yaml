@@ -33,6 +33,18 @@ metrics:
     implementation: gage_eval.metrics.builtin.runtime_judge:RuntimeFailureReasonMetric
     aggregation: categorical_count
 
+
+agent_runtimes:
+  - agent_runtime_id: terminal_bench_installed_client
+    benchmark_kit_id: terminal_bench
+    scheduler_type: installed_client
+    client_id: codex
+    sandbox_profile_id: terminal_bench_runtime
+    resource_policy:
+      resource_kind: docker
+      lifecycle: per_sample
+    verifier_binding_id: terminal_bench_native
+
 sandbox_profiles:
   - sandbox_id: terminal_bench_runtime
     runtime: docker

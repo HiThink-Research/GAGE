@@ -20,7 +20,7 @@ def test_appworld_demo_config_parses() -> None:
 
     assert config.metadata.get("name") == "appworld_agent_demo"
     assert config.datasets[0].dataset_id == "appworld_demo"
-    assert config.agent_backends[0].agent_backend_id == "agent_model_main"
+    assert config.agent_runtimes[0].agent_runtime_id == "appworld_framework_loop"
 
     adapter_ids = {spec.adapter_id for spec in config.role_adapters}
     assert {"toolchain_main", "dut_agent_main"}.issubset(adapter_ids)

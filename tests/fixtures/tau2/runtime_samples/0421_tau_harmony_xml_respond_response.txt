@@ -1,0 +1,22 @@
+The user is asking for help with mobile data issues. According to the policy, I must first identify the customer before I can help with technical support. I need to call a tool to get customer information. The user hasn't provided any identifying information yet (phone number, customer ID, or name/DOB). However, the policy states I must call exactly one available tool now. Since I don't have the required information to identify the customer, I should ask for it using the respond tool. But wait, the instruction says "If you need to speak to the user, call the respond tool instead of returning plain text." So I should use respond to ask for the required information.
+
+However, looking at the policy again: "You must first identify the customer." for technical support. The user hasn't provided any identifying information. I need to ask for it. So I should call respond with a message asking for the phone number or other identifying details.
+
+But the instruction also says: "Your previous response did not call a tool. You must call exactly one available tool now." This is a bit confusing because my first response was just a greeting and question, but I didn't call any tool. Now I need to call a tool. Since I don't have the customer's information, I cannot call get_customer_by_phone, get_customer_by_id, or get_customer_by_name. The only tool I can call is respond to ask for the information.
+
+So I will call respond with a message asking for the phone number or other identifying details.
+</think>
+
+<tool_call>
+<function=respond>
+<parameter=message>
+Hello! I'd be happy to help you with your mobile data issues. To get started, I need to identify your account. Could you please provide one of the following:
+
+- The phone number for the line with the issue, or
+- Your customer ID, or
+- Your full name and date of birth (in YYYY-MM-DD format)
+
+Also, are you currently traveling outside your home network (roaming)? And can you still make calls and send/receive regular texts on this phone?
+</parameter>
+</function>
+</tool_call>

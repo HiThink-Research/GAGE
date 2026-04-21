@@ -21,7 +21,7 @@ class _RegistryStub:
     def materialize_backends(self, config):
         return {}
 
-    def materialize_agent_backends(self, config, *, backends):
+    def materialize_agent_runtimes(self, config):
         return {}
 
     def materialize_sandbox_profiles(self, config):
@@ -86,6 +86,7 @@ def test_single_and_task_runtime_metadata_share_one_contract(tmp_path) -> None:
     for key in (
         "runtime_metadata_schema_version",
         "backends",
+        "agent_runtimes",
         "models",
         "role_adapters",
         "summary_generators",

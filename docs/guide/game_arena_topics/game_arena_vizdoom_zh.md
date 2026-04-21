@@ -45,6 +45,28 @@ bash scripts/run/arenas/vizdoom/run.sh --mode dummy --max-samples 1
 OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>" bash scripts/run/arenas/vizdoom/run.sh --mode llm_visual_openai --max-samples 1
 ```
 
+建议先用这条命令验证 ViZDoom、websocketRGB 和浏览器查看链路，再继续切到模型模式。
+
+这个 websocketRGB helper 的执行顺序：
+
+1. 选择 Python 解释器。
+2. 校验配置文件路径。
+3. 选择一个可用的 `WS_RGB_PORT`。
+4. 在后台启动 `python run.py --config ...`。
+5. 等待 `http://127.0.0.1:<port>/ws_rgb/viewer` 可访问。
+6. 打印可用的 viewer 地址，并按配置决定是否自动打开浏览器。
+
+这个示例里最常用的变量：
+
+- `PYTHON_BIN`：Python 解释器
+- `CFG`：默认 `config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml`
+- `RUN_ID`：写入 `runs/` 的运行编号
+- `OUTPUT_DIR`：默认 `runs`
+- `WS_RGB_HOST`：默认 `127.0.0.1`
+- `WS_RGB_PORT`：默认 `5800`
+
+如果你想改成本地窗口验证路径，可以执行：
+
 ```bash
 bash scripts/run/arenas/vizdoom/run.sh --mode human_visual --max-samples 1
 ```

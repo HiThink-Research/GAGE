@@ -144,5 +144,5 @@ def test_phase1_installed_client_local_configs_do_not_declare_agent_backends(
     config = _load_config(REPO_ROOT / config_relpath)
 
     adapter = next(spec for spec in config.role_adapters if spec.adapter_id == adapter_id)
-    assert adapter.agent_backend_id is None
-    assert not config.agent_backends
+    assert adapter.backend_id is None
+    assert config.agent_runtimes

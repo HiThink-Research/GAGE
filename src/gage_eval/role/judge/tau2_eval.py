@@ -93,8 +93,13 @@ def _build_simulation(task: Any, runtime_state: Dict[str, Any]) -> Any:
     duration = _duration_seconds(start_time, end_time)
     termination = resolve_tau2_termination_reason(
         runtime_state.get("termination_reason"),
-        fallback="too_many_errors",
+        fallback=None,
     )
+    if termination is None:
+        termination = resolve_tau2_termination_reason(
+            "agent_error",
+            fallback="too_many_errors",
+        )
     return SimulationRun(
         id=str(runtime_state.get("simulation_id") or runtime_state.get("task_id") or task.id),
         task_id=str(task.id),

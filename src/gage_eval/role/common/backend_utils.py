@@ -11,6 +11,8 @@ import re
 import uuid
 import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from dataclasses import asdict, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -99,6 +101,8 @@ def finalize_backend_result(
     batch_path: str,
     backend_tag: str,
     cfg_tokenizer_path: Any = None,
+    raw_outputs: Optional[List[Any]] = None,
+    usage: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Normalize backend output shape with metadata from prepared inputs."""
 
@@ -106,12 +110,73 @@ def finalize_backend_result(
         result = {"answer": outputs, "_backend": backend_tag, "_sample_n": sample_n, "_batch_path": batch_path}
     else:
         result = {"answer": outputs[0] if outputs else "", "_backend": backend_tag, "_batch_path": batch_path}
+    if raw_outputs is not None:
+        result["raw_response"] = _normalize_raw_response(raw_outputs, sample_n=sample_n)
+    if usage is not None:
+        result["usage"] = usage
     attach_template_metadata(prepared, result, cfg_tokenizer_path=cfg_tokenizer_path)
     if prepared.get("prompt_meta"):
         result["prompt_meta"] = prepared["prompt_meta"]
     if prepared.get("cache_namespace"):
         result["cache_namespace"] = prepared["cache_namespace"]
     return result
+
+
+def _normalize_raw_response(raw_outputs: List[Any], *, sample_n: int) -> Any:
+    if sample_n > 1:
+        return _to_json_safe(raw_outputs)
+    if raw_outputs:
+        return _to_json_safe(raw_outputs[0])
+    return None
+
+
+def _to_json_safe(value: Any, *, _seen: Optional[set[int]] = None) -> Any:
+    """Convert backend-native response objects into JSON-friendly data."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Enum):
+        return _to_json_safe(value.value, _seen=_seen)
+
+    if _seen is None:
+        _seen = set()
+    object_id = id(value)
+    if object_id in _seen:
+        return {"object_type": f"{value.__class__.__module__}.{value.__class__.__qualname__}", "cycle": True}
+    _seen.add(object_id)
+
+    if isinstance(value, dict):
+        return {str(key): _to_json_safe(item, _seen=_seen) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_to_json_safe(item, _seen=_seen) for item in value]
+    if is_dataclass(value):
+        return _to_json_safe(asdict(value), _seen=_seen)
+
+    for method_name in ("model_dump", "to_dict", "dict"):
+        method = getattr(value, method_name, None)
+        if callable(method):
+            try:
+                return _to_json_safe(method(), _seen=_seen)
+            except Exception:
+                pass
+
+    try:
+        attrs = vars(value)
+    except TypeError:
+        attrs = None
+    if isinstance(attrs, dict) and attrs:
+        payload = {str(key): _to_json_safe(item, _seen=_seen) for key, item in attrs.items()}
+        payload.setdefault("object_type", f"{value.__class__.__module__}.{value.__class__.__qualname__}")
+        return payload
+
+    return {
+        "object_type": f"{value.__class__.__module__}.{value.__class__.__qualname__}",
+        "repr": repr(value),
+    }
 
 
 def run_coroutine_threadsafe_with_timeout(
@@ -507,7 +572,7 @@ def maybe_tokenize_messages(
     cache_suffix: str = "-chat_template",
     normalize_fn=normalize_messages_safe,
 ) -> Tuple[str, Any, Dict[str, Any]]:
-    """Generate prompt_token_ids using tokenizer/processor if needed.
+    """Render messages with backend chat templates while preserving explicit token ids.
 
     Returns: (new_prompt, new_inputs, meta_updates).
     """
@@ -535,6 +600,9 @@ def maybe_tokenize_messages(
 
     has_multimodal = ChatTemplateMixin.detect_multimodal(prepared)
     render_messages = messages if has_multimodal else normalize_fn(messages)
+    chat_template_kwargs = prepared.get("chat_template_kwargs")
+    if not isinstance(chat_template_kwargs, dict):
+        chat_template_kwargs = {}
 
     chat_template_fn = None
     if has_multimodal and processor and hasattr(processor, "apply_chat_template"):
@@ -562,37 +630,29 @@ def maybe_tokenize_messages(
     try:
         sanitized_messages = messages
         rendered = None
-        tokenized = None
         try:
-            rendered = chat_template_fn(render_messages, tokenize=False, add_generation_prompt=True)
-            tokenized = chat_template_fn(render_messages, tokenize=True, add_generation_prompt=True)
+            rendered = chat_template_fn(
+                render_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **chat_template_kwargs,
+            )
         except Exception:
             if not has_multimodal:
                 return prompt, inputs, {}
             sanitized_messages = _strip_non_text(messages)
-            rendered = chat_template_fn(sanitized_messages, tokenize=False, add_generation_prompt=True)
-            tokenized = chat_template_fn(sanitized_messages, tokenize=True, add_generation_prompt=True)
-
-        if isinstance(tokenized, list):
-            first = tokenized[0] if tokenized else []
-            token_ids = first if isinstance(first, (list, tuple)) else tokenized
-        else:
-            # Handle transformers BatchEncoding / dict-like outputs
-            if hasattr(tokenized, "__getitem__") and "input_ids" in tokenized:
-                token_ids = tokenized["input_ids"]
-                # BatchEncoding may return nested list for batch dimension
-                if isinstance(token_ids, list) and token_ids and isinstance(token_ids[0], list):
-                    token_ids = token_ids[0]
-            else:
-                token_ids = tokenized
+            rendered = chat_template_fn(
+                sanitized_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                **chat_template_kwargs,
+            )
 
         new_prompt = str(rendered) if rendered else prompt
         if not isinstance(inputs, dict):
             inputs = {}
         new_inputs = dict(inputs)
         new_inputs["prompt"] = new_prompt
-        if token_ids is not None:
-            new_inputs["prompt_token_ids"] = token_ids
 
         meta = {
             "template_source": "model",

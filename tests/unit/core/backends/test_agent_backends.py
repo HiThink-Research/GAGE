@@ -206,6 +206,207 @@ def test_model_backend_extracts_tool_calls():
 
 
 @pytest.mark.fast
+def test_model_backend_extracts_tagged_text_tool_call():
+    class TaggedToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    '{"name": "respond", "arguments": {"message": "hello"}}\n'
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": TaggedToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert "raw_answer" in result
+    assert result["tool_calls"][0]["type"] == "function"
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"message": "hello"}
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_tool_calls_json_array_marker():
+    class ArrayToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "[TOOL_CALLS]\n"
+                    '[{"name": "set_network_mode_preference", "arguments": {"mode": "5G"}}]'
+                )
+            }
+
+    backend = ModelBackend({"backend": ArrayToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "set_network_mode_preference"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"mode": "5G"}
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_qwen_xml_function_call():
+    class XmlToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    "<function=respond>\n"
+                    "<parameter=message>Done, your mobile data is working.</parameter>\n"
+                    "</function>\n"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": XmlToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Done, your mobile data is working."
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_named_xml_function_call():
+    class NamedXmlToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<function_calls>\n"
+                    '<function name="toggle_airplane_mode">\n'
+                    '<parameter name="enabled">false</parameter>\n'
+                    "</function>\n"
+                    "</function_calls>"
+                )
+            }
+
+    backend = ModelBackend({"backend": NamedXmlToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "toggle_airplane_mode"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"enabled": False}
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_pythonic_function_call():
+    class PythonicToolCallBackend:
+        def invoke(self, payload):
+            return {"answer": "<function_calls>\nrespond(message='All set')\n</function_calls>"}
+
+    backend = ModelBackend({"backend": PythonicToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"message": "All set"}
+
+
+def test_model_backend_filters_tool_calls_by_tools_schema_if_present():
+    class XmlToolCallBackend:
+        def __init__(self) -> None:
+            self._answer = (
+                "<tool_call>\n"
+                "<function=respond>\n"
+                "<parameter=message>Done, your mobile data is working.</parameter>\n"
+                "</function>\n"
+                "</tool_call>"
+            )
+
+        def invoke(self, payload):
+            return {"answer": self._answer}
+
+    backend = ModelBackend(
+        {
+            "backend": XmlToolCallBackend(),
+            "sampling_params": {},
+        }
+    )
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["answer"] == ""
+    assert result["raw_answer"] == (
+        "<tool_call>\n"
+        "<function=respond>\n"
+        "<parameter=message>Done, your mobile data is working.</parameter>\n"
+        "</function>\n"
+        "</tool_call>"
+    )
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Done, your mobile data is working."
+    }
+
+
+def test_model_backend_rejects_tool_calls_not_in_tools_schema_from_text_parser():
+    class XmlToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    "<function=respond>\n"
+                    "<parameter=message>Done, your mobile data is working.</parameter>\n"
+                    "</function>\n"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": XmlToolCallBackend(), "sampling_params": {}})
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "other_tool", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["answer"].startswith("<tool_call>")
+    assert "raw_answer" not in result
+    assert "tool_calls" not in result
+
+
+def test_model_backend_no_tool_filtering_when_tools_empty():
+    class XmlToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    "<function=respond>\n"
+                    "<parameter=message>Done, your mobile data is working.</parameter>\n"
+                    "</function>\n"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": XmlToolCallBackend(), "sampling_params": {}})
+    result = backend.invoke({"messages": [], "tools": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Done, your mobile data is working."
+    }
+
+
+@pytest.mark.fast
 def test_model_backend_ainvoke_reuses_running_thread() -> None:
     wrapped_backend = AsyncDummyModelBackend()
     backend = ModelBackend({"backend": wrapped_backend})

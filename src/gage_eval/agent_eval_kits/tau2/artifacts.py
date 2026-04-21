@@ -70,17 +70,17 @@ def _build_trajectory_payload(
     scheduler_output: Mapping[str, Any],
     runtime_state: Mapping[str, Any],
 ) -> dict[str, Any]:
-    agent_trace = scheduler_output.get("agent_trace")
-    if isinstance(agent_trace, list) and agent_trace:
-        return {
-            "source": "agent_trace",
-            "events": agent_trace,
-        }
     messages = runtime_state.get("messages")
     if isinstance(messages, list):
         return {
             "source": "runtime_state.messages",
             "events": messages,
+        }
+    agent_trace = scheduler_output.get("agent_trace")
+    if isinstance(agent_trace, list) and agent_trace:
+        return {
+            "source": "agent_trace",
+            "events": agent_trace,
         }
     return {
         "source": "unavailable",
@@ -98,6 +98,10 @@ def _build_cost_payload(
         "termination_reason": runtime_state.get(
             "termination_reason",
             scheduler_output.get("termination_reason"),
+        ),
+        "termination_detail": runtime_state.get(
+            "termination_detail",
+            scheduler_output.get("termination_detail", ""),
         ),
     }
 
@@ -119,14 +123,27 @@ def _normalize_runtime_state(
     normalized["user_cost"] = _coerce_cost(
         runtime_state.get("user_cost", scheduler_output.get("user_cost"))
     )
+    normalized["termination_detail"] = _normalize_termination_detail(
+        runtime_state.get(
+            "termination_detail",
+            scheduler_output.get("termination_detail"),
+        )
+    )
     return normalized
 
 
 def _normalize_termination_reason(value: Any) -> str:
-    resolved = resolve_tau2_termination_reason(value, fallback="too_many_errors")
+    resolved = resolve_tau2_termination_reason(value)
     raw_value = getattr(resolved, "value", resolved)
     text = str(raw_value or "").strip()
-    return text or "too_many_errors"
+    return text or ""
+
+
+def _normalize_termination_detail(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
 
 
 def _coerce_cost(value: Any) -> float:

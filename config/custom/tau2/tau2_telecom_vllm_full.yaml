@@ -1,0 +1,161 @@
+api_version: gage/v1
+kind: PipelineConfig
+
+metadata:
+  name: tau2_telecom_vllm_full
+  description: >
+    Tau2 telecom - DUT agent uses in-process vLLM backend; user simulator
+    calls an OpenAI-compatible HTTP endpoint (e.g. another vLLM server or
+    the OpenAI API).
+
+# User simulator: calls a vLLM server that exposes an OpenAI-compatible API.
+# LiteLLM routes requests via the openai/ prefix + api_base.
+#
+# Required env vars:
+#   TAU2_USER_BASE_URL   e.g. http://localhost:8000/v1
+#   TAU2_USER_MODEL      e.g. Qwen/Qwen2.5-72B-Instruct
+# Optional:
+#   TAU2_USER_API_KEY    defaults to "dummy" (vLLM ignores it by default)
+#   TAU2_USER_TEMPERATURE
+#
+# IMPORTANT - vLLM server flags for tool calling:
+#   The tau2 user simulator sends tool_choice="auto" when user tools are
+#   present.  vLLM rejects this unless the server is started with:
+#     --enable-auto-tool-choice
+#     --tool-call-parser <parser>   # hermes | mistral | llama3_json | etc.
+#   Example:
+#     vllm serve Qwen/Qwen2.5-72B-Instruct \
+#       --enable-auto-tool-choice --tool-call-parser hermes
+#
+#   This config keeps tool calling enabled. Start the user-simulator server
+#   with tool-calling support instead of disabling tool use in the client.
+benchmark_configs:
+  tau2:
+    user_simulator:
+      type: openai_http
+      model: ${TAU2_USER_MODEL:?set TAU2_USER_MODEL to the vLLM model name}
+      base_url: ${TAU2_USER_BASE_URL:?set TAU2_USER_BASE_URL to the vLLM /v1 endpoint}
+      model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+        api_key: ${TAU2_USER_API_KEY:-dummy}
+
+prompts:
+  - prompt_id: dut/tau2@v1
+    renderer: jinja_chat
+    template: |
+      <instructions>
+      {{ sample.metadata.tau2.agent_instruction }}
+      {{ sample.metadata.tau2.gage_instruction }}
+      </instructions>
+      <policy>
+      {{ sample.metadata.tau2.policy }}
+      </policy>
+    params:
+      role: system
+      include_existing: true
+
+datasets:
+  - dataset_id: tau2_telecom_base
+    loader: tau2_tasks
+    params:
+      domain: telecom
+      task_split: base
+      num_trials: ${TAU2_NUM_TRIALS:-1}
+      seed: ${TAU2_SEED:-300}
+      hub_id: HuggingFaceH4/tau2-bench-data
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      preprocess: tau2_preprocessor
+
+# DUT agent backend: in-process vLLM.
+#
+# Required env vars:
+#   VLLM_MODEL_PATH   path or HF repo of the model to load
+# Optional:
+#   VLLM_TENSOR_PARALLEL_SIZE, VLLM_PIPELINE_PARALLEL_SIZE
+#   VLLM_MAX_MODEL_LEN, VLLM_REQUEST_TIMEOUT
+#   TAU2_AGENT_MAX_TOKENS, TAU2_AGENT_TEMPERATURE
+backends:
+  - backend_id: tau2_vllm
+    type: vllm
+    config:
+      model_path: ${VLLM_MODEL_PATH:?set VLLM_MODEL_PATH}
+      trust_remote_code: true
+      tokenizer_trust_remote_code: true
+      force_tokenize_prompt: true
+      tensor_parallel_size: ${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      pipeline_parallel_size: ${VLLM_PIPELINE_PARALLEL_SIZE:-1}
+      max_model_len: ${VLLM_MAX_MODEL_LEN:-8192}
+      max_tokens: ${TAU2_AGENT_MAX_TOKENS:-512}
+      request_timeout: ${VLLM_REQUEST_TIMEOUT:-300}
+      sampling_params:
+        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+
+agent_runtimes:
+  - agent_runtime_id: tau2_framework_loop
+    benchmark_kit_id: tau2
+    scheduler_type: framework_loop
+    sandbox_profile_id: tau2_local
+    resource_policy:
+      resource_kind: local_process
+      lifecycle: per_sample
+    verifier_binding_id: tau2_verifier
+
+sandbox_profiles:
+  - sandbox_id: tau2_local
+    runtime: tau2
+    runtime_configs:
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      max_steps: ${TAU2_MAX_STEPS:-200}
+      max_errors: ${TAU2_MAX_ERRORS:-10}
+      respond_tool_name: respond
+
+role_adapters:
+  - adapter_id: tau2_agent
+    role_type: dut_agent
+    backend_id: tau2_vllm
+    agent_runtime_id: tau2_framework_loop
+    prompt_id: dut/tau2@v1
+    sandbox:
+      sandbox_id: tau2_local
+      lifecycle: per_sample
+    params:
+      force_tool_choice: first_turn
+      max_turns: ${TAU2_MAX_TURNS:-200}
+
+  - adapter_id: tau2_judge
+    role_type: judge_extend
+    params:
+      implementation: tau2_eval
+
+metrics:
+  - metric_id: tau2_reward
+    implementation: tau2_reward
+  - metric_id: tau2_pass
+    implementation: tau2_pass
+  - metric_id: tau2_pass_hat_k
+    implementation: tau2_pass_hat_k
+    aggregation: tau2_pass_hat
+  - metric_id: tau2_agent_cost
+    implementation: tau2_agent_cost
+  - metric_id: tau2_user_cost
+    implementation: tau2_user_cost
+
+summary_generators:
+  - tau2_summary
+
+tasks:
+  - task_id: tau2_telecom_vllm_full
+    dataset_id: tau2_telecom_base
+    steps:
+      - step: inference
+        adapter_id: tau2_agent
+      - step: judge
+        adapter_id: tau2_judge
+      - step: auto_eval
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_telecom_vllm_full_summary.json

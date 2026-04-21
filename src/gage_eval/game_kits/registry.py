@@ -48,6 +48,13 @@ from gage_eval.game_kits.real_time_game.retro_platformer.visualization import (
     VISUALIZATION_SPEC as RETRO_PLATFORMER_VISUALIZATION_SPEC,
     VISUALIZATION_SPEC_ID as RETRO_PLATFORMER_VISUALIZATION_SPEC_ID,
 )
+from gage_eval.game_kits.real_time_game.openra.kit import (
+    build_openra_game_kit,
+)
+from gage_eval.game_kits.real_time_game.openra.visualization import (
+    VISUALIZATION_SPEC as OPENRA_VISUALIZATION_SPEC,
+    VISUALIZATION_SPEC_ID as OPENRA_VISUALIZATION_SPEC_ID,
+)
 from gage_eval.game_kits.real_time_game.vizdoom.kit import (
     build_vizdoom_game_kit,
 )
@@ -98,6 +105,11 @@ _RUNTIME_VISUALIZATION_SPECS = (
         RETRO_PLATFORMER_VISUALIZATION_SPEC_ID,
         RETRO_PLATFORMER_VISUALIZATION_SPEC,
         "Retro platformer frame visualization spec",
+    ),
+    (
+        OPENRA_VISUALIZATION_SPEC_ID,
+        OPENRA_VISUALIZATION_SPEC,
+        "OpenRA RTS visualization spec",
     ),
 )
 
@@ -312,6 +324,13 @@ def register_runtime_assets(*, registry_target=None) -> None:
         build_retro_platformer_game_kit,
         desc="GameArena retro platformer realtime kit",
         tags=("gamekit", "real_time_game", "retro"),
+    )
+    target.register(
+        "game_kits",
+        "openra",
+        build_openra_game_kit,
+        desc="GameArena OpenRA realtime kit",
+        tags=("gamekit", "real_time_game", "openra", "rts"),
     )
     for asset_name in _RUNTIME_RENDERER_ASSETS:
         import_asset_from_manifest(

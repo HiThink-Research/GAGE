@@ -18,6 +18,7 @@ class AgentRuntimeSession:
     benchmark_kit_id: str
     scheduler_type: str
     client_id: str | None = None
+    benchmark_config: dict[str, Any] = field(default_factory=dict)
     resource_lease: ResourceLease | None = None
     runtime_context: dict[str, Any] = field(default_factory=dict)
     prompt_context: dict[str, Any] = field(default_factory=dict)

@@ -5,6 +5,14 @@ metadata:
   name: tau2_telecom_runtime
   description: Tau2 telecom runtime-owned config.
 
+benchmark_configs:
+  tau2:
+    user_simulator:
+      type: litellm
+      model: ${TAU2_USER_MODEL:-gpt-4.1}
+      model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+
 prompts:
   - prompt_id: dut/tau2@v1
     renderer: jinja_chat
@@ -43,12 +51,16 @@ backends:
       generation_parameters:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
 
-agent_backends:
-  - agent_backend_id: tau2_agent_backend
-    type: model_backend
-    backend_id: tau2_openai_http
-    config:
-      force_tool_choice: first_turn
+
+agent_runtimes:
+  - agent_runtime_id: tau2_framework_loop
+    benchmark_kit_id: tau2
+    scheduler_type: framework_loop
+    sandbox_profile_id: tau2_local
+    resource_policy:
+      resource_kind: local_process
+      lifecycle: per_sample
+    verifier_binding_id: tau2_verifier
 
 sandbox_profiles:
   - sandbox_id: tau2_local
@@ -58,20 +70,18 @@ sandbox_profiles:
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
-      user_model: ${TAU2_USER_MODEL:-gpt-4.1}
-      user_model_args:
-        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
 
 role_adapters:
   - adapter_id: tau2_agent
     role_type: dut_agent
-    agent_backend_id: tau2_agent_backend
+    backend_id: tau2_openai_http
     agent_runtime_id: tau2_framework_loop
     prompt_id: dut/tau2@v1
     sandbox:
       sandbox_id: tau2_local
       lifecycle: per_sample
     params:
+      force_tool_choice: first_turn
       max_turns: ${TAU2_MAX_TURNS:-200}
 
   - adapter_id: tau2_runtime_judge

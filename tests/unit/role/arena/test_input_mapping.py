@@ -17,6 +17,7 @@ from gage_eval.game_kits.aec_env_game.pettingzoo.input_mapper import (
 from gage_eval.game_kits.real_time_game.retro_platformer.input_mapper import (
     RetroInputMapper,
 )
+from gage_eval.game_kits.real_time_game.openra.input_mapper import OpenRAInputMapper
 from gage_eval.game_kits.real_time_game.vizdoom.input_mapper import ViZDoomInputMapper
 from gage_eval.role.arena.input_mapping import BrowserKeyEvent, GameInputMapper, HumanActionEvent
 
@@ -112,6 +113,7 @@ def test_mahjong_input_mapper_resolves_index_and_filters_illegal_action() -> Non
         context=context,
     )
     assert illegal == []
+
 
 def test_mahjong_input_mapper_import_does_not_load_rlcard_core() -> None:
     package_prefix = "gage_eval.game_kits.phase_card_game.mahjong"
@@ -311,6 +313,85 @@ def test_vizdoom_input_mapper_supports_keyboard_map_and_filters_illegal() -> Non
 
     illegal = mapper.handle_browser_event(
         {"event": "action_submit", "action": "99"},
+        context=context,
+    )
+    assert illegal == []
+
+
+def test_openra_input_mapper_maps_typed_actions_from_browser_payloads() -> None:
+    mapper = OpenRAInputMapper()
+    context = {
+        "human_player_id": "player_0",
+        "legal_actions": {
+            "items": [
+                {
+                    "id": "select_units",
+                    "label": "Select units",
+                    "payloadSchema": {"unit_ids": ["<unit-id>", "<unit-id>"]},
+                },
+                {
+                    "id": "issue_command",
+                    "label": "Issue command",
+                    "payloadSchema": {"command": "attack_move", "target": {"x": 18, "y": 11}},
+                },
+            ]
+        },
+    }
+
+    actions = mapper.handle_browser_event(
+        {
+            "event": "action_submit",
+            "action_id": "issue_command",
+            "payload": {"command": "attack_move", "target": {"x": 18, "y": 11}},
+        },
+        context=context,
+    )
+
+    assert len(actions) == 1
+    assert actions[0].player_id == "player_0"
+    assert actions[0].move == "issue_command"
+    payload = json.loads(actions[0].raw)
+    assert payload == {
+        "action_id": "issue_command",
+        "payload": {"command": "attack_move", "target": {"x": 18, "y": 11}},
+    }
+
+
+def test_openra_input_mapper_supports_keyboard_shortcuts_and_filters_illegal_actions() -> None:
+    mapper = OpenRAInputMapper(
+        key_map={
+            "a": {
+                "action_id": "camera_pan",
+                "payload": {"direction": "left", "distance": 6},
+            },
+            "space": {
+                "action_id": "select_units",
+                "payload": {"unit_ids": ["mcv_1"]},
+            },
+        }
+    )
+    context = {
+        "human_player_id": "spectator_0",
+        "legal_actions": {
+            "items": [
+                {"id": "camera_pan", "label": "Camera pan"},
+                {"id": "select_units", "label": "Select units"},
+            ]
+        },
+    }
+
+    pan = mapper.handle_browser_event({"type": "keydown", "key": "a"}, context=context)
+    assert len(pan) == 1
+    assert pan[0].player_id == "spectator_0"
+    assert pan[0].move == "camera_pan"
+    assert json.loads(pan[0].raw)["payload"] == {"direction": "left", "distance": 6}
+
+    illegal = mapper.handle_browser_event(
+        {
+            "event": "action_submit",
+            "action_id": "queue_production",
+            "payload": {"queue": "barracks", "unit_type": "ranger"},
+        },
         context=context,
     )
     assert illegal == []

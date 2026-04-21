@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from gage_eval.agent_eval_kits.tau2.artifacts import persist_tau2_artifacts
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
 from gage_eval.agent_eval_kits.tau2.units import build_tau2_messages, build_tau2_tools
@@ -35,6 +37,10 @@ def _inject_tool_schemas(*, session, sample, payload):
 
 def _finalize_loop_result(*, session, sample, scheduler_output, sandbox_provider=None):
     output = dict(scheduler_output or {})
+    _mark_loop_termination(
+        sandbox_provider=sandbox_provider,
+        loop_exit_reason=output.get("loop_exit_reason"),
+    )
     _record_tau2_agent_usage(sandbox_provider=sandbox_provider, scheduler_output=output)
     artifact_paths = dict(output.get("artifact_paths") or {})
     artifact_paths.update(
@@ -46,6 +52,25 @@ def _finalize_loop_result(*, session, sample, scheduler_output, sandbox_provider
     )
     output["artifact_paths"] = artifact_paths
     return output
+
+
+def _mark_loop_termination(*, sandbox_provider, loop_exit_reason: Any | None) -> None:
+    if loop_exit_reason not in {"tool_call_retry_budget", "max_turns"}:
+        return
+    if sandbox_provider is None:
+        return
+    handle = sandbox_provider.get_handle()
+    runtime = handle.sandbox if handle is not None else None
+    mark_agent_exhausted = getattr(runtime, "mark_agent_exhausted", None)
+    if not callable(mark_agent_exhausted):
+        return
+
+    detail = (
+        "no_tool_call_from_agent"
+        if loop_exit_reason == "tool_call_retry_budget"
+        else "agent_loop_max_turns"
+    )
+    mark_agent_exhausted(detail)
 
 
 def _record_tau2_agent_usage(*, sandbox_provider, scheduler_output) -> None:

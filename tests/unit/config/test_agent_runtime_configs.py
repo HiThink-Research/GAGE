@@ -5,8 +5,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.config.pipeline_builder import PipelineConfigBuildError
 from gage_eval.config.pipeline_config import PipelineConfig
+from gage_eval.config.registry import ConfigRegistry
 
 
 def _load_config(path: Path) -> PipelineConfig:
@@ -44,6 +46,48 @@ def test_tau2_runtime_config_drops_bootstrap_support() -> None:
     assert dut_agent.agent_runtime_id == "tau2_framework_loop"
 
 
+def test_tau2_user_simulator_config_materializes_outside_sandbox_profile() -> None:
+    config_path = (
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "tau2"
+        / "tau2_telecom_runtime.yaml"
+    )
+    config = PipelineConfig.from_dict(load_pipeline_config_payload(config_path))
+
+    raw_profile = next(spec for spec in config.sandbox_profiles if spec.sandbox_id == "tau2_local")
+    assert "user_model" not in raw_profile.runtime_configs
+    assert "user_simulator" not in raw_profile.runtime_configs
+
+    profiles = ConfigRegistry().materialize_sandbox_profiles(config)
+    assert "user_simulator" not in profiles["tau2_local"]["runtime_configs"]
+
+
+def test_tau2_all_subsets_base_drops_legacy_support_steps() -> None:
+    config = _load_config(
+        Path(__file__).resolve().parents[3]
+        / "config"
+        / "custom"
+        / "tau2"
+        / "tau2_all_subsets_base.yaml"
+    )
+
+    adapter_ids = {spec.adapter_id for spec in config.role_adapters}
+    assert "tau2_bootstrap" not in adapter_ids
+    assert "tau2_toolchain" not in adapter_ids
+
+    dut_agent = next(spec for spec in config.role_adapters if spec.adapter_id == "tau2_agent")
+    assert dut_agent.agent_runtime_id == "tau2_framework_loop"
+
+    task_ids = {task.task_id for task in config.tasks}
+    assert task_ids == {"tau2_airline_base", "tau2_retail_base", "tau2_telecom_base"}
+
+    for task in config.tasks:
+        step_types = [s.step_type for s in task.steps]
+        assert "support" not in step_types
+
+
 def test_terminal_and_skillsbench_runtime_smokes_parse() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
     terminal = _load_config(base / "terminal_bench" / "terminal_bench_smoke_runtime.yaml")
@@ -74,9 +118,9 @@ def test_builtin_codex_installed_client_configs_parse_without_agent_backend() ->
     assert terminal_agent.agent_runtime_id == "terminal_bench_installed_client"
     assert swebench_agent.agent_runtime_id == "swebench_installed_client"
     assert appworld_agent.agent_runtime_id == "appworld_installed_client"
-    assert terminal_agent.agent_backend_id is None
-    assert swebench_agent.agent_backend_id is None
-    assert appworld_agent.agent_backend_id is None
+    assert terminal_agent.backend_id is None
+    assert swebench_agent.backend_id is None
+    assert appworld_agent.backend_id is None
 
 
 def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
@@ -96,11 +140,15 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
                 "config": {"base_url": "http://127.0.0.1:11434/v1", "model": "dummy"},
             }
         ],
-        "agent_backends": [
+        "agent_runtimes": [
             {
-                "agent_backend_id": "demo_agent_backend",
-                "type": "model_backend",
-                "backend_id": "demo_backend",
+                "agent_runtime_id": "terminal_bench_installed_client",
+                "benchmark_kit_id": "terminal_bench",
+                "scheduler_type": "installed_client",
+                "client_id": "codex",
+                "sandbox_profile_id": "terminal_bench_runtime",
+                "resource_policy": {"resource_kind": "docker", "lifecycle": "per_sample"},
+                "verifier_binding_id": "terminal_bench_native",
             }
         ],
         "role_adapters": [
@@ -108,7 +156,7 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
                 "adapter_id": "dut_agent_main",
                 "role_type": "dut_agent",
                 "agent_runtime_id": "terminal_bench_installed_client",
-                "agent_backend_id": "demo_agent_backend",
+                "backend_id": "demo_backend",
             }
         ],
         "tasks": [
@@ -120,5 +168,5 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
         ],
     }
 
-    with pytest.raises(PipelineConfigBuildError, match="must not declare 'agent_backend_id'"):
+    with pytest.raises(PipelineConfigBuildError, match="must not declare 'backend_id'"):
         PipelineConfig.from_dict(payload)

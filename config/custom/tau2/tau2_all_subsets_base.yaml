@@ -4,12 +4,16 @@ metadata:
   name: tau2_all_subsets_base
   description: Tau2 all subsets (airline/retail/telecom/mock), base split, 10 samples each
 
+benchmark_configs:
+  tau2:
+    user_simulator:
+      type: litellm
+      model: ${TAU2_USER_MODEL:-gpt-4.1}
+      model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+
 custom:
   steps:
-    - step: support
-      adapter_id: tau2_bootstrap
-    - step: support
-      adapter_id: tau2_toolchain
     - step: inference
       adapter_id: tau2_agent
     - step: judge
@@ -32,48 +36,33 @@ prompts:
       include_existing: true
 
 datasets:
-  - dataset_id: tau2_airline_base_10
+  - dataset_id: tau2_airline_base
     loader: tau2_tasks
     params:
       domain: airline
       task_split: base
-      num_tasks: 10
       num_trials: 4
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
-  - dataset_id: tau2_retail_base_10
+  - dataset_id: tau2_retail_base
     loader: tau2_tasks
     params:
       domain: retail
       task_split: base
-      num_tasks: 10
       num_trials: 4
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
-  - dataset_id: tau2_telecom_base_10
+  - dataset_id: tau2_telecom_base
     loader: tau2_tasks
     params:
       domain: telecom
       task_split: base
-      num_tasks: 10
-      num_trials: 4
-      seed: ${TAU2_SEED:-300}
-      hub_id: HuggingFaceH4/tau2-bench-data
-      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
-      preprocess: tau2_preprocessor
-
-  - dataset_id: tau2_mock_base_10
-    loader: tau2_tasks
-    params:
-      domain: mock
-      task_split: base
-      num_tasks: 10
       num_trials: 4
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data
@@ -91,12 +80,16 @@ backends:
       generation_parameters:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
 
-agent_backends:
-  - agent_backend_id: tau2_agent_backend
-    type: model_backend
-    backend_id: tau2_openai_http
-    config:
-      force_tool_choice: first_turn
+
+agent_runtimes:
+  - agent_runtime_id: tau2_framework_loop
+    benchmark_kit_id: tau2
+    scheduler_type: framework_loop
+    sandbox_profile_id: tau2_local
+    resource_policy:
+      resource_kind: local_process
+      lifecycle: per_sample
+    verifier_binding_id: tau2_verifier
 
 sandbox_profiles:
   - sandbox_id: tau2_local
@@ -106,43 +99,18 @@ sandbox_profiles:
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
-      user_model: ${TAU2_USER_MODEL:-gpt-4.1}
-      user_model_args:
-        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
 
 role_adapters:
-  - adapter_id: tau2_bootstrap
-    role_type: context_provider
-    params:
-      implementation: tau2_bootstrap
-
-  - adapter_id: tau2_toolchain
-    role_type: toolchain
-    params:
-      tools:
-        - type: function
-          function:
-            name: respond
-            description: Send a message to the user and receive the user's reply.
-            parameters:
-              type: object
-              properties:
-                message:
-                  type: string
-                  description: Message text to send to the user.
-              required:
-                - message
-          x-gage:
-            final_answer_from: final_answer
-
   - adapter_id: tau2_agent
     role_type: dut_agent
-    agent_backend_id: tau2_agent_backend
+    backend_id: tau2_openai_http
+    agent_runtime_id: tau2_framework_loop
     prompt_id: dut/tau2@v1
     sandbox:
       sandbox_id: tau2_local
       lifecycle: per_sample
     params:
+      force_tool_choice: first_turn
       max_turns: ${TAU2_MAX_TURNS:-200}
 
   - adapter_id: tau2_judge
@@ -167,13 +135,9 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: tau2_airline_base_10
-    dataset_id: tau2_airline_base_10
+  - task_id: tau2_airline_base
+    dataset_id: tau2_airline_base
     steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
       - step: inference
         adapter_id: tau2_agent
       - step: judge
@@ -181,13 +145,9 @@ tasks:
       - step: auto_eval
     concurrency: 1
 
-  - task_id: tau2_retail_base_10
-    dataset_id: tau2_retail_base_10
+  - task_id: tau2_retail_base
+    dataset_id: tau2_retail_base
     steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
       - step: inference
         adapter_id: tau2_agent
       - step: judge
@@ -195,27 +155,9 @@ tasks:
       - step: auto_eval
     concurrency: 1
 
-  - task_id: tau2_telecom_base_10
-    dataset_id: tau2_telecom_base_10
+  - task_id: tau2_telecom_base
+    dataset_id: tau2_telecom_base
     steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
-      - step: inference
-        adapter_id: tau2_agent
-      - step: judge
-        adapter_id: tau2_judge
-      - step: auto_eval
-    concurrency: 1
-
-  - task_id: tau2_mock_base_10
-    dataset_id: tau2_mock_base_10
-    steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
       - step: inference
         adapter_id: tau2_agent
       - step: judge

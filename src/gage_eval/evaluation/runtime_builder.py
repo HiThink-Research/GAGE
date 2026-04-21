@@ -75,6 +75,7 @@ def build_runtime(
 
     trace = trace or ObservabilityTrace()
     configure_observability(config.observability)
+    _prime_agent_runtime_verifiers(config)
     runtime_registry_context = registry.prepare_runtime_registry_context(
         config,
         run_id=trace.run_id,
@@ -335,6 +336,21 @@ def _ensure_validation_ledger(
     return ledger
 
 
+def _prime_agent_runtime_verifiers(config: PipelineConfig) -> None:
+    """Load verifier adapters before the runtime registry guard is active."""
+
+    if not config.agent_runtimes:
+        return
+    from gage_eval.agent_eval_kits import load_benchmark_kit
+
+    seen: set[str] = set()
+    for spec in config.agent_runtimes:
+        if spec.benchmark_kit_id in seen:
+            continue
+        seen.add(spec.benchmark_kit_id)
+        load_benchmark_kit(spec.benchmark_kit_id).resolve_verifier_resources()
+
+
 def _select_dataset_id(
     explicit_dataset_id: Optional[str],
     config: PipelineConfig,
@@ -359,12 +375,7 @@ def _materialize_role_adapters(
     backend_instances = registry.materialize_backends(config)
     for backend_id, backend in backend_instances.items():
         role_manager.register_backend(backend_id, backend)
-    agent_backend_instances = registry.materialize_agent_backends(
-        config,
-        backends=backend_instances,
-    )
-    for agent_backend_id, backend in agent_backend_instances.items():
-        role_manager.register_agent_backend(agent_backend_id, backend)
+    agent_runtime_specs = registry.materialize_agent_runtimes(config)
     sandbox_profiles = registry.materialize_sandbox_profiles(config)
     mcp_clients = registry.materialize_mcp_clients(config)
     prompt_assets = registry.materialize_prompts(config)
@@ -372,7 +383,7 @@ def _materialize_role_adapters(
         config,
         backends=backend_instances,
         prompts=prompt_assets,
-        agent_backends=agent_backend_instances,
+        agent_runtimes=agent_runtime_specs,
         sandbox_profiles=sandbox_profiles,
         mcp_clients=mcp_clients,
     )

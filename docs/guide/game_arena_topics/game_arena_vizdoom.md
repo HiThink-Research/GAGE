@@ -45,6 +45,28 @@ bash scripts/run/arenas/vizdoom/run.sh --mode dummy --max-samples 1
 OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>" bash scripts/run/arenas/vizdoom/run.sh --mode llm_visual_openai --max-samples 1
 ```
 
+Use this first to validate ViZDoom, websocketRGB, and browser viewing before adding model-backed runs.
+
+What the websocketRGB helper does:
+
+1. Picks a Python executable.
+2. Validates the config path.
+3. Chooses a free `WS_RGB_PORT`.
+4. Starts `python run.py --config ...` in the background.
+5. Waits until `http://127.0.0.1:<port>/ws_rgb/viewer` is reachable.
+6. Prints the ready viewer URL and optionally auto-opens the browser.
+
+Useful variables for this example:
+
+- `PYTHON_BIN`: Python executable
+- `CFG`: Defaults to `config/custom/vizdoom/vizdoom_dummy_vs_dummy_ws_rgb.yaml`
+- `RUN_ID`: Output run id under `runs/`
+- `OUTPUT_DIR`: Defaults to `runs`
+- `WS_RGB_HOST`: Defaults to `127.0.0.1`
+- `WS_RGB_PORT`: Defaults to `5800`
+
+If you want the local-window validation path instead, use:
+
 ```bash
 bash scripts/run/arenas/vizdoom/run.sh --mode human_visual --max-samples 1
 ```

@@ -290,12 +290,7 @@ class PipelineFactory:
         backend_instances = self._registry.materialize_backends(config)
         for backend_id, backend in backend_instances.items():
             role_manager.register_backend(backend_id, backend)
-        agent_backend_instances = self._registry.materialize_agent_backends(
-            config,
-            backends=backend_instances,
-        )
-        for agent_backend_id, backend in agent_backend_instances.items():
-            role_manager.register_agent_backend(agent_backend_id, backend)
+        agent_runtime_specs = self._registry.materialize_agent_runtimes(config)
         sandbox_profiles = self._registry.materialize_sandbox_profiles(config)
         mcp_clients = self._registry.materialize_mcp_clients(config)
         prompt_assets = self._registry.materialize_prompts(config)
@@ -311,7 +306,7 @@ class PipelineFactory:
             config,
             backends=backend_instances,
             prompts=prompt_assets,
-            agent_backends=agent_backend_instances,
+            agent_runtimes=agent_runtime_specs,
             sandbox_profiles=sandbox_profiles,
             mcp_clients=mcp_clients,
         )

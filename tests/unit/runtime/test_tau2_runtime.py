@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 from enum import Enum
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from gage_eval.agent_eval_kits.tau2.runtime import Tau2RuntimeEntry
 from gage_eval.sandbox.protocols import (
     StateQueryProtocol,
     TaskInitProtocol,
@@ -14,6 +16,7 @@ from gage_eval.sandbox.tau2_runtime import (
     Tau2Runtime,
     _normalize_tau2_user_model_args,
     _resolve_agent_usage_cost,
+    _resolve_tau2_user_simulator_runtime_config,
     _termination_reason,
 )
 from tests._support.stubs.tau2_stub import STOP, install_tau2_stub
@@ -41,7 +44,7 @@ def test_tau2_runtime_basic_flow(tmp_path: Path, monkeypatch) -> None:
     init_output = runtime.initialize_task(sample)
 
     assert init_output["messages"]
-    assert len(sample["messages"]) == 2
+    assert len(sample["messages"]) == 1  # synthetic greeting filtered; DUT sees only user_message
 
     respond_out = runtime.exec_tool("respond", {"message": "hello"})
     assert respond_out["user_message"] == "user_response"
@@ -65,6 +68,35 @@ def test_tau2_runtime_user_tools_and_stop(tmp_path: Path, monkeypatch) -> None:
     assert (term.value if hasattr(term, "value") else str(term)) == "user_stop"
 
 
+def test_tau2_runtime_get_state_tracks_termination_detail(tmp_path: Path, monkeypatch) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    sample = _build_sample()
+    runtime.initialize_task(sample)
+
+    assert runtime.get_state().get("termination_detail") is None
+
+
+def test_tau2_runtime_initialize_task_resets_per_task_state(tmp_path: Path, monkeypatch) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    runtime.initialize_task(_build_sample())
+    runtime.mark_agent_exhausted("no_tool_call_from_agent")
+
+    runtime.initialize_task(_build_sample(domain="telecom"))
+    state = runtime.get_state()
+    assert state["termination_reason"] is None
+    assert state["termination_detail"] is None
+    assert len(state["messages"]) == 2
+
+    response = runtime.exec_tool("respond", {"message": "hello"})
+    assert response.get("final_answer") != "simulation_terminated"
+
+
 def test_tau2_runtime_satisfies_protocols(tmp_path: Path, monkeypatch) -> None:
     """Tau2Runtime satisfies all three tool-protocol runtime contracts."""
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
@@ -74,6 +106,31 @@ def test_tau2_runtime_satisfies_protocols(tmp_path: Path, monkeypatch) -> None:
     assert isinstance(runtime, ToolExecutionProtocol)
     assert isinstance(runtime, StateQueryProtocol)
     assert isinstance(runtime, TaskInitProtocol)
+
+
+@pytest.mark.parametrize("initial_reason", ["user_stop", "max_steps"])
+def test_tau2_runtime_mark_agent_exhausted_no_override(initial_reason: str) -> None:
+    runtime = Tau2Runtime()
+    runtime._termination_reason = _termination_reason(initial_reason)
+    runtime._termination_detail = "already_terminated"
+
+    runtime.mark_agent_exhausted("tool_call_retry_budget")
+
+    state = runtime.get_state()
+    term = state["termination_reason"]
+    assert (term.value if hasattr(term, "value") else str(term)) == initial_reason
+    assert state["termination_detail"] == "already_terminated"
+
+
+def test_tau2_runtime_mark_agent_exhausted_sets_agent_error_reason_and_detail() -> None:
+    runtime = Tau2Runtime()
+
+    runtime.mark_agent_exhausted("no_tool_call_from_agent")
+
+    state = runtime.get_state()
+    term = state["termination_reason"]
+    assert (term.value if hasattr(term, "value") else str(term)) == "agent_error"
+    assert state["termination_detail"] == "no_tool_call_from_agent"
 
 
 def test_tau2_runtime_exec_reports_protocol_mismatch(
@@ -122,6 +179,77 @@ def test_tau2_runtime_normalizes_ollama_chat_api_base() -> None:
     }
 
 
+def test_tau2_runtime_prefers_user_simulator_config_over_legacy_user_model() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {
+            "user_model": "legacy-model",
+            "user_model_args": {"temperature": 0.5},
+            "user_simulator": {
+                "model": "gpt-4.1",
+                "model_args": {"temperature": 0.0},
+            },
+        }
+    )
+
+    assert resolved == {"model": "gpt-4.1", "model_args": {"temperature": 0.0}}
+
+
+def test_tau2_runtime_prefers_kit_user_simulator_override() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {
+            "user_model": "legacy-model",
+            "user_model_args": {"temperature": 0.5},
+        },
+        override={
+            "model": "openai/gpt-4.1",
+            "model_args": {"api_base": "https://api.openai.com/v1"},
+        },
+    )
+
+    assert resolved == {
+        "model": "openai/gpt-4.1",
+        "model_args": {
+            "api_base": "https://api.openai.com/v1",
+            "temperature": 0.0,
+        },
+    }
+
+
+def test_tau2_kit_configures_user_simulator_before_initialize() -> None:
+    class FakeRuntime:
+        def __init__(self) -> None:
+            self.configured = None
+
+        def configure_user_simulator(self, user_simulator) -> None:
+            self.configured = user_simulator
+
+        def initialize_task(self, _sample):
+            return {"messages": [], "tools_schema": [], "metadata": {}}
+
+    runtime = FakeRuntime()
+    provider = SimpleNamespace(get_handle=lambda: SimpleNamespace(sandbox=runtime))
+    session = SimpleNamespace(
+        benchmark_config={
+            "user_simulator": {
+                "model": "gpt-4.1",
+                "model_args": {"temperature": 0.0},
+            }
+        }
+    )
+
+    Tau2RuntimeEntry().bootstrap(
+        session=session,
+        sample={"id": "sample-1"},
+        payload={},
+        sandbox_provider=provider,
+    )
+
+    assert runtime.configured == {
+        "model": "gpt-4.1",
+        "model_args": {"temperature": 0.0},
+    }
+
+
 def test_tau2_runtime_records_agent_usage_from_total_tokens(
     tmp_path: Path,
     monkeypatch,
@@ -140,3 +268,101 @@ def test_resolve_agent_usage_cost_prefers_total_tokens() -> None:
     assert _resolve_agent_usage_cost({"prompt_tokens": 4, "completion_tokens": 6}) == 10.0
     assert _resolve_agent_usage_cost({"input_tokens": 3, "output_tokens": 7}) == 10.0
     assert _resolve_agent_usage_cost({"cost_usd": 0.25, "total_tokens": 99}) == 0.25
+
+
+def test_tau2_runtime_resolves_openai_http_user_simulator() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "Qwen/Qwen2.5-72B-Instruct",
+            "base_url": "http://localhost:8000/v1",
+            "model_args": {"temperature": 0.0, "api_key": "dummy"},
+        },
+    )
+
+    assert resolved["model"] == "openai/Qwen/Qwen2.5-72B-Instruct"
+    assert resolved["model_args"]["api_base"] == "http://localhost:8000/v1"
+    assert resolved["model_args"]["api_key"] == "dummy"
+    assert resolved["model_args"]["temperature"] == 0.0
+
+
+def test_tau2_runtime_openai_http_preserves_existing_openai_prefix() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "openai/my-model",
+            "model_args": {"api_base": "http://localhost:8000/v1"},
+        },
+    )
+
+    assert resolved["model"] == "openai/my-model"
+
+
+def test_tau2_runtime_openai_http_reads_api_base_from_model_args() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "my-model",
+            "model_args": {"api_base": "http://vllm-host:8000/v1"},
+        },
+    )
+
+    assert resolved["model_args"]["api_base"] == "http://vllm-host:8000/v1"
+
+
+def test_tau2_runtime_openai_http_reads_base_url_from_model_args() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "my-model",
+            "model_args": {"base_url": "http://vllm-host:8000/v1"},
+        },
+    )
+
+    assert resolved["model_args"]["api_base"] == "http://vllm-host:8000/v1"
+    assert "base_url" not in resolved["model_args"]
+
+
+def test_tau2_runtime_openai_http_does_not_strip_v1_from_api_base() -> None:
+    normalized = _normalize_tau2_user_model_args(
+        model="openai/Qwen2.5-72B-Instruct",
+        model_args={"api_base": "http://localhost:8000/v1"},
+    )
+
+    assert normalized["api_base"] == "http://localhost:8000/v1"
+
+
+def test_tau2_runtime_openai_http_applies_env_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("TAU2_USER_BASE_URL", "http://env-host:9000/v1")
+    monkeypatch.setenv("TAU2_USER_MODEL", "my-env-model")
+
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={"type": "openai_http"},
+    )
+
+    assert resolved["model"] == "openai/my-env-model"
+    assert resolved["model_args"]["api_base"] == "http://env-host:9000/v1"
+
+
+def test_tau2_runtime_openai_http_preserves_tool_choice_auto_override() -> None:
+    # tool_choice in model_args gets passed as **llm_args to tau2's generate(),
+    # which has tool_choice as a named parameter and keeps OpenAI-compatible
+    # tool calling explicit for user-simulator endpoints.
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {},
+        override={
+            "type": "openai_http",
+            "model": "my-model",
+            "model_args": {
+                "api_base": "http://localhost:8000/v1",
+                "tool_choice": "auto",
+            },
+        },
+    )
+
+    assert resolved["model_args"]["tool_choice"] == "auto"

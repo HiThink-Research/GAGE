@@ -5,6 +5,14 @@ metadata:
   name: tau2_telecom_installed_client_ollama
   description: Tau2 telecom runtime-owned config targeting Ollama using the installed-client scheduler.
 
+benchmark_configs:
+  tau2:
+    user_simulator:
+      type: litellm
+      model: ${TAU2_USER_MODEL:-gpt-4.1}
+      model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+
 prompts:
   - prompt_id: dut/tau2@v1
     renderer: jinja_chat
@@ -40,11 +48,6 @@ sandbox_profiles:
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
-      user_model: ${TAU2_USER_MODEL:-openai/qwen3-vl:2b-instruct}
-      user_model_args:
-        api_base: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}
-        api_key: ${OLLAMA_API_KEY:-dummy}
-        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
 
 role_adapters:
   - adapter_id: tau2_agent
@@ -74,6 +77,18 @@ metrics:
     implementation: tau2_agent_cost
   - metric_id: tau2_user_cost
     implementation: tau2_user_cost
+
+
+agent_runtimes:
+  - agent_runtime_id: tau2_installed_client
+    benchmark_kit_id: tau2
+    scheduler_type: installed_client
+    client_id: codex
+    sandbox_profile_id: tau2_local
+    resource_policy:
+      resource_kind: local_process
+      lifecycle: per_sample
+    verifier_binding_id: tau2_verifier
 
 summary_generators:
   - tau2_summary

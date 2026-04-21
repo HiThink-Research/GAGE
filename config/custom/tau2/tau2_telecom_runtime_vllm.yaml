@@ -1,0 +1,122 @@
+api_version: gage/v1
+kind: PipelineConfig
+
+metadata:
+  name: tau2_telecom_runtime_vllm
+  description: Tau2 telecom runtime-owned config targeting an in-process vLLM backend.
+
+benchmark_configs:
+  tau2:
+    user_simulator:
+      type: litellm
+      model: ${TAU2_USER_MODEL:-gpt-4.1}
+      model_args:
+        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+
+prompts:
+  - prompt_id: dut/tau2@v1
+    renderer: jinja_chat
+    template: |
+      <instructions>
+      {{ sample.metadata.tau2.agent_instruction }}
+      {{ sample.metadata.tau2.gage_instruction }}
+      </instructions>
+      <policy>
+      {{ sample.metadata.tau2.policy }}
+      </policy>
+    params:
+      role: system
+      include_existing: true
+
+datasets:
+  - dataset_id: tau2_telecom_base
+    loader: tau2_tasks
+    params:
+      domain: telecom
+      task_split: base
+      num_trials: ${TAU2_NUM_TRIALS:-1}
+      seed: ${TAU2_SEED:-300}
+      hub_id: HuggingFaceH4/tau2-bench-data
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      preprocess: tau2_preprocessor
+
+backends:
+  - backend_id: tau2_vllm
+    type: vllm
+    config:
+      model_path: ${VLLM_MODEL_PATH:?set VLLM_MODEL_PATH}
+      trust_remote_code: true
+      tokenizer_trust_remote_code: true
+      force_tokenize_prompt: true
+      tensor_parallel_size: ${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      pipeline_parallel_size: ${VLLM_PIPELINE_PARALLEL_SIZE:-1}
+      max_model_len: ${VLLM_MAX_MODEL_LEN:-8192}
+      max_tokens: ${TAU2_AGENT_MAX_TOKENS:-512}
+      request_timeout: ${VLLM_REQUEST_TIMEOUT:-300}
+      sampling_params:
+        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+
+
+agent_runtimes:
+  - agent_runtime_id: tau2_framework_loop
+    benchmark_kit_id: tau2
+    scheduler_type: framework_loop
+    sandbox_profile_id: tau2_local
+    resource_policy:
+      resource_kind: local_process
+      lifecycle: per_sample
+    verifier_binding_id: tau2_verifier
+
+sandbox_profiles:
+  - sandbox_id: tau2_local
+    runtime: tau2
+    runtime_configs:
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      max_steps: ${TAU2_MAX_STEPS:-200}
+      max_errors: ${TAU2_MAX_ERRORS:-10}
+      respond_tool_name: respond
+
+role_adapters:
+  - adapter_id: tau2_agent
+    role_type: dut_agent
+    backend_id: tau2_vllm
+    agent_runtime_id: tau2_framework_loop
+    prompt_id: dut/tau2@v1
+    sandbox:
+      sandbox_id: tau2_local
+      lifecycle: per_sample
+    params:
+      force_tool_choice: first_turn
+      max_turns: ${TAU2_MAX_TURNS:-200}
+
+  - adapter_id: tau2_runtime_judge
+    role_type: judge_extend
+    params:
+      implementation: tau2_eval
+
+metrics:
+  - metric_id: tau2_reward
+    implementation: tau2_reward
+  - metric_id: tau2_pass
+    implementation: tau2_pass
+  - metric_id: tau2_pass_hat_k
+    implementation: tau2_pass_hat_k
+    aggregation: tau2_pass_hat
+  - metric_id: tau2_agent_cost
+    implementation: tau2_agent_cost
+  - metric_id: tau2_user_cost
+    implementation: tau2_user_cost
+
+summary_generators:
+  - tau2_summary
+
+tasks:
+  - task_id: tau2_telecom_runtime_vllm
+    dataset_id: tau2_telecom_base
+    steps:
+      - step: inference
+        adapter_id: tau2_agent
+      - step: judge
+        adapter_id: tau2_runtime_judge
+      - step: auto_eval
+    concurrency: 1

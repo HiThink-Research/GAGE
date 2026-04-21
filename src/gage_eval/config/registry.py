@@ -12,6 +12,7 @@ from gage_eval.agent_runtime.resolver import (
     build_compiled_runtime_executor,
     compile_agent_runtime_plan,
 )
+from gage_eval.agent_runtime.spec import AgentRuntimeSpec
 from gage_eval.config.pipeline_config import (
     BackendSpec,
     DatasetSpec,
@@ -168,9 +169,10 @@ class ConfigRegistry:
         spec: RoleAdapterSpec,
         backends: Optional[Dict[str, Any]] = None,
         prompts: Optional[Dict[str, PromptTemplateAsset]] = None,
-        agent_backends: Optional[Dict[str, Any]] = None,
+        agent_runtimes: Optional[Dict[str, AgentRuntimeSpec]] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         mcp_clients: Optional[Dict[str, Any]] = None,
+        benchmark_configs: Optional[Dict[str, Any]] = None,
     ) -> Any:
         adapter_cls = self._resolve_role_class(spec)
         lookup = self._registry_lookup()
@@ -193,7 +195,7 @@ class ConfigRegistry:
                     f"Backend '{spec.backend_id}' referenced by adapter '{spec.adapter_id}' is not defined"
                 )
             backend_obj = backends[spec.backend_id]
-        if backend_obj is not None:
+        if backend_obj is not None and spec.role_type != "dut_agent":
             adapter_kwargs.setdefault("backend", backend_obj)
         if spec.prompt_id:
             if not prompts or spec.prompt_id not in prompts:
@@ -203,14 +205,8 @@ class ConfigRegistry:
             prompt_renderer = prompts[spec.prompt_id].instantiate(spec.prompt_params)
             adapter_kwargs.setdefault("prompt_renderer", prompt_renderer)
         agent_backend_obj: Any = None
-        if spec.agent_backend is not None:
-            agent_backend_obj = self._build_inline_agent_backend(spec.agent_backend)
-        elif spec.agent_backend_id:
-            if not agent_backends or spec.agent_backend_id not in agent_backends:
-                raise KeyError(
-                    f"Agent backend '{spec.agent_backend_id}' referenced by adapter '{spec.adapter_id}' is not defined"
-                )
-            agent_backend_obj = agent_backends[spec.agent_backend_id]
+        if spec.role_type == "dut_agent" and backend_obj is not None:
+            agent_backend_obj = self._build_model_agent_backend(backend_obj, adapter_kwargs)
         if agent_backend_obj is not None:
             adapter_kwargs.setdefault("agent_backend", agent_backend_obj)
         if spec.mcp_client_id:
@@ -229,6 +225,12 @@ class ConfigRegistry:
             compiled_plan = compile_agent_runtime_plan(
                 agent_runtime_id=spec.agent_runtime_id,
                 sandbox_config=spec.sandbox,
+                runtime_specs=agent_runtimes,
+                benchmark_config=_resolve_benchmark_config_for_runtime(
+                    spec.agent_runtime_id,
+                    agent_runtimes=agent_runtimes,
+                    benchmark_configs=benchmark_configs,
+                ),
             )
             adapter_kwargs.setdefault("agent_runtime_id", spec.agent_runtime_id)
             adapter_kwargs.setdefault("compat_runtime_id", spec.compat_runtime_id)
@@ -240,6 +242,7 @@ class ConfigRegistry:
                     installed_client_override=None,
                     prompt_renderer=adapter_kwargs.get("prompt_renderer"),
                     max_turns=int(adapter_kwargs.get("max_turns", 8)),
+                    tool_call_retry_budget=adapter_kwargs.get("tool_call_retry_budget", 3),
                     pre_hooks=adapter_kwargs.get("pre_hooks"),
                     post_hooks=adapter_kwargs.get("post_hooks"),
                     mcp_clients=mcp_clients,
@@ -291,7 +294,7 @@ class ConfigRegistry:
         config: PipelineConfig,
         backends: Optional[Dict[str, Any]] = None,
         prompts: Optional[Dict[str, PromptTemplateAsset]] = None,
-        agent_backends: Optional[Dict[str, Any]] = None,
+        agent_runtimes: Optional[Dict[str, AgentRuntimeSpec]] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
         mcp_clients: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -303,11 +306,17 @@ class ConfigRegistry:
                 spec,
                 backends=backends,
                 prompts=prompts,
-                agent_backends=agent_backends,
+                agent_runtimes=agent_runtimes,
                 sandbox_profiles=sandbox_profiles,
                 mcp_clients=mcp_clients,
+                benchmark_configs=config.benchmark_configs,
             )
         return instances
+
+    def materialize_agent_runtimes(self, config: PipelineConfig) -> Dict[str, AgentRuntimeSpec]:
+        """Index agent runtime declarations by runtime id."""
+
+        return {spec.agent_runtime_id: spec for spec in config.agent_runtimes}
 
     def materialize_backends(self, config: PipelineConfig) -> Dict[str, Any]:
         """Instantiate backend objects declared at the pipeline level."""
@@ -323,37 +332,11 @@ class ConfigRegistry:
             )
         return instances
 
-    def materialize_agent_backends(
-        self,
-        config: PipelineConfig,
-        *,
-        backends: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Instantiate agent backend objects declared at the pipeline level."""
-
-        from gage_eval.role.agent.backends import build_agent_backend
-
-        instances: Dict[str, Any] = {}
-        for spec in config.agent_backends:
-            config_payload = dict(spec.config or {})
-            backend_id = spec.backend_id or config_payload.pop("backend_id", None)
-            if spec.backend_id:
-                config_payload.pop("backend_id", None)
-            if spec.type == "model_backend" and backend_id:
-                if not backends or backend_id not in backends:
-                    raise KeyError(
-                        f"Agent backend '{spec.agent_backend_id}' references unknown backend '{backend_id}'"
-                    )
-                config_payload["backend"] = backends[backend_id]
-            instances[spec.agent_backend_id] = build_agent_backend(
-                {"type": spec.type, "config": config_payload}
-            )
-        return instances
-
     def materialize_sandbox_profiles(self, config: PipelineConfig) -> Dict[str, Dict[str, Any]]:
         profiles: Dict[str, Dict[str, Any]] = {}
         for spec in config.sandbox_profiles:
-            profiles[spec.sandbox_id] = spec.to_dict()
+            profile = spec.to_dict()
+            profiles[spec.sandbox_id] = profile
         return profiles
 
     def materialize_mcp_clients(self, config: PipelineConfig) -> Dict[str, Any]:
@@ -433,15 +416,16 @@ class ConfigRegistry:
         backend_payload.setdefault("config", backend_payload.get("config", {}) or {})
         return build_backend(backend_payload, registry_view=self._registry_lookup())
 
-    def _build_inline_agent_backend(self, spec: Dict[str, Any]) -> Any:
-        from gage_eval.role.agent.backends import build_agent_backend
+    def _build_model_agent_backend(self, backend: Any, adapter_kwargs: Dict[str, Any]) -> Any:
+        """Wrap a model backend for framework-loop agent execution."""
 
-        backend_payload: Dict[str, Any] = dict(spec)
-        backend_type = backend_payload.get("type")
-        if not backend_type:
-            raise ValueError("Inline agent backend must declare field 'type'")
-        backend_payload.setdefault("config", backend_payload.get("config", {}) or {})
-        return build_agent_backend(backend_payload)
+        from gage_eval.role.agent.backends.model_backend import ModelBackend
+
+        config_payload: Dict[str, Any] = {"backend": backend}
+        for key in ("force_tool_choice", "sampling_params"):
+            if key in adapter_kwargs:
+                config_payload[key] = adapter_kwargs.pop(key)
+        return ModelBackend(config_payload)
 
     # ------------------------------------------------------------------
     # Convenience utilities
@@ -456,6 +440,21 @@ def _resolve_mcp_client_class(transport: Optional[str]) -> Any:
     from gage_eval.mcp import McpClient
 
     return McpClient
+
+
+def _resolve_benchmark_config_for_runtime(
+    agent_runtime_id: Optional[str],
+    *,
+    agent_runtimes: Optional[Dict[str, AgentRuntimeSpec]],
+    benchmark_configs: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not agent_runtime_id or not agent_runtimes or not benchmark_configs:
+        return {}
+    runtime_spec = agent_runtimes.get(agent_runtime_id)
+    if runtime_spec is None:
+        return {}
+    benchmark_config = benchmark_configs.get(runtime_spec.benchmark_kit_id)
+    return dict(benchmark_config) if isinstance(benchmark_config, dict) else {}
 
 
 def _env_truthy(value: Optional[str]) -> bool:

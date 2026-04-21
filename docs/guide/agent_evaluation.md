@@ -251,11 +251,30 @@ python run.py \
   --output-dir runs/tau2_all_subsets_base
 ```
 
+Run telecom domain with a local vLLM model (config: [`config/custom/tau2/tau2_telecom_runtime_vllm.yaml`](../../config/custom/tau2/tau2_telecom_runtime_vllm.yaml)):
+
+```bash
+cd gage-eval-main
+export VLLM_MODEL_PATH=/path/to/your/model      # required
+export TAU2_DATA_DIR=/path/to/tau2-data
+export OPENAI_API_KEY=your_key                  # for the default gpt-4.1 user simulator
+# export TAU2_USER_MODEL=gpt-4.1               # override user simulator model
+# export VLLM_MAX_MODEL_LEN=8192
+# export VLLM_TENSOR_PARALLEL_SIZE=1
+python run.py \
+  --config config/custom/tau2/tau2_telecom_runtime_vllm.yaml \
+  --run-id tau2_vllm_$(date +%H%M%S) \
+  --output-dir runs \
+  --max-samples 1
+```
+
+> **User simulator note:** The user simulator (`TAU2_USER_MODEL`, default `gpt-4.1`) must be a capable model. Do not reuse the DUT model as the user simulator — a small or vision-only model will loop on device diagnostics instead of acting as a customer.
+
 ### 4.5 Metrics and Outputs
 
 - Metrics: `tau2_reward`, `tau2_pass`, `tau2_pass_hat_k`, `tau2_agent_cost`, `tau2_user_cost`.
 - Summary generator: `tau2_summary` produces `pass_hat_k` and per-domain averages in `summary.json`.
-- Tau2 user simulator relies on the official Tau2 runtime (LiteLLM), so API keys must be configured in the environment for the user model.
+- Tau2 user simulator relies on the official Tau2 runtime (LiteLLM), so API keys must be configured in the environment for the user model. Configure it through `benchmark_configs.tau2.user_simulator`; the default model is `gpt-4.1`.
 
 ### 4.6 Core Configuration Knobs (Tau2)
 
@@ -267,7 +286,8 @@ python run.py \
 | `datasets[*].params.seed` | seed | Base seed; trial seed is `seed + trial`. Fix for reproducibility. |
 | `datasets[*].params.num_tasks` | sampling | Use for smoke runs; remove for full evaluation. |
 | `datasets[*].params.data_dir` | data path | Path to HF snapshot or local data directory. |
-| `sandbox_profiles[*].runtime_configs.user_model` | user sim | Configure the user LLM (LiteLLM-compatible). |
+| `benchmark_configs.tau2.user_simulator.model` | user sim | Configure the user LLM (LiteLLM-compatible). Defaults to `gpt-4.1`; set `TAU2_USER_MODEL` to override. |
+| `benchmark_configs.tau2.user_simulator.model_args` | user sim | Pass LiteLLM args such as `api_base`, `api_key`, and `temperature`; set the same model and args as the DUT backend if you want both roles to share a backend. |
 | `sandbox_profiles[*].runtime_configs.max_steps` | max steps | Prevent infinite loops. |
 | `metrics[*]` | pass-hat | `tau2_pass_hat_k` produces `pass_hat@1..k` based on min trials. |
 

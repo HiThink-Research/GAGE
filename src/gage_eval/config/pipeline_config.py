@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from gage_eval.agent_runtime.spec import AgentRuntimeSpec
 from gage_eval.observability.logger import ObservableLogger
 
 _logger = ObservableLogger()
@@ -26,16 +27,6 @@ class BackendSpec:
     backend_id: str
     type: str
     config: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class AgentBackendSpec:
-    """Describes a reusable agent backend instance."""
-
-    agent_backend_id: str
-    type: str
-    config: Dict[str, Any] = field(default_factory=dict)
-    backend_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -100,8 +91,6 @@ class RoleAdapterSpec:
     params: Dict[str, Any] = field(default_factory=dict)
     backend_id: Optional[str] = None
     backend: Optional[Dict[str, Any]] = None
-    agent_backend_id: Optional[str] = None
-    agent_backend: Optional[Dict[str, Any]] = None
     agent_runtime_id: Optional[str] = None
     compat_runtime_id: Optional[str] = None
     mcp_client_id: Optional[str] = None
@@ -231,7 +220,8 @@ class PipelineConfig:
     datasets: Sequence[DatasetSpec] = field(default_factory=tuple)
     models: Sequence[ModelSpec] = field(default_factory=tuple)
     backends: Sequence[BackendSpec] = field(default_factory=tuple)
-    agent_backends: Sequence[AgentBackendSpec] = field(default_factory=tuple)
+    agent_runtimes: Sequence[AgentRuntimeSpec] = field(default_factory=tuple)
+    benchmark_configs: Dict[str, Any] = field(default_factory=dict)
     sandbox_profiles: Sequence[SandboxProfileSpec] = field(default_factory=tuple)
     mcp_clients: Sequence[McpClientSpec] = field(default_factory=tuple)
     prompts: Sequence[PromptTemplateSpec] = field(default_factory=tuple)

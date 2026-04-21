@@ -26,6 +26,8 @@ class VLLMRequest:
     cache_namespace: Optional[str] = None
     chat_template_kwargs: Dict[str, Any] = field(default_factory=dict)
     output_type: str = "text"
+    tools: List[Dict[str, Any]] = field(default_factory=list)
+    tool_choice: Optional[Any] = None
 
 
 def _normalize_payload_base(payload: Dict[str, Any]) -> VLLMRequest:
@@ -47,6 +49,12 @@ def _normalize_payload_base(payload: Dict[str, Any]) -> VLLMRequest:
     cache_namespace = payload.get("cache_namespace") or sample.get("cache_namespace")
     chat_template_kwargs = payload.get("chat_template_kwargs") or sample.get("chat_template_kwargs") or {}
     output_type = payload.get("output_type") or sample.get("output_type") or "text"
+    tools = payload.get("tools")
+    if tools is None:
+        tools = sample.get("tools") if isinstance(sample, dict) else None
+    tool_choice = payload.get("tool_choice")
+    if tool_choice is None and isinstance(sample, dict):
+        tool_choice = sample.get("tool_choice")
 
     sampling_params: Dict[str, Any] = {}
     for source in (
@@ -68,6 +76,8 @@ def _normalize_payload_base(payload: Dict[str, Any]) -> VLLMRequest:
         cache_namespace=str(cache_namespace) if cache_namespace is not None else None,
         chat_template_kwargs=chat_template_kwargs if isinstance(chat_template_kwargs, dict) else {},
         output_type=str(output_type or "text"),
+        tools=list(tools) if isinstance(tools, list) else [],
+        tool_choice=tool_choice,
     )
 
 
@@ -158,6 +168,8 @@ def normalize_request_payload(
         cache_namespace=base.cache_namespace,
         chat_template_kwargs=base.chat_template_kwargs,
         output_type=base.output_type,
+        tools=base.tools,
+        tool_choice=base.tool_choice,
         sample_n=sample_n,
         request_id=request_id,
         chat_meta=chat_meta,
