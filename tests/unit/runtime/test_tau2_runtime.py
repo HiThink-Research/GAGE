@@ -53,6 +53,78 @@ def test_tau2_runtime_basic_flow(tmp_path: Path, monkeypatch) -> None:
     assert "content" in tool_out
 
 
+def test_tau2_runtime_respond_tool_schema_marks_final_answer(tmp_path: Path, monkeypatch) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    sample = _build_sample(domain="telecom")
+    runtime.initialize_task(sample)
+
+    respond_tool = next(
+        tool
+        for tool in sample["tools"]
+        if tool.get("function", {}).get("name") == "respond"
+    )
+    assert respond_tool["x-gage"]["final_answer_from"] == "final_answer"
+
+
+def test_tau2_runtime_gage_instruction_blocks_user_side_tool_hallucination(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    sample = _build_sample(domain="telecom")
+    runtime.initialize_task(sample)
+
+    instruction = sample["metadata"]["tau2"]["gage_instruction"]
+    assert "Only call tools listed in the provided tools schema" in instruction
+    assert "user-side device tools" in instruction
+    assert "check_status_bar" in instruction
+    assert "Do not call them directly" in instruction
+    assert "Before transferring to a human agent" in instruction
+    assert "exhaust every troubleshooting step listed in the policy" in instruction
+    assert "Before telling the user the problem is resolved" in instruction
+    assert "can_send_mms" in instruction
+    assert "connect_vpn" in instruction
+    assert "disconnect_vpn" in instruction
+    assert "run_speed_test" in instruction
+    assert "final verification" in instruction
+
+
+def test_tau2_runtime_unknown_user_side_tool_error_guides_agent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.initialize_task(_build_sample(domain="telecom"))
+
+    env = runtime._env
+    env.get_user_tools = lambda: [SimpleNamespace(name="check_network_status")]
+
+    def fake_response(tool_call):
+        return SimpleNamespace(
+            id=tool_call.id,
+            role="tool",
+            content="Error: Tool 'check_network_status' not found.",
+            requestor="assistant",
+            error=True,
+        )
+
+    env.get_response = fake_response
+
+    response = runtime.exec_tool("check_network_status", {})
+
+    content = response["content"]
+    assert "Tool 'check_network_status' is a user-side device tool" in content
+    assert "Do not call it directly" in content
+    assert "respond" in content
+    assert "Available agent tools: lookup, respond" in content
+
+
 def test_tau2_runtime_user_tools_and_stop(tmp_path: Path, monkeypatch) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path, force_user_tool_call=True)
     runtime = Tau2Runtime()

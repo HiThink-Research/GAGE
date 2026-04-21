@@ -20,6 +20,19 @@ from gage_eval.utils.benchmark_helpers.tau2 import (
     resolve_tau2_data_dir,
 )
 
+_USER_SIDE_DEVICE_TOOL_PREFIXES = ("check_", "toggle_", "set_", "reboot_", "reseat_")
+_USER_SIDE_DEVICE_TOOL_NAMES = {
+    "can_send_mms",
+    "connect_vpn",
+    "disconnect_vpn",
+    "get_status_bar",
+    "grant_app_permission",
+    "reboot_device",
+    "reset_apn_settings",
+    "reseat_sim_card",
+    "run_speed_test",
+}
+
 
 def _tau2_import(module_path: str, name: str) -> Any:
     """Import a single symbol from a tau2 submodule, raising RuntimeError on failure."""
@@ -314,8 +327,16 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         self._trajectory.append(tool_msg)
         self._step_count += 1
         self._maybe_terminate()
+        content = tool_msg.content
+        if getattr(tool_msg, "error", False):
+            content = _augment_env_tool_error(
+                content,
+                tool_name=name,
+                env=self._env,
+                respond_tool_name=self._respond_tool_name,
+            )
         return {
-            "content": tool_msg.content,
+            "content": content,
             "error": bool(getattr(tool_msg, "error", False)),
         }
 
@@ -646,6 +667,7 @@ def _build_respond_tool_schema(respond_tool_name: str) -> Dict[str, Any]:
                 "required": ["message"],
             },
         },
+        "x-gage": {"final_answer_from": "final_answer"},
     }
 
 
@@ -713,11 +735,100 @@ def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:
     tau2_meta["policy"] = env.get_policy()
     tau2_meta["agent_instruction"] = AGENT_INSTRUCTION
     tau2_meta["gage_instruction"] = (
-        "When you want to reply to the user, call the respond tool with your message. "
-        "Do not send plain assistant messages directly."
+        "Only call tools listed in the provided tools schema. When you want to reply "
+        "to the user, call the respond tool with your message. Do not send plain "
+        "assistant messages directly. The user-side device tools such as check_status_bar, "
+        "check_*, toggle_*, set_*, reboot_*, reseat_*, run_speed_test, get_status_bar, "
+        "can_send_mms, connect_vpn, disconnect_vpn, and grant_app_permission are not "
+        "agent tools. Do not call them directly; ask the user via respond to perform "
+        "the action or check and report the result. Before transferring to a human agent for telecom technical support, "
+        "exhaust every troubleshooting step listed in the policy for the user's issue. "
+        "Before telling the user the problem is resolved, obtain final verification: "
+        "ask the user via respond to run can_send_mms for MMS issues or run_speed_test "
+        "for mobile data issues, and ground the resolved message on that result."
     )
     meta["tau2"] = tau2_meta
     sample["metadata"] = meta
+
+
+def _augment_env_tool_error(
+    content: Any,
+    *,
+    tool_name: str,
+    env: Any,
+    respond_tool_name: str,
+) -> str:
+    text = "" if content is None else str(content)
+    if not _is_tool_not_found_error(text, tool_name):
+        return text
+    agent_tools = _agent_tool_names(env, respond_tool_name)
+    available = _format_tool_names(agent_tools)
+    if _is_user_side_device_tool(tool_name, env):
+        return (
+            f"{text} Tool '{tool_name}' is a user-side device tool, not an agent tool. "
+            "Do not call it directly. Ask the user via the respond tool to perform "
+            f"the action or check and report the result. Available agent tools: {available}."
+        )
+    return (
+        f"{text} Tool '{tool_name}' is not available to the agent. Only call tools "
+        f"listed in the provided tools schema. Available agent tools: {available}."
+    )
+
+
+def _is_tool_not_found_error(content: str, tool_name: str) -> bool:
+    if not tool_name:
+        return False
+    return f"Tool '{tool_name}' not found" in content
+
+
+def _is_user_side_device_tool(tool_name: str, env: Any) -> bool:
+    user_tools = _tool_names(_safe_get_user_tools(env))
+    if tool_name in user_tools:
+        return True
+    if tool_name in _USER_SIDE_DEVICE_TOOL_NAMES:
+        return True
+    return tool_name.startswith(_USER_SIDE_DEVICE_TOOL_PREFIXES)
+
+
+def _agent_tool_names(env: Any, respond_tool_name: str) -> list[str]:
+    try:
+        tools = env.get_tools()
+    except Exception:
+        tools = []
+    names = _tool_names(tools)
+    if respond_tool_name:
+        names.append(str(respond_tool_name))
+    return _dedupe_names(names)
+
+
+def _tool_names(tools: Any) -> list[str]:
+    names: list[str] = []
+    for tool in tools or []:
+        name = getattr(tool, "name", None)
+        if not name and isinstance(tool, dict):
+            function = tool.get("function")
+            if isinstance(function, dict):
+                name = function.get("name")
+            else:
+                name = tool.get("name")
+        if name:
+            names.append(str(name))
+    return _dedupe_names(names)
+
+
+def _dedupe_names(names: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        stripped = name.strip()
+        if stripped and stripped not in seen:
+            deduped.append(stripped)
+            seen.add(stripped)
+    return deduped
+
+
+def _format_tool_names(names: list[str]) -> str:
+    return ", ".join(names) if names else "<none>"
 
 
 def _extract_message(arguments: Any) -> str:

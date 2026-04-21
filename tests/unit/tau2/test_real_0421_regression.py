@@ -94,6 +94,28 @@ def test_real_0421_harmony_xml_response_parses_as_respond_tool_call() -> None:
 
 
 @pytest.mark.fast
+def test_real_0421_tau2_think_tail_bare_json_response_parses_as_respond_tool_call() -> None:
+    text = _fixture_text("0421_tau2_think_tail_bare_json_respond_response.txt")
+    model = _StaticTextModel(text)
+    backend = ModelBackend({"backend": model})
+
+    result = backend.invoke(
+        {
+            "messages": [{"role": "user", "content": "My mobile data is not working."}],
+            "tools": [RESPOND_TOOL],
+            "tool_choice": "required",
+        }
+    )
+
+    assert result["answer"] == ""
+    assert result["raw_answer"] == text
+    assert len(result["tool_calls"]) == 1
+    call = result["tool_calls"][0]
+    assert call["function"]["name"] == "respond"
+    assert "verify your account" in call["function"]["arguments"]["message"].lower()
+
+
+@pytest.mark.fast
 def test_real_0421_harmony_xml_response_reaches_tool_router_without_retry() -> None:
     text = _fixture_text("0421_tau_harmony_xml_respond_response.txt")
     model = _StaticTextModel(text)
@@ -166,3 +188,12 @@ def test_real_0421_fixture_documents_original_too_many_errors_artifact() -> None
 
     assert cost_payload["termination_reason"] == "too_many_errors"
     assert cost_payload["agent_cost"] > 1_000_000
+
+
+@pytest.mark.fast
+def test_real_0421_tau2_fixture_documents_user_side_tool_error() -> None:
+    trace_step = json.loads(_fixture_text("0421_tau2_unknown_user_side_tool_error.json"))
+
+    assert trace_step["name"] == "check_network_status"
+    assert trace_step["status"] == "failed"
+    assert trace_step["output"]["content"] == "Error: Tool 'check_network_status' not found."

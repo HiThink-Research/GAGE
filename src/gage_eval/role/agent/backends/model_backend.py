@@ -213,7 +213,31 @@ def _extract_tool_calls_from_answer(answer: Any) -> List[Dict[str, Any]]:
         calls.extend(_normalize_text_tool_calls(parsed))
         if not calls:
             calls.extend(_parse_pythonic_tool_calls(raw_payload))
-    return calls
+    return _dedupe_tool_calls(calls)
+
+
+def _dedupe_tool_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = str(function.get("name") or call.get("name") or "")
+        arguments = function.get("arguments", call.get("arguments", {}))
+        key = (name, _canonical_tool_arguments(arguments))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(call)
+    return deduped
+
+
+def _canonical_tool_arguments(arguments: Any) -> str:
+    try:
+        return json.dumps(arguments, sort_keys=True, default=str)
+    except TypeError:
+        return str(arguments)
 
 
 def _iter_tool_call_payloads(answer: str) -> List[str]:
@@ -243,7 +267,24 @@ def _iter_tool_call_payloads(answer: str) -> List[str]:
     stripped = answer.strip()
     if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
         payloads.append(stripped)
+    for tail in _iter_think_tails(answer):
+        balanced = _extract_balanced_json(tail)
+        if balanced is not None:
+            payloads.append(balanced)
+        if _has_pythonic_tool_call(tail):
+            payloads.append(tail)
     return [payload for payload in payloads if payload.strip()]
+
+
+def _iter_think_tails(answer: str) -> Iterable[str]:
+    for match in re.finditer(r"</think\s*>", answer, flags=re.IGNORECASE):
+        tail = answer[match.end() :].strip()
+        if tail:
+            yield tail
+
+
+def _has_pythonic_tool_call(text: str) -> bool:
+    return any(True for _ in _iter_pythonic_call_expressions(text))
 
 
 def _parse_tool_payload(raw: str) -> Any:

@@ -306,6 +306,79 @@ def test_model_backend_extracts_pythonic_function_call():
     assert result["tool_calls"][0]["function"]["arguments"] == {"message": "All set"}
 
 
+@pytest.mark.fast
+def test_model_backend_extracts_bare_pythonic_function_call_after_think_tail():
+    class PythonicToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<think>I should ask the user for their phone number.</think>\n\n"
+                    "respond(message='Please provide your phone number.')"
+                )
+            }
+
+    backend = ModelBackend({"backend": PythonicToolCallBackend()})
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Please provide your phone number."
+    }
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize(
+    "answer",
+    [
+        (
+            "<think>Need to refuel data.</think>\n"
+            "<tool_call>\n"
+            '{"name":"refuel_data", "arguments":{"gb_amount":2.0}}\n'
+            "</tool_call>"
+        ),
+        (
+            "<think>Need to refuel data.</think>\n"
+            "```json\n"
+            '{"name":"refuel_data", "arguments":{"gb_amount":2.0}}\n'
+            "```"
+        ),
+    ],
+)
+def test_model_backend_does_not_duplicate_wrapped_json_after_think_tail(answer: str):
+    class WrappedJsonToolCallBackend:
+        def invoke(self, payload):
+            return {"answer": answer}
+
+    backend = ModelBackend({"backend": WrappedJsonToolCallBackend()})
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "refuel_data", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["answer"] == ""
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "refuel_data"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"gb_amount": 2.0}
+
+
 def test_model_backend_filters_tool_calls_by_tools_schema_if_present():
     class XmlToolCallBackend:
         def __init__(self) -> None:
