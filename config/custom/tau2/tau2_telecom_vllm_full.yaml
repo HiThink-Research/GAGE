@@ -128,6 +128,10 @@ role_adapters:
       tool_result_format: ${TAU2_AGENT_TOOL_FORMAT:-}
       plain_text_response_tool: ${TAU2_PLAIN_TEXT_RESPONSE_TOOL:-respond}
       plain_text_response_formats:
+        - qwen
+        - qwen3
+        - qwen3.5
+        - qwen3.6
         - gemma
         - gemma4
         - gemma-4

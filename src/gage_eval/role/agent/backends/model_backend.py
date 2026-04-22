@@ -129,6 +129,8 @@ def _normalize_backend_response(
 ) -> Dict[str, Any]:
     result = normalize_agent_output(response)
     tool_calls = _extract_tool_calls(response)
+    if tool_calls:
+        tool_calls = _normalize_tool_call_names(tool_calls)
     parsed_tool_calls: List[Dict[str, Any]] = []
     if not tool_calls:
         tool_calls = _extract_tool_calls_from_answer(result.get("answer"), tool_call_format=tool_call_format)
@@ -391,7 +393,17 @@ def _should_wrap_plain_text_response(
 def _extract_plain_text_response_content(answer: Any) -> str:
     if not isinstance(answer, str):
         return ""
-    content = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", answer, flags=re.DOTALL | re.IGNORECASE)
+    closing_think_tags = list(re.finditer(r"</think\s*>", answer, flags=re.IGNORECASE))
+    if closing_think_tags:
+        # Qwen-style templates can emit a bare closing tag; text after the last close is the user-visible reply.
+        content = answer[closing_think_tags[-1].end() :]
+    else:
+        content = re.sub(
+            r"<think\b[^>]*>.*?</think\s*>",
+            "",
+            answer,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
     return content.strip()
 
 
@@ -542,10 +554,35 @@ def _build_openai_tool_call(name: Any, arguments: Any, *, call_id: Any = None) -
         "id": str(call_id or "call_0"),
         "type": "function",
         "function": {
-            "name": str(name),
+            "name": _normalize_generated_tool_name(name),
             "arguments": arguments,
         },
     }
+
+
+def _normalize_tool_call_names(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized_calls: List[Dict[str, Any]] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        normalized = dict(call)
+        function = normalized.get("function")
+        if isinstance(function, dict):
+            normalized_function = dict(function)
+            normalized_function["name"] = _normalize_generated_tool_name(
+                normalized_function.get("name")
+            )
+            normalized["function"] = normalized_function
+        elif "name" in normalized:
+            normalized["name"] = _normalize_generated_tool_name(normalized.get("name"))
+        normalized_calls.append(normalized)
+    return normalized_calls
+
+
+def _normalize_generated_tool_name(name: Any) -> str:
+    if name is None:
+        return ""
+    return str(name).split("<|channel|>", 1)[0].strip()
 
 
 def _extract_balanced_json(text: str) -> Optional[str]:
@@ -582,7 +619,11 @@ def _extract_balanced_json(text: str) -> Optional[str]:
 def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
     function_blocks = re.findall(
-        r"<function(?:\s+name=\"([^\"]+)\"|=([A-Za-z_][\w.-]*))>\s*(.*?)\s*</function>",
+        (
+            r"<function(?:\s+name=\"([^\"]+)\"|="
+            r"([A-Za-z_][\w.-]*(?:<\|channel\|>[A-Za-z_][\w.-]*)?))>"
+            r"\s*(.*?)\s*</function>"
+        ),
         answer,
         flags=re.DOTALL | re.IGNORECASE,
     )
@@ -837,7 +878,7 @@ def _infer_tool_format(backend: Any) -> str:
         return "minimax"
     if "functiongemma" in model_text or re.search(r"gemma[_-]?4", model_text):
         return "gemma4"
-    if "qwen3" in model_text:
+    if re.search(r"\bqwen(?:2|3)?(?:[\W_]|$)", model_text):
         return "qwen"
     return "auto"
 

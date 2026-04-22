@@ -82,6 +82,19 @@ role_adapters:
       lifecycle: per_sample
     params:
       force_tool_choice: first_turn
+      tool_call_format: ${TAU2_AGENT_TOOL_FORMAT:-}
+      tool_result_format: ${TAU2_AGENT_TOOL_FORMAT:-}
+      plain_text_response_tool: ${TAU2_PLAIN_TEXT_RESPONSE_TOOL:-respond}
+      plain_text_response_formats:
+        - qwen
+        - qwen3
+        - qwen3.5
+        - qwen3.6
+        - gemma
+        - gemma4
+        - gemma-4
+        - gemma_4
+        - functiongemma
       max_turns: ${TAU2_MAX_TURNS:-200}
 
   - adapter_id: tau2_judge

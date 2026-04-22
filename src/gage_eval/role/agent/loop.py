@@ -772,8 +772,6 @@ def _tool_call_name(tool_call: Dict[str, Any]) -> str:
 
 
 def _resolve_tool_final_answer(tool_result: Dict[str, Any]) -> str:
-    if tool_result.get("status") != "success":
-        return ""
     final_answer = tool_result.get("final_answer")
     if isinstance(final_answer, str) and final_answer.strip():
         return final_answer

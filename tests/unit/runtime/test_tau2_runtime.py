@@ -7,19 +7,62 @@ from types import SimpleNamespace
 import pytest
 
 from gage_eval.agent_eval_kits.tau2.runtime import Tau2RuntimeEntry
+from gage_eval.role.agent.loop import AgentLoop
+from gage_eval.role.agent.tool_router import ToolRouter
 from gage_eval.sandbox.protocols import (
     StateQueryProtocol,
     TaskInitProtocol,
     ToolExecutionProtocol,
 )
 from gage_eval.sandbox.tau2_runtime import (
+    CANONICAL,
+    TerminalSignal,
     Tau2Runtime,
     _normalize_tau2_user_model_args,
     _resolve_agent_usage_cost,
     _resolve_tau2_user_simulator_runtime_config,
     _termination_reason,
+    parse_terminal_signal,
 )
 from tests._support.stubs.tau2_stub import STOP, install_tau2_stub
+
+
+class _SingleToolBackend:
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+        self.calls = 0
+
+    def invoke(self, _payload):
+        self.calls += 1
+        return {
+            "answer": "",
+            "tool_calls": [
+                {
+                    "id": "call_terminated_env_tool",
+                    "type": "function",
+                    "function": {"name": self.tool_name, "arguments": {}},
+                }
+            ],
+        }
+
+
+class _TerminatedToolSandbox:
+    def exec_tool(self, _name, _arguments):
+        return {
+            "error": "tau2_simulation_terminated",
+            "final_answer": "simulation_terminated",
+        }
+
+    def is_alive(self):
+        return True
+
+
+class _TerminatedToolProvider:
+    def __init__(self) -> None:
+        self.sandbox = _TerminatedToolSandbox()
+
+    def get_handle(self):
+        return SimpleNamespace(sandbox=self.sandbox, runtime_handle={})
 
 
 def _build_sample(domain: str = "airline") -> dict:
@@ -67,6 +110,52 @@ def test_tau2_runtime_respond_tool_schema_marks_final_answer(tmp_path: Path, mon
         if tool.get("function", {}).get("name") == "respond"
     )
     assert respond_tool["x-gage"]["final_answer_from"] == "final_answer"
+
+
+def test_tau2_runtime_env_tool_schema_marks_final_answer(tmp_path: Path, monkeypatch) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+
+    sample = _build_sample(domain="retail")
+    runtime.initialize_task(sample)
+
+    env_tool = next(
+        tool
+        for tool in sample["tools"]
+        if tool.get("function", {}).get("name") == "lookup"
+    )
+    assert env_tool["x-gage"]["final_answer_from"] == "final_answer"
+
+
+def test_tau2_runtime_env_tool_terminated_result_stops_agent_loop(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    sample = _build_sample(domain="retail")
+    runtime.initialize_task(sample)
+    backend = _SingleToolBackend("lookup")
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=5,
+        tool_call_retry_budget=3,
+    )
+
+    result = loop.run(
+        messages=sample["messages"],
+        tools=sample["tools"],
+        tool_choice="required",
+        sandbox_config={"runtime": "tau2"},
+        sandbox_provider=_TerminatedToolProvider(),
+    )
+
+    assert backend.calls == 1
+    assert result["answer"] == "simulation_terminated"
+    assert result["loop_exit_reason"] is None
 
 
 def test_tau2_runtime_gage_instruction_blocks_user_side_tool_hallucination(
@@ -142,6 +231,203 @@ def test_tau2_runtime_user_tools_and_stop(tmp_path: Path, monkeypatch) -> None:
     state = runtime.get_state()
     term = state["termination_reason"]
     assert (term.value if hasattr(term, "value") else str(term)) == "user_stop"
+
+
+def test_tau2_runtime_parse_terminal_signal_returns_canonical_and_raw() -> None:
+    assert parse_terminal_signal("### out of scope ###") == TerminalSignal(
+        kind="OUT_OF_SCOPE",
+        canonical=CANONICAL["OUT_OF_SCOPE"],
+        raw="### out of scope ###",
+    )
+    assert parse_terminal_signal("Thanks.\n### STOP ###") == TerminalSignal(
+        kind="STOP",
+        canonical=CANONICAL["STOP"],
+        raw="### STOP ###",
+    )
+    assert parse_terminal_signal("I mean ### STOP ### right?") is None
+    assert parse_terminal_signal("### TRANSFER ###", allowed=frozenset({"STOP"})) is None
+
+
+@pytest.mark.parametrize("agent_stop_text", ["###STOP###", "### STOP ###"])
+def test_tau2_runtime_recognizes_agent_stop_variants(
+    agent_stop_text: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.initialize_task(_build_sample(domain="telecom"))
+
+    respond_out = runtime.exec_tool("respond", {"message": agent_stop_text})
+
+    assert respond_out["final_answer"] == agent_stop_text
+    term = runtime.get_state()["termination_reason"]
+    assert (term.value if hasattr(term, "value") else str(term)) == "agent_stop"
+    assert runtime.get_state()["termination_detail"] == f"STOP:{agent_stop_text}"
+
+
+@pytest.mark.parametrize(
+    "terminal_text",
+    [
+        "### STOP ###",
+        "### STOP###",
+        "###TRANSFER ###",
+        "### OUT-OF-SCOPE ###",
+        "### out of scope ###",
+        "Thanks.\n### STOP ###",
+    ],
+)
+def test_tau2_runtime_recognizes_user_terminal_token_variants(
+    terminal_text: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.initialize_task(_build_sample(domain="telecom"))
+
+    def generate_next_message(_message, state):
+        from tau2.data_model.message import UserMessage
+
+        return UserMessage(role="user", content=terminal_text), state
+
+    runtime._user.generate_next_message = generate_next_message
+
+    respond_out = runtime.exec_tool("respond", {"message": "please verify"})
+
+    assert respond_out["final_answer"] == terminal_text
+    term = runtime.get_state()["termination_reason"]
+    assert (term.value if hasattr(term, "value") else str(term)) == "user_stop"
+    assert runtime.get_state()["termination_detail"] is not None
+
+
+def test_tau2_runtime_terminal_token_fallback_requires_token_boundaries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.initialize_task(_build_sample(domain="telecom"))
+
+    def generate_next_message(_message, state):
+        from tau2.data_model.message import UserMessage
+
+        return UserMessage(role="user", content="foo### STOP ###bar"), state
+
+    runtime._user.generate_next_message = generate_next_message
+
+    respond_out = runtime.exec_tool("respond", {"message": "please verify"})
+
+    assert "final_answer" not in respond_out
+    assert runtime.get_state()["termination_reason"] is None
+
+
+def test_tau2_runtime_normalizes_user_tool_channel_suffix_and_alias(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.initialize_task(_build_sample(domain="telecom"))
+
+    from tau2.data_model.message import ToolCall, ToolMessage, UserMessage
+
+    seen_names: list[str] = []
+
+    def fake_get_response(tool_call):
+        seen_names.append(tool_call.name)
+        return ToolMessage(
+            id=tool_call.id,
+            role="tool",
+            content=f"ok:{tool_call.name}",
+            requestor=tool_call.requestor,
+            error=False,
+        )
+
+    def generate_next_message(_message, state):
+        return UserMessage(role="user", content=STOP), state
+
+    runtime._env.get_response = fake_get_response
+    runtime._user.generate_next_message = generate_next_message
+    user_msg = UserMessage(
+        role="user",
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id="user_tool",
+                name="check_data_saver_mode<|channel|>commentary",
+                arguments={},
+                requestor="user",
+            )
+        ],
+    )
+
+    result = runtime._resolve_user_tool_calls(user_msg)
+
+    assert result.content == STOP
+    assert seen_names == ["check_data_restriction_status"]
+
+
+def test_tau2_runtime_normalizes_user_tool_alias_before_trajectory_append(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    install_tau2_stub(monkeypatch, data_dir=tmp_path)
+    runtime = Tau2Runtime()
+    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.initialize_task(_build_sample(domain="telecom"))
+
+    from tau2.data_model.message import AssistantMessage, ToolCall, ToolMessage, UserMessage
+
+    seen_names: list[str] = []
+
+    def fake_get_response(tool_call):
+        seen_names.append(tool_call.name)
+        return ToolMessage(
+            id=tool_call.id,
+            role="tool",
+            content=f"ok:{tool_call.name}",
+            requestor=tool_call.requestor,
+            error=False,
+        )
+
+    def generate_next_message(message, state):
+        if isinstance(message, AssistantMessage):
+            return (
+                UserMessage(
+                    role="user",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="user_alias_tool",
+                            name="check_roaming_status",
+                            arguments={},
+                            requestor="user",
+                        )
+                    ],
+                ),
+                state,
+            )
+        return UserMessage(role="user", content=STOP), state
+
+    runtime._env.get_response = fake_get_response
+    runtime._user.generate_next_message = generate_next_message
+
+    result = runtime.exec_tool("respond", {"message": "please check roaming"})
+    state = runtime.get_state()
+    user_tool_messages = [
+        msg
+        for msg in state["messages"]
+        if getattr(msg, "role", None) == "user" and getattr(msg, "tool_calls", None)
+    ]
+
+    assert result["final_answer"] == STOP
+    assert seen_names == ["check_network_status"]
+    assert user_tool_messages[-1].tool_calls[0].name == "check_network_status"
 
 
 def test_tau2_runtime_get_state_tracks_termination_detail(tmp_path: Path, monkeypatch) -> None:

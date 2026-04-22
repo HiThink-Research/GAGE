@@ -67,7 +67,9 @@ class ToolRouter:
             "latency_ms": latency_ms,
         }
         final_answer = _resolve_final_answer(result["output"], metadata)
-        if status == "success" and final_answer:
+        if final_answer and (
+            status == "success" or _allows_failed_status_final_answer(metadata)
+        ):
             result["final_answer"] = final_answer
         if resolved_tool:
             result["resolved_tool"] = resolved_tool
@@ -150,7 +152,7 @@ def _normalize_tool_call(tool_call: Dict[str, Any]) -> Tuple[str, Any]:
         parsed = _try_parse_json(arguments)
         if parsed is not None:
             arguments = parsed
-    return str(name or ""), arguments
+    return _normalize_generated_tool_name(name), arguments
 
 
 def _try_parse_json(raw: str) -> Any:
@@ -207,6 +209,24 @@ def _resolve_tool_metadata(
     if isinstance(tool_call, dict):
         metadata.update(tool_call.get("x-gage") or {})
     return metadata
+
+
+def _normalize_generated_tool_name(name: Any) -> str:
+    if name is None:
+        return ""
+    return str(name).split("<|channel|>", 1)[0].strip()
+
+
+def _allows_failed_status_final_answer(metadata: Dict[str, Any]) -> bool:
+    if metadata.get("final_answer_on_failure") or metadata.get("final_answer_on_error"):
+        return True
+    spec = metadata.get("final_answer_from") or metadata.get("final_answer_key")
+    # Only a literal final_answer field is treated as a termination signal on failures.
+    if isinstance(spec, str):
+        return spec == "final_answer"
+    if isinstance(spec, list):
+        return "final_answer" in {str(item) for item in spec if item is not None}
+    return False
 
 
 def _resolve_question(arguments: Any) -> str:

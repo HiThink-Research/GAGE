@@ -28,10 +28,14 @@ TAU2_SOURCE_ROOT = (
     / "tau2_telecom_vllm_full"
 )
 GEMMA4_ALL_SOURCE_ROOT = REPO_ROOT / "runs" / "gemma4_all" / "gemma4_all" / "tau" / "samples"
+QWEN_ALL_TAU_ROOT = WORKSPACE_ROOT / "agent-eval" / "0421" / "qwen3_6_35B_all" / "tau"
+QWEN_GPT_TAU_ROOT = WORKSPACE_ROOT / "agent-eval" / "0421" / "qwen3_6_35B_all_gpt" / "tau"
 SOURCE_ROOTS = {
     "tau": SOURCE_ROOT,
     "tau2": TAU2_SOURCE_ROOT,
     "gemma4_all": GEMMA4_ALL_SOURCE_ROOT,
+    "qwen_all_tau": QWEN_ALL_TAU_ROOT,
+    "qwen_gpt_tau": QWEN_GPT_TAU_ROOT,
 }
 OUTPUT_ROOT = Path(__file__).resolve().parent / "runtime_samples"
 
@@ -63,6 +67,14 @@ TRACE_FIXTURES = [
         "source_field": "model_output.agent_trace[0].output.answer",
         "description": "Real Gemma 4 assistant response from the 2026-04-21 airline run with a bare call: respond tool call.",
     },
+    {
+        "output": "0421_qwen_gpt_airline_plain_text_response.txt",
+        "source_run": "qwen_gpt_tau",
+        "source": "samples.jsonl",
+        "sample_id": "tau2_airline_vllm_full:airline_0__trial_2",
+        "source_field": "model_output.answer",
+        "description": "Real Qwen3.6/GPT-simulator airline response from 2026-04-21 that returned plain text instead of calling respond.",
+    },
 ]
 
 ARTIFACT_FIXTURES = [
@@ -80,6 +92,58 @@ JSON_FIXTURES = [
         "sample_dir": "telecom_[mms_issue]break_apn_mms_setting|user_abroad_roaming_enabled_off[PERSONA:Hard]__trial_0",
         "source_field": "scheduler_result.agent_output.agent_trace[8]",
         "description": "Real failed tool trace from the latest 2026-04-21 tau 2 run where the DUT called a user-side device tool directly.",
+    },
+    {
+        "output": "0421_qwen_simulation_terminated_tool_trace.json",
+        "source_run": "qwen_all_tau",
+        "source": "samples.jsonl",
+        "sample_id": "tau2_retail_vllm_full:retail_0__trial_0",
+        "source_field": "model_output.agent_trace[15]",
+        "description": "Real failed retail tool trace from 2026-04-21 where tau2 had already terminated and returned final_answer=simulation_terminated.",
+    },
+    {
+        "output": "0421_qwen_real_terminal_signals.json",
+        "source_run": "qwen_all_tau",
+        "source": "samples.jsonl",
+        "description": "Real user simulator terminal-token outputs from the 2026-04-21 Qwen3.6 all-subsets run.",
+        "terminal_messages": [
+            {
+                "sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]airplane_mode_on|data_saver_mode_on|user_abroad_roaming_disabled_on[PERSONA:None]__trial_1",
+                "trace_index": 15,
+                "field": "user_message",
+                "kind": "STOP",
+            },
+            {
+                "sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]data_mode_off|data_usage_exceeded[PERSONA:None]__trial_0",
+                "trace_index": 13,
+                "field": "user_message",
+                "kind": "STOP",
+            },
+            {
+                "sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]airplane_mode_on|bad_network_preference|data_mode_off|data_usage_exceeded|user_abroad_roaming_disabled_on[PERSONA:None]__trial_0",
+                "trace_index": 17,
+                "field": "user_message",
+                "kind": "TRANSFER",
+            },
+            {
+                "sample_id": "tau2_telecom_vllm_full:telecom_[service_issue]airplane_mode_on|overdue_bill_suspension[PERSONA:None]__trial_1",
+                "trace_index": 21,
+                "field": "user_message",
+                "kind": "TRANSFER",
+            },
+            {
+                "sample_id": "tau2_retail_vllm_full:retail_5__trial_0",
+                "trace_index": 1,
+                "field": "user_message",
+                "kind": "OUT_OF_SCOPE",
+            },
+            {
+                "sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]data_mode_off|data_usage_exceeded[PERSONA:None]__trial_0",
+                "trace_index": 12,
+                "field": "user_message",
+                "kind": "STOP",
+            },
+        ],
     }
 ]
 
@@ -90,7 +154,15 @@ def main() -> None:
     existing_fixtures = _read_existing_fixture_entries()
 
     for spec in TRACE_FIXTURES:
-        if "source" in spec:
+        if str(spec.get("source") or "").endswith(".jsonl"):
+            metadata_path = _source_root(spec) / spec["source"]
+            if not metadata_path.exists():
+                _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+                continue
+            metadata = _read_jsonl_sample(metadata_path, spec["sample_id"])
+            source_field = spec["source_field"]
+            answer = _read_source_field(metadata, source_field)
+        elif "source" in spec:
             metadata_path = _source_root(spec) / spec["source"]
             if not metadata_path.exists():
                 _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
@@ -121,13 +193,29 @@ def main() -> None:
         )
 
     for spec in JSON_FIXTURES:
-        metadata_path = _source_root(spec) / spec["sample_dir"] / "runtime_metadata.json"
-        if not metadata_path.exists():
-            _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
-            continue
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        source_field = spec["source_field"]
-        payload = _read_source_field(metadata, source_field)
+        if "terminal_messages" in spec:
+            metadata_path = _source_root(spec) / spec["source"]
+            if not metadata_path.exists():
+                _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+                continue
+            payload = _build_terminal_signal_fixture(metadata_path, spec["terminal_messages"])
+            source_field = "derived:model_output.agent_trace[].output.user_message"
+        elif str(spec.get("source") or "").endswith(".jsonl"):
+            metadata_path = _source_root(spec) / spec["source"]
+            if not metadata_path.exists():
+                _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+                continue
+            metadata = _read_jsonl_sample(metadata_path, spec["sample_id"])
+            source_field = spec["source_field"]
+            payload = _read_source_field(metadata, source_field)
+        else:
+            metadata_path = _source_root(spec) / spec["sample_dir"] / "runtime_metadata.json"
+            if not metadata_path.exists():
+                _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+                continue
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            source_field = spec["source_field"]
+            payload = _read_source_field(metadata, source_field)
         output_path = OUTPUT_ROOT / spec["output"]
         output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
         manifest["fixtures"].append(
@@ -209,6 +297,48 @@ def _read_source_field(payload: Any, source_field: str) -> Any:
         for index in indexes:
             current = current[index]
     return current
+
+
+def _read_jsonl_sample(path: Path, sample_id: str) -> dict[str, Any]:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        sample = json.loads(line)
+        if sample.get("sample_id") == sample_id:
+            return sample
+    raise KeyError(f"{sample_id} not found in {path}")
+
+
+def _build_terminal_signal_fixture(
+    path: Path,
+    message_specs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    messages: list[dict[str, Any]] = []
+    for spec in message_specs:
+        sample = _read_jsonl_sample(path, spec["sample_id"])
+        source_field = (
+            f"model_output.agent_trace[{int(spec['trace_index'])}].output.{spec['field']}"
+        )
+        content = _read_source_field(sample, source_field)
+        if not isinstance(content, str):
+            raise TypeError(f"{source_field} is not a string")
+        messages.append(
+            {
+                "source_sample_id": spec["sample_id"],
+                "trace_index": int(spec["trace_index"]),
+                "field": spec["field"],
+                "kind": spec["kind"],
+                "raw": _extract_terminal_token_line(content),
+                "content": content,
+            }
+        )
+    return {"source": _relative(path), "messages": messages}
+
+
+def _extract_terminal_token_line(content: str) -> str:
+    for line in content.splitlines() or [content]:
+        stripped = line.strip()
+        if stripped.startswith("###") and stripped.endswith("###"):
+            return stripped
+    raise ValueError(f"No terminal token line found in {content!r}")
 
 
 def _split_field_part(part: str) -> tuple[str, list[int]]:

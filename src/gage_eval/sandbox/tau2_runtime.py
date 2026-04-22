@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +34,32 @@ _USER_SIDE_DEVICE_TOOL_NAMES = {
     "reseat_sim_card",
     "run_speed_test",
 }
+_USER_SIDE_TOOL_ALIASES = {
+    "check_data_saver_mode": "check_data_restriction_status",
+    "check_roaming_status": "check_network_status",
+    "get_status_bar": "check_status_bar",
+}
+CANONICAL = {
+    "STOP": "###STOP###",
+    "TRANSFER": "###TRANSFER###",
+    "OUT_OF_SCOPE": "###OUT-OF-SCOPE###",
+}
+_ALL_TERMINAL_KINDS = frozenset(CANONICAL)
+_TERMINAL_LINE_RE = re.compile(
+    (
+        r"^\s*#{2,}\s*"
+        r"(?P<kind>STOP|TRANSFER|OUT\s*[-_ ]?\s*OF\s*[-_ ]?\s*SCOPE)"
+        r"\s*#{2,}\s*$"
+    ),
+    flags=re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class TerminalSignal:
+    kind: str
+    canonical: str
+    raw: str
 
 
 def _tau2_import(module_path: str, name: str) -> Any:
@@ -237,6 +265,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             user_message, user_state = user_sim.generate_next_message(
                 first_assistant, user_state
             )
+            user_message = _normalize_user_message_tool_calls(user_message)
             trajectory.append(user_message)
             self._user_state = user_state
             self._user_cost_total += _resolve_user_message_cost(user_message)
@@ -248,6 +277,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                 user_message, user_state = user_sim.generate_next_message(
                     last, user_state
                 )
+                user_message = _normalize_user_message_tool_calls(user_message)
                 trajectory.append(user_message)
                 self._user_state = user_state
                 self._user_cost_total += _resolve_user_message_cost(user_message)
@@ -255,7 +285,10 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
                     self._resolve_user_tool_calls(user_message)
 
         # STEP 3: Prepare sample payload updates (messages + tools + metadata).
-        tools_schema = [tool.openai_schema for tool in env.get_tools()]
+        tools_schema = [
+            _annotate_tau2_tool_schema(tool.openai_schema)
+            for tool in env.get_tools()
+        ]
         tools_schema = tools_schema + [_build_respond_tool_schema(self._respond_tool_name)]
         sample_messages = self._build_agent_visible_messages(trajectory)
         _update_tau2_metadata(sample, env)
@@ -347,24 +380,33 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         assistant_msg = _build_assistant_text_message(message_text)
         self._trajectory.append(assistant_msg)
         self._step_count += 1
-        if _is_agent_stop(message_text):
+        agent_signal = parse_terminal_signal(message_text, allowed=frozenset({"STOP"}))
+        if agent_signal is not None:
             self._termination_reason = _termination_reason("agent_stop")
+            self._termination_detail = _terminal_detail(agent_signal)
             return {"final_answer": message_text, "user_message": message_text}
 
         user_msg, self._user_state = self._user.generate_next_message(
             assistant_msg, self._user_state
         )
+        user_msg = _normalize_user_message_tool_calls(user_msg)
         self._trajectory.append(user_msg)
         self._user_cost_total += _resolve_user_message_cost(user_msg)
 
-        if _is_user_stop(user_msg):
+        user_signal = parse_terminal_signal(getattr(user_msg, "content", None))
+        if _is_user_stop_official(user_msg) or user_signal is not None:
             self._termination_reason = _termination_reason("user_stop")
+            if user_signal is not None:
+                self._termination_detail = _terminal_detail(user_signal)
             return {"final_answer": user_msg.content, "user_message": user_msg.content}
 
         if getattr(user_msg, "tool_calls", None):
             user_msg = self._resolve_user_tool_calls(user_msg)
-            if _is_user_stop(user_msg):
+            user_signal = parse_terminal_signal(getattr(user_msg, "content", None))
+            if _is_user_stop_official(user_msg) or user_signal is not None:
                 self._termination_reason = _termination_reason("user_stop")
+                if user_signal is not None:
+                    self._termination_detail = _terminal_detail(user_signal)
                 return {
                     "final_answer": user_msg.content,
                     "user_message": user_msg.content,
@@ -383,7 +425,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             loops += 1
             tool_messages = []
             for tool_call in current.tool_calls:
-                tool_msg = self._env.get_response(tool_call)
+                tool_msg = self._env.get_response(_normalize_user_tool_call(tool_call))
                 if getattr(tool_msg, "error", False):
                     self._error_count += 1
                 tool_messages.append(tool_msg)
@@ -392,6 +434,7 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
             next_user_msg, self._user_state = self._user.generate_next_message(
                 next_input, self._user_state
             )
+            next_user_msg = _normalize_user_message_tool_calls(next_user_msg)
             self._trajectory.append(next_user_msg)
             self._user_cost_total += _resolve_user_message_cost(next_user_msg)
             current = next_user_msg
@@ -671,12 +714,20 @@ def _build_respond_tool_schema(respond_tool_name: str) -> Dict[str, Any]:
     }
 
 
+def _annotate_tau2_tool_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    annotated = dict(schema)
+    metadata = dict(annotated.get("x-gage") or {})
+    metadata.setdefault("final_answer_from", "final_answer")
+    annotated["x-gage"] = metadata
+    return annotated
+
+
 def _build_tool_call(name: str, arguments: Any, *, requestor: str) -> Any:
     ToolCall = _tau2_import("tau2.data_model.message", "ToolCall")
     payload = _normalize_tool_args(arguments)
     return ToolCall(
         id=str(uuid.uuid4()),
-        name=str(name),
+        name=_strip_tool_channel_suffix(name),
         arguments=payload,
         requestor=requestor,
     )
@@ -708,17 +759,111 @@ def _build_multi_tool_message(tool_messages: List[Any]) -> Any:
 def _is_user_stop(message: Any) -> bool:
     if message is None:
         return False
+    if _is_user_stop_official(message):
+        return True
+    return parse_terminal_signal(getattr(message, "content", None)) is not None
+
+
+def _is_user_stop_official(message: Any) -> bool:
+    if message is None:
+        return False
     try:
         UserSimulator = _tau2_import("tau2.user.user_simulator", "UserSimulator")
     except RuntimeError:
         return False
-    return UserSimulator.is_stop(message)
+    return bool(UserSimulator.is_stop(message))
 
 
 def _is_agent_stop(content: Optional[str]) -> bool:
     if not content:
         return False
-    return "###STOP###" in content
+    return parse_terminal_signal(content, allowed=frozenset({"STOP"})) is not None
+
+
+def parse_terminal_signal(
+    content: Any,
+    *,
+    allowed: Optional[frozenset[str]] = None,
+) -> Optional[TerminalSignal]:
+    if not isinstance(content, str):
+        return None
+    allowed_kinds = _ALL_TERMINAL_KINDS if allowed is None else frozenset(allowed)
+    for line in content.splitlines() or [content]:
+        match = _TERMINAL_LINE_RE.match(line)
+        if not match:
+            continue
+        kind = _canonicalize_terminal_kind(match.group("kind"))
+        if kind in allowed_kinds:
+            return TerminalSignal(
+                kind=kind,
+                canonical=CANONICAL[kind],
+                raw=line.strip(),
+            )
+    return None
+
+
+def _canonicalize_terminal_kind(value: str) -> str:
+    return re.sub(r"[\s_-]+", "_", value.strip().upper()).strip("_")
+
+
+def _terminal_detail(signal: TerminalSignal) -> str:
+    return f"{signal.kind}:{signal.raw}"
+
+
+def _normalize_user_tool_call(tool_call: Any) -> Any:
+    name = getattr(tool_call, "name", None)
+    normalized_name = _normalize_user_tool_name(name)
+    if not normalized_name or normalized_name == name:
+        return tool_call
+    model_copy = getattr(tool_call, "model_copy", None)
+    if callable(model_copy):
+        try:
+            return model_copy(update={"name": normalized_name})
+        except Exception:
+            pass
+    try:
+        cloned = copy.copy(tool_call)
+        setattr(cloned, "name", normalized_name)
+        return cloned
+    except Exception:
+        return tool_call
+
+
+def _normalize_user_message_tool_calls(user_msg: Any) -> Any:
+    tool_calls = getattr(user_msg, "tool_calls", None)
+    if not tool_calls:
+        return user_msg
+    normalized_tool_calls = [
+        _normalize_user_tool_call(tool_call) for tool_call in tool_calls
+    ]
+    if all(
+        normalized is original
+        for original, normalized in zip(tool_calls, normalized_tool_calls)
+    ):
+        return user_msg
+    model_copy = getattr(user_msg, "model_copy", None)
+    if callable(model_copy):
+        try:
+            return model_copy(update={"tool_calls": normalized_tool_calls})
+        except Exception:
+            pass
+    try:
+        cloned = copy.copy(user_msg)
+        setattr(cloned, "tool_calls", normalized_tool_calls)
+        return cloned
+    except Exception:
+        return user_msg
+
+
+def _normalize_user_tool_name(name: Any) -> str:
+    stripped = _strip_tool_channel_suffix(name)
+    return _USER_SIDE_TOOL_ALIASES.get(stripped, stripped)
+
+
+def _strip_tool_channel_suffix(name: Any) -> str:
+    if name is None:
+        return ""
+    return str(name).split("<|channel|>", 1)[0].strip()
 
 
 def _termination_reason(reason: str) -> Any:

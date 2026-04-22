@@ -207,6 +207,19 @@ class FailingFakeSandbox(FakeSandbox):
         return ExecResult(exit_code=127, stdout="", stderr="/bin/sh: 1: badcmd: not found\n", duration_ms=1.0)
 
 
+class TerminatedTau2Sandbox(FakeSandbox):
+    def __init__(self, runtime_configs=None, resources=None):
+        super().__init__(runtime_configs=runtime_configs, resources=resources)
+        self.calls = 0
+
+    def exec_tool(self, name, arguments):
+        self.calls += 1
+        return {
+            "error": "tau2_simulation_terminated",
+            "final_answer": "simulation_terminated",
+        }
+
+
 @pytest.mark.fast
 def test_agent_loop_tool_call_flow():
     manager = SandboxManager()
@@ -262,6 +275,46 @@ def test_agent_loop_accumulates_usage_across_turns():
         "completion_tokens": 3,
         "total_tokens": 11,
     }
+
+
+@pytest.mark.fast
+def test_agent_loop_stops_on_explicit_final_answer_from_failed_tool_result() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("terminated_tau2", TerminatedTau2Sandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "terminated_tau2"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    sandbox = provider.get_handle().sandbox
+    loop = AgentLoop(
+        backend=FakeBackend(),
+        tool_router=ToolRouter(),
+        max_turns=3,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "run_shell", "parameters": {}},
+                "x-gage": {"final_answer_from": "final_answer"},
+            }
+        ],
+        sandbox_config={"runtime": "terminated_tau2"},
+        sandbox_provider=provider,
+    )
+
+    assert result["answer"] == "simulation_terminated"
+    assert result["loop_exit_reason"] is None
+    assert result["agent_trace"][0]["status"] == "failed"
+    assert result["agent_trace"][1]["output"] == {
+        "answer": "simulation_terminated",
+        "final_from_tool": "run_shell",
+    }
+    assert sandbox.calls == 1
+    provider.release()
 
 
 @pytest.mark.fast

@@ -321,6 +321,24 @@ def test_model_backend_infers_generic_qwen3_tool_format():
 
 
 @pytest.mark.fast
+def test_model_backend_infers_qwen_tool_format_for_qwen2_and_bare_qwen_names():
+    class Qwen2Backend:
+        config = {"model": "Qwen/Qwen2.5-7B-Instruct"}
+
+        def invoke(self, payload):
+            return {"answer": "done"}
+
+    class BareQwenBackend:
+        config = {"model_path": "/mnt/model/qwen-omni"}
+
+        def invoke(self, payload):
+            return {"answer": "done"}
+
+    assert ModelBackend({"backend": Qwen2Backend()})._tool_call_format == "qwen"
+    assert ModelBackend({"backend": BareQwenBackend()})._tool_call_format == "qwen"
+
+
+@pytest.mark.fast
 def test_model_backend_extracts_minimax_tool_call():
     class MiniMaxToolCallBackend:
         def invoke(self, payload):
@@ -774,6 +792,117 @@ def test_model_backend_wraps_gemma4_plain_text_response_as_respond_tool():
     assert result["tool_calls"][0]["function"]["arguments"] == {
         "message": "Your mobile data has been restored. Please try loading a webpage now."
     }
+
+
+@pytest.mark.fast
+def test_model_backend_wraps_qwen_plain_text_response_when_enabled():
+    class QwenPlainTextBackend:
+        config = {"model_path": "/mnt/models/qwen3_6_35B"}
+
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<think>I should answer the user.</think>\n\n"
+                    "Please run a speed test and tell me the result."
+                )
+            }
+
+    backend = ModelBackend(
+        {
+            "backend": QwenPlainTextBackend(),
+            "plain_text_response_tool": "respond",
+            "plain_text_response_formats": ["qwen"],
+        }
+    )
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert backend._tool_call_format == "qwen"
+    assert result["answer"] == ""
+    assert result["plain_text_response_wrapped"] is True
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Please run a speed test and tell me the result."
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_wraps_qwen_plain_text_response_after_bare_think_close():
+    class QwenBareClosePlainTextBackend:
+        config = {"model_path": "/mnt/models/qwen3_6_35B"}
+
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "I should ask the customer for the cancellation reason.\n"
+                    "</think>\n\n"
+                    "What is the reason for cancellation?"
+                )
+            }
+
+    backend = ModelBackend(
+        {
+            "backend": QwenBareClosePlainTextBackend(),
+            "plain_text_response_tool": "respond",
+            "plain_text_response_formats": ["qwen"],
+        }
+    )
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["plain_text_response_wrapped"] is True
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "What is the reason for cancellation?"
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_strips_qwen_channel_suffix_from_tool_call_name():
+    class QwenChannelSuffixBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    "<function=respond<|channel|>commentary>\n"
+                    "<parameter=message>Hello</parameter>\n"
+                    "</function>\n"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": QwenChannelSuffixBackend(), "tool_format": "qwen"})
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert "invalid_tool_call_names" not in result
 
 
 @pytest.mark.fast

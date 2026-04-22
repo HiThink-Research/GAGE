@@ -11,11 +11,14 @@ import pytest
 FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "tau2" / "runtime_samples"
 EXTRACTOR_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "tau2" / "_extract_0421_tau_fixtures.py"
 CANONICAL_JSON_FIXTURES = {
+    "0421_qwen_real_terminal_signals.json",
+    "0421_qwen_simulation_terminated_tool_trace.json",
     "0421_tau_old_failed_cost.json",
     "0421_tau2_unknown_user_side_tool_error.json",
 }
 RAW_TEXT_FIXTURES = {
     "0421_gemma4_airline_bare_call_respond_response.txt",
+    "0421_qwen_gpt_airline_plain_text_response.txt",
 }
 
 
@@ -69,3 +72,6 @@ def test_tau2_fixture_extractor_declares_new_tau2_fixtures() -> None:
     assert "0421_tau2_think_tail_bare_json_respond_response.txt" in declared_outputs
     assert "0421_gemma4_airline_bare_call_respond_response.txt" in declared_outputs
     assert "0421_tau2_unknown_user_side_tool_error.json" in declared_outputs
+    assert "0421_qwen_gpt_airline_plain_text_response.txt" in declared_outputs
+    assert "0421_qwen_real_terminal_signals.json" in declared_outputs
+    assert "0421_qwen_simulation_terminated_tool_trace.json" in declared_outputs
