@@ -217,8 +217,8 @@ role_adapters:
     role_type: judge_extend
     sandbox:
       sandbox_id: swebench_runtime
-      # Used only to read submission.patch if the agent did not return a diff.
-      # The verifier itself starts a fresh official SWE-bench Pro container.
+      # The verifier closes the agent sandbox and restarts this sandbox profile
+      # before running the official SWE-bench Pro judge script.
       lifecycle: per_sample
     params:
       implementation: swebench_docker
@@ -230,7 +230,6 @@ role_adapters:
         block_network: true
         test_timeout_s: 900
         docker_platform: linux/amd64
-        reuse_agent_sandbox_for_judge: false
 
 metrics:
   - metric_id: swebench_resolve_rate

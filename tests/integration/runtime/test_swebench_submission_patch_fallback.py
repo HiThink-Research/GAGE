@@ -63,15 +63,10 @@ def test_swebench_submission_patch_fallback_flow(tmp_path, mock_trace, temp_work
     run_dir.mkdir(parents=True)
     (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
     (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
-    container_calls = []
+    def fail_run_container(*_args, **_kwargs):
+        raise AssertionError("SWE-bench judge should restart the sandbox provider by default")
 
-    def fake_run_container(self, *, image_uri, workspace_dir, params, run_id, instance_id):
-        container_calls.append({"workspace_dir": workspace_dir, "instance_id": instance_id})
-        output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
-        (workspace_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
-        return {"status": "ok"}
-
-    monkeypatch.setattr(SwebenchDocker, "_run_container", fake_run_container)
+    monkeypatch.setattr(SwebenchDocker, "_run_container", fail_run_container)
 
     samples = [
         {
@@ -128,6 +123,5 @@ def test_swebench_submission_patch_fallback_flow(tmp_path, mock_trace, temp_work
     sample_loop.run(planner=planner, role_manager=role_manager, trace=mock_trace)
 
     assert samples[0]["eval_result"]["resolved"] is True
-    assert len(container_calls) == 1
     events = [item["event"] for item in mock_trace.events]
     assert "swebench_patch_fallback" in events

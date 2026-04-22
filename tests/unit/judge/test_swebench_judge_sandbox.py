@@ -37,10 +37,33 @@ class FakeHandle:
 
 class FakeProvider:
     def __init__(self, sandbox: FakeSandbox, runtime_configs: dict | None = None) -> None:
-        self._handle = FakeHandle(sandbox, runtime_configs)
+        self._handles = [FakeHandle(sandbox, runtime_configs)]
+        self._current = 0
+        self.release_calls = 0
+        self.get_handle_calls = 0
+
+    @classmethod
+    def with_restart(
+        cls,
+        agent_sandbox: FakeSandbox,
+        judge_sandbox: FakeSandbox,
+        runtime_configs: dict | None = None,
+    ) -> "FakeProvider":
+        provider = cls(agent_sandbox, runtime_configs)
+        provider._handles = [
+            FakeHandle(agent_sandbox, runtime_configs),
+            FakeHandle(judge_sandbox, runtime_configs),
+        ]
+        return provider
 
     def get_handle(self) -> FakeHandle:
-        return self._handle
+        self.get_handle_calls += 1
+        return self._handles[self._current]
+
+    def release(self) -> None:
+        self.release_calls += 1
+        if self._current < len(self._handles) - 1:
+            self._current += 1
 
 
 class MissingFileSandbox(FakeSandbox):
@@ -56,7 +79,7 @@ def _successful_container_run(workspace_dir: Path, test_name: str = "tests/test_
 
 
 @pytest.mark.io
-def test_swebench_judge_uses_fresh_container_by_default(tmp_path, temp_workspace, monkeypatch) -> None:
+def test_swebench_judge_restarts_sandbox_by_default(tmp_path, temp_workspace, monkeypatch) -> None:
     instance_id = "instance_1"
     scripts_root = tmp_path / "run_scripts"
     run_dir = scripts_root / instance_id
@@ -64,22 +87,15 @@ def test_swebench_judge_uses_fresh_container_by_default(tmp_path, temp_workspace
     (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
     (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
 
-    sandbox = FakeSandbox()
-    provider = FakeProvider(sandbox)
-    container_calls: list[dict[str, object]] = []
+    agent_sandbox = FakeSandbox()
+    output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+    judge_sandbox = FakeSandbox(outputs={"/workspace/output.json": json.dumps(output).encode("utf-8")})
+    provider = FakeProvider.with_restart(agent_sandbox, judge_sandbox)
 
-    def fake_run_container(self, *, image_uri, workspace_dir, params, run_id, instance_id):
-        container_calls.append(
-            {
-                "image_uri": image_uri,
-                "workspace_dir": workspace_dir,
-                "instance_id": instance_id,
-            }
-        )
-        _successful_container_run(workspace_dir)
-        return {"status": "ok"}
+    def fail_run_container(*_args, **_kwargs):
+        raise AssertionError("default judge path should use restarted sandbox provider")
 
-    monkeypatch.setattr(SwebenchDocker, "_run_container", fake_run_container)
+    monkeypatch.setattr(SwebenchDocker, "_run_container", fail_run_container)
 
     judge = SwebenchDocker(scripts_dir=str(scripts_root), allow_pull=False)
     sample = {
@@ -103,9 +119,11 @@ def test_swebench_judge_uses_fresh_container_by_default(tmp_path, temp_workspace
     result = judge.invoke(payload)
 
     assert result["resolved"] is True
-    assert len(container_calls) == 1
-    assert sandbox.exec_calls == []
-    assert "/workspace/entryscript.sh" not in sandbox.writes
+    assert provider.release_calls == 2
+    assert agent_sandbox.exec_calls == []
+    assert "/workspace/entryscript.sh" not in agent_sandbox.writes
+    assert "bash /workspace/entryscript.sh" in judge_sandbox.exec_calls
+    assert "/workspace/entryscript.sh" in judge_sandbox.writes
 
 
 @pytest.mark.io
@@ -136,7 +154,7 @@ def test_swebench_judge_sandbox_path(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 
@@ -176,7 +194,7 @@ def test_swebench_judge_entryscript_uses_official_git_apply(tmp_path, temp_works
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 
@@ -217,7 +235,7 @@ def test_swebench_judge_missing_patch_status_is_ok(tmp_path, temp_workspace) -> 
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 
@@ -268,7 +286,7 @@ def test_swebench_judge_cleans_patch_markdown(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": raw_patch},
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 
@@ -335,7 +353,7 @@ def test_swebench_judge_uses_agent_trace_patch_when_answer_missing(tmp_path, tem
                 }
             ],
         },
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 
@@ -386,7 +404,7 @@ def test_swebench_judge_normalizes_hunk_context_lines(tmp_path, temp_workspace) 
     payload = {
         "sample": sample,
         "model_output": {"answer": raw_patch},
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 
@@ -437,7 +455,7 @@ def test_swebench_judge_trims_diff_tail(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": raw_patch},
-        "params": {"reuse_agent_sandbox_for_judge": True},
+        "params": {},
         "sandbox_provider": provider,
     }
 

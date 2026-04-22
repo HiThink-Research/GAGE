@@ -48,7 +48,6 @@ class SwebenchDocker(JudgeImplementation):
         image_lock_dir: Optional[str] = None,
         dockerfiles_dir: Optional[str] = None,
         docker_platform: Optional[str] = None,
-        reuse_agent_sandbox_for_judge: bool = False,
     ) -> None:
         self._scripts_dir = Path(scripts_dir) if scripts_dir else _default_scripts_dir()
         self._dockerhub_username = dockerhub_username
@@ -61,7 +60,6 @@ class SwebenchDocker(JudgeImplementation):
         self._image_lock_dir = Path(image_lock_dir) if image_lock_dir else None
         self._dockerfiles_dir = Path(dockerfiles_dir) if dockerfiles_dir else None
         self._docker_platform = docker_platform
-        self._reuse_agent_sandbox_for_judge = bool(reuse_agent_sandbox_for_judge)
 
     def invoke(self, payload: Dict[str, Any], state: Any = None) -> Dict[str, Any]:
         params = payload.get("params") or {}
@@ -118,13 +116,9 @@ class SwebenchDocker(JudgeImplementation):
         if test_patch:
             _write_text(workspace_dir / "test_patch.diff", test_patch)
 
-        reuse_agent_sandbox = _coerce_bool(
-            params.get("reuse_agent_sandbox_for_judge"),
-            default=self._reuse_agent_sandbox_for_judge,
-        )
-        if sandbox_provider is not None and reuse_agent_sandbox:
+        if sandbox_provider is not None:
             try:
-                return self._run_with_sandbox(
+                return self._run_with_restarted_sandbox(
                     sandbox_provider=sandbox_provider,
                     params=params,
                     sample=sample,
@@ -139,7 +133,14 @@ class SwebenchDocker(JudgeImplementation):
                     workspace_dir=workspace_dir,
                 )
             except _SandboxFallback as exc:
-                logger.warning("SWE-bench sandbox path fallback: {}", exc)
+                logger.warning("SWE-bench sandbox-managed judge failed: {}", exc)
+                return {
+                    "resolved": False,
+                    "failure_reason": "sandbox_judge_error",
+                    "log_dir": str(log_dir),
+                    "diagnostic_reason": str(exc),
+                    "diagnostic_details": {"log_dir": str(log_dir)},
+                }
 
         entryscript = _create_entryscript(
             sample=sample,
@@ -202,6 +203,41 @@ class SwebenchDocker(JudgeImplementation):
                 "submission_patch": "artifacts/submission.patch",
             }
         return result
+
+    def _run_with_restarted_sandbox(
+        self,
+        *,
+        sandbox_provider: Any,
+        params: Dict[str, Any],
+        sample: Dict[str, Any],
+        patch: str,
+        run_script: str,
+        parser_script: str,
+        test_patch: Optional[str],
+        base_commit: str,
+        run_id: str,
+        instance_id: str,
+        log_dir: Path,
+        workspace_dir: Path,
+    ) -> Dict[str, Any]:
+        _release_sandbox_provider(sandbox_provider, phase="agent")
+        try:
+            return self._run_with_sandbox(
+                sandbox_provider=sandbox_provider,
+                params=params,
+                sample=sample,
+                patch=patch,
+                run_script=run_script,
+                parser_script=parser_script,
+                test_patch=test_patch,
+                base_commit=base_commit,
+                run_id=run_id,
+                instance_id=instance_id,
+                log_dir=log_dir,
+                workspace_dir=workspace_dir,
+            )
+        finally:
+            _release_sandbox_provider(sandbox_provider, phase="judge")
 
     def _run_with_sandbox(
         self,
@@ -537,6 +573,16 @@ def _coerce_bool(value: Any, *, default: bool) -> bool:
         if lowered in {"0", "false", "no", "off"}:
             return False
     return bool(value)
+
+
+def _release_sandbox_provider(sandbox_provider: Any, *, phase: str) -> None:
+    releaser = getattr(sandbox_provider, "release", None)
+    if not callable(releaser):
+        raise _SandboxFallback(f"sandbox_{phase}_release_unavailable")
+    try:
+        releaser()
+    except Exception as exc:
+        raise _SandboxFallback(f"sandbox_{phase}_release_failed") from exc
 
 
 def _load_submission_patch(

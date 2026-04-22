@@ -35,10 +35,23 @@ class FakeHandle:
 
 class FakeProvider:
     def __init__(self, sandbox: FakeSandbox) -> None:
-        self._handle = FakeHandle(sandbox)
+        self._handles = [FakeHandle(sandbox)]
+        self._current = 0
+        self.release_calls = 0
+
+    @classmethod
+    def with_restart(cls, agent_sandbox: FakeSandbox, judge_sandbox: FakeSandbox) -> "FakeProvider":
+        provider = cls(agent_sandbox)
+        provider._handles = [FakeHandle(agent_sandbox), FakeHandle(judge_sandbox)]
+        return provider
 
     def get_handle(self) -> FakeHandle:
-        return self._handle
+        return self._handles[self._current]
+
+    def release(self) -> None:
+        self.release_calls += 1
+        if self._current < len(self._handles) - 1:
+            self._current += 1
 
 
 @pytest.mark.io
@@ -59,21 +72,19 @@ def test_swebench_judge_fallback_reads_submission_patch(tmp_path, temp_workspace
         "-old\n"
         "+new\n"
     )
-    sandbox = FakeSandbox(
+    agent_sandbox = FakeSandbox(
         outputs={
             "/workspace/submission.patch": patch.encode("utf-8"),
         }
     )
-    provider = FakeProvider(sandbox)
-    container_calls = []
+    output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+    judge_sandbox = FakeSandbox(outputs={"/workspace/output.json": json.dumps(output).encode("utf-8")})
+    provider = FakeProvider.with_restart(agent_sandbox, judge_sandbox)
 
-    def fake_run_container(self, *, image_uri, workspace_dir, params, run_id, instance_id):
-        container_calls.append({"workspace_dir": workspace_dir, "instance_id": instance_id})
-        output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
-        (workspace_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
-        return {"status": "ok"}
+    def fail_run_container(*_args, **_kwargs):
+        raise AssertionError("sandbox fallback should restart the sandbox provider, not use Docker SDK")
 
-    monkeypatch.setattr(SwebenchDocker, "_run_container", fake_run_container)
+    monkeypatch.setattr(SwebenchDocker, "_run_container", fail_run_container)
 
     judge = SwebenchDocker(scripts_dir=str(scripts_root))
     sample = {
@@ -98,9 +109,9 @@ def test_swebench_judge_fallback_reads_submission_patch(tmp_path, temp_workspace
     result = judge.invoke(payload)
 
     assert result["resolved"] is True
-    assert len(container_calls) == 1
-    workspace_dir = container_calls[0]["workspace_dir"]
-    assert (workspace_dir / "patch.diff").read_text(encoding="utf-8").strip() == patch.strip()
-    assert "/workspace/entryscript.sh" not in sandbox.writes
+    assert provider.release_calls == 2
+    assert judge_sandbox.writes["/workspace/patch.diff"].decode("utf-8").strip() == patch.strip()
+    assert "/workspace/entryscript.sh" not in agent_sandbox.writes
+    assert "/workspace/entryscript.sh" in judge_sandbox.writes
     events = [item["event"] for item in mock_trace.events]
     assert "swebench_patch_fallback" in events

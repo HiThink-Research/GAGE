@@ -133,7 +133,7 @@ The local smoke demo config `swebench_pro_smoke_runtime_ollama_local.yaml` is a 
 - Loads records from `SWEBENCH_LOCAL_PATH`.
 - Uses per-sample Docker containers (`runtime: docker`) with network blocked by default.
 - Calls the DUT agent through an Ollama-compatible OpenAI HTTP backend.
-- Judges with `swebench_docker` in a fresh official SWE-bench Pro Docker container; the agent sandbox is only used as a fallback source for `submission.patch`.
+- Judges with `swebench_docker` by closing the agent sandbox and restarting the same sandbox profile before running the official SWE-bench Pro judge script.
 
 ### 3.4 Run Evaluation
 
@@ -173,7 +173,7 @@ If you need a full evaluation, remove the smoke allowlist in the dataset preproc
 | `datasets[*].hub_params.hub_id` | dataset hub | Default `ScaleAI/SWE-bench_Pro`. |
 | `datasets[*].params.preprocess_kwargs.smoke_ids_path` | smoke filter | Remove for full runs. |
 | `sandbox_profiles[*].runtime_configs.network_mode` | network | Keep blocked for reproducibility. |
-| `role_adapters.swebench_docker_judge.params.implementation_params` | judge | `scripts_dir`, `dockerfiles_dir`, `dockerhub_username`, `test_timeout_s`, `docker_platform`, `reuse_agent_sandbox_for_judge: false`. |
+| `role_adapters.swebench_docker_judge.params.implementation_params` | judge | `scripts_dir`, `dockerfiles_dir`, `dockerhub_username`, `test_timeout_s`, `docker_platform`. |
 | `role_adapters.dut_agent.params.max_turns` | max turns | Prevent runaway tool loops. |
 | `metrics[*].aggregation` | failure counts | `categorical_count` for failure reasons. |
 
@@ -181,7 +181,7 @@ If you need a full evaluation, remove the smoke allowlist in the dataset preproc
 
 | Official practice | gage-eval implementation |
 | --- | --- |
-| Run tests in isolated Docker containers | `swebench_docker` starts a new per-judge Docker container from the official image |
+| Run tests in isolated Docker containers | `swebench_docker` releases the agent sandbox and restarts the same sandbox profile for verifier execution |
 | Use official run scripts and dockerfiles | `implementation_params.scripts_dir` + `dockerfiles_dir` |
 | Block network for reproducibility | `runtime_configs.network_mode: none` and `block_network: true` |
 | Enforce platform compatibility | `docker_platform: linux/amd64` |
