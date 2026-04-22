@@ -82,6 +82,18 @@ class RetryBudgetExceededBackend:
         return {"answer": "please call a tool", "raw_response": {"content": "please"}}
 
 
+class BareCallRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {
+            "answer": "call:respond{message:Hello Emma Kim! I can help with that.}",
+            "raw_response": {"content": "call:respond"},
+        }
+
+
 class AsyncRetryBackend:
     def __init__(self):
         self.calls = 0
@@ -308,6 +320,30 @@ def test_agent_loop_retries_until_budget_exhausted() -> None:
         for event in events
     )
     assert all(tc == "required" for tc in backend.tool_choice_required_payloads[:3])
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_event_marks_bare_call_prefix() -> None:
+    backend = BareCallRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    retry_events = [
+        event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
+    ]
+    assert backend.calls == 1
+    assert retry_events[0]["payload"]["has_bare_call_prefix"] is True
+    assert retry_events[0]["payload"]["has_minimax_tag"] is False
 
 
 @pytest.mark.fast

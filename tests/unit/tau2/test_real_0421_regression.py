@@ -116,6 +116,28 @@ def test_real_0421_tau2_think_tail_bare_json_response_parses_as_respond_tool_cal
 
 
 @pytest.mark.fast
+def test_real_0421_gemma4_airline_bare_call_response_parses_as_respond_tool_call() -> None:
+    text = _fixture_text("0421_gemma4_airline_bare_call_respond_response.txt")
+    model = _StaticTextModel(text)
+    backend = ModelBackend({"backend": model, "tool_format": "gemma4"})
+
+    result = backend.invoke(
+        {
+            "messages": [{"role": "user", "content": "I want to cancel reservation EHGLP3."}],
+            "tools": [RESPOND_TOOL],
+            "tool_choice": "required",
+        }
+    )
+
+    assert result["answer"] == ""
+    assert result["raw_answer"] == text
+    assert len(result["tool_calls"]) == 1
+    call = result["tool_calls"][0]
+    assert call["function"]["name"] == "respond"
+    assert "reservation ehglp3" in call["function"]["arguments"]["message"].lower()
+
+
+@pytest.mark.fast
 def test_real_0421_harmony_xml_response_reaches_tool_router_without_retry() -> None:
     text = _fixture_text("0421_tau_harmony_xml_respond_response.txt")
     model = _StaticTextModel(text)

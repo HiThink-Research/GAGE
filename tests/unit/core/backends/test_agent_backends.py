@@ -371,6 +371,55 @@ def test_model_backend_extracts_minimax_json_parameter_values():
 
 
 @pytest.mark.fast
+def test_model_backend_extracts_minimax_truncated_tool_call():
+    class MiniMaxToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<think>Need a tool.</think>\n"
+                    "<minimax:tool_call>\n"
+                    '<invoke\n  name="respond"\n>'
+                    '<parameter\n name="message"\n>Done, your mobile data is working.</parameter>'
+                    "</invoke>"
+                )
+            }
+
+    backend = ModelBackend({"backend": MiniMaxToolCallBackend(), "tool_format": "minimax"})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Done, your mobile data is working."
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_minimax_bare_invoke_with_loose_attributes():
+    class MiniMaxToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<think>Need a tool.</think>\n"
+                    "<invoke name='respond'>"
+                    "<parameter name=message>Hello from MiniMax.</parameter>"
+                    "<parameter name='urgent'>false</parameter>"
+                    "</invoke>"
+                )
+            }
+
+    backend = ModelBackend({"backend": MiniMaxToolCallBackend(), "tool_format": "minimax-m2.5"})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Hello from MiniMax.",
+        "urgent": False,
+    }
+
+
+@pytest.mark.fast
 def test_model_backend_extracts_gemma4_tool_call():
     class Gemma4ToolCallBackend:
         def invoke(self, payload):
@@ -393,6 +442,40 @@ def test_model_backend_extracts_gemma4_tool_call():
         "location": "London",
         "units": "celsius",
         "days": 2,
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_gemma4_bare_tool_call():
+    class Gemma4ToolCallBackend:
+        config = {"model_path": "/mnt/models/gemma_4_27b_it"}
+
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "call:respond{message:Hello Emma Kim! I can help with that, "
+                    "and I will first check your booking.}"
+                )
+            }
+
+    backend = ModelBackend({"backend": Gemma4ToolCallBackend()})
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert backend._tool_call_format == "gemma4"
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Hello Emma Kim! I can help with that, and I will first check your booking."
     }
 
 
@@ -422,6 +505,21 @@ def test_model_backend_extracts_gemma4_nested_tool_call_arguments():
         "filters": {"enabled": True, "tags": ["x,y", "z"]},
         "limit": 3,
     }
+
+
+@pytest.mark.fast
+def test_model_backend_infers_functiongemma_tool_format():
+    class FunctionGemmaBackend:
+        config = {"model": "google/functiongemma-270m-it"}
+
+        def invoke(self, payload):
+            return {"answer": "call:respond{message:Hello.}"}
+
+    backend = ModelBackend({"backend": FunctionGemmaBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert backend._tool_call_format == "gemma4"
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
 
 
 @pytest.mark.fast

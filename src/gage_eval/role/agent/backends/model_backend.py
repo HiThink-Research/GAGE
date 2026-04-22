@@ -216,9 +216,26 @@ def _extract_tool_calls_from_answer(answer: Any, *, tool_call_format: str = "aut
     calls: List[Dict[str, Any]] = []
     normalized_format = str(tool_call_format or "auto").strip().lower()
     lowered = answer.lower()
-    if normalized_format in {"auto", "minimax", "minimax_m2", "minimax-m2"} and "<minimax:tool_call>" in lowered:
+    minimax_formats = {
+        "auto",
+        "minimax",
+        "minimax_m2",
+        "minimax-m2",
+        "minimax_m25",
+        "minimax-m25",
+        "minimax_m2_5",
+        "minimax-m2.5",
+    }
+    if normalized_format in minimax_formats and (
+        "<minimax:tool_call" in lowered or _has_minimax_bare_invoke(answer)
+    ):
         calls.extend(_extract_minimax_tool_calls(answer))
-    if normalized_format in {"auto", "gemma", "gemma4", "gemma-4"} and "<|tool_call>" in lowered:
+    gemma4_formats = {"auto", "gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"}
+    if normalized_format in gemma4_formats and (
+        "<|tool_call>" in lowered
+        or normalized_format != "auto"
+        or _has_gemma4_bare_call(answer)
+    ):
         calls.extend(_extract_gemma4_tool_calls(answer))
     if normalized_format in {"auto", "qwen", "qwen3", "qwen3.5", "qwen3.6"} or "<tool_call>" in lowered:
         calls.extend(_extract_xml_function_calls(answer))
@@ -420,18 +437,11 @@ def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
 
 def _extract_minimax_tool_calls(answer: str) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
-    tool_blocks = re.findall(
-        r"<minimax:tool_call>\s*(.*?)\s*</minimax:tool_call>",
-        answer,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    tool_blocks = _extract_minimax_tool_blocks(answer)
+    if not tool_blocks and _has_minimax_bare_invoke(answer):
+        tool_blocks = [answer]
     for tool_block in tool_blocks:
-        invoke_blocks = re.findall(
-            r"<invoke\s+name=\"([^\"]+)\">\s*(.*?)\s*</invoke>",
-            tool_block,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        for name, body in invoke_blocks:
+        for name, body in _extract_minimax_invokes(tool_block):
             stripped_name = name.strip()
             if not stripped_name:
                 continue
@@ -445,6 +455,33 @@ def _extract_minimax_tool_calls(answer: str) -> List[Dict[str, Any]]:
     return calls
 
 
+def _extract_minimax_tool_blocks(answer: str) -> List[str]:
+    return [
+        match.group(1)
+        for match in re.finditer(
+            r"<minimax:tool_call\s*>\s*(.*?)(?:</minimax:tool_call\s*>|\Z)",
+            answer,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    ]
+
+
+def _extract_minimax_invokes(text: str) -> List[tuple[str, str]]:
+    invoke_blocks = re.findall(
+        r"<invoke\s+name\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\"'\s>]+))\s*>\s*(.*?)\s*</invoke\s*>",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return [
+        (double_quoted or single_quoted or unquoted, body)
+        for double_quoted, single_quoted, unquoted, body in invoke_blocks
+    ]
+
+
+def _has_minimax_bare_invoke(answer: str) -> bool:
+    return re.search(r"<invoke\s+name\s*=", answer, flags=re.IGNORECASE) is not None
+
+
 def _extract_gemma4_tool_calls(answer: str) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
     tool_blocks = re.findall(
@@ -453,17 +490,68 @@ def _extract_gemma4_tool_calls(answer: str) -> List[Dict[str, Any]]:
         flags=re.DOTALL | re.IGNORECASE,
     )
     for tool_block in tool_blocks:
-        match = re.search(
-            r"call:([A-Za-z_][\w.-]*)\s*(\{.*\})",
-            tool_block,
-            flags=re.DOTALL,
-        )
-        if not match:
-            continue
-        name = match.group(1)
-        arguments = _parse_gemma4_arguments(match.group(2))
-        calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+        for name, raw_arguments in _extract_gemma4_call_chunks(tool_block, require_line_start=False):
+            arguments = _parse_gemma4_arguments(raw_arguments)
+            calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+    if not calls:
+        for name, raw_arguments in _extract_gemma4_call_chunks(answer, require_line_start=True):
+            arguments = _parse_gemma4_arguments(raw_arguments)
+            calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
     return calls
+
+
+def _extract_gemma4_call_chunks(text: str, *, require_line_start: bool) -> List[tuple[str, str]]:
+    pattern = r"(?m)^\s*call:([A-Za-z_][\w.-]*)\s*(?=\{)"
+    if not require_line_start:
+        pattern = r"(?:^|(?<=[\s>]))call:([A-Za-z_][\w.-]*)\s*(?=\{)"
+    chunks: List[tuple[str, str]] = []
+    for match in re.finditer(pattern, text):
+        raw_arguments = _extract_balanced_gemma4_braces(text, match.end())
+        if raw_arguments is not None:
+            chunks.append((match.group(1), raw_arguments))
+    return chunks
+
+
+def _extract_balanced_gemma4_braces(text: str, start: int) -> Optional[str]:
+    idx = start
+    while idx < len(text) and text[idx].isspace():
+        idx += 1
+    if idx >= len(text) or text[idx] != "{":
+        return None
+    begin = idx
+    depth = 0
+    in_delimited_string = False
+    in_json_string = False
+    escape = False
+    while idx < len(text):
+        if text.startswith('<|"|>', idx):
+            if not in_json_string:
+                in_delimited_string = not in_delimited_string
+            idx += len('<|"|>')
+            continue
+        char = text[idx]
+        if in_json_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_json_string = False
+        elif not in_delimited_string:
+            if char == '"':
+                in_json_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[begin : idx + 1]
+        idx += 1
+    return None
+
+
+def _has_gemma4_bare_call(answer: str) -> bool:
+    return re.search(r"(?m)^\s*call:[A-Za-z_][\w.-]*\s*\{", answer) is not None
 
 
 def _parse_gemma4_arguments(raw: str) -> Dict[str, Any]:
@@ -479,7 +567,7 @@ def _parse_gemma4_mapping(raw: str) -> Dict[str, Any]:
     if not body:
         return {}
     arguments: Dict[str, Any] = {}
-    for item in _split_gemma4_top_level(body):
+    for item in _split_gemma4_top_level(body, require_key_after_comma=True):
         key, separator, value = item.partition(":")
         if not separator:
             continue
@@ -490,7 +578,7 @@ def _parse_gemma4_mapping(raw: str) -> Dict[str, Any]:
     return arguments
 
 
-def _split_gemma4_top_level(body: str) -> List[str]:
+def _split_gemma4_top_level(body: str, *, require_key_after_comma: bool = False) -> List[str]:
     items: List[str] = []
     start = 0
     brace_depth = 0
@@ -524,7 +612,12 @@ def _split_gemma4_top_level(body: str) -> List[str]:
                 bracket_depth += 1
             elif char == "]":
                 bracket_depth = max(0, bracket_depth - 1)
-            elif char == "," and brace_depth == 0 and bracket_depth == 0:
+            elif (
+                char == ","
+                and brace_depth == 0
+                and bracket_depth == 0
+                and (not require_key_after_comma or _looks_like_gemma4_key(body[idx + 1 :]))
+            ):
                 items.append(body[start:idx].strip())
                 start = idx + 1
         idx += 1
@@ -532,6 +625,10 @@ def _split_gemma4_top_level(body: str) -> List[str]:
     if tail:
         items.append(tail)
     return items
+
+
+def _looks_like_gemma4_key(text: str) -> bool:
+    return re.match(r"\s*[A-Za-z_][\w.-]*\s*:", text) is not None
 
 
 def _parse_gemma4_value(value: str) -> Any:
@@ -570,7 +667,7 @@ def _infer_tool_format(backend: Any) -> str:
     model_text = " ".join(str(value).lower() for value in candidates if value)
     if "minimax" in model_text:
         return "minimax"
-    if "gemma-4" in model_text or "gemma4" in model_text:
+    if "functiongemma" in model_text or re.search(r"gemma[_-]?4", model_text):
         return "gemma4"
     if "qwen3" in model_text:
         return "qwen"
@@ -580,12 +677,15 @@ def _infer_tool_format(backend: Any) -> str:
 def _extract_xml_parameters(body: str) -> Dict[str, Any]:
     arguments: Dict[str, Any] = {}
     parameter_blocks = re.findall(
-        r"<parameter(?:\s+name=\"([^\"]+)\"|=([A-Za-z_][\w.-]*))>\s*(.*?)\s*</parameter>",
+        (
+            r"<parameter(?:\s+name\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z_][\w.-]*))"
+            r"|=([A-Za-z_][\w.-]*))\s*>\s*(.*?)\s*</parameter\s*>"
+        ),
         body,
         flags=re.DOTALL | re.IGNORECASE,
     )
-    for quoted_name, equals_name, value in parameter_blocks:
-        name = quoted_name or equals_name
+    for double_quoted_name, single_quoted_name, unquoted_name, equals_name, value in parameter_blocks:
+        name = double_quoted_name or single_quoted_name or unquoted_name or equals_name
         if not name:
             continue
         parsed_value = _parse_tool_payload(value)

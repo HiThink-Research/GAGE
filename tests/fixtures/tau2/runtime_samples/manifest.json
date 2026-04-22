@@ -23,6 +23,13 @@
       "sha256": "0052caf1dfca46edeccc1476ecfbbe317823e9bbf666c24c7717766f50b40d32"
     },
     {
+      "file": "0421_gemma4_airline_bare_call_respond_response.txt",
+      "description": "Real Gemma 4 assistant response from the 2026-04-21 airline run with a bare call: respond tool call.",
+      "source": "GAGE/runs/gemma4_all/gemma4_all/tau/samples/judge_tau2_airline_vllm_full/tau2_airline_vllm_full_airline_0__trial_0.json",
+      "source_field": "model_output.agent_trace[0].output.answer",
+      "sha256": "1825f0ffb77c172608bd396bd8797f543571b4ce2040014223ebf4b55252c681"
+    },
+    {
       "file": "0421_tau2_unknown_user_side_tool_error.json",
       "description": "Real failed tool trace from the latest 2026-04-21 tau 2 run where the DUT called a user-side device tool directly.",
       "source": "agent-eval/0421/tau 2/samples/runtime/tau2_telecom_vllm_full/telecom_[mms_issue]break_apn_mms_setting|user_abroad_roaming_enabled_off[PERSONA:Hard]__trial_0/runtime_metadata.json",

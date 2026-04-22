@@ -242,6 +242,8 @@ class AgentLoop:
                                 "answer_preview": (answer or "")[:120],
                                 "has_tool_call_tag": _contains_tag(answer, "tool_call"),
                                 "has_function_tag": _contains_tag(answer, "function"),
+                                "has_minimax_tag": _contains_minimax_tag(answer),
+                                "has_bare_call_prefix": _has_bare_call_prefix(answer),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -510,6 +512,8 @@ class AgentLoop:
                                 "answer_preview": (answer or "")[:120],
                                 "has_tool_call_tag": _contains_tag(answer, "tool_call"),
                                 "has_function_tag": _contains_tag(answer, "function"),
+                                "has_minimax_tag": _contains_minimax_tag(answer),
+                                "has_bare_call_prefix": _has_bare_call_prefix(answer),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -740,7 +744,7 @@ def _append_assistant_tool_response(
 
 def _uses_assistant_tool_responses(backend: Any) -> bool:
     tool_result_format = str(getattr(backend, "_tool_result_format", "") or "").strip().lower()
-    return tool_result_format in {"gemma", "gemma4", "gemma-4"}
+    return tool_result_format in {"gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"}
 
 
 def _tool_call_name(tool_call: Dict[str, Any]) -> str:
@@ -764,6 +768,18 @@ def _contains_tag(value: Any, tag: str) -> bool:
         return False
     needle = f"<{tag}"
     return needle in value.lower()
+
+
+def _contains_minimax_tag(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return "<minimax:tool_call" in value.lower()
+
+
+def _has_bare_call_prefix(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.lstrip().startswith("call:")
 
 
 def _build_tool_registry(tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
