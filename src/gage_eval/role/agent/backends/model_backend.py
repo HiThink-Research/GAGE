@@ -28,16 +28,23 @@ class ModelBackend(AgentBackend):
         self._backend = backend
         self._default_sampling = dict(config.get("sampling_params") or {})
         self._force_tool_choice_mode = _resolve_force_tool_choice_mode(config.get("force_tool_choice"))
+        inferred_format = _infer_tool_format(backend)
+        self._tool_call_format = str(
+            config.get("tool_call_format") or config.get("tool_format") or inferred_format
+        )
+        self._tool_result_format = str(
+            config.get("tool_result_format") or config.get("tool_format") or inferred_format
+        )
 
     def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = _call_backend_sync(self._backend, request)
-        return _normalize_backend_response(response, request.get("tools"))
+        return _normalize_backend_response(response, request.get("tools"), self._tool_call_format)
 
     async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = await _call_backend_async(self._backend, request)
-        return _normalize_backend_response(response, request.get("tools"))
+        return _normalize_backend_response(response, request.get("tools"), self._tool_call_format)
 
 
 def _build_backend_request(
@@ -94,11 +101,11 @@ async def _call_backend_async(backend: Any, request: Dict[str, Any]) -> Any:
     raise RuntimeError("model_backend_missing_invoke")
 
 
-def _normalize_backend_response(response: Any, tools: Any = None) -> Dict[str, Any]:
+def _normalize_backend_response(response: Any, tools: Any = None, tool_call_format: str = "auto") -> Dict[str, Any]:
     result = normalize_agent_output(response)
     tool_calls = _extract_tool_calls(response)
     if not tool_calls:
-        tool_calls = _extract_tool_calls_from_answer(result.get("answer"))
+        tool_calls = _extract_tool_calls_from_answer(result.get("answer"), tool_call_format=tool_call_format)
         if tools:
             tool_calls = _filter_tool_calls_by_schema(tool_calls, tools)
     if tool_calls:
@@ -203,11 +210,18 @@ def _extract_from_message(message: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _extract_tool_calls_from_answer(answer: Any) -> List[Dict[str, Any]]:
+def _extract_tool_calls_from_answer(answer: Any, *, tool_call_format: str = "auto") -> List[Dict[str, Any]]:
     if not isinstance(answer, str) or not answer.strip():
         return []
     calls: List[Dict[str, Any]] = []
-    calls.extend(_extract_xml_function_calls(answer))
+    normalized_format = str(tool_call_format or "auto").strip().lower()
+    lowered = answer.lower()
+    if normalized_format in {"auto", "minimax", "minimax_m2", "minimax-m2"} and "<minimax:tool_call>" in lowered:
+        calls.extend(_extract_minimax_tool_calls(answer))
+    if normalized_format in {"auto", "gemma", "gemma4", "gemma-4"} and "<|tool_call>" in lowered:
+        calls.extend(_extract_gemma4_tool_calls(answer))
+    if normalized_format in {"auto", "qwen", "qwen3", "qwen3.5", "qwen3.6"} or "<tool_call>" in lowered:
+        calls.extend(_extract_xml_function_calls(answer))
     for raw_payload in _iter_tool_call_payloads(answer):
         parsed = _parse_tool_payload(raw_payload)
         calls.extend(_normalize_text_tool_calls(parsed))
@@ -395,13 +409,172 @@ def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
         name = quoted_name or equals_name
         if not name:
             continue
-        parsed_body = _parse_tool_payload(body)
-        if isinstance(parsed_body, dict):
-            arguments = parsed_body.get("arguments", parsed_body)
-        else:
+        if re.search(r"<parameter(?:\s+name=|=)", body, flags=re.IGNORECASE):
             arguments = _extract_xml_parameters(body)
+        else:
+            parsed_body = _parse_tool_payload(body)
+            arguments = parsed_body.get("arguments", parsed_body) if isinstance(parsed_body, dict) else {}
         calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
     return calls
+
+
+def _extract_minimax_tool_calls(answer: str) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    tool_blocks = re.findall(
+        r"<minimax:tool_call>\s*(.*?)\s*</minimax:tool_call>",
+        answer,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for tool_block in tool_blocks:
+        invoke_blocks = re.findall(
+            r"<invoke\s+name=\"([^\"]+)\">\s*(.*?)\s*</invoke>",
+            tool_block,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        for name, body in invoke_blocks:
+            stripped_name = name.strip()
+            if not stripped_name:
+                continue
+            calls.append(
+                _build_openai_tool_call(
+                    stripped_name,
+                    _extract_xml_parameters(body),
+                    call_id=f"call_{len(calls)}",
+                )
+            )
+    return calls
+
+
+def _extract_gemma4_tool_calls(answer: str) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    tool_blocks = re.findall(
+        r"<\|tool_call>\s*(.*?)\s*<tool_call\|>",
+        answer,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for tool_block in tool_blocks:
+        match = re.search(
+            r"call:([A-Za-z_][\w.-]*)\s*(\{.*\})",
+            tool_block,
+            flags=re.DOTALL,
+        )
+        if not match:
+            continue
+        name = match.group(1)
+        arguments = _parse_gemma4_arguments(match.group(2))
+        calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+    return calls
+
+
+def _parse_gemma4_arguments(raw: str) -> Dict[str, Any]:
+    parsed = _parse_gemma4_value(raw.strip())
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_gemma4_mapping(raw: str) -> Dict[str, Any]:
+    stripped = raw.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return {}
+    body = stripped[1:-1].strip()
+    if not body:
+        return {}
+    arguments: Dict[str, Any] = {}
+    for item in _split_gemma4_top_level(body):
+        key, separator, value = item.partition(":")
+        if not separator:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        arguments[key] = _parse_gemma4_value(value.strip())
+    return arguments
+
+
+def _split_gemma4_top_level(body: str) -> List[str]:
+    items: List[str] = []
+    start = 0
+    brace_depth = 0
+    bracket_depth = 0
+    in_delimited_string = False
+    in_json_string = False
+    escape = False
+    idx = 0
+    while idx < len(body):
+        if body.startswith('<|"|>', idx):
+            if not in_json_string:
+                in_delimited_string = not in_delimited_string
+            idx += len('<|"|>')
+            continue
+        char = body[idx]
+        if in_json_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_json_string = False
+        elif not in_delimited_string:
+            if char == '"':
+                in_json_string = True
+            if char == "{":
+                brace_depth += 1
+            elif char == "}":
+                brace_depth = max(0, brace_depth - 1)
+            elif char == "[":
+                bracket_depth += 1
+            elif char == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+            elif char == "," and brace_depth == 0 and bracket_depth == 0:
+                items.append(body[start:idx].strip())
+                start = idx + 1
+        idx += 1
+    tail = body[start:].strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _parse_gemma4_value(value: str) -> Any:
+    if value.startswith('<|"|>') and value.endswith('<|"|>'):
+        return value[len('<|"|>') : -len('<|"|>')]
+    if value.startswith("{") and value.endswith("}"):
+        return _parse_gemma4_mapping(value)
+    if value.startswith("[") and value.endswith("]"):
+        body = value[1:-1].strip()
+        if not body:
+            return []
+        return [_parse_gemma4_value(item.strip()) for item in _split_gemma4_top_level(body)]
+    parsed = _parse_tool_payload(value)
+    if parsed is not None:
+        return parsed
+    lowered = value.strip().lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "null":
+        return None
+    return value
+
+
+def _infer_tool_format(backend: Any) -> str:
+    config = getattr(backend, "config", {}) or {}
+    candidates = [
+        config.get("tool_format"),
+        config.get("model"),
+        config.get("model_name"),
+        config.get("model_path"),
+        config.get("tokenizer_path"),
+        config.get("tokenizer_name"),
+    ]
+    model_text = " ".join(str(value).lower() for value in candidates if value)
+    if "minimax" in model_text:
+        return "minimax"
+    if "gemma-4" in model_text or "gemma4" in model_text:
+        return "gemma4"
+    if "qwen3" in model_text:
+        return "qwen"
+    return "auto"
 
 
 def _extract_xml_parameters(body: str) -> Dict[str, Any]:

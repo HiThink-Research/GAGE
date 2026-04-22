@@ -271,6 +271,160 @@ def test_model_backend_extracts_qwen_xml_function_call():
 
 
 @pytest.mark.fast
+def test_model_backend_extracts_qwen_json_parameter_values():
+    class QwenToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    "<function=update_preferences>\n"
+                    "<parameter=enabled>\ntrue\n</parameter>\n"
+                    '<parameter=filters>\n{"plan": "premium", "tags": ["5g", "roaming"]}\n</parameter>\n'
+                    "</function>\n"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": QwenToolCallBackend(), "tool_format": "qwen"})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "update_preferences"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "enabled": True,
+        "filters": {"plan": "premium", "tags": ["5g", "roaming"]},
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_infers_generic_qwen3_tool_format():
+    class Qwen3ToolCallBackend:
+        config = {"model": "Qwen/Qwen3-235B-A22B"}
+
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<tool_call>\n"
+                    "<function=respond>\n"
+                    "<parameter=message>ok</parameter>\n"
+                    "</function>\n"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": Qwen3ToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert backend._tool_call_format == "qwen"
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {"message": "ok"}
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_minimax_tool_call():
+    class MiniMaxToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<minimax:tool_call>\n"
+                    '<invoke name="respond">'
+                    '<parameter name="message">Done, your mobile data is working.</parameter>'
+                    '<parameter name="urgent">false</parameter>'
+                    "</invoke>\n"
+                    "</minimax:tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": MiniMaxToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Done, your mobile data is working.",
+        "urgent": False,
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_minimax_json_parameter_values():
+    class MiniMaxToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<minimax:tool_call>\n"
+                    '<invoke name="set_filters">'
+                    '<parameter name="filters">{"network": "5G", "limits": [1, 2]}</parameter>'
+                    "</invoke>\n"
+                    "</minimax:tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": MiniMaxToolCallBackend(), "tool_format": "minimax"})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "set_filters"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "filters": {"network": "5G", "limits": [1, 2]}
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_gemma4_tool_call():
+    class Gemma4ToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<|channel>thought\n"
+                    "Need a tool.\n"
+                    "<channel|><|tool_call>"
+                    'call:get_current_weather{location:<|"|>London<|"|>,units:<|"|>celsius<|"|>,days:2}'
+                    "<tool_call|><|tool_response>"
+                )
+            }
+
+    backend = ModelBackend({"backend": Gemma4ToolCallBackend()})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "get_current_weather"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "location": "London",
+        "units": "celsius",
+        "days": 2,
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_extracts_gemma4_nested_tool_call_arguments():
+    class Gemma4ToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<|tool_call>"
+                    "call:search_records{"
+                    'query:<|"|>alpha,beta {literal}<|"|>,'
+                    "filters:{enabled:true,tags:[<|\"|>x,y<|\"|>,<|\"|>z<|\"|>]},"
+                    "limit:3"
+                    "}"
+                    "<tool_call|><|tool_response>"
+                )
+            }
+
+    backend = ModelBackend({"backend": Gemma4ToolCallBackend(), "tool_format": "gemma4"})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "search_records"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "query": "alpha,beta {literal}",
+        "filters": {"enabled": True, "tags": ["x,y", "z"]},
+        "limit": 3,
+    }
+
+
+@pytest.mark.fast
 def test_model_backend_extracts_named_xml_function_call():
     class NamedXmlToolCallBackend:
         def invoke(self, payload):

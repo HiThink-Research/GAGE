@@ -140,7 +140,8 @@ class AgentLoop:
                         len(tool_calls),
                         [_tool_call_name(call) for call in tool_calls],
                     )
-                    messages.append(_build_tool_call_message(output, tool_calls))
+                    assistant_tool_message = _build_tool_call_message(output, tool_calls)
+                    messages.append(assistant_tool_message)
                     stop_after_tool = False
                     for tool_call in tool_calls:
                         tool_result = self._tool_router.execute(
@@ -178,7 +179,14 @@ class AgentLoop:
                                 tool_result.get("status"),
                             )
                         step_index += 1
-                        messages.append(_build_tool_message(tool_call, tool_result.get("output")))
+                        if _uses_assistant_tool_responses(self._backend):
+                            _append_assistant_tool_response(
+                                assistant_tool_message,
+                                tool_call,
+                                tool_result.get("output"),
+                            )
+                        else:
+                            messages.append(_build_tool_message(tool_call, tool_result.get("output")))
                         final_answer = _resolve_tool_final_answer(tool_result)
                         if final_answer:
                             answer = final_answer
@@ -413,7 +421,8 @@ class AgentLoop:
                         len(tool_calls),
                         [_tool_call_name(call) for call in tool_calls],
                     )
-                    messages.append(_build_tool_call_message(output, tool_calls))
+                    assistant_tool_message = _build_tool_call_message(output, tool_calls)
+                    messages.append(assistant_tool_message)
                     stop_after_tool = False
                     for tool_call in tool_calls:
                         tool_result = self._tool_router.execute(
@@ -451,7 +460,14 @@ class AgentLoop:
                                 tool_result.get("status"),
                             )
                         step_index += 1
-                        messages.append(_build_tool_message(tool_call, tool_result.get("output")))
+                        if _uses_assistant_tool_responses(self._backend):
+                            _append_assistant_tool_response(
+                                assistant_tool_message,
+                                tool_call,
+                                tool_result.get("output"),
+                            )
+                        else:
+                            messages.append(_build_tool_message(tool_call, tool_result.get("output")))
                         final_answer = _resolve_tool_final_answer(tool_result)
                         if final_answer:
                             answer = final_answer
@@ -708,6 +724,23 @@ def _build_tool_call_message(output: Dict[str, Any], tool_calls: List[Dict[str, 
         "content": output.get("answer") or "",
         "tool_calls": tool_calls,
     }
+
+
+def _append_assistant_tool_response(
+    assistant_message: Dict[str, Any],
+    tool_call: Dict[str, Any],
+    output: Any,
+) -> None:
+    responses = assistant_message.setdefault("tool_responses", [])
+    if not isinstance(responses, list):
+        responses = []
+        assistant_message["tool_responses"] = responses
+    responses.append({"name": _tool_call_name(tool_call), "response": output})
+
+
+def _uses_assistant_tool_responses(backend: Any) -> bool:
+    tool_result_format = str(getattr(backend, "_tool_result_format", "") or "").strip().lower()
+    return tool_result_format in {"gemma", "gemma4", "gemma-4"}
 
 
 def _tool_call_name(tool_call: Dict[str, Any]) -> str:
