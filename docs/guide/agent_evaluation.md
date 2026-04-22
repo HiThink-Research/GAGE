@@ -134,6 +134,7 @@ The local smoke demo config `swebench_pro_smoke_runtime_ollama_local.yaml` is a 
 - Uses per-sample Docker containers (`runtime: docker`) with network blocked by default.
 - Calls the DUT agent through an Ollama-compatible OpenAI HTTP backend.
 - Judges with `swebench_docker` by closing the agent sandbox and restarting the same sandbox profile before running the official SWE-bench Pro judge script.
+- The restarted sandbox uses the per-instance image injected by the preprocessor, for example `jefzda/swe-bench-pro-{instance_id}:...`, so the agent and verifier phases run against the same instance image.
 
 ### 3.4 Run Evaluation
 

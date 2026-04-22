@@ -119,7 +119,13 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
         _cleanup_container(docker_bin, target, stop_timeout_s=stop_timeout)
         return True
 
-    def exec(self, command: str, timeout: int = 30) -> ExecResult:
+    def exec(
+        self,
+        command: str,
+        timeout: int = 30,
+        *,
+        login_shell: bool = True,
+    ) -> ExecResult:
         start = time.perf_counter()
         runner = self._runtime_configs.get("command_runner")
         if callable(runner):
@@ -136,7 +142,8 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
             exec_args.extend(["-u", str(exec_user)])
         if exec_workdir:
             exec_args.extend(["-w", str(exec_workdir)])
-        exec_args.extend([self._container_id, "/bin/sh", "-lc", command])
+        shell_flag = "-lc" if login_shell else "-c"
+        exec_args.extend([self._container_id, "/bin/sh", shell_flag, command])
         completed = subprocess.run(
             exec_args,
             capture_output=True,

@@ -67,16 +67,20 @@ class SwebenchDocker(JudgeImplementation):
         model_output = resolve_model_output(sample, payload.get("model_output"))
         sandbox_provider = payload.get("sandbox_provider")
 
-        patch = _clean_patch_content(_resolve_patch(model_output))
-        if not patch and sandbox_provider is not None:
-            patch = _load_submission_patch(sandbox_provider, payload, sample)
-        if not patch:
-            return {
-                "resolved": False,
-                "failure_reason": "missing_patch",
-                "diagnostic_reason": "missing_patch_submission",
-                "diagnostic_details": {"submission_patch": None},
-            }
+        raw_patch = _resolve_patch(model_output)
+        has_model_patch = bool(raw_patch.strip())
+        patch = _clean_patch_content(raw_patch)
+        if not has_model_patch:
+            # Only fall back to submission.patch when the model produced no patch field.
+            if sandbox_provider is not None:
+                patch = _load_submission_patch(sandbox_provider, payload, sample)
+            if not patch:
+                return {
+                    "resolved": False,
+                    "failure_reason": "missing_patch",
+                    "diagnostic_reason": "missing_patch_submission",
+                    "diagnostic_details": {"submission_patch": None},
+                }
 
         instance_id = _resolve_instance_id(sample)
         repo = _get_meta(sample, "repo")
@@ -237,7 +241,10 @@ class SwebenchDocker(JudgeImplementation):
                 workspace_dir=workspace_dir,
             )
         finally:
-            _release_sandbox_provider(sandbox_provider, phase="judge")
+            try:
+                _release_sandbox_provider(sandbox_provider, phase="judge")
+            except _SandboxFallback as exc:
+                logger.warning("SWE-bench judge sandbox release failed: {}", exc)
 
     def _run_with_sandbox(
         self,
@@ -295,9 +302,11 @@ class SwebenchDocker(JudgeImplementation):
             self._write_sandbox_file(sandbox, "/workspace/parser.py", parser_script)
 
         try:
-            sandbox.exec(
+            _exec_sandbox_command(
+                sandbox,
                 "bash /workspace/entryscript.sh",
                 timeout=int(params.get("test_timeout_s", self._test_timeout_s)),
+                login_shell=False,
             )
         except Exception as exc:
             raise _SandboxFallback("sandbox_exec_failed") from exc
@@ -309,6 +318,8 @@ class SwebenchDocker(JudgeImplementation):
             _write_text(workspace_dir / "stdout.log", stdout_bytes.decode("utf-8", errors="replace"))
         if stderr_bytes is not None:
             _write_text(workspace_dir / "stderr.log", stderr_bytes.decode("utf-8", errors="replace"))
+        if output_bytes is not None:
+            _write_text(workspace_dir / "output.json", output_bytes.decode("utf-8", errors="replace"))
         if output_bytes is None:
             return {
                 "resolved": False,
@@ -555,10 +566,27 @@ def _clean_patch_content(raw: str) -> str:
     if _has_diff_markers(cleaned):
         cleaned = _trim_diff_tail(cleaned)
         cleaned = _normalize_hunk_context_lines(cleaned)
+        cleaned = _strip_binary_hunks(cleaned)
     cleaned = cleaned.strip()
     if cleaned and not cleaned.endswith("\n"):
         cleaned += "\n"
     return cleaned
+
+
+def _strip_binary_hunks(patch: str) -> str:
+    if not patch:
+        return patch
+    sections = re.split(r"(?=^diff --git )", patch, flags=re.MULTILINE)
+    kept: List[str] = []
+    for section in sections:
+        if not section.strip():
+            continue
+        if re.search(r"^Binary files .* differ$", section, re.MULTILINE):
+            continue
+        if re.search(r"^GIT binary patch$", section, re.MULTILINE):
+            continue
+        kept.append(section)
+    return "".join(kept)
 
 
 def _coerce_bool(value: Any, *, default: bool) -> bool:
@@ -583,6 +611,21 @@ def _release_sandbox_provider(sandbox_provider: Any, *, phase: str) -> None:
         releaser()
     except Exception as exc:
         raise _SandboxFallback(f"sandbox_{phase}_release_failed") from exc
+
+
+def _exec_sandbox_command(
+    sandbox: Any,
+    command: str,
+    *,
+    timeout: int,
+    login_shell: bool = True,
+) -> Any:
+    try:
+        return sandbox.exec(command, timeout=timeout, login_shell=login_shell)
+    except TypeError as exc:
+        if "login_shell" not in str(exc):
+            raise
+        return sandbox.exec(command, timeout=timeout)
 
 
 def _load_submission_patch(

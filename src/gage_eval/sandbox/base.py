@@ -34,7 +34,13 @@ class BaseSandbox:
 
         raise NotImplementedError
 
-    def exec(self, command: str, timeout: int = 30) -> ExecResult:  # pragma: no cover - interface
+    def exec(
+        self,
+        command: str,
+        timeout: int = 30,
+        *,
+        login_shell: bool = True,
+    ) -> ExecResult:  # pragma: no cover - interface
         """Execute a command in the sandbox runtime."""
 
         raise NotImplementedError

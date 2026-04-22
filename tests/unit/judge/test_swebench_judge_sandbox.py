@@ -13,9 +13,11 @@ class FakeSandbox:
         self.outputs = outputs or {}
         self.writes: dict[str, bytes] = {}
         self.exec_calls: list[str] = []
+        self.exec_login_shells: list[bool] = []
 
-    def exec(self, command: str, timeout: int = 30):
+    def exec(self, command: str, timeout: int = 30, *, login_shell: bool = True):
         self.exec_calls.append(command)
+        self.exec_login_shells.append(login_shell)
         return type("ExecResult", (), {"exit_code": 0, "stdout": "", "stderr": ""})()
 
     def write_file(self, path: str, content: bytes) -> None:
@@ -73,6 +75,24 @@ class MissingFileSandbox(FakeSandbox):
         return super().read_file(path)
 
 
+class EntryscriptFailSandbox(FakeSandbox):
+    def exec(self, command: str, timeout: int = 30, *, login_shell: bool = True):
+        self.exec_calls.append(command)
+        self.exec_login_shells.append(login_shell)
+        if command == "bash /workspace/entryscript.sh":
+            raise RuntimeError("entryscript failed")
+        return type("ExecResult", (), {"exit_code": 0, "stdout": "", "stderr": ""})()
+
+
+class FailingJudgeReleaseProvider(FakeProvider):
+    def release(self) -> None:
+        self.release_calls += 1
+        if self.release_calls == 1 and self._current < len(self._handles) - 1:
+            self._current += 1
+            return
+        raise RuntimeError("judge release failed")
+
+
 def _successful_container_run(workspace_dir: Path, test_name: str = "tests/test_bar.py::test_bar") -> None:
     output = {"tests": [{"name": test_name, "status": "PASSED"}]}
     (workspace_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
@@ -123,6 +143,7 @@ def test_swebench_judge_restarts_sandbox_by_default(tmp_path, temp_workspace, mo
     assert agent_sandbox.exec_calls == []
     assert "/workspace/entryscript.sh" not in agent_sandbox.writes
     assert "bash /workspace/entryscript.sh" in judge_sandbox.exec_calls
+    assert judge_sandbox.exec_login_shells[-1] is False
     assert "/workspace/entryscript.sh" in judge_sandbox.writes
 
 
@@ -162,8 +183,49 @@ def test_swebench_judge_sandbox_path(tmp_path, temp_workspace) -> None:
 
     assert result["resolved"] is True
     assert "/workspace/patch.diff" in sandbox.writes
+    assert (Path(result["log_dir"]) / "workspace" / "output.json").read_text(encoding="utf-8") == json.dumps(output)
     entryscript = sandbox.writes["/workspace/entryscript.sh"].decode("utf-8")
     assert "bash /workspace/run_script.sh" in entryscript
+
+
+@pytest.mark.io
+def test_swebench_judge_release_preserves_original_exec_failure(tmp_path, temp_workspace) -> None:
+    instance_id = "instance_1"
+    scripts_root = tmp_path / "run_scripts"
+    run_dir = scripts_root / instance_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
+
+    agent_sandbox = FakeSandbox()
+    judge_sandbox = EntryscriptFailSandbox()
+    provider = FailingJudgeReleaseProvider.with_restart(agent_sandbox, judge_sandbox)
+
+    judge = SwebenchDocker(scripts_dir=str(scripts_root))
+    sample = {
+        "id": instance_id,
+        "messages": [{"role": "user", "content": "fix bug"}],
+        "metadata": {
+            "instance_id": instance_id,
+            "repo": "repo/name",
+            "base_commit": "abc",
+            "fail_to_pass": ["tests/test_bar.py::test_bar"],
+            "pass_to_pass": [],
+        },
+    }
+    payload = {
+        "sample": sample,
+        "model_output": {"answer": "patch"},
+        "params": {},
+        "sandbox_provider": provider,
+    }
+
+    result = judge.invoke(payload)
+
+    assert result["resolved"] is False
+    assert result["failure_reason"] == "sandbox_judge_error"
+    assert result["diagnostic_reason"] == "sandbox_exec_failed"
+    assert provider.release_calls == 2
 
 
 @pytest.mark.io
@@ -304,6 +366,115 @@ def test_swebench_judge_cleans_patch_markdown(tmp_path, temp_workspace) -> None:
         "+new\n"
     )
     assert cleaned_patch.strip() == expected.strip()
+
+
+@pytest.mark.io
+def test_swebench_judge_strips_binary_diff_hunks(tmp_path, temp_workspace) -> None:
+    instance_id = "instance_1"
+    scripts_root = tmp_path / "run_scripts"
+    run_dir = scripts_root / instance_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
+
+    output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+    sandbox = FakeSandbox(outputs={"/workspace/output.json": json.dumps(output).encode("utf-8")})
+    provider = FakeProvider(sandbox)
+
+    raw_patch = (
+        "diff --git a/foo.txt b/foo.txt\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/foo.txt\n"
+        "+++ b/foo.txt\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/logo.png b/logo.png\n"
+        "new file mode 100644\n"
+        "index 0000000..1111111\n"
+        "GIT binary patch\n"
+        "literal 0\n"
+        "HcmV?d00001\n"
+        "diff --git a/screenshot.png b/screenshot.png\n"
+        "Binary files a/screenshot.png and b/screenshot.png differ\n"
+    )
+
+    judge = SwebenchDocker(scripts_dir=str(scripts_root))
+    sample = {
+        "id": instance_id,
+        "messages": [{"role": "user", "content": "fix bug"}],
+        "metadata": {
+            "instance_id": instance_id,
+            "repo": "repo/name",
+            "base_commit": "abc",
+            "fail_to_pass": ["tests/test_bar.py::test_bar"],
+            "pass_to_pass": [],
+        },
+    }
+    payload = {
+        "sample": sample,
+        "model_output": {"answer": raw_patch},
+        "params": {},
+        "sandbox_provider": provider,
+    }
+
+    result = judge.invoke(payload)
+
+    assert result["resolved"] is True
+    cleaned_patch = sandbox.writes["/workspace/patch.diff"].decode("utf-8")
+    assert "foo.txt" in cleaned_patch
+    assert "logo.png" not in cleaned_patch
+    assert "screenshot.png" not in cleaned_patch
+    assert "GIT binary patch" not in cleaned_patch
+    assert "Binary files" not in cleaned_patch
+
+
+@pytest.mark.io
+def test_swebench_judge_all_binary_patch_runs_empty_patch(tmp_path, temp_workspace) -> None:
+    instance_id = "instance_1"
+    scripts_root = tmp_path / "run_scripts"
+    run_dir = scripts_root / instance_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
+
+    output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+    sandbox = FakeSandbox(outputs={"/workspace/output.json": json.dumps(output).encode("utf-8")})
+    provider = FakeProvider(sandbox)
+
+    raw_patch = (
+        "diff --git a/logo.png b/logo.png\n"
+        "new file mode 100644\n"
+        "index 0000000..1111111\n"
+        "GIT binary patch\n"
+        "literal 0\n"
+        "HcmV?d00001\n"
+    )
+
+    judge = SwebenchDocker(scripts_dir=str(scripts_root))
+    sample = {
+        "id": instance_id,
+        "messages": [{"role": "user", "content": "fix bug"}],
+        "metadata": {
+            "instance_id": instance_id,
+            "repo": "repo/name",
+            "base_commit": "abc",
+            "fail_to_pass": ["tests/test_bar.py::test_bar"],
+            "pass_to_pass": [],
+        },
+    }
+    payload = {
+        "sample": sample,
+        "model_output": {"answer": raw_patch},
+        "params": {},
+        "sandbox_provider": provider,
+    }
+
+    result = judge.invoke(payload)
+
+    assert result["resolved"] is True
+    assert sandbox.writes["/workspace/patch.diff"] == b""
+    assert "bash /workspace/entryscript.sh" in sandbox.exec_calls
 
 
 @pytest.mark.io

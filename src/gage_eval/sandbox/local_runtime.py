@@ -22,7 +22,13 @@ class LocalSubprocessSandbox(SandboxOptionalMixin, BaseSandbox):
         self._running = True
         return {"profile": "local_subprocess"}
 
-    def exec(self, command: str, timeout: int = 30) -> ExecResult:
+    def exec(
+        self,
+        command: str,
+        timeout: int = 30,
+        *,
+        login_shell: bool = True,
+    ) -> ExecResult:
         runner = self._runtime_configs.get("command_runner")
         if callable(runner):
             result = runner(command, timeout)

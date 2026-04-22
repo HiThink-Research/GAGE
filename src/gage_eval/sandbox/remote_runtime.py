@@ -159,7 +159,13 @@ class RemoteSandbox(SandboxOptionalMixin, BaseSandbox):
         )
         self._api_key_header = str(rc.get("api_key_header", self._api_key_header))
 
-    def exec(self, command: str, timeout: int | None = None) -> ExecResult:
+    def exec(
+        self,
+        command: str,
+        timeout: int | None = None,
+        *,
+        login_shell: bool = True,
+    ) -> ExecResult:
         """Execute a command via the remote execution endpoint.
 
         Args:

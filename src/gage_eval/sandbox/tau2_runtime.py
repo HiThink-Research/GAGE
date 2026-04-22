@@ -125,7 +125,11 @@ class Tau2Runtime(SandboxOptionalMixin, BaseSandbox):
         return {"profile": "tau2_local", "data_dir": self._data_dir}
 
     def exec(
-        self, command: str, timeout: int = 30
+        self,
+        command: str,
+        timeout: int = 30,
+        *,
+        login_shell: bool = True,
     ) -> ExecResult:  # pragma: no cover - protocol mismatch
         """Tau2 does not support shell-style execution.
 

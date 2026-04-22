@@ -346,6 +346,7 @@ export OLLAMA_API_KEY=dummy
 
 - 推荐使用 `swebench_pro_smoke_runtime_ollama_local.yaml` 跑本地 smoke demo；它会从本地数据集读取样本，并通过 `framework_loop` 驱动 agent。
 - verifier 会先关闭 agent sandbox，再用同一套 sandbox profile 重新启动干净的 sandbox 执行官方 SWE-bench Pro judge 脚本。
+- 重启后的 sandbox 使用 preprocessor 按 instance 注入的同一个镜像，例如 `jefzda/swe-bench-pro-{instance_id}:...`，因此 agent 阶段和 verifier 阶段面对的是同一个实例镜像。
 - 现在可以安全地追加 `--max-samples 1` 作为单条 smoke demo：本地 loader 会在应用 dataset `limit` 前，先把 smoke allowlist 中的样本排到前面，避免再出现 `sample_count=0` 的 0 sample run。
 - 若不传 `--max-samples`，则按配置内置的 smoke 子集与 `tasks[].max_samples` 执行，适合跑完整 smoke 集。
 - `concurrency: 1` 只表示同一时刻只处理 1 个 sample，并不表示内存一定恒定。当前 SampleLoop 默认仍会保留一个很小的预取缓冲区；同时 SWE-bench 每个 sample 都可能切换到不同的 Docker 镜像。若第 2 个 sample 触发了新的镜像拉取、解压或容器启动，宿主机内存占用可能明显高于第 1 个 sample，这不一定代表出现了并行执行。
