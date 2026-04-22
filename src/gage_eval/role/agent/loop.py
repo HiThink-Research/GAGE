@@ -211,9 +211,9 @@ class AgentLoop:
                         break
                     continue
                 answer = output.get("answer") or ""
-                if _requires_tool_call(effective_tool_choice, tools or []):
+                if _should_retry_missing_tool_call(effective_tool_choice, tools or [], output):
                     logger.warning(
-                        "AgentLoop turn {} required tool call but backend returned plain answer",
+                        "AgentLoop turn {} missing executable tool call; retrying",
                         turn,
                     )
                     required_tool_retry_count += 1
@@ -245,6 +245,7 @@ class AgentLoop:
                                 "has_minimax_tag": _contains_minimax_tag(answer),
                                 "has_bare_call_prefix": _has_bare_call_prefix(answer),
                                 "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
+                                "tool_call_parse_error_type": output.get("tool_call_parse_error_type"),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -495,9 +496,9 @@ class AgentLoop:
                         break
                     continue
                 answer = output.get("answer") or ""
-                if _requires_tool_call(effective_tool_choice, tools or []):
+                if _should_retry_missing_tool_call(effective_tool_choice, tools or [], output):
                     logger.warning(
-                        "AgentLoop turn {} required tool call but backend returned plain answer",
+                        "AgentLoop turn {} missing executable tool call; retrying",
                         turn,
                     )
                     required_tool_retry_count += 1
@@ -516,6 +517,7 @@ class AgentLoop:
                                 "has_minimax_tag": _contains_minimax_tag(answer),
                                 "has_bare_call_prefix": _has_bare_call_prefix(answer),
                                 "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
+                                "tool_call_parse_error_type": output.get("tool_call_parse_error_type"),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -700,6 +702,19 @@ def _requires_tool_call(tool_choice: Optional[Any], tools: List[Dict[str, Any]])
     return False
 
 
+def _should_retry_missing_tool_call(
+    tool_choice: Optional[Any],
+    tools: List[Dict[str, Any]],
+    output: Dict[str, Any],
+) -> bool:
+    if _requires_tool_call(tool_choice, tools):
+        return True
+    if output.get("tool_call_parse_error_type"):
+        return True
+    invalid_tool_names = output.get("invalid_tool_call_names")
+    return isinstance(invalid_tool_names, list) and bool(invalid_tool_names)
+
+
 def _build_required_tool_retry_message() -> Dict[str, Any]:
     return {
         "role": "user",
@@ -850,6 +865,12 @@ def _build_agent_output_payload(output: Dict[str, Any], answer: str) -> Dict[str
         payload["filtered_tool_calls"] = output.get("filtered_tool_calls")
     if "invalid_tool_call_names" in output:
         payload["invalid_tool_call_names"] = output.get("invalid_tool_call_names")
+    if "tool_call_parse_error_type" in output:
+        payload["tool_call_parse_error_type"] = output.get("tool_call_parse_error_type")
+    if "tool_call_parse_error" in output:
+        payload["tool_call_parse_error"] = output.get("tool_call_parse_error")
+    if "plain_text_response_wrapped" in output:
+        payload["plain_text_response_wrapped"] = output.get("plain_text_response_wrapped")
     if "error" in output:
         payload["error"] = output.get("error")
     if "status" in output:
@@ -865,6 +886,12 @@ def _required_tool_call_missing_error(output: Dict[str, Any]) -> str:
 
 
 def _missing_tool_call_detail(output: Dict[str, Any]) -> str:
+    parse_error_type = output.get("tool_call_parse_error_type")
+    if parse_error_type:
+        parse_error = output.get("tool_call_parse_error")
+        if parse_error:
+            return f"{parse_error_type}: {parse_error}"
+        return str(parse_error_type)
     invalid_tool_names = output.get("invalid_tool_call_names")
     if isinstance(invalid_tool_names, list) and invalid_tool_names:
         names = ", ".join(str(name) for name in invalid_tool_names)

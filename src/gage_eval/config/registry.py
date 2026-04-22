@@ -428,6 +428,10 @@ class ConfigRegistry:
             "tool_format",
             "tool_call_format",
             "tool_result_format",
+            "plain_text_response_tool",
+            "plain_text_wrapper_tool",
+            "plain_text_response_formats",
+            "plain_text_wrapper_formats",
         ):
             if key in adapter_kwargs:
                 config_payload[key] = adapter_kwargs.pop(key)

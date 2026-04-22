@@ -122,6 +122,19 @@ class InvalidToolRetryBackend:
         }
 
 
+class ToolCallParseErrorRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {
+            "answer": "call:respond{message:Hello",
+            "tool_call_parse_error_type": "gemma4_tool_call_format_error",
+            "tool_call_parse_error": "Gemma tool-call text was present but could not be parsed.",
+        }
+
+
 class AsyncRetryBackend:
     def __init__(self):
         self.calls = 0
@@ -419,6 +432,58 @@ def test_agent_loop_missing_tool_call_error_includes_filtered_tool_detail() -> N
         event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
     ][0]
     assert retry_event["payload"]["invalid_tool_call_names"] == ["run_speed_test"]
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_error_includes_parse_error_detail() -> None:
+    backend = ToolCallParseErrorRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert result["agent_trace"][0]["output"]["error"] == (
+        "required_tool_call_missing: gemma4_tool_call_format_error: "
+        "Gemma tool-call text was present but could not be parsed."
+    )
+    assert result["agent_trace"][0]["output"]["tool_call_parse_error_type"] == (
+        "gemma4_tool_call_format_error"
+    )
+    retry_event = [
+        event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
+    ][0]
+    assert retry_event["payload"]["tool_call_parse_error_type"] == "gemma4_tool_call_format_error"
+
+
+@pytest.mark.fast
+def test_agent_loop_retries_tool_call_parse_error_when_tool_choice_auto() -> None:
+    backend = ToolCallParseErrorRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="auto",
+    )
+
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert result["agent_trace"][0]["status"] == "retry_required_tool_call"
+    assert result["agent_trace"][0]["output"]["error"].startswith(
+        "required_tool_call_missing: gemma4_tool_call_format_error"
+    )
 
 
 @pytest.mark.fast

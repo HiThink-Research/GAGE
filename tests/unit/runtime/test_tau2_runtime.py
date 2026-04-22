@@ -92,6 +92,10 @@ def test_tau2_runtime_gage_instruction_blocks_user_side_tool_hallucination(
     assert "disconnect_vpn" in instruction
     assert "run_speed_test" in instruction
     assert "final verification" in instruction
+    gemma_instruction = sample["metadata"]["tau2"]["gemma4_tool_instruction"]
+    assert "call:tool_name{key:value}" in gemma_instruction
+    assert "call:respond{message:your message}" in gemma_instruction
+    assert "JSON object" in gemma_instruction
 
 
 def test_tau2_runtime_unknown_user_side_tool_error_guides_agent(

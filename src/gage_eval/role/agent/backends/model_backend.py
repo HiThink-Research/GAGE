@@ -35,16 +35,34 @@ class ModelBackend(AgentBackend):
         self._tool_result_format = str(
             config.get("tool_result_format") or config.get("tool_format") or inferred_format
         )
+        self._plain_text_response_tool = _optional_str(
+            config.get("plain_text_response_tool") or config.get("plain_text_wrapper_tool")
+        )
+        self._plain_text_response_formats = _normalize_format_allowlist(
+            config.get("plain_text_response_formats") or config.get("plain_text_wrapper_formats")
+        )
 
     def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = _call_backend_sync(self._backend, request)
-        return _normalize_backend_response(response, request.get("tools"), self._tool_call_format)
+        return _normalize_backend_response(
+            response,
+            request.get("tools"),
+            self._tool_call_format,
+            plain_text_response_tool=self._plain_text_response_tool,
+            plain_text_response_formats=self._plain_text_response_formats,
+        )
 
     async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = await _call_backend_async(self._backend, request)
-        return _normalize_backend_response(response, request.get("tools"), self._tool_call_format)
+        return _normalize_backend_response(
+            response,
+            request.get("tools"),
+            self._tool_call_format,
+            plain_text_response_tool=self._plain_text_response_tool,
+            plain_text_response_formats=self._plain_text_response_formats,
+        )
 
 
 def _build_backend_request(
@@ -101,9 +119,17 @@ async def _call_backend_async(backend: Any, request: Dict[str, Any]) -> Any:
     raise RuntimeError("model_backend_missing_invoke")
 
 
-def _normalize_backend_response(response: Any, tools: Any = None, tool_call_format: str = "auto") -> Dict[str, Any]:
+def _normalize_backend_response(
+    response: Any,
+    tools: Any = None,
+    tool_call_format: str = "auto",
+    *,
+    plain_text_response_tool: Optional[str] = None,
+    plain_text_response_formats: Optional[set[str]] = None,
+) -> Dict[str, Any]:
     result = normalize_agent_output(response)
     tool_calls = _extract_tool_calls(response)
+    parsed_tool_calls: List[Dict[str, Any]] = []
     if not tool_calls:
         tool_calls = _extract_tool_calls_from_answer(result.get("answer"), tool_call_format=tool_call_format)
         parsed_tool_calls = list(tool_calls)
@@ -117,6 +143,33 @@ def _normalize_backend_response(response: Any, tools: Any = None, tool_call_form
                 result["invalid_tool_call_names"] = [
                     name for call in dropped_tool_calls if (name := _tool_call_name(call))
                 ]
+        if not parsed_tool_calls:
+            parse_error_type = _detect_tool_call_parse_error(result.get("answer"), tool_call_format)
+            if parse_error_type:
+                result["tool_call_parse_error_type"] = parse_error_type
+                result["tool_call_parse_error"] = _tool_call_parse_error_message(parse_error_type)
+        if (
+            not tool_calls
+            and not parsed_tool_calls
+            and not result.get("tool_call_parse_error_type")
+            and _should_wrap_plain_text_response(
+                result,
+                tools,
+                tool_call_format,
+                plain_text_response_tool,
+                plain_text_response_formats,
+            )
+        ):
+            response_content = _extract_plain_text_response_content(result.get("answer"))
+            if response_content:
+                tool_calls = [
+                    _build_openai_tool_call(
+                        plain_text_response_tool,
+                        {"message": response_content},
+                        call_id="call_plain_text_response",
+                    )
+                ]
+                result["plain_text_response_wrapped"] = True
     if tool_calls:
         result["tool_calls"] = tool_calls
         if isinstance(result.get("answer"), str):
@@ -167,6 +220,26 @@ def _tool_call_name(tool_call: Dict[str, Any]) -> Optional[str]:
     if isinstance(name, str):
         return name.strip()
     return None
+
+
+def _optional_str(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _normalize_format_allowlist(value: Any) -> Optional[set[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = [item.strip().lower() for item in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip().lower() for item in value]
+    else:
+        return None
+    formats = {item for item in items if item}
+    return formats or None
 
 
 def _raise_if_active_event_loop() -> None:
@@ -254,6 +327,88 @@ def _extract_tool_calls_from_answer(answer: Any, *, tool_call_format: str = "aut
         if not calls:
             calls.extend(_parse_pythonic_tool_calls(raw_payload))
     return _dedupe_tool_calls(calls)
+
+
+def _detect_tool_call_parse_error(answer: Any, tool_call_format: str) -> Optional[str]:
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+    normalized_format = str(tool_call_format or "auto").strip().lower()
+    lowered = answer.lower()
+    if normalized_format in {"gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"}:
+        if "<|tool_call>" in lowered or _has_gemma4_call_prefix(answer):
+            return "gemma4_tool_call_format_error"
+    if normalized_format in {
+        "minimax",
+        "minimax_m2",
+        "minimax-m2",
+        "minimax_m25",
+        "minimax-m25",
+        "minimax_m2_5",
+        "minimax-m2.5",
+    }:
+        if "<minimax:tool_call" in lowered or "<invoke" in lowered:
+            return "minimax_tool_call_format_error"
+    return None
+
+
+def _tool_call_parse_error_message(error_type: str) -> str:
+    if error_type == "gemma4_tool_call_format_error":
+        return (
+            "Gemma tool-call text was present but could not be parsed. Expected "
+            "call:name{key:value} or <|tool_call>call:name{key:value}<tool_call|>."
+        )
+    if error_type == "minimax_tool_call_format_error":
+        return (
+            "MiniMax tool-call text was present but could not be parsed. Expected "
+            "<minimax:tool_call><invoke name=\"tool\">...</invoke></minimax:tool_call>."
+        )
+    return "Tool-call text was present but could not be parsed."
+
+
+def _should_wrap_plain_text_response(
+    result: Dict[str, Any],
+    tools: Any,
+    tool_call_format: str,
+    plain_text_response_tool: Optional[str],
+    plain_text_response_formats: Optional[set[str]],
+) -> bool:
+    if not plain_text_response_tool:
+        return False
+    if result.get("error") or result.get("status") not in (None, "success"):
+        return False
+    normalized_format = str(tool_call_format or "auto").strip().lower()
+    if plain_text_response_formats is not None and normalized_format not in plain_text_response_formats:
+        return False
+    if plain_text_response_tool not in _extract_tool_names(tools):
+        return False
+    answer = result.get("answer")
+    content = _extract_plain_text_response_content(answer)
+    if not content:
+        return False
+    return not _looks_like_tool_call_text(content)
+
+
+def _extract_plain_text_response_content(answer: Any) -> str:
+    if not isinstance(answer, str):
+        return ""
+    content = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", answer, flags=re.DOTALL | re.IGNORECASE)
+    return content.strip()
+
+
+def _looks_like_tool_call_text(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    lowered = stripped.lower()
+    return (
+        lowered.startswith("call:")
+        or "<|tool_call>" in lowered
+        or "<tool_call" in lowered
+        or "<function" in lowered
+        or "<minimax:tool_call" in lowered
+        or "<invoke" in lowered
+        or lowered.startswith("[tool_calls]")
+    )
 
 
 def _dedupe_tool_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -561,6 +716,10 @@ def _extract_balanced_gemma4_braces(text: str, start: int) -> Optional[str]:
 
 def _has_gemma4_bare_call(answer: str) -> bool:
     return re.search(r"(?m)^\s*call:[A-Za-z_][\w.-]*\s*\{", answer) is not None
+
+
+def _has_gemma4_call_prefix(answer: str) -> bool:
+    return re.search(r"(?m)^\s*call:[A-Za-z_][\w.-]*", answer) is not None
 
 
 def _parse_gemma4_arguments(raw: str) -> Dict[str, Any]:

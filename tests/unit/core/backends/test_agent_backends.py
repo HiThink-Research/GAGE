@@ -734,6 +734,81 @@ def test_model_backend_reports_filtered_gemma4_tool_call_names():
     assert result["filtered_tool_calls"][0]["function"]["name"] == "run_speed_test"
 
 
+@pytest.mark.fast
+def test_model_backend_wraps_gemma4_plain_text_response_as_respond_tool():
+    class Gemma4PlainTextBackend:
+        config = {"model_path": "/mnt/models/gemma-4-27b-it"}
+
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "<think>I have enough information to answer.</think>\n\n"
+                    "Your mobile data has been restored. Please try loading a webpage now."
+                )
+            }
+
+    backend = ModelBackend(
+        {
+            "backend": Gemma4PlainTextBackend(),
+            "plain_text_response_tool": "respond",
+            "plain_text_response_formats": ["gemma4"],
+        }
+    )
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert backend._tool_call_format == "gemma4"
+    assert result["answer"] == ""
+    assert result["plain_text_response_wrapped"] is True
+    assert result["raw_answer"].startswith("<think>")
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Your mobile data has been restored. Please try loading a webpage now."
+    }
+
+
+@pytest.mark.fast
+def test_model_backend_reports_malformed_gemma4_tool_call_separately():
+    class Gemma4MalformedToolCallBackend:
+        def invoke(self, payload):
+            return {"answer": "call:respond{message:Hello"}
+
+    backend = ModelBackend(
+        {
+            "backend": Gemma4MalformedToolCallBackend(),
+            "tool_format": "gemma4",
+            "plain_text_response_tool": "respond",
+            "plain_text_response_formats": ["gemma4"],
+        }
+    )
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["answer"] == "call:respond{message:Hello"
+    assert "tool_calls" not in result
+    assert result["tool_call_parse_error_type"] == "gemma4_tool_call_format_error"
+    assert "Gemma tool-call text was present" in result["tool_call_parse_error"]
+    assert "plain_text_response_wrapped" not in result
+
+
 def test_model_backend_no_tool_filtering_when_tools_empty():
     class XmlToolCallBackend:
         def invoke(self, payload):

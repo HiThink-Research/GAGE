@@ -747,6 +747,13 @@ def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:
         "ask the user via respond to run can_send_mms for MMS issues or run_speed_test "
         "for mobile data issues, and ground the resolved message on that result."
     )
+    tau2_meta["gemma4_tool_instruction"] = (
+        "For Gemma-style tool calling, use the chat-template tool-call form rather "
+        "than JSON-only text. Emit exactly call:tool_name{key:value} for each tool "
+        "call. To speak to the user, emit call:respond{message:your message}. Do "
+        "not wrap tool calls in a JSON object, and do not answer with plain assistant "
+        "text when the respond tool is available."
+    )
     meta["tau2"] = tau2_meta
     sample["metadata"] = meta
 
