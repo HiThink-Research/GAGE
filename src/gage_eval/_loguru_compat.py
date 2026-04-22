@@ -25,15 +25,19 @@ def ensure_loguru() -> None:
     _CONTEXT_EXTRA: ContextVar[dict] = ContextVar("stub_loguru_context_extra", default={})
 
     class _StubLogger:
-        def __init__(self, sinks=None, extra=None):
+        def __init__(self, sinks=None, extra=None, *, lazy=False):
             self._sinks = sinks if sinks is not None else []
             self._extra = extra or {}
+            self._lazy = bool(lazy)
 
         def bind(self, **kwargs):
             merged = dict(_CONTEXT_EXTRA.get())
             merged.update(self._extra)
             merged.update({k: v for k, v in kwargs.items() if v is not None})
-            return _StubLogger(self._sinks, merged)
+            return _StubLogger(self._sinks, merged, lazy=self._lazy)
+
+        def opt(self, **kwargs):
+            return _StubLogger(self._sinks, self._extra, lazy=kwargs.get("lazy", self._lazy))
 
         @contextmanager
         def contextualize(self, **kwargs):
@@ -50,6 +54,12 @@ def ensure_loguru() -> None:
             return len(self._sinks)
 
         def log(self, level, message, *args, **kwargs):
+            if self._lazy:
+                args = tuple(item() if callable(item) else item for item in args)
+                kwargs = {
+                    key: value() if callable(value) else value
+                    for key, value in kwargs.items()
+                }
             formatted = message.format(*args, **kwargs) if (args or kwargs) else message
             extra = dict(_CONTEXT_EXTRA.get())
             extra.update(self._extra)

@@ -78,7 +78,12 @@ def test_appworld_demo_with_streamable_http(
 
     monkeypatch.setattr(appworld_runtime_module.requests, "post", fake_post)
     payload["backends"][0]["type"] = "dummy"
-    payload["backends"][0]["config"] = {"responses": ["ok"]}
+    payload["backends"][0]["config"] = {
+        "responses": [
+            '{"tool_calls":[{"id":"tool-1","type":"function","function":{"name":"step","arguments":{"action":"noop"}}}]}',
+            "done",
+        ],
+    }
     payload["mcp_clients"][0]["endpoint"] = "http://stub"
     payload["mcp_clients"][0]["params"] = {**payload["mcp_clients"][0].get("params", {}), "requester": requester}
     payload["tasks"][0]["max_samples"] = 1

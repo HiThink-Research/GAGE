@@ -164,12 +164,6 @@ role_adapters:
       force_tool_choice: first_turn
       # Safety net for runaway tool loops.
       max_turns: 120
-      pre_hooks:
-        # Initialize AppWorld task state before the agent starts.
-        - type: appworld_initialize
-      post_hooks:
-        # Persist AppWorld task outputs after the agent finishes.
-        - type: appworld_save
 
   - adapter_id: appworld_judge
     role_type: judge_extend

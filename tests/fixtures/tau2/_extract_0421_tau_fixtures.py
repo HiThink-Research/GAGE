@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,21 @@ SOURCE_ROOT = (
     / "runtime"
     / "tau2_telecom_vllm_full"
 )
+TAU2_SOURCE_ROOT = (
+    WORKSPACE_ROOT
+    / "agent-eval"
+    / "0421"
+    / "tau 2"
+    / "samples"
+    / "runtime"
+    / "tau2_telecom_vllm_full"
+)
+GEMMA4_ALL_SOURCE_ROOT = REPO_ROOT / "runs" / "gemma4_all" / "gemma4_all" / "tau" / "samples"
+SOURCE_ROOTS = {
+    "tau": SOURCE_ROOT,
+    "tau2": TAU2_SOURCE_ROOT,
+    "gemma4_all": GEMMA4_ALL_SOURCE_ROOT,
+}
 OUTPUT_ROOT = Path(__file__).resolve().parent / "runtime_samples"
 
 
@@ -33,6 +49,20 @@ TRACE_FIXTURES = [
         "trace_index": 1,
         "description": "Real assistant response containing a harmony-style XML respond tool call from the failed 2026-04-21 run.",
     },
+    {
+        "output": "0421_tau2_think_tail_bare_json_respond_response.txt",
+        "source_run": "tau2",
+        "sample_dir": "telecom_[mobile_data_issue]airplane_mode_on|bad_network_preference|data_mode_off|data_saver_mode_on[PERSONA:Hard]__trial_0",
+        "trace_index": 0,
+        "description": "Real assistant response from the latest 2026-04-21 tau 2 run with a bare JSON respond call immediately after </think>.",
+    },
+    {
+        "output": "0421_gemma4_airline_bare_call_respond_response.txt",
+        "source_run": "gemma4_all",
+        "source": "judge_tau2_airline_vllm_full/tau2_airline_vllm_full_airline_0__trial_0.json",
+        "source_field": "model_output.agent_trace[0].output.answer",
+        "description": "Real Gemma 4 assistant response from the 2026-04-21 airline run with a bare call: respond tool call.",
+    },
 ]
 
 ARTIFACT_FIXTURES = [
@@ -43,17 +73,41 @@ ARTIFACT_FIXTURES = [
     }
 ]
 
+JSON_FIXTURES = [
+    {
+        "output": "0421_tau2_unknown_user_side_tool_error.json",
+        "source_run": "tau2",
+        "sample_dir": "telecom_[mms_issue]break_apn_mms_setting|user_abroad_roaming_enabled_off[PERSONA:Hard]__trial_0",
+        "source_field": "scheduler_result.agent_output.agent_trace[8]",
+        "description": "Real failed tool trace from the latest 2026-04-21 tau 2 run where the DUT called a user-side device tool directly.",
+    }
+]
+
 
 def main() -> None:
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     manifest: dict[str, Any] = {"source_root": _relative(SOURCE_ROOT), "fixtures": []}
+    existing_fixtures = _read_existing_fixture_entries()
 
     for spec in TRACE_FIXTURES:
-        metadata_path = SOURCE_ROOT / spec["sample_dir"] / "runtime_metadata.json"
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        trace = metadata["scheduler_result"]["agent_output"]["agent_trace"]
-        trace_index = int(spec["trace_index"])
-        answer = trace[trace_index]["output"]["answer"]
+        if "source" in spec:
+            metadata_path = _source_root(spec) / spec["source"]
+            if not metadata_path.exists():
+                _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+                continue
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            source_field = spec["source_field"]
+            answer = _read_source_field(metadata, source_field)
+        else:
+            metadata_path = _source_root(spec) / spec["sample_dir"] / "runtime_metadata.json"
+            if not metadata_path.exists():
+                _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+                continue
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            trace = metadata["scheduler_result"]["agent_output"]["agent_trace"]
+            trace_index = int(spec["trace_index"])
+            source_field = f"scheduler_result.agent_output.agent_trace[{trace_index}].output.answer"
+            answer = trace[trace_index]["output"]["answer"]
         output_path = OUTPUT_ROOT / spec["output"]
         output_path.write_text(answer, encoding="utf-8")
         manifest["fixtures"].append(
@@ -61,13 +115,36 @@ def main() -> None:
                 "file": spec["output"],
                 "description": spec["description"],
                 "source": _relative(metadata_path),
-                "source_field": f"scheduler_result.agent_output.agent_trace[{trace_index}].output.answer",
+                "source_field": source_field,
                 "sha256": _sha256(answer.encode("utf-8")),
+            }
+        )
+
+    for spec in JSON_FIXTURES:
+        metadata_path = _source_root(spec) / spec["sample_dir"] / "runtime_metadata.json"
+        if not metadata_path.exists():
+            _append_existing_fixture(manifest, existing_fixtures, spec["output"], metadata_path)
+            continue
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        source_field = spec["source_field"]
+        payload = _read_source_field(metadata, source_field)
+        output_path = OUTPUT_ROOT / spec["output"]
+        output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+        manifest["fixtures"].append(
+            {
+                "file": spec["output"],
+                "description": spec["description"],
+                "source": _relative(metadata_path),
+                "source_field": source_field,
+                "sha256": _sha256(json.dumps(payload, sort_keys=True).encode("utf-8")),
             }
         )
 
     for spec in ARTIFACT_FIXTURES:
         source_path = SOURCE_ROOT / spec["source"]
+        if not source_path.exists():
+            _append_existing_fixture(manifest, existing_fixtures, spec["output"], source_path)
+            continue
         payload = json.loads(source_path.read_text(encoding="utf-8"))
         output_path = OUTPUT_ROOT / spec["output"]
         output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
@@ -84,11 +161,60 @@ def main() -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
+def _read_existing_fixture_entries() -> dict[str, dict[str, Any]]:
+    manifest_path = OUTPUT_ROOT / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    fixtures = manifest.get("fixtures", [])
+    if not isinstance(fixtures, list):
+        return {}
+    return {
+        fixture["file"]: fixture
+        for fixture in fixtures
+        if isinstance(fixture, dict) and isinstance(fixture.get("file"), str)
+    }
+
+
+def _append_existing_fixture(
+    manifest: dict[str, Any],
+    existing_fixtures: dict[str, dict[str, Any]],
+    output: str,
+    missing_source: Path,
+) -> None:
+    fixture = existing_fixtures.get(output)
+    if fixture is None:
+        raise FileNotFoundError(missing_source)
+    manifest["fixtures"].append(fixture)
+
+
 def _relative(path: Path) -> str:
     try:
         return str(path.relative_to(WORKSPACE_ROOT))
     except ValueError:
         return str(path)
+
+
+def _source_root(spec: dict[str, Any]) -> Path:
+    source_run = str(spec.get("source_run") or "tau")
+    return SOURCE_ROOTS[source_run]
+
+
+def _read_source_field(payload: Any, source_field: str) -> Any:
+    current = payload
+    for part in source_field.split("."):
+        name, indexes = _split_field_part(part)
+        if name:
+            current = current[name]
+        for index in indexes:
+            current = current[index]
+    return current
+
+
+def _split_field_part(part: str) -> tuple[str, list[int]]:
+    name = part.split("[", 1)[0]
+    indexes = [int(match) for match in re.findall(r"\[(\d+)\]", part)]
+    return name, indexes
 
 
 def _sha256(data: bytes) -> str:

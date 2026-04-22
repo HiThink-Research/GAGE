@@ -28,16 +28,41 @@ class ModelBackend(AgentBackend):
         self._backend = backend
         self._default_sampling = dict(config.get("sampling_params") or {})
         self._force_tool_choice_mode = _resolve_force_tool_choice_mode(config.get("force_tool_choice"))
+        inferred_format = _infer_tool_format(backend)
+        self._tool_call_format = str(
+            config.get("tool_call_format") or config.get("tool_format") or inferred_format
+        )
+        self._tool_result_format = str(
+            config.get("tool_result_format") or config.get("tool_format") or inferred_format
+        )
+        self._plain_text_response_tool = _optional_str(
+            config.get("plain_text_response_tool") or config.get("plain_text_wrapper_tool")
+        )
+        self._plain_text_response_formats = _normalize_format_allowlist(
+            config.get("plain_text_response_formats") or config.get("plain_text_wrapper_formats")
+        )
 
     def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = _call_backend_sync(self._backend, request)
-        return _normalize_backend_response(response, request.get("tools"))
+        return _normalize_backend_response(
+            response,
+            request.get("tools"),
+            self._tool_call_format,
+            plain_text_response_tool=self._plain_text_response_tool,
+            plain_text_response_formats=self._plain_text_response_formats,
+        )
 
     async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         request = _build_backend_request(payload, self._default_sampling, self._force_tool_choice_mode)
         response = await _call_backend_async(self._backend, request)
-        return _normalize_backend_response(response, request.get("tools"))
+        return _normalize_backend_response(
+            response,
+            request.get("tools"),
+            self._tool_call_format,
+            plain_text_response_tool=self._plain_text_response_tool,
+            plain_text_response_formats=self._plain_text_response_formats,
+        )
 
 
 def _build_backend_request(
@@ -94,13 +119,57 @@ async def _call_backend_async(backend: Any, request: Dict[str, Any]) -> Any:
     raise RuntimeError("model_backend_missing_invoke")
 
 
-def _normalize_backend_response(response: Any, tools: Any = None) -> Dict[str, Any]:
+def _normalize_backend_response(
+    response: Any,
+    tools: Any = None,
+    tool_call_format: str = "auto",
+    *,
+    plain_text_response_tool: Optional[str] = None,
+    plain_text_response_formats: Optional[set[str]] = None,
+) -> Dict[str, Any]:
     result = normalize_agent_output(response)
     tool_calls = _extract_tool_calls(response)
+    parsed_tool_calls: List[Dict[str, Any]] = []
     if not tool_calls:
-        tool_calls = _extract_tool_calls_from_answer(result.get("answer"))
-        if tools:
-            tool_calls = _filter_tool_calls_by_schema(tool_calls, tools)
+        tool_calls = _extract_tool_calls_from_answer(result.get("answer"), tool_call_format=tool_call_format)
+        parsed_tool_calls = list(tool_calls)
+        if tools and parsed_tool_calls:
+            tool_calls = _filter_tool_calls_by_schema(parsed_tool_calls, tools)
+            dropped_tool_calls = [
+                call for call in parsed_tool_calls if _tool_call_name(call) not in _extract_tool_names(tools)
+            ]
+            if dropped_tool_calls:
+                result["filtered_tool_calls"] = dropped_tool_calls
+                result["invalid_tool_call_names"] = [
+                    name for call in dropped_tool_calls if (name := _tool_call_name(call))
+                ]
+        if not parsed_tool_calls:
+            parse_error_type = _detect_tool_call_parse_error(result.get("answer"), tool_call_format)
+            if parse_error_type:
+                result["tool_call_parse_error_type"] = parse_error_type
+                result["tool_call_parse_error"] = _tool_call_parse_error_message(parse_error_type)
+        if (
+            not tool_calls
+            and not parsed_tool_calls
+            and not result.get("tool_call_parse_error_type")
+            and _should_wrap_plain_text_response(
+                result,
+                tools,
+                tool_call_format,
+                plain_text_response_tool,
+                plain_text_response_formats,
+            )
+        ):
+            response_content = _extract_plain_text_response_content(result.get("answer"))
+            if response_content:
+                tool_calls = [
+                    _build_openai_tool_call(
+                        plain_text_response_tool,
+                        {"message": response_content},
+                        call_id="call_plain_text_response",
+                    )
+                ]
+                result["plain_text_response_wrapped"] = True
     if tool_calls:
         result["tool_calls"] = tool_calls
         if isinstance(result.get("answer"), str):
@@ -153,6 +222,26 @@ def _tool_call_name(tool_call: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _optional_str(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _normalize_format_allowlist(value: Any) -> Optional[set[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = [item.strip().lower() for item in value.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        items = [str(item).strip().lower() for item in value]
+    else:
+        return None
+    formats = {item for item in items if item}
+    return formats or None
+
+
 def _raise_if_active_event_loop() -> None:
     try:
         asyncio.get_running_loop()
@@ -203,17 +292,147 @@ def _extract_from_message(message: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _extract_tool_calls_from_answer(answer: Any) -> List[Dict[str, Any]]:
+def _extract_tool_calls_from_answer(answer: Any, *, tool_call_format: str = "auto") -> List[Dict[str, Any]]:
     if not isinstance(answer, str) or not answer.strip():
         return []
     calls: List[Dict[str, Any]] = []
-    calls.extend(_extract_xml_function_calls(answer))
+    normalized_format = str(tool_call_format or "auto").strip().lower()
+    lowered = answer.lower()
+    minimax_formats = {
+        "auto",
+        "minimax",
+        "minimax_m2",
+        "minimax-m2",
+        "minimax_m25",
+        "minimax-m25",
+        "minimax_m2_5",
+        "minimax-m2.5",
+    }
+    if normalized_format in minimax_formats and (
+        "<minimax:tool_call" in lowered or _has_minimax_bare_invoke(answer)
+    ):
+        calls.extend(_extract_minimax_tool_calls(answer))
+    gemma4_formats = {"auto", "gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"}
+    if normalized_format in gemma4_formats and (
+        "<|tool_call>" in lowered
+        or normalized_format != "auto"
+        or _has_gemma4_bare_call(answer)
+    ):
+        calls.extend(_extract_gemma4_tool_calls(answer))
+    if normalized_format in {"auto", "qwen", "qwen3", "qwen3.5", "qwen3.6"} or "<tool_call>" in lowered:
+        calls.extend(_extract_xml_function_calls(answer))
     for raw_payload in _iter_tool_call_payloads(answer):
         parsed = _parse_tool_payload(raw_payload)
         calls.extend(_normalize_text_tool_calls(parsed))
         if not calls:
             calls.extend(_parse_pythonic_tool_calls(raw_payload))
-    return calls
+    return _dedupe_tool_calls(calls)
+
+
+def _detect_tool_call_parse_error(answer: Any, tool_call_format: str) -> Optional[str]:
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+    normalized_format = str(tool_call_format or "auto").strip().lower()
+    lowered = answer.lower()
+    if normalized_format in {"gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"}:
+        if "<|tool_call>" in lowered or _has_gemma4_call_prefix(answer):
+            return "gemma4_tool_call_format_error"
+    if normalized_format in {
+        "minimax",
+        "minimax_m2",
+        "minimax-m2",
+        "minimax_m25",
+        "minimax-m25",
+        "minimax_m2_5",
+        "minimax-m2.5",
+    }:
+        if "<minimax:tool_call" in lowered or "<invoke" in lowered:
+            return "minimax_tool_call_format_error"
+    return None
+
+
+def _tool_call_parse_error_message(error_type: str) -> str:
+    if error_type == "gemma4_tool_call_format_error":
+        return (
+            "Gemma tool-call text was present but could not be parsed. Expected "
+            "call:name{key:value} or <|tool_call>call:name{key:value}<tool_call|>."
+        )
+    if error_type == "minimax_tool_call_format_error":
+        return (
+            "MiniMax tool-call text was present but could not be parsed. Expected "
+            "<minimax:tool_call><invoke name=\"tool\">...</invoke></minimax:tool_call>."
+        )
+    return "Tool-call text was present but could not be parsed."
+
+
+def _should_wrap_plain_text_response(
+    result: Dict[str, Any],
+    tools: Any,
+    tool_call_format: str,
+    plain_text_response_tool: Optional[str],
+    plain_text_response_formats: Optional[set[str]],
+) -> bool:
+    if not plain_text_response_tool:
+        return False
+    if result.get("error") or result.get("status") not in (None, "success"):
+        return False
+    normalized_format = str(tool_call_format or "auto").strip().lower()
+    if plain_text_response_formats is not None and normalized_format not in plain_text_response_formats:
+        return False
+    if plain_text_response_tool not in _extract_tool_names(tools):
+        return False
+    answer = result.get("answer")
+    content = _extract_plain_text_response_content(answer)
+    if not content:
+        return False
+    return not _looks_like_tool_call_text(content)
+
+
+def _extract_plain_text_response_content(answer: Any) -> str:
+    if not isinstance(answer, str):
+        return ""
+    content = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", answer, flags=re.DOTALL | re.IGNORECASE)
+    return content.strip()
+
+
+def _looks_like_tool_call_text(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    lowered = stripped.lower()
+    return (
+        lowered.startswith("call:")
+        or "<|tool_call>" in lowered
+        or "<tool_call" in lowered
+        or "<function" in lowered
+        or "<minimax:tool_call" in lowered
+        or "<invoke" in lowered
+        or lowered.startswith("[tool_calls]")
+    )
+
+
+def _dedupe_tool_calls(calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        name = str(function.get("name") or call.get("name") or "")
+        arguments = function.get("arguments", call.get("arguments", {}))
+        key = (name, _canonical_tool_arguments(arguments))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(call)
+    return deduped
+
+
+def _canonical_tool_arguments(arguments: Any) -> str:
+    try:
+        return json.dumps(arguments, sort_keys=True, default=str)
+    except TypeError:
+        return str(arguments)
 
 
 def _iter_tool_call_payloads(answer: str) -> List[str]:
@@ -243,7 +462,24 @@ def _iter_tool_call_payloads(answer: str) -> List[str]:
     stripped = answer.strip()
     if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
         payloads.append(stripped)
+    for tail in _iter_think_tails(answer):
+        balanced = _extract_balanced_json(tail)
+        if balanced is not None:
+            payloads.append(balanced)
+        if _has_pythonic_tool_call(tail):
+            payloads.append(tail)
     return [payload for payload in payloads if payload.strip()]
+
+
+def _iter_think_tails(answer: str) -> Iterable[str]:
+    for match in re.finditer(r"</think\s*>", answer, flags=re.IGNORECASE):
+        tail = answer[match.end() :].strip()
+        if tail:
+            yield tail
+
+
+def _has_pythonic_tool_call(text: str) -> bool:
+    return any(True for _ in _iter_pythonic_call_expressions(text))
 
 
 def _parse_tool_payload(raw: str) -> Any:
@@ -354,24 +590,270 @@ def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
         name = quoted_name or equals_name
         if not name:
             continue
-        parsed_body = _parse_tool_payload(body)
-        if isinstance(parsed_body, dict):
-            arguments = parsed_body.get("arguments", parsed_body)
-        else:
+        if re.search(r"<parameter(?:\s+name=|=)", body, flags=re.IGNORECASE):
             arguments = _extract_xml_parameters(body)
+        else:
+            parsed_body = _parse_tool_payload(body)
+            arguments = parsed_body.get("arguments", parsed_body) if isinstance(parsed_body, dict) else {}
         calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
     return calls
+
+
+def _extract_minimax_tool_calls(answer: str) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    tool_blocks = _extract_minimax_tool_blocks(answer)
+    if not tool_blocks and _has_minimax_bare_invoke(answer):
+        tool_blocks = [answer]
+    for tool_block in tool_blocks:
+        for name, body in _extract_minimax_invokes(tool_block):
+            stripped_name = name.strip()
+            if not stripped_name:
+                continue
+            calls.append(
+                _build_openai_tool_call(
+                    stripped_name,
+                    _extract_xml_parameters(body),
+                    call_id=f"call_{len(calls)}",
+                )
+            )
+    return calls
+
+
+def _extract_minimax_tool_blocks(answer: str) -> List[str]:
+    return [
+        match.group(1)
+        for match in re.finditer(
+            r"<minimax:tool_call\s*>\s*(.*?)(?:</minimax:tool_call\s*>|\Z)",
+            answer,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    ]
+
+
+def _extract_minimax_invokes(text: str) -> List[tuple[str, str]]:
+    invoke_blocks = re.findall(
+        r"<invoke\s+name\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\"'\s>]+))\s*>\s*(.*?)\s*</invoke\s*>",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return [
+        (double_quoted or single_quoted or unquoted, body)
+        for double_quoted, single_quoted, unquoted, body in invoke_blocks
+    ]
+
+
+def _has_minimax_bare_invoke(answer: str) -> bool:
+    return re.search(r"<invoke\s+name\s*=", answer, flags=re.IGNORECASE) is not None
+
+
+def _extract_gemma4_tool_calls(answer: str) -> List[Dict[str, Any]]:
+    calls: List[Dict[str, Any]] = []
+    tool_blocks = re.findall(
+        r"<\|tool_call>\s*(.*?)\s*<tool_call\|>",
+        answer,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for tool_block in tool_blocks:
+        for name, raw_arguments in _extract_gemma4_call_chunks(tool_block, require_line_start=False):
+            arguments = _parse_gemma4_arguments(raw_arguments)
+            calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+    if not calls:
+        for name, raw_arguments in _extract_gemma4_call_chunks(answer, require_line_start=True):
+            arguments = _parse_gemma4_arguments(raw_arguments)
+            calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
+    return calls
+
+
+def _extract_gemma4_call_chunks(text: str, *, require_line_start: bool) -> List[tuple[str, str]]:
+    pattern = r"(?m)^\s*call:([A-Za-z_][\w.-]*)\s*(?=\{)"
+    if not require_line_start:
+        pattern = r"(?:^|(?<=[\s>]))call:([A-Za-z_][\w.-]*)\s*(?=\{)"
+    chunks: List[tuple[str, str]] = []
+    for match in re.finditer(pattern, text):
+        raw_arguments = _extract_balanced_gemma4_braces(text, match.end())
+        if raw_arguments is not None:
+            chunks.append((match.group(1), raw_arguments))
+    return chunks
+
+
+def _extract_balanced_gemma4_braces(text: str, start: int) -> Optional[str]:
+    idx = start
+    while idx < len(text) and text[idx].isspace():
+        idx += 1
+    if idx >= len(text) or text[idx] != "{":
+        return None
+    begin = idx
+    depth = 0
+    in_delimited_string = False
+    in_json_string = False
+    escape = False
+    while idx < len(text):
+        if text.startswith('<|"|>', idx):
+            if not in_json_string:
+                in_delimited_string = not in_delimited_string
+            idx += len('<|"|>')
+            continue
+        char = text[idx]
+        if in_json_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_json_string = False
+        elif not in_delimited_string:
+            if char == '"':
+                in_json_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[begin : idx + 1]
+        idx += 1
+    return None
+
+
+def _has_gemma4_bare_call(answer: str) -> bool:
+    return re.search(r"(?m)^\s*call:[A-Za-z_][\w.-]*\s*\{", answer) is not None
+
+
+def _has_gemma4_call_prefix(answer: str) -> bool:
+    return re.search(r"(?m)^\s*call:[A-Za-z_][\w.-]*", answer) is not None
+
+
+def _parse_gemma4_arguments(raw: str) -> Dict[str, Any]:
+    parsed = _parse_gemma4_value(raw.strip())
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_gemma4_mapping(raw: str) -> Dict[str, Any]:
+    stripped = raw.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return {}
+    body = stripped[1:-1].strip()
+    if not body:
+        return {}
+    arguments: Dict[str, Any] = {}
+    for item in _split_gemma4_top_level(body, require_key_after_comma=True):
+        key, separator, value = item.partition(":")
+        if not separator:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        arguments[key] = _parse_gemma4_value(value.strip())
+    return arguments
+
+
+def _split_gemma4_top_level(body: str, *, require_key_after_comma: bool = False) -> List[str]:
+    items: List[str] = []
+    start = 0
+    brace_depth = 0
+    bracket_depth = 0
+    in_delimited_string = False
+    in_json_string = False
+    escape = False
+    idx = 0
+    while idx < len(body):
+        if body.startswith('<|"|>', idx):
+            if not in_json_string:
+                in_delimited_string = not in_delimited_string
+            idx += len('<|"|>')
+            continue
+        char = body[idx]
+        if in_json_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_json_string = False
+        elif not in_delimited_string:
+            if char == '"':
+                in_json_string = True
+            if char == "{":
+                brace_depth += 1
+            elif char == "}":
+                brace_depth = max(0, brace_depth - 1)
+            elif char == "[":
+                bracket_depth += 1
+            elif char == "]":
+                bracket_depth = max(0, bracket_depth - 1)
+            elif (
+                char == ","
+                and brace_depth == 0
+                and bracket_depth == 0
+                and (not require_key_after_comma or _looks_like_gemma4_key(body[idx + 1 :]))
+            ):
+                items.append(body[start:idx].strip())
+                start = idx + 1
+        idx += 1
+    tail = body[start:].strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _looks_like_gemma4_key(text: str) -> bool:
+    return re.match(r"\s*[A-Za-z_][\w.-]*\s*:", text) is not None
+
+
+def _parse_gemma4_value(value: str) -> Any:
+    if value.startswith('<|"|>') and value.endswith('<|"|>'):
+        return value[len('<|"|>') : -len('<|"|>')]
+    if value.startswith("{") and value.endswith("}"):
+        return _parse_gemma4_mapping(value)
+    if value.startswith("[") and value.endswith("]"):
+        body = value[1:-1].strip()
+        if not body:
+            return []
+        return [_parse_gemma4_value(item.strip()) for item in _split_gemma4_top_level(body)]
+    parsed = _parse_tool_payload(value)
+    if parsed is not None:
+        return parsed
+    lowered = value.strip().lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "null":
+        return None
+    return value
+
+
+def _infer_tool_format(backend: Any) -> str:
+    config = getattr(backend, "config", {}) or {}
+    candidates = [
+        config.get("tool_format"),
+        config.get("model"),
+        config.get("model_name"),
+        config.get("model_path"),
+        config.get("tokenizer_path"),
+        config.get("tokenizer_name"),
+    ]
+    model_text = " ".join(str(value).lower() for value in candidates if value)
+    if "minimax" in model_text:
+        return "minimax"
+    if "functiongemma" in model_text or re.search(r"gemma[_-]?4", model_text):
+        return "gemma4"
+    if "qwen3" in model_text:
+        return "qwen"
+    return "auto"
 
 
 def _extract_xml_parameters(body: str) -> Dict[str, Any]:
     arguments: Dict[str, Any] = {}
     parameter_blocks = re.findall(
-        r"<parameter(?:\s+name=\"([^\"]+)\"|=([A-Za-z_][\w.-]*))>\s*(.*?)\s*</parameter>",
+        (
+            r"<parameter(?:\s+name\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([A-Za-z_][\w.-]*))"
+            r"|=([A-Za-z_][\w.-]*))\s*>\s*(.*?)\s*</parameter\s*>"
+        ),
         body,
         flags=re.DOTALL | re.IGNORECASE,
     )
-    for quoted_name, equals_name, value in parameter_blocks:
-        name = quoted_name or equals_name
+    for double_quoted_name, single_quoted_name, unquoted_name, equals_name, value in parameter_blocks:
+        name = double_quoted_name or single_quoted_name or unquoted_name or equals_name
         if not name:
             continue
         parsed_value = _parse_tool_payload(value)

@@ -10,6 +10,7 @@ from gage_eval.evaluation.task_planner import TaskPlanner
 import gage_eval.metrics.builtin.swebench  # noqa: F401
 from gage_eval.role.adapters.dut_model import DUTModelAdapter
 from gage_eval.role.adapters.judge_extend import JudgeExtendAdapter
+from gage_eval.role.judge.swebench_docker import SwebenchDocker
 import gage_eval.role.model.backends.dummy_backend  # noqa: F401
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_manager import RoleManager
@@ -55,13 +56,22 @@ class FallbackSandbox:
 
 
 @pytest.mark.io
-def test_swebench_submission_patch_fallback_flow(tmp_path, mock_trace, temp_workspace) -> None:
+def test_swebench_submission_patch_fallback_flow(tmp_path, mock_trace, temp_workspace, monkeypatch) -> None:
     instance_id = "instance_1"
     scripts_root = tmp_path / "run_scripts"
     run_dir = scripts_root / instance_id
     run_dir.mkdir(parents=True)
     (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
     (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
+    container_calls = []
+
+    def fake_run_container(self, *, image_uri, workspace_dir, params, run_id, instance_id):
+        container_calls.append({"workspace_dir": workspace_dir, "instance_id": instance_id})
+        output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+        (workspace_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
+        return {"status": "ok"}
+
+    monkeypatch.setattr(SwebenchDocker, "_run_container", fake_run_container)
 
     samples = [
         {
@@ -118,5 +128,6 @@ def test_swebench_submission_patch_fallback_flow(tmp_path, mock_trace, temp_work
     sample_loop.run(planner=planner, role_manager=role_manager, trace=mock_trace)
 
     assert samples[0]["eval_result"]["resolved"] is True
+    assert len(container_calls) == 1
     events = [item["event"] for item in mock_trace.events]
     assert "swebench_patch_fallback" in events

@@ -124,10 +124,6 @@ role_adapters:
     params:
       force_tool_choice: first_turn
       max_turns: 120
-      pre_hooks:
-        - type: appworld_initialize
-      post_hooks:
-        - type: appworld_save
 
   - adapter_id: appworld_judge
     role_type: judge_extend

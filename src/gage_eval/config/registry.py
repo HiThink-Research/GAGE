@@ -422,7 +422,17 @@ class ConfigRegistry:
         from gage_eval.role.agent.backends.model_backend import ModelBackend
 
         config_payload: Dict[str, Any] = {"backend": backend}
-        for key in ("force_tool_choice", "sampling_params"):
+        for key in (
+            "force_tool_choice",
+            "sampling_params",
+            "tool_format",
+            "tool_call_format",
+            "tool_result_format",
+            "plain_text_response_tool",
+            "plain_text_wrapper_tool",
+            "plain_text_response_formats",
+            "plain_text_wrapper_formats",
+        ):
             if key in adapter_kwargs:
                 config_payload[key] = adapter_kwargs.pop(key)
         return ModelBackend(config_payload)

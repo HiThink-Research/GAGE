@@ -52,6 +52,7 @@ role_adapters:
       lifecycle: per_sample
     params:
       max_turns: 8
+      force_tool_choice: never
 
 tasks:
   - task_id: terminal_bench_smoke_runtime

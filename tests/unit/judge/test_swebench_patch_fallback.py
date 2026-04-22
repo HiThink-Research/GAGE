@@ -42,7 +42,7 @@ class FakeProvider:
 
 
 @pytest.mark.io
-def test_swebench_judge_fallback_reads_submission_patch(tmp_path, temp_workspace, mock_trace) -> None:
+def test_swebench_judge_fallback_reads_submission_patch(tmp_path, temp_workspace, mock_trace, monkeypatch) -> None:
     instance_id = "instance_1"
     scripts_root = tmp_path / "run_scripts"
     run_dir = scripts_root / instance_id
@@ -59,14 +59,21 @@ def test_swebench_judge_fallback_reads_submission_patch(tmp_path, temp_workspace
         "-old\n"
         "+new\n"
     )
-    output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
     sandbox = FakeSandbox(
         outputs={
             "/workspace/submission.patch": patch.encode("utf-8"),
-            "/workspace/output.json": json.dumps(output).encode("utf-8"),
         }
     )
     provider = FakeProvider(sandbox)
+    container_calls = []
+
+    def fake_run_container(self, *, image_uri, workspace_dir, params, run_id, instance_id):
+        container_calls.append({"workspace_dir": workspace_dir, "instance_id": instance_id})
+        output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+        (workspace_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
+        return {"status": "ok"}
+
+    monkeypatch.setattr(SwebenchDocker, "_run_container", fake_run_container)
 
     judge = SwebenchDocker(scripts_dir=str(scripts_root))
     sample = {
@@ -91,6 +98,9 @@ def test_swebench_judge_fallback_reads_submission_patch(tmp_path, temp_workspace
     result = judge.invoke(payload)
 
     assert result["resolved"] is True
-    assert "/workspace/patch.diff" in sandbox.writes
+    assert len(container_calls) == 1
+    workspace_dir = container_calls[0]["workspace_dir"]
+    assert (workspace_dir / "patch.diff").read_text(encoding="utf-8").strip() == patch.strip()
+    assert "/workspace/entryscript.sh" not in sandbox.writes
     events = [item["event"] for item in mock_trace.events]
     assert "swebench_patch_fallback" in events

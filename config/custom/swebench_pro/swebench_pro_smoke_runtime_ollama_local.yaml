@@ -82,6 +82,7 @@ role_adapters:
         block_network: true
         test_timeout_s: 900
         docker_platform: linux/amd64
+        reuse_agent_sandbox_for_judge: false
 
 metrics:
   - metric_id: swebench_resolve_rate

@@ -110,11 +110,6 @@ role_adapters:
     params:
       force_tool_choice: first_turn
       max_turns: 16
-      # Initialize and persist AppWorld state around each sample.
-      pre_hooks:
-        - type: appworld_initialize
-      post_hooks:
-        - type: appworld_save
 
 tasks:
   - task_id: appworld_agent_demo

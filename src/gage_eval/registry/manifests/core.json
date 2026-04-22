@@ -30,15 +30,6 @@
     },
     {
       "kind": "context_impls",
-      "name": "tau2_bootstrap",
-      "module": "gage_eval.role.context.tau2_bootstrap",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/context/tau2_bootstrap.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "context_impls",
       "name": "tictactoe_context",
       "module": "gage_eval.role.context.tictactoe_context",
       "load_phase": "prepare_only",

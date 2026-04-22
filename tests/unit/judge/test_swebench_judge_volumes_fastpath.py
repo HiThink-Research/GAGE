@@ -68,7 +68,7 @@ def test_swebench_judge_volume_fastpath(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 

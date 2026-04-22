@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - optional dependency
     APIStatusError = BadRequestError = PermissionDeniedError = UnprocessableEntityError = None
     OpenAI = None
     AsyncOpenAI = None
-    ChatCompletion = Any  # type: ignore
+    ChatCompletion = None  # type: ignore
 
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.registry import registry

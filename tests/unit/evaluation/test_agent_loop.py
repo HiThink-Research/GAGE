@@ -82,6 +82,59 @@ class RetryBudgetExceededBackend:
         return {"answer": "please call a tool", "raw_response": {"content": "please"}}
 
 
+class BareCallRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {
+            "answer": "call:respond{message:Hello Emma Kim! I can help with that.}",
+            "raw_response": {"content": "call:respond"},
+        }
+
+
+class ErrorRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {"answer": "", "error": "vllm timeout", "error_type": "TimeoutError"}
+
+
+class InvalidToolRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {
+            "answer": "call:run_speed_test{}",
+            "invalid_tool_call_names": ["run_speed_test"],
+            "filtered_tool_calls": [
+                {
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "run_speed_test", "arguments": {}},
+                }
+            ],
+        }
+
+
+class ToolCallParseErrorRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {
+            "answer": "call:respond{message:Hello",
+            "tool_call_parse_error_type": "gemma4_tool_call_format_error",
+            "tool_call_parse_error": "Gemma tool-call text was present but could not be parsed.",
+        }
+
+
 class AsyncRetryBackend:
     def __init__(self):
         self.calls = 0
@@ -308,6 +361,129 @@ def test_agent_loop_retries_until_budget_exhausted() -> None:
         for event in events
     )
     assert all(tc == "required" for tc in backend.tool_choice_required_payloads[:3])
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_event_marks_bare_call_prefix() -> None:
+    backend = BareCallRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    retry_events = [
+        event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
+    ]
+    assert backend.calls == 1
+    assert retry_events[0]["payload"]["has_bare_call_prefix"] is True
+    assert retry_events[0]["payload"]["has_minimax_tag"] is False
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_error_includes_backend_error_detail() -> None:
+    backend = ErrorRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert result["agent_trace"][0]["output"]["error"] == (
+        "required_tool_call_missing: TimeoutError: vllm timeout"
+    )
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_error_includes_filtered_tool_detail() -> None:
+    backend = InvalidToolRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert result["agent_trace"][0]["output"]["error"] == (
+        "required_tool_call_missing: invalid_tool_calls_filtered: run_speed_test"
+    )
+    assert result["agent_trace"][0]["output"]["invalid_tool_call_names"] == ["run_speed_test"]
+    retry_event = [
+        event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
+    ][0]
+    assert retry_event["payload"]["invalid_tool_call_names"] == ["run_speed_test"]
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_error_includes_parse_error_detail() -> None:
+    backend = ToolCallParseErrorRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert result["agent_trace"][0]["output"]["error"] == (
+        "required_tool_call_missing: gemma4_tool_call_format_error: "
+        "Gemma tool-call text was present but could not be parsed."
+    )
+    assert result["agent_trace"][0]["output"]["tool_call_parse_error_type"] == (
+        "gemma4_tool_call_format_error"
+    )
+    retry_event = [
+        event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
+    ][0]
+    assert retry_event["payload"]["tool_call_parse_error_type"] == "gemma4_tool_call_format_error"
+
+
+@pytest.mark.fast
+def test_agent_loop_retries_tool_call_parse_error_when_tool_choice_auto() -> None:
+    backend = ToolCallParseErrorRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="auto",
+    )
+
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert result["agent_trace"][0]["status"] == "retry_required_tool_call"
+    assert result["agent_trace"][0]["output"]["error"].startswith(
+        "required_tool_call_missing: gemma4_tool_call_format_error"
+    )
 
 
 @pytest.mark.fast

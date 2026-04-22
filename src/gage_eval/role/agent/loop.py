@@ -140,7 +140,8 @@ class AgentLoop:
                         len(tool_calls),
                         [_tool_call_name(call) for call in tool_calls],
                     )
-                    messages.append(_build_tool_call_message(output, tool_calls))
+                    assistant_tool_message = _build_tool_call_message(output, tool_calls)
+                    messages.append(assistant_tool_message)
                     stop_after_tool = False
                     for tool_call in tool_calls:
                         tool_result = self._tool_router.execute(
@@ -178,7 +179,14 @@ class AgentLoop:
                                 tool_result.get("status"),
                             )
                         step_index += 1
-                        messages.append(_build_tool_message(tool_call, tool_result.get("output")))
+                        if _uses_assistant_tool_responses(self._backend):
+                            _append_assistant_tool_response(
+                                assistant_tool_message,
+                                tool_call,
+                                tool_result.get("output"),
+                            )
+                        else:
+                            messages.append(_build_tool_message(tool_call, tool_result.get("output")))
                         final_answer = _resolve_tool_final_answer(tool_result)
                         if final_answer:
                             answer = final_answer
@@ -203,14 +211,14 @@ class AgentLoop:
                         break
                     continue
                 answer = output.get("answer") or ""
-                if _requires_tool_call(effective_tool_choice, tools or []):
+                if _should_retry_missing_tool_call(effective_tool_choice, tools or [], output):
                     logger.warning(
-                        "AgentLoop turn {} required tool call but backend returned plain answer",
+                        "AgentLoop turn {} missing executable tool call; retrying",
                         turn,
                     )
                     required_tool_retry_count += 1
                     trace_output = _build_agent_output_payload(output, answer)
-                    trace_output["error"] = "required_tool_call_missing"
+                    trace_output["error"] = _required_tool_call_missing_error(output)
                     trace_output["retry_count"] = required_tool_retry_count
                     agent_trace.append(
                         _build_trace_step(
@@ -234,6 +242,10 @@ class AgentLoop:
                                 "answer_preview": (answer or "")[:120],
                                 "has_tool_call_tag": _contains_tag(answer, "tool_call"),
                                 "has_function_tag": _contains_tag(answer, "function"),
+                                "has_minimax_tag": _contains_minimax_tag(answer),
+                                "has_bare_call_prefix": _has_bare_call_prefix(answer),
+                                "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
+                                "tool_call_parse_error_type": output.get("tool_call_parse_error_type"),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -413,7 +425,8 @@ class AgentLoop:
                         len(tool_calls),
                         [_tool_call_name(call) for call in tool_calls],
                     )
-                    messages.append(_build_tool_call_message(output, tool_calls))
+                    assistant_tool_message = _build_tool_call_message(output, tool_calls)
+                    messages.append(assistant_tool_message)
                     stop_after_tool = False
                     for tool_call in tool_calls:
                         tool_result = self._tool_router.execute(
@@ -451,7 +464,14 @@ class AgentLoop:
                                 tool_result.get("status"),
                             )
                         step_index += 1
-                        messages.append(_build_tool_message(tool_call, tool_result.get("output")))
+                        if _uses_assistant_tool_responses(self._backend):
+                            _append_assistant_tool_response(
+                                assistant_tool_message,
+                                tool_call,
+                                tool_result.get("output"),
+                            )
+                        else:
+                            messages.append(_build_tool_message(tool_call, tool_result.get("output")))
                         final_answer = _resolve_tool_final_answer(tool_result)
                         if final_answer:
                             answer = final_answer
@@ -476,14 +496,14 @@ class AgentLoop:
                         break
                     continue
                 answer = output.get("answer") or ""
-                if _requires_tool_call(effective_tool_choice, tools or []):
+                if _should_retry_missing_tool_call(effective_tool_choice, tools or [], output):
                     logger.warning(
-                        "AgentLoop turn {} required tool call but backend returned plain answer",
+                        "AgentLoop turn {} missing executable tool call; retrying",
                         turn,
                     )
                     required_tool_retry_count += 1
                     trace_output = _build_agent_output_payload(output, answer)
-                    trace_output["error"] = "required_tool_call_missing"
+                    trace_output["error"] = _required_tool_call_missing_error(output)
                     trace_output["retry_count"] = required_tool_retry_count
                     observability_events.append(
                         {
@@ -494,6 +514,10 @@ class AgentLoop:
                                 "answer_preview": (answer or "")[:120],
                                 "has_tool_call_tag": _contains_tag(answer, "tool_call"),
                                 "has_function_tag": _contains_tag(answer, "function"),
+                                "has_minimax_tag": _contains_minimax_tag(answer),
+                                "has_bare_call_prefix": _has_bare_call_prefix(answer),
+                                "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
+                                "tool_call_parse_error_type": output.get("tool_call_parse_error_type"),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -678,6 +702,19 @@ def _requires_tool_call(tool_choice: Optional[Any], tools: List[Dict[str, Any]])
     return False
 
 
+def _should_retry_missing_tool_call(
+    tool_choice: Optional[Any],
+    tools: List[Dict[str, Any]],
+    output: Dict[str, Any],
+) -> bool:
+    if _requires_tool_call(tool_choice, tools):
+        return True
+    if output.get("tool_call_parse_error_type"):
+        return True
+    invalid_tool_names = output.get("invalid_tool_call_names")
+    return isinstance(invalid_tool_names, list) and bool(invalid_tool_names)
+
+
 def _build_required_tool_retry_message() -> Dict[str, Any]:
     return {
         "role": "user",
@@ -710,6 +747,23 @@ def _build_tool_call_message(output: Dict[str, Any], tool_calls: List[Dict[str, 
     }
 
 
+def _append_assistant_tool_response(
+    assistant_message: Dict[str, Any],
+    tool_call: Dict[str, Any],
+    output: Any,
+) -> None:
+    responses = assistant_message.setdefault("tool_responses", [])
+    if not isinstance(responses, list):
+        responses = []
+        assistant_message["tool_responses"] = responses
+    responses.append({"name": _tool_call_name(tool_call), "response": output})
+
+
+def _uses_assistant_tool_responses(backend: Any) -> bool:
+    tool_result_format = str(getattr(backend, "_tool_result_format", "") or "").strip().lower()
+    return tool_result_format in {"gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"}
+
+
 def _tool_call_name(tool_call: Dict[str, Any]) -> str:
     if "function" in tool_call:
         fn = tool_call.get("function") or {}
@@ -731,6 +785,18 @@ def _contains_tag(value: Any, tag: str) -> bool:
         return False
     needle = f"<{tag}"
     return needle in value.lower()
+
+
+def _contains_minimax_tag(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return "<minimax:tool_call" in value.lower()
+
+
+def _has_bare_call_prefix(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.lstrip().startswith("call:")
 
 
 def _build_tool_registry(tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -795,11 +861,51 @@ def _build_agent_output_payload(output: Dict[str, Any], answer: str) -> Dict[str
     payload: Dict[str, Any] = {"answer": answer}
     if "raw_response" in output:
         payload["raw_response"] = output.get("raw_response")
+    if "filtered_tool_calls" in output:
+        payload["filtered_tool_calls"] = output.get("filtered_tool_calls")
+    if "invalid_tool_call_names" in output:
+        payload["invalid_tool_call_names"] = output.get("invalid_tool_call_names")
+    if "tool_call_parse_error_type" in output:
+        payload["tool_call_parse_error_type"] = output.get("tool_call_parse_error_type")
+    if "tool_call_parse_error" in output:
+        payload["tool_call_parse_error"] = output.get("tool_call_parse_error")
+    if "plain_text_response_wrapped" in output:
+        payload["plain_text_response_wrapped"] = output.get("plain_text_response_wrapped")
     if "error" in output:
         payload["error"] = output.get("error")
     if "status" in output:
         payload["status"] = output.get("status")
     return payload
+
+
+def _required_tool_call_missing_error(output: Dict[str, Any]) -> str:
+    detail = _missing_tool_call_detail(output)
+    if not detail:
+        return "required_tool_call_missing"
+    return f"required_tool_call_missing: {detail}"
+
+
+def _missing_tool_call_detail(output: Dict[str, Any]) -> str:
+    parse_error_type = output.get("tool_call_parse_error_type")
+    if parse_error_type:
+        parse_error = output.get("tool_call_parse_error")
+        if parse_error:
+            return f"{parse_error_type}: {parse_error}"
+        return str(parse_error_type)
+    invalid_tool_names = output.get("invalid_tool_call_names")
+    if isinstance(invalid_tool_names, list) and invalid_tool_names:
+        names = ", ".join(str(name) for name in invalid_tool_names)
+        return f"invalid_tool_calls_filtered: {names}"
+    error = output.get("error")
+    if error:
+        error_type = output.get("error_type")
+        if error_type:
+            return f"{error_type}: {error}"
+        return str(error)
+    status = output.get("status")
+    if status is not None:
+        return f"backend_status={status}"
+    return ""
 
 
 def _resolve_trace_status(output: Dict[str, Any]) -> str:

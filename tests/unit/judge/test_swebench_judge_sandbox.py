@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +50,64 @@ class MissingFileSandbox(FakeSandbox):
         return super().read_file(path)
 
 
+def _successful_container_run(workspace_dir: Path, test_name: str = "tests/test_bar.py::test_bar") -> None:
+    output = {"tests": [{"name": test_name, "status": "PASSED"}]}
+    (workspace_dir / "output.json").write_text(json.dumps(output), encoding="utf-8")
+
+
+@pytest.mark.io
+def test_swebench_judge_uses_fresh_container_by_default(tmp_path, temp_workspace, monkeypatch) -> None:
+    instance_id = "instance_1"
+    scripts_root = tmp_path / "run_scripts"
+    run_dir = scripts_root / instance_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+    (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
+
+    sandbox = FakeSandbox()
+    provider = FakeProvider(sandbox)
+    container_calls: list[dict[str, object]] = []
+
+    def fake_run_container(self, *, image_uri, workspace_dir, params, run_id, instance_id):
+        container_calls.append(
+            {
+                "image_uri": image_uri,
+                "workspace_dir": workspace_dir,
+                "instance_id": instance_id,
+            }
+        )
+        _successful_container_run(workspace_dir)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(SwebenchDocker, "_run_container", fake_run_container)
+
+    judge = SwebenchDocker(scripts_dir=str(scripts_root), allow_pull=False)
+    sample = {
+        "id": instance_id,
+        "messages": [{"role": "user", "content": "fix bug"}],
+        "metadata": {
+            "instance_id": instance_id,
+            "repo": "repo/name",
+            "base_commit": "abc",
+            "fail_to_pass": ["tests/test_bar.py::test_bar"],
+            "pass_to_pass": [],
+        },
+    }
+    payload = {
+        "sample": sample,
+        "model_output": {"answer": "diff --git a/foo b/foo\n"},
+        "params": {},
+        "sandbox_provider": provider,
+    }
+
+    result = judge.invoke(payload)
+
+    assert result["resolved"] is True
+    assert len(container_calls) == 1
+    assert sandbox.exec_calls == []
+    assert "/workspace/entryscript.sh" not in sandbox.writes
+
+
 @pytest.mark.io
 def test_swebench_judge_sandbox_path(tmp_path, temp_workspace) -> None:
     instance_id = "instance_1"
@@ -77,7 +136,7 @@ def test_swebench_judge_sandbox_path(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 
@@ -90,7 +149,7 @@ def test_swebench_judge_sandbox_path(tmp_path, temp_workspace) -> None:
 
 
 @pytest.mark.io
-def test_swebench_judge_patch_apply_failure(tmp_path, temp_workspace) -> None:
+def test_swebench_judge_entryscript_uses_official_git_apply(tmp_path, temp_workspace) -> None:
     instance_id = "instance_1"
     scripts_root = tmp_path / "run_scripts"
     run_dir = scripts_root / instance_id
@@ -98,13 +157,8 @@ def test_swebench_judge_patch_apply_failure(tmp_path, temp_workspace) -> None:
     (run_dir / "run_script.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
     (run_dir / "parser.py").write_text("print('ok')\n", encoding="utf-8")
 
-    status = {"status": "failed", "patch": "patch.diff", "log": "/workspace/patch_apply.log"}
-    sandbox = FakeSandbox(
-        outputs={
-            "/workspace/patch_apply_status.json": json.dumps(status).encode("utf-8"),
-            "/workspace/patch_apply.log": b"patch failed",
-        }
-    )
+    output = {"tests": [{"name": "tests/test_bar.py::test_bar", "status": "PASSED"}]}
+    sandbox = FakeSandbox(outputs={"/workspace/output.json": json.dumps(output).encode("utf-8")})
     provider = FakeProvider(sandbox)
 
     judge = SwebenchDocker(scripts_dir=str(scripts_root))
@@ -122,14 +176,17 @@ def test_swebench_judge_patch_apply_failure(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 
     result = judge.invoke(payload)
 
-    assert result["resolved"] is False
-    assert result["failure_reason"] == "patch_apply_failed"
+    assert result["resolved"] is True
+    entryscript = sandbox.writes["/workspace/entryscript.sh"].decode("utf-8")
+    assert "git apply -v /workspace/patch.diff" in entryscript
+    assert "--ignore-whitespace" not in entryscript
+    assert "patch_apply_status.json" not in entryscript
 
 
 @pytest.mark.io
@@ -160,7 +217,7 @@ def test_swebench_judge_missing_patch_status_is_ok(tmp_path, temp_workspace) -> 
     payload = {
         "sample": sample,
         "model_output": {"answer": "patch"},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 
@@ -211,7 +268,7 @@ def test_swebench_judge_cleans_patch_markdown(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": raw_patch},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 
@@ -278,7 +335,7 @@ def test_swebench_judge_uses_agent_trace_patch_when_answer_missing(tmp_path, tem
                 }
             ],
         },
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 
@@ -329,7 +386,7 @@ def test_swebench_judge_normalizes_hunk_context_lines(tmp_path, temp_workspace) 
     payload = {
         "sample": sample,
         "model_output": {"answer": raw_patch},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 
@@ -380,7 +437,7 @@ def test_swebench_judge_trims_diff_tail(tmp_path, temp_workspace) -> None:
     payload = {
         "sample": sample,
         "model_output": {"answer": raw_patch},
-        "params": {},
+        "params": {"reuse_agent_sandbox_for_judge": True},
         "sandbox_provider": provider,
     }
 

@@ -44,3 +44,5 @@ def test_swebench_smoke_sandbox_profile(config_name: str) -> None:
     judge_adapter = next(spec for spec in config.role_adapters if spec.adapter_id == "swebench_docker_judge")
     assert judge_adapter.sandbox.get("sandbox_id") == "swebench_runtime"
     assert judge_adapter.sandbox.get("lifecycle") == "per_sample"
+    impl_params = judge_adapter.params.get("implementation_params") or {}
+    assert impl_params.get("reuse_agent_sandbox_for_judge") is False

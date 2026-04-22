@@ -46,6 +46,9 @@ prompts:
       <instructions>
       {{ sample.metadata.tau2.agent_instruction }}
       {{ sample.metadata.tau2.gage_instruction }}
+      {% if (tool_prompt_format | lower) in ["gemma", "gemma4", "gemma-4", "gemma_4", "functiongemma"] %}
+      {{ sample.metadata.tau2.gemma4_tool_instruction }}
+      {% endif %}
       </instructions>
       <policy>
       {{ sample.metadata.tau2.policy }}
@@ -53,6 +56,7 @@ prompts:
     params:
       role: system
       include_existing: true
+      tool_prompt_format: ${TAU2_AGENT_TOOL_FORMAT:-}
 
 datasets:
   - dataset_id: tau2_telecom_base
@@ -119,7 +123,16 @@ role_adapters:
       sandbox_id: tau2_local
       lifecycle: per_sample
     params:
-      force_tool_choice: first_turn
+      force_tool_choice: ${TAU2_FORCE_TOOL_CHOICE:-never}
+      tool_call_format: ${TAU2_AGENT_TOOL_FORMAT:-}
+      tool_result_format: ${TAU2_AGENT_TOOL_FORMAT:-}
+      plain_text_response_tool: ${TAU2_PLAIN_TEXT_RESPONSE_TOOL:-respond}
+      plain_text_response_formats:
+        - gemma
+        - gemma4
+        - gemma-4
+        - gemma_4
+        - functiongemma
       max_turns: ${TAU2_MAX_TURNS:-200}
 
   - adapter_id: tau2_judge

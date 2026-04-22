@@ -48,6 +48,7 @@ class SwebenchDocker(JudgeImplementation):
         image_lock_dir: Optional[str] = None,
         dockerfiles_dir: Optional[str] = None,
         docker_platform: Optional[str] = None,
+        reuse_agent_sandbox_for_judge: bool = False,
     ) -> None:
         self._scripts_dir = Path(scripts_dir) if scripts_dir else _default_scripts_dir()
         self._dockerhub_username = dockerhub_username
@@ -60,6 +61,7 @@ class SwebenchDocker(JudgeImplementation):
         self._image_lock_dir = Path(image_lock_dir) if image_lock_dir else None
         self._dockerfiles_dir = Path(dockerfiles_dir) if dockerfiles_dir else None
         self._docker_platform = docker_platform
+        self._reuse_agent_sandbox_for_judge = bool(reuse_agent_sandbox_for_judge)
 
     def invoke(self, payload: Dict[str, Any], state: Any = None) -> Dict[str, Any]:
         params = payload.get("params") or {}
@@ -108,14 +110,19 @@ class SwebenchDocker(JudgeImplementation):
             logger.error("SWE-bench run_scripts missing: {}", exc)
             return {"resolved": False, "failure_reason": "missing_run_scripts"}
 
-        test_patch = _get_meta(sample, "test_patch")
+        apply_test_patch = _coerce_bool(params.get("apply_test_patch"), default=False)
+        test_patch = _get_meta(sample, "test_patch") if apply_test_patch else None
         _write_text(workspace_dir / "patch.diff", patch)
         _write_text(workspace_dir / "run_script.sh", run_script)
         _write_text(workspace_dir / "parser.py", parser_script)
         if test_patch:
             _write_text(workspace_dir / "test_patch.diff", test_patch)
 
-        if sandbox_provider is not None:
+        reuse_agent_sandbox = _coerce_bool(
+            params.get("reuse_agent_sandbox_for_judge"),
+            default=self._reuse_agent_sandbox_for_judge,
+        )
+        if sandbox_provider is not None and reuse_agent_sandbox:
             try:
                 return self._run_with_sandbox(
                     sandbox_provider=sandbox_provider,
@@ -138,7 +145,7 @@ class SwebenchDocker(JudgeImplementation):
             sample=sample,
             base_commit=base_commit,
             dockerfiles_dir=params.get("dockerfiles_dir") or self._dockerfiles_dir,
-            test_patch=bool(test_patch),
+            apply_test_patch=bool(test_patch),
             run_script_path="/workspace/run_script.sh",
             parser_path="/workspace/parser.py",
         )
@@ -166,21 +173,6 @@ class SwebenchDocker(JudgeImplementation):
                 "diagnostic_reason": str(run_result.get("failure_reason", "container_error")),
                 "diagnostic_details": {"log_dir": str(log_dir)},
             }
-
-        patch_status = _load_patch_status_file(workspace_dir / "patch_apply_status.json")
-        if patch_status:
-            failure_reason = _resolve_patch_failure_reason(patch_status)
-            if failure_reason:
-                return {
-                    "resolved": False,
-                    "failure_reason": failure_reason,
-                    "log_dir": str(log_dir),
-                    "diagnostic_reason": str(failure_reason),
-                    "diagnostic_details": {
-                        "log_dir": str(log_dir),
-                        "submission_patch": "artifacts/submission.patch",
-                    },
-                }
 
         output = _load_output_json(workspace_dir / "output.json")
         if output is None:
@@ -251,7 +243,7 @@ class SwebenchDocker(JudgeImplementation):
             sample=sample,
             base_commit=base_commit,
             dockerfiles_dir=params.get("dockerfiles_dir") or self._dockerfiles_dir,
-            test_patch=bool(test_patch),
+            apply_test_patch=bool(test_patch),
             run_script_path=run_script_path,
             parser_path=parser_path,
         )
@@ -273,29 +265,6 @@ class SwebenchDocker(JudgeImplementation):
             )
         except Exception as exc:
             raise _SandboxFallback("sandbox_exec_failed") from exc
-
-        patch_status_bytes = self._read_sandbox_file(sandbox, "/workspace/patch_apply_status.json")
-        if patch_status_bytes:
-            patch_status = _parse_patch_status(patch_status_bytes)
-            _write_text(
-                workspace_dir / "patch_apply_status.json",
-                patch_status_bytes.decode("utf-8", errors="replace"),
-            )
-            log_path = patch_status.get("log")
-            if log_path:
-                log_bytes = self._read_sandbox_file(sandbox, str(log_path))
-                if log_bytes is not None:
-                    _write_text(
-                        workspace_dir / Path(str(log_path)).name,
-                        log_bytes.decode("utf-8", errors="replace"),
-                    )
-            failure_reason = _resolve_patch_failure_reason(patch_status)
-            if failure_reason:
-                return {
-                    "resolved": False,
-                    "failure_reason": failure_reason,
-                    "log_dir": str(log_dir),
-                }
 
         stdout_bytes = self._read_sandbox_file(sandbox, "/workspace/stdout.log")
         stderr_bytes = self._read_sandbox_file(sandbox, "/workspace/stderr.log")
@@ -556,6 +525,20 @@ def _clean_patch_content(raw: str) -> str:
     return cleaned
 
 
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
 def _load_submission_patch(
     sandbox_provider: Any,
     payload: Dict[str, Any],
@@ -772,7 +755,7 @@ def _create_entryscript(
     sample: Dict[str, Any],
     base_commit: str,
     dockerfiles_dir: Optional[Path],
-    test_patch: bool,
+    apply_test_patch: bool,
     run_script_path: str,
     parser_path: str,
 ) -> str:
@@ -794,40 +777,14 @@ def _create_entryscript(
         lines.append(env_cmds)
     lines.extend(
         [
-            "PATCH_STATUS=/workspace/patch_apply_status.json",
-            "apply_patch() {",
-            "  patch_path=\"$1\"",
-            "  log_path=\"$2\"",
-            "  label=\"$3\"",
-            "  if [ ! -f \"$patch_path\" ]; then",
-            "    return 0",
-            "  fi",
-            "  # Attempt 1: Recount + ignore whitespace",
-            "  if ! git apply --recount --ignore-space-change --ignore-whitespace -v \"$patch_path\" > \"$log_path\" 2>&1; then",
-            "    echo \"Recount+whitespace-ignored apply failed, trying patch tool...\" >> \"$log_path\"",
-            "    # Attempt 2: GNU patch fallback",
-            "      if command -v patch >/dev/null 2>&1; then",
-            "        if patch -p1 --force --ignore-whitespace --batch -i \"$patch_path\" >> \"$log_path\" 2>&1; then",
-            "          return 0",
-            "        fi",
-            "      fi",
-            "      # All attempts failed",
-            "      printf '{\"status\":\"failed\",\"patch\":\"%s\",\"log\":\"%s\"}\\n' \"$label\" \"$log_path\" > \"$PATCH_STATUS\"",
-            "      exit 0",
-            "  fi",
-            "}",
-        ]
-    )
-    lines.extend(
-        [
             "cd /app",
             f"git reset --hard {base_commit}",
             f"git checkout {base_commit}",
-            "apply_patch /workspace/patch.diff /workspace/patch_apply.log patch.diff",
+            "git apply -v /workspace/patch.diff",
         ]
     )
-    if test_patch:
-        lines.append("apply_patch /workspace/test_patch.diff /workspace/test_patch_apply.log test_patch.diff")
+    if apply_test_patch:
+        lines.append("git apply -v /workspace/test_patch.diff")
     if before_repo_set_cmd:
         lines.append(before_repo_set_cmd)
     if selected_arg:
@@ -872,31 +829,6 @@ def _load_output_json(path: Path) -> Optional[Dict[str, Any]]:
             return json.load(handle)
     except Exception:
         return None
-
-
-def _parse_patch_status(payload: bytes) -> Dict[str, Any]:
-    try:
-        return json.loads(payload.decode("utf-8", errors="replace"))
-    except Exception:
-        return {"status": "failed"}
-
-
-def _load_patch_status_file(path: Path) -> Optional[Dict[str, Any]]:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except Exception:
-        return {"status": "failed"}
-
-
-def _resolve_patch_failure_reason(status: Dict[str, Any]) -> Optional[str]:
-    if status.get("status") != "failed":
-        return None
-    patch_label = str(status.get("patch") or "")
-    if patch_label == "test_patch.diff":
-        return "test_patch_apply_failed"
-    return "patch_apply_failed"
 
 
 def _evaluate_resolution(
