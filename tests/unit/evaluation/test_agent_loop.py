@@ -94,6 +94,34 @@ class BareCallRetryBackend:
         }
 
 
+class ErrorRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {"answer": "", "error": "vllm timeout", "error_type": "TimeoutError"}
+
+
+class InvalidToolRetryBackend:
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        return {
+            "answer": "call:run_speed_test{}",
+            "invalid_tool_call_names": ["run_speed_test"],
+            "filtered_tool_calls": [
+                {
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "run_speed_test", "arguments": {}},
+                }
+            ],
+        }
+
+
 class AsyncRetryBackend:
     def __init__(self):
         self.calls = 0
@@ -344,6 +372,53 @@ def test_agent_loop_missing_tool_call_event_marks_bare_call_prefix() -> None:
     assert backend.calls == 1
     assert retry_events[0]["payload"]["has_bare_call_prefix"] is True
     assert retry_events[0]["payload"]["has_minimax_tag"] is False
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_error_includes_backend_error_detail() -> None:
+    backend = ErrorRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert result["agent_trace"][0]["output"]["error"] == (
+        "required_tool_call_missing: TimeoutError: vllm timeout"
+    )
+
+
+@pytest.mark.fast
+def test_agent_loop_missing_tool_call_error_includes_filtered_tool_detail() -> None:
+    backend = InvalidToolRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert result["agent_trace"][0]["output"]["error"] == (
+        "required_tool_call_missing: invalid_tool_calls_filtered: run_speed_test"
+    )
+    assert result["agent_trace"][0]["output"]["invalid_tool_call_names"] == ["run_speed_test"]
+    retry_event = [
+        event for event in result["observability_events"] if event.get("event") == "agent_retry_missing_tool_call"
+    ][0]
+    assert retry_event["payload"]["invalid_tool_call_names"] == ["run_speed_test"]
 
 
 @pytest.mark.fast

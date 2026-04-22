@@ -106,8 +106,17 @@ def _normalize_backend_response(response: Any, tools: Any = None, tool_call_form
     tool_calls = _extract_tool_calls(response)
     if not tool_calls:
         tool_calls = _extract_tool_calls_from_answer(result.get("answer"), tool_call_format=tool_call_format)
-        if tools:
-            tool_calls = _filter_tool_calls_by_schema(tool_calls, tools)
+        parsed_tool_calls = list(tool_calls)
+        if tools and parsed_tool_calls:
+            tool_calls = _filter_tool_calls_by_schema(parsed_tool_calls, tools)
+            dropped_tool_calls = [
+                call for call in parsed_tool_calls if _tool_call_name(call) not in _extract_tool_names(tools)
+            ]
+            if dropped_tool_calls:
+                result["filtered_tool_calls"] = dropped_tool_calls
+                result["invalid_tool_call_names"] = [
+                    name for call in dropped_tool_calls if (name := _tool_call_name(call))
+                ]
     if tool_calls:
         result["tool_calls"] = tool_calls
         if isinstance(result.get("answer"), str):

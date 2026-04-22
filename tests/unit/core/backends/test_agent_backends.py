@@ -706,6 +706,32 @@ def test_model_backend_rejects_tool_calls_not_in_tools_schema_from_text_parser()
     assert result["answer"].startswith("<tool_call>")
     assert "raw_answer" not in result
     assert "tool_calls" not in result
+    assert result["invalid_tool_call_names"] == ["respond"]
+    assert result["filtered_tool_calls"][0]["function"]["name"] == "respond"
+
+
+def test_model_backend_reports_filtered_gemma4_tool_call_names():
+    class Gemma4ToolCallBackend:
+        def invoke(self, payload):
+            return {"answer": "call:run_speed_test{}"}
+
+    backend = ModelBackend({"backend": Gemma4ToolCallBackend(), "tool_format": "gemma4"})
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert result["answer"] == "call:run_speed_test{}"
+    assert "tool_calls" not in result
+    assert result["invalid_tool_call_names"] == ["run_speed_test"]
+    assert result["filtered_tool_calls"][0]["function"]["name"] == "run_speed_test"
 
 
 def test_model_backend_no_tool_filtering_when_tools_empty():

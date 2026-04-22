@@ -218,7 +218,7 @@ class AgentLoop:
                     )
                     required_tool_retry_count += 1
                     trace_output = _build_agent_output_payload(output, answer)
-                    trace_output["error"] = "required_tool_call_missing"
+                    trace_output["error"] = _required_tool_call_missing_error(output)
                     trace_output["retry_count"] = required_tool_retry_count
                     agent_trace.append(
                         _build_trace_step(
@@ -244,6 +244,7 @@ class AgentLoop:
                                 "has_function_tag": _contains_tag(answer, "function"),
                                 "has_minimax_tag": _contains_minimax_tag(answer),
                                 "has_bare_call_prefix": _has_bare_call_prefix(answer),
+                                "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -501,7 +502,7 @@ class AgentLoop:
                     )
                     required_tool_retry_count += 1
                     trace_output = _build_agent_output_payload(output, answer)
-                    trace_output["error"] = "required_tool_call_missing"
+                    trace_output["error"] = _required_tool_call_missing_error(output)
                     trace_output["retry_count"] = required_tool_retry_count
                     observability_events.append(
                         {
@@ -514,6 +515,7 @@ class AgentLoop:
                                 "has_function_tag": _contains_tag(answer, "function"),
                                 "has_minimax_tag": _contains_minimax_tag(answer),
                                 "has_bare_call_prefix": _has_bare_call_prefix(answer),
+                                "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
                                 "backend_has_raw_response": "raw_response" in output,
                             },
                         }
@@ -844,11 +846,39 @@ def _build_agent_output_payload(output: Dict[str, Any], answer: str) -> Dict[str
     payload: Dict[str, Any] = {"answer": answer}
     if "raw_response" in output:
         payload["raw_response"] = output.get("raw_response")
+    if "filtered_tool_calls" in output:
+        payload["filtered_tool_calls"] = output.get("filtered_tool_calls")
+    if "invalid_tool_call_names" in output:
+        payload["invalid_tool_call_names"] = output.get("invalid_tool_call_names")
     if "error" in output:
         payload["error"] = output.get("error")
     if "status" in output:
         payload["status"] = output.get("status")
     return payload
+
+
+def _required_tool_call_missing_error(output: Dict[str, Any]) -> str:
+    detail = _missing_tool_call_detail(output)
+    if not detail:
+        return "required_tool_call_missing"
+    return f"required_tool_call_missing: {detail}"
+
+
+def _missing_tool_call_detail(output: Dict[str, Any]) -> str:
+    invalid_tool_names = output.get("invalid_tool_call_names")
+    if isinstance(invalid_tool_names, list) and invalid_tool_names:
+        names = ", ".join(str(name) for name in invalid_tool_names)
+        return f"invalid_tool_calls_filtered: {names}"
+    error = output.get("error")
+    if error:
+        error_type = output.get("error_type")
+        if error_type:
+            return f"{error_type}: {error}"
+        return str(error)
+    status = output.get("status")
+    if status is not None:
+        return f"backend_status={status}"
+    return ""
 
 
 def _resolve_trace_status(output: Dict[str, Any]) -> str:
