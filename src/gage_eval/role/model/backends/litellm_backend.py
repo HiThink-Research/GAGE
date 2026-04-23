@@ -158,7 +158,9 @@ class LiteLLMBackend(EngineBackend):
             raw_response = completion
         raw_response = self._to_jsonable(raw_response)
         result: Dict[str, Any] = {"answer": answer, "raw_response": raw_response}
-        if not stream and hasattr(completion, "usage"):
+        if isinstance(raw_response, dict) and isinstance(raw_response.get("usage"), dict):
+            result["usage"] = raw_response["usage"]
+        elif not stream and hasattr(completion, "usage"):
             usage = getattr(completion, "usage")
             if hasattr(usage, "model_dump"):
                 result["usage"] = usage.model_dump()
@@ -276,27 +278,139 @@ class LiteLLMBackend(EngineBackend):
                 return content or ""
         return str(completion)
 
-    def _collect_stream(self, stream_response: Any) -> Tuple[str, List[Any]]:
-        """Collect streaming chunks into a single text answer."""
+    def _collect_stream(self, stream_response: Any) -> Tuple[str, Dict[str, Any]]:
+        """Collect streaming chunks into a completion-shaped response."""
 
-        chunks: List[Any] = []
-        parts: List[str] = []
+        chunks: List[Dict[str, Any]] = []
         for chunk in stream_response:
-            chunks.append(chunk)
-            choices = getattr(chunk, "choices", None)
-            if not choices and isinstance(chunk, dict):
-                choices = chunk.get("choices")
-            if not choices:
+            jsonable_chunk = self._to_jsonable(chunk)
+            if isinstance(jsonable_chunk, dict):
+                chunks.append(jsonable_chunk)
+        merged = self._merge_stream_chunks(chunks)
+        return self._extract_answer(merged), merged
+
+    def _merge_stream_chunks(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Merges LiteLLM streaming chunks into a chat completion payload."""
+
+        if not chunks:
+            return {"object": "chat.completion", "choices": [], "stream_chunk_count": 0}
+
+        metadata: Dict[str, Any] = {"object": "chat.completion", "stream_chunk_count": len(chunks)}
+        merged_choices: Dict[int, Dict[str, Any]] = {}
+        usage: Optional[Dict[str, Any]] = None
+
+        # STEP 1: Collect response metadata and usage from all chunks
+        for chunk in chunks:
+            for key in ("id", "created", "model", "system_fingerprint", "service_tier"):
+                value = chunk.get(key)
+                if value is not None:
+                    metadata[key] = value
+            raw_usage = chunk.get("usage")
+            if isinstance(raw_usage, dict):
+                usage = raw_usage
+
+            # STEP 2: Merge choice deltas into final assistant messages
+            for position, raw_choice in enumerate(chunk.get("choices") or []):
+                if not isinstance(raw_choice, dict):
+                    continue
+                choice_index = self._coerce_stream_index(raw_choice.get("index"), default=position)
+                state = merged_choices.setdefault(
+                    choice_index,
+                    {
+                        "index": choice_index,
+                        "finish_reason": None,
+                        "message": {"role": "assistant", "content": ""},
+                    },
+                )
+                if raw_choice.get("finish_reason") is not None:
+                    state["finish_reason"] = raw_choice.get("finish_reason")
+                delta = raw_choice.get("message") or raw_choice.get("delta") or {}
+                if isinstance(delta, dict):
+                    self._merge_stream_message_delta(state["message"], delta)
+
+        metadata["choices"] = [merged_choices[idx] for idx in sorted(merged_choices)]
+        if usage is not None:
+            metadata["usage"] = usage
+        return metadata
+
+    def _merge_stream_message_delta(self, message_state: Dict[str, Any], delta: Dict[str, Any]) -> None:
+        role = delta.get("role")
+        if role:
+            message_state["role"] = role
+
+        content = self._content_to_text(delta.get("content"))
+        if content:
+            message_state["content"] = f"{message_state.get('content', '')}{content}"
+
+        reasoning = delta.get("reasoning_content")
+        if reasoning is not None:
+            message_state["reasoning_content"] = f"{message_state.get('reasoning_content', '')}{reasoning}"
+
+        function_call = delta.get("function_call")
+        if isinstance(function_call, dict):
+            merged = message_state.setdefault("function_call", {})
+            if function_call.get("name"):
+                merged["name"] = function_call["name"]
+            arguments = function_call.get("arguments")
+            if arguments is not None:
+                merged["arguments"] = f"{merged.get('arguments', '')}{arguments}"
+
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list):
+            merged_tool_calls = message_state.setdefault("tool_calls", [])
+            self._merge_stream_tool_calls(merged_tool_calls, tool_calls)
+
+    def _merge_stream_tool_calls(
+        self,
+        merged_tool_calls: List[Dict[str, Any]],
+        tool_calls: List[Any],
+    ) -> None:
+        for position, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
                 continue
-            delta = getattr(choices[0], "delta", None) or getattr(choices[0], "message", None)
-            if delta is None and isinstance(choices[0], dict):
-                delta = choices[0].get("delta") or choices[0].get("message")
-            content = getattr(delta, "content", None) if delta else None
-            if isinstance(content, list):
-                parts.append("".join([self._content_piece(part) for part in content]))
-            elif content:
-                parts.append(str(content))
-        return "".join(parts), chunks
+            tool_index = self._coerce_stream_index(tool_call.get("index"), default=position)
+            while len(merged_tool_calls) <= tool_index:
+                merged_tool_calls.append({})
+            merged = merged_tool_calls[tool_index]
+            if tool_call.get("id"):
+                merged["id"] = tool_call["id"]
+            if tool_call.get("type"):
+                merged["type"] = tool_call["type"]
+
+            function = tool_call.get("function")
+            if not isinstance(function, dict):
+                continue
+            merged_function = merged.setdefault("function", {})
+            if function.get("name"):
+                merged_function["name"] = function["name"]
+            arguments = function.get("arguments")
+            if arguments is not None:
+                merged_function["arguments"] = f"{merged_function.get('arguments', '')}{arguments}"
+
+    def _content_to_text(self, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(self._content_to_text(part) for part in content)
+        if isinstance(content, dict):
+            text = content.get("text")
+            if text is not None:
+                return str(text)
+            if content.get("type") == "text":
+                return str(content.get("content", ""))
+        text_attr = getattr(content, "text", None)
+        if text_attr is not None:
+            return str(text_attr)
+        return str(content)
+
+    def _coerce_stream_index(self, value: Any, *, default: int) -> int:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            return default
+        return index if index >= 0 else default
 
     # ------------------------------------------------------------------ #
     # Helpers                                                            #

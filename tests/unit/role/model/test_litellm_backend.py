@@ -418,6 +418,118 @@ class LiteLLMBackendTests(unittest.TestCase):
         self.assertIn("\"has_tool_calls\": true", payload)
         self.assertIn("\"finish_reason\": \"stop\"", payload)
 
+    def test_streaming_reasoning_tool_call_chunks_are_merged(self):
+        fake_litellm = _FakeLitellm(
+            response=[
+                {
+                    "id": "resp-stream",
+                    "object": "chat.completion.chunk",
+                    "model": "moonshot/kimi-k2",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": ""},
+                        }
+                    ],
+                },
+                {
+                    "id": "resp-stream",
+                    "object": "chat.completion.chunk",
+                    "model": "moonshot/kimi-k2",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"reasoning_content": "Need "},
+                        }
+                    ],
+                },
+                {
+                    "id": "resp-stream",
+                    "object": "chat.completion.chunk",
+                    "model": "moonshot/kimi-k2",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"reasoning_content": "a tool."},
+                        }
+                    ],
+                },
+                {
+                    "id": "resp-stream",
+                    "object": "chat.completion.chunk",
+                    "model": "moonshot/kimi-k2",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "respond",
+                                            "arguments": "{\"message\":",
+                                        },
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                },
+                {
+                    "id": "resp-stream",
+                    "object": "chat.completion.chunk",
+                    "model": "moonshot/kimi-k2",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "tool_calls",
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "arguments": "\"hello\"}",
+                                        },
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 3},
+                },
+            ]
+        )
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "moonshot/kimi-k2",
+                    "provider": "kimi",
+                    "api_key": "kimi-key",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            result = backend.generate(
+                {
+                    "messages": [{"role": "user", "content": "please respond"}],
+                    "stream": True,
+                }
+            )
+
+        message = result["raw_response"]["choices"][0]["message"]
+        tool_call = message["tool_calls"][0]
+        self.assertEqual(result["answer"], "")
+        self.assertEqual(result["raw_response"]["object"], "chat.completion")
+        self.assertEqual(result["raw_response"]["stream_chunk_count"], 5)
+        self.assertEqual(message["reasoning_content"], "Need a tool.")
+        self.assertEqual(tool_call["id"], "call_1")
+        self.assertEqual(tool_call["type"], "function")
+        self.assertEqual(tool_call["function"]["name"], "respond")
+        self.assertEqual(tool_call["function"]["arguments"], "{\"message\":\"hello\"}")
+        self.assertEqual(result["usage"], {"prompt_tokens": 4, "completion_tokens": 3})
+        self.assertEqual(result["raw_response"]["usage"], {"prompt_tokens": 4, "completion_tokens": 3})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -266,7 +266,9 @@ class AgentLoop:
                         )
                         answer = ""
                         break
-                    messages.append({"role": "assistant", "content": answer})
+                    retry_assistant_message = _build_retry_assistant_message(output, answer)
+                    if retry_assistant_message is not None:
+                        messages.append(retry_assistant_message)
                     messages.append(_build_required_tool_retry_message())
                     required_tool_retry_active = True
                     answer = ""
@@ -551,7 +553,9 @@ class AgentLoop:
                         )
                         answer = ""
                         break
-                    messages.append({"role": "assistant", "content": answer})
+                    retry_assistant_message = _build_retry_assistant_message(output, answer)
+                    if retry_assistant_message is not None:
+                        messages.append(retry_assistant_message)
                     messages.append(_build_required_tool_retry_message())
                     required_tool_retry_active = True
                     answer = ""
@@ -740,11 +744,26 @@ def _build_tool_message(tool_call: Dict[str, Any], output: Any) -> Dict[str, Any
 
 
 def _build_tool_call_message(output: Dict[str, Any], tool_calls: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {
+    message = {
         "role": "assistant",
         "content": output.get("answer") or "",
         "tool_calls": tool_calls,
     }
+    reasoning = output.get("reasoning_content")
+    if reasoning is not None:
+        message["reasoning_content"] = reasoning
+    return message
+
+
+def _build_retry_assistant_message(output: Dict[str, Any], answer: str) -> Optional[Dict[str, Any]]:
+    content = answer or ""
+    if not content.strip():
+        return None
+    message: Dict[str, Any] = {"role": "assistant", "content": content}
+    reasoning = output.get("reasoning_content")
+    if reasoning is not None:
+        message["reasoning_content"] = reasoning
+    return message
 
 
 def _append_assistant_tool_response(
@@ -869,6 +888,8 @@ def _build_agent_output_payload(output: Dict[str, Any], answer: str) -> Dict[str
         payload["tool_call_parse_error"] = output.get("tool_call_parse_error")
     if "plain_text_response_wrapped" in output:
         payload["plain_text_response_wrapped"] = output.get("plain_text_response_wrapped")
+    if "reasoning_content" in output:
+        payload["reasoning_content"] = output.get("reasoning_content")
     if "error" in output:
         payload["error"] = output.get("error")
     if "status" in output:

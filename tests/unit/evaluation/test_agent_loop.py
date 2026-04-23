@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -142,6 +143,46 @@ class AsyncRetryBackend:
     async def ainvoke(self, payload):
         self.calls += 1
         return {"answer": "please call a tool", "raw_response": {"content": "please"}}
+
+
+class EmptyAssistantRetryBackend:
+    def __init__(self):
+        self.calls = 0
+        self.payloads: list[dict[str, Any]] = []
+
+    def invoke(self, payload):
+        self.calls += 1
+        self.payloads.append(deepcopy(payload))
+        return {
+            "answer": "",
+            "reasoning_content": "The model is still assembling a tool call.",
+            "raw_response": {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": "The model is still assembling a tool call.",
+                        }
+                    }
+                ]
+            },
+        }
+
+
+class ReasoningToolCallBackend:
+    def invoke(self, payload):
+        return {
+            "answer": "",
+            "reasoning_content": "I should call respond.",
+            "tool_calls": [
+                {
+                    "id": "call_reasoning",
+                    "type": "function",
+                    "function": {"name": "respond", "arguments": "{\"message\": \"hello\"}"},
+                }
+            ],
+        }
 
 
 class AsyncBackend:
@@ -414,6 +455,61 @@ def test_agent_loop_retries_until_budget_exhausted() -> None:
         for event in events
     )
     assert all(tc == "required" for tc in backend.tool_choice_required_payloads[:3])
+
+
+@pytest.mark.fast
+def test_agent_loop_does_not_append_empty_assistant_on_required_tool_retry() -> None:
+    backend = EmptyAssistantRetryBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=2,
+        tool_call_retry_budget=2,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert backend.calls == 2
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert backend.payloads[1]["messages"] == [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "user",
+            "content": (
+                "Your previous response did not call a tool. You must call exactly one "
+                "available tool now. If you need to speak to the user, call the respond "
+                "tool instead of returning plain text."
+            ),
+        },
+    ]
+    assert result["agent_trace"][0]["output"]["reasoning_content"] == (
+        "The model is still assembling a tool call."
+    )
+
+
+@pytest.mark.fast
+def test_agent_loop_preserves_reasoning_content_on_tool_call_history() -> None:
+    messages = [{"role": "user", "content": "hi"}]
+    loop = AgentLoop(
+        backend=ReasoningToolCallBackend(),
+        tool_router=ToolRouter(),
+        max_turns=1,
+    )
+
+    loop.run(
+        messages=messages,
+        tools=[{"type": "function", "function": {"name": "respond", "parameters": {}}}],
+        tool_choice="required",
+    )
+
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"] == ""
+    assert messages[1]["reasoning_content"] == "I should call respond."
+    assert messages[1]["tool_calls"][0]["function"]["name"] == "respond"
 
 
 @pytest.mark.fast
