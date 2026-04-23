@@ -15,6 +15,15 @@ class FakeSandbox:
         return ExecResult(exit_code=0, stdout="ok", stderr="", duration_ms=1.0)
 
 
+class ToolSandbox:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def exec_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
+        self.calls.append((name, arguments))
+        return {"arguments": arguments}
+
+
 @pytest.mark.fast
 def test_tool_router_unwraps_input_arguments() -> None:
     sandbox = FakeSandbox()
@@ -25,3 +34,48 @@ def test_tool_router_unwraps_input_arguments() -> None:
 
     assert sandbox.calls == [("echo hi", 30)]
     assert result["status"] == "success"
+
+
+@pytest.mark.fast
+def test_tool_router_coerces_string_schema_arguments_before_execution() -> None:
+    sandbox = ToolSandbox()
+    router = ToolRouter()
+    tool_registry = {
+        "modify_pending_order_items": {
+            "type": "function",
+            "function": {
+                "name": "modify_pending_order_items",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "order_id": {"type": "string"},
+                        "item_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "confirm": {"type": "boolean"},
+                    },
+                },
+            },
+        }
+    }
+    tool_call = {
+        "function": {
+            "name": "modify_pending_order_items",
+            "arguments": {"order_id": 12345, "item_ids": [1151293680], "confirm": True},
+        }
+    }
+
+    result = router.execute(tool_call, sandbox, tool_registry=tool_registry)
+
+    assert sandbox.calls == [
+        (
+            "modify_pending_order_items",
+            {"order_id": "12345", "item_ids": ["1151293680"], "confirm": True},
+        )
+    ]
+    assert result["input"] == {
+        "order_id": "12345",
+        "item_ids": ["1151293680"],
+        "confirm": True,
+    }

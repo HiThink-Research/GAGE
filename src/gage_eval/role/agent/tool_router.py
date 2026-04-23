@@ -46,6 +46,7 @@ class ToolRouter:
         """
 
         name, arguments = _normalize_tool_call(tool_call)
+        arguments = _coerce_arguments_to_schema(name, arguments, tool_registry)
         metadata = _resolve_tool_metadata(name, tool_registry, tool_call)
         resolved_tool = _resolve_meta_tool_target(name, arguments, metadata)
         start = time.perf_counter()
@@ -194,6 +195,55 @@ def _normalize_tool_arguments(arguments: Any) -> Dict[str, Any]:
     if isinstance(arguments, dict):
         return _unwrap_tool_arguments(arguments)
     return {"value": arguments}
+
+
+def _coerce_arguments_to_schema(
+    name: str,
+    arguments: Any,
+    tool_registry: Optional[Dict[str, Dict[str, Any]]],
+) -> Any:
+    if not isinstance(arguments, dict) or not tool_registry:
+        return arguments
+    tool_entry = tool_registry.get(name)
+    if not isinstance(tool_entry, dict):
+        return arguments
+    parameters = _extract_tool_parameters(tool_entry)
+    if not isinstance(parameters, dict):
+        return arguments
+    return _coerce_value_to_schema(arguments, parameters)
+
+
+def _extract_tool_parameters(tool_entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if tool_entry.get("type") == "function" and isinstance(tool_entry.get("function"), dict):
+        parameters = tool_entry["function"].get("parameters")
+    else:
+        parameters = tool_entry.get("parameters")
+    return parameters if isinstance(parameters, dict) else None
+
+
+def _coerce_value_to_schema(value: Any, schema: Dict[str, Any]) -> Any:
+    schema_type = schema.get("type")
+    if schema_type == "string":
+        return _coerce_schema_string(value)
+    if schema_type == "array" and isinstance(value, list):
+        item_schema = schema.get("items") if isinstance(schema.get("items"), dict) else {}
+        return [_coerce_value_to_schema(item, item_schema) for item in value]
+    if schema_type == "object" and isinstance(value, dict):
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        coerced = dict(value)
+        for key, property_schema in properties.items():
+            if key in coerced and isinstance(property_schema, dict):
+                coerced[key] = _coerce_value_to_schema(coerced[key], property_schema)
+        return coerced
+    return value
+
+
+def _coerce_schema_string(value: Any) -> Any:
+    if isinstance(value, str) or value is None:
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    return value
 
 
 def _resolve_tool_metadata(
