@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from contextlib import contextmanager
 import json
 import os
@@ -148,7 +149,7 @@ class LiteLLMBackend(EngineBackend):
             with self._temporary_litellm_module_state():
                 return self._litellm.completion(stream=stream, **kwargs)
 
-        completion = self._call_with_retries(_call)
+        completion = self._call_with_retries(_call, recover_sse_stream=stream)
 
         # STEP 2: Normalize the response for downstream consumers and safe diagnostics.
         if stream:
@@ -313,6 +314,9 @@ class LiteLLMBackend(EngineBackend):
             for position, raw_choice in enumerate(chunk.get("choices") or []):
                 if not isinstance(raw_choice, dict):
                     continue
+                raw_choice_usage = raw_choice.get("usage")
+                if isinstance(raw_choice_usage, dict):
+                    usage = raw_choice_usage
                 choice_index = self._coerce_stream_index(raw_choice.get("index"), default=position)
                 state = merged_choices.setdefault(
                     choice_index,
@@ -559,13 +563,21 @@ class LiteLLMBackend(EngineBackend):
             return min(max_tokens, self._max_context_length)
         return max_tokens
 
-    def _call_with_retries(self, func):
+    def _call_with_retries(self, func, *, recover_sse_stream: bool = False):
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
                 return func()
             except Exception as exc:  # pragma: no cover - network/third-party errors
                 last_exc = exc
+                if recover_sse_stream:
+                    recovered = self._recover_sse_stream_from_exception(exc)
+                    if recovered:
+                        logger.warning(
+                            "LiteLLM raised after receiving a valid SSE stream; recovered {} chunks from exception text.",
+                            len(recovered),
+                        )
+                        return recovered
                 if self._is_non_retryable_error(exc):
                     logger.debug("LiteLLM call aborted without retry due to non-retryable error: {}", exc)
                     break
@@ -576,6 +588,70 @@ class LiteLLMBackend(EngineBackend):
                 time.sleep(wait)
         assert last_exc is not None
         raise last_exc
+
+    @classmethod
+    def _recover_sse_stream_from_exception(cls, exc: Exception) -> Optional[List[Dict[str, Any]]]:
+        message = str(exc)
+        if "Received:" not in message or "data:" not in message:
+            return None
+        payload = cls._extract_received_payload(message)
+        if not payload:
+            return None
+        chunks = cls._parse_sse_chunks(payload)
+        return chunks or None
+
+    @staticmethod
+    def _extract_received_payload(message: str) -> Optional[str]:
+        marker = "Received:"
+        marker_index = message.find(marker)
+        if marker_index < 0:
+            return None
+        rest = message[marker_index + len(marker) :].lstrip()
+        if not rest:
+            return None
+        quote = rest[0]
+        if quote not in {"'", '"'}:
+            return rest
+
+        escaped = False
+        for index in range(1, len(rest)):
+            char = rest[index]
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char != quote:
+                continue
+            candidate = rest[: index + 1]
+            try:
+                parsed = ast.literal_eval(candidate)
+            except (SyntaxError, ValueError):
+                return rest[1:index].replace("\\n", "\n").replace("\\'", "'").replace('\\"', '"')
+            return parsed if isinstance(parsed, str) else None
+        return None
+
+    @staticmethod
+    def _parse_sse_chunks(payload: str) -> List[Dict[str, Any]]:
+        chunks: List[Dict[str, Any]] = []
+        for line in payload.replace("\r\n", "\n").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(":") or stripped.startswith("retry:"):
+                continue
+            if not stripped.startswith("data:"):
+                continue
+            data = stripped[len("data:") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                parsed = json.loads(data)
+            except json.JSONDecodeError:
+                logger.debug("Skipping unparsable SSE data frame recovered from LiteLLM exception.")
+                continue
+            if isinstance(parsed, dict):
+                chunks.append(parsed)
+        return chunks
 
     @staticmethod
     def _is_non_retryable_error(exc: Exception) -> bool:

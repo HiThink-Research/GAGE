@@ -530,6 +530,74 @@ class LiteLLMBackendTests(unittest.TestCase):
         self.assertEqual(result["usage"], {"prompt_tokens": 4, "completion_tokens": 3})
         self.assertEqual(result["raw_response"]["usage"], {"prompt_tokens": 4, "completion_tokens": 3})
 
+    def test_streaming_sse_payload_is_recovered_from_litellm_exception(self):
+        sse_payload = "\n\n".join(
+            [
+                (
+                    'data:{"id":"resp-exc","object":"chat.completion.chunk","model":"kimi-k2.6",'
+                    '"choices":[{"index":0,"delta":{"role":"assistant","content":""},'
+                    '"finish_reason":null}]}'
+                ),
+                (
+                    'data:{"id":"resp-exc","object":"chat.completion.chunk","model":"kimi-k2.6",'
+                    '"choices":[{"index":0,"delta":{"reasoning_content":"Need a tool."},'
+                    '"finish_reason":null}]}'
+                ),
+                (
+                    'data:{"id":"resp-exc","object":"chat.completion.chunk","model":"kimi-k2.6",'
+                    '"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"respond:0",'
+                    '"type":"function","function":{"name":"respond","arguments":"{\\"message\\":"}}]},'
+                    '"finish_reason":null}]}'
+                ),
+                (
+                    'data:{"id":"resp-exc","object":"chat.completion.chunk","model":"kimi-k2.6",'
+                    '"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,'
+                    '"function":{"arguments":"\\"hello\\"}"}}]},"finish_reason":null}]}'
+                ),
+                (
+                    'data:{"id":"resp-exc","object":"chat.completion.chunk","model":"kimi-k2.6",'
+                    '"choices":[{"index":0,"usage":{"prompt_tokens":7,"completion_tokens":5},'
+                    '"delta":{},"finish_reason":"tool_calls"}]}'
+                ),
+                "data:[DONE]",
+            ]
+        )
+
+        class FailingStreamLitellm(_FakeLitellm):
+            def completion(self, **kwargs):
+                self.calls.append(dict(kwargs))
+                raise RuntimeError(
+                    "litellm.InternalServerError: Empty or invalid response from LLM endpoint. "
+                    f"Received: {sse_payload!r}. Check the reverse proxy or model server configuration."
+                )
+
+        fake_litellm = FailingStreamLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}):
+            backend = LiteLLMBackend(
+                {
+                    "model": "moonshot/kimi-k2.6",
+                    "provider": "kimi",
+                    "api_key": "kimi-key",
+                    "retry_sleep": 0.0,
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            result = backend.generate(
+                {
+                    "messages": [{"role": "user", "content": "please respond"}],
+                    "stream": True,
+                }
+            )
+
+        message = result["raw_response"]["choices"][0]["message"]
+        tool_call = message["tool_calls"][0]
+        self.assertEqual(len(fake_litellm.calls), 1)
+        self.assertEqual(message["reasoning_content"], "Need a tool.")
+        self.assertEqual(tool_call["id"], "respond:0")
+        self.assertEqual(tool_call["function"]["name"], "respond")
+        self.assertEqual(tool_call["function"]["arguments"], '{"message":"hello"}')
+        self.assertEqual(result["usage"], {"prompt_tokens": 7, "completion_tokens": 5})
+
 
 if __name__ == "__main__":
     unittest.main()
