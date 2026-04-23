@@ -29,11 +29,15 @@ class ModelBackend(AgentBackend):
         self._default_sampling = dict(config.get("sampling_params") or {})
         self._force_tool_choice_mode = _resolve_force_tool_choice_mode(config.get("force_tool_choice"))
         inferred_format = _infer_tool_format(backend)
-        self._tool_call_format = str(
-            config.get("tool_call_format") or config.get("tool_format") or inferred_format
+        self._tool_call_format = _resolve_tool_format(
+            config.get("tool_call_format"),
+            fallback=config.get("tool_format"),
+            inferred_format=inferred_format,
         )
-        self._tool_result_format = str(
-            config.get("tool_result_format") or config.get("tool_format") or inferred_format
+        self._tool_result_format = _resolve_tool_format(
+            config.get("tool_result_format"),
+            fallback=config.get("tool_format"),
+            inferred_format=inferred_format,
         )
         self._plain_text_response_tool = _optional_str(
             config.get("plain_text_response_tool") or config.get("plain_text_wrapper_tool")
@@ -228,7 +232,51 @@ def _optional_str(value: Any) -> Optional[str]:
     if not isinstance(value, str):
         return None
     stripped = value.strip()
+    default = _extract_unresolved_env_default(stripped)
+    if default is not None:
+        stripped = default.strip()
     return stripped or None
+
+
+def _resolve_tool_format(
+    value: Any,
+    *,
+    fallback: Any,
+    inferred_format: str,
+) -> str:
+    """Resolve tool-call format without letting empty config mask model inference."""
+
+    configured = _optional_tool_format(value)
+    if configured is None:
+        configured = _optional_tool_format(fallback)
+    if configured is None:
+        return inferred_format
+    if configured.lower() == "auto" and inferred_format != "auto":
+        return inferred_format
+    return configured
+
+
+def _optional_tool_format(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    default = _extract_unresolved_env_default(stripped)
+    if default is not None:
+        stripped = default.strip()
+    if not stripped or _looks_like_unresolved_env_placeholder(stripped):
+        return None
+    return stripped
+
+
+def _looks_like_unresolved_env_placeholder(value: str) -> bool:
+    return value.startswith("${") and value.endswith("}")
+
+
+def _extract_unresolved_env_default(value: str) -> Optional[str]:
+    match = re.fullmatch(r"\$\{[^}:]+:-(.*)\}", value)
+    if match:
+        return match.group(1)
+    return None
 
 
 def _normalize_format_allowlist(value: Any) -> Optional[set[str]]:
@@ -379,7 +427,11 @@ def _should_wrap_plain_text_response(
     if result.get("error") or result.get("status") not in (None, "success"):
         return False
     normalized_format = str(tool_call_format or "auto").strip().lower()
-    if plain_text_response_formats is not None and normalized_format not in plain_text_response_formats:
+    if (
+        plain_text_response_formats is not None
+        and normalized_format not in plain_text_response_formats
+        and normalized_format != "auto"
+    ):
         return False
     if plain_text_response_tool not in _extract_tool_names(tools):
         return False

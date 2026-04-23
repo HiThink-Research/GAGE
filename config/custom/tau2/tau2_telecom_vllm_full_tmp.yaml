@@ -4,29 +4,26 @@ kind: PipelineConfig
 metadata:
   name: tau2_telecom_vllm_full
   description: >
-    Tau2 telecom - DUT agent uses in-process vLLM backend; user simulator
-    calls an OpenAI-compatible HTTP endpoint (e.g. another vLLM server or
-    the OpenAI API).
+    Tau2 telecom - both DUT agent and user simulator call local Ollama through
+    its OpenAI-compatible HTTP endpoint.
 
-# User simulator: calls a vLLM server that exposes an OpenAI-compatible API.
+# User simulator: calls Ollama through its OpenAI-compatible API.
 # LiteLLM routes requests via the openai/ prefix + api_base.
 #
 # Required env vars:
-#   TAU2_USER_BASE_URL   e.g. http://localhost:8000/v1
-#   TAU2_USER_MODEL      e.g. Qwen/Qwen2.5-72B-Instruct
+#   Ollama running at http://127.0.0.1:11434
 # Optional:
-#   TAU2_USER_API_KEY    defaults to "dummy" (vLLM ignores it by default)
+#   TAU2_USER_API_KEY    defaults to "dummy" (Ollama ignores it by default)
 #   TAU2_USER_TEMPERATURE
 benchmark_configs:
   tau2:
     user_simulator:
       type: openai_http
-      model: /mnt/model/qwen2_5_7B
-      base_url: http://localhost:8000/v1
+      model: qwen3-vl:2b-instruct
+      base_url: http://127.0.0.1:11434/v1
       model_args:
         temperature: ${TAU2_USER_TEMPERATURE:-0.0}
         api_key: ${TAU2_USER_API_KEY:-dummy}
-        max_model_len: ${VLLM_MAX_MODEL_LEN:-32768}
         max_tokens: ${TAU2_AGENT_MAX_TOKENS:-2048}
 prompts:
   - prompt_id: dut/tau2@v1
@@ -52,6 +49,7 @@ datasets:
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data
+      source: local
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
@@ -63,6 +61,7 @@ datasets:
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data
+      source: local
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
@@ -74,32 +73,29 @@ datasets:
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
       hub_id: HuggingFaceH4/tau2-bench-data
+      source: local
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
-# DUT agent backend: in-process vLLM.
+# DUT agent backend: Ollama OpenAI-compatible HTTP.
 #
 # Required env vars:
-#   VLLM_MODEL_PATH   path or HF repo of the model to load
+#   Ollama running at http://127.0.0.1:11434
 # Optional:
-#   VLLM_TENSOR_PARALLEL_SIZE, VLLM_PIPELINE_PARALLEL_SIZE
-#   VLLM_MAX_MODEL_LEN, VLLM_REQUEST_TIMEOUT
+#   OLLAMA_API_KEY, OLLAMA_REQUEST_TIMEOUT
 #   TAU2_AGENT_MAX_TOKENS, TAU2_AGENT_TEMPERATURE
 backends:
   - backend_id: tau2_vllm
-    type: vllm
+    type: openai_http
     config:
-      model_path: /mnt/model/qwen2_5_7B
-      trust_remote_code: true
-      tokenizer_trust_remote_code: true
-      force_tokenize_prompt: true
-      tensor_parallel_size: ${VLLM_TENSOR_PARALLEL_SIZE:-1}
-      pipeline_parallel_size: ${VLLM_PIPELINE_PARALLEL_SIZE:-1}
-      max_model_len: ${VLLM_MAX_MODEL_LEN:-32768}
-      max_tokens: ${TAU2_AGENT_MAX_TOKENS:-2048}
-      request_timeout: ${VLLM_REQUEST_TIMEOUT:-300}
-      sampling_params:
+      base_url: http://127.0.0.1:11434/v1
+      model: qwen3-vl:2b-instruct
+      api_key: ${OLLAMA_API_KEY:-dummy}
+      require_api_key: false
+      timeout: ${OLLAMA_REQUEST_TIMEOUT:-300}
+      default_params:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+        max_tokens: ${TAU2_AGENT_MAX_TOKENS:-2048}
 
 agent_runtimes:
   - agent_runtime_id: tau2_framework_loop

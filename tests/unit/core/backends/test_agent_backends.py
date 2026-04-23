@@ -875,6 +875,56 @@ def test_model_backend_wraps_qwen_plain_text_response_after_bare_think_close():
 
 
 @pytest.mark.fast
+@pytest.mark.parametrize(
+    "configured_format",
+    ["auto", "${TAU2_AGENT_TOOL_FORMAT:-}"],
+)
+def test_model_backend_wraps_qwen_plain_text_when_config_format_is_not_specific(
+    configured_format,
+):
+    class QwenPlainTextBackend:
+        config = {"model_path": "/mnt/models/Qwen3.6-35B-A3B"}
+
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "</think>\n\n"
+                    "Please confirm whether you want me to proceed with this exchange."
+                )
+            }
+
+    backend = ModelBackend(
+        {
+            "backend": QwenPlainTextBackend(),
+            "tool_call_format": configured_format,
+            "plain_text_response_tool": "${TAU2_PLAIN_TEXT_RESPONSE_TOOL:-respond}",
+            "plain_text_response_formats": ["qwen"],
+        }
+    )
+    result = backend.invoke(
+        {
+            "messages": [],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "respond", "parameters": {}},
+                }
+            ],
+        }
+    )
+
+    assert backend._tool_call_format == "qwen"
+    assert result["answer"] == ""
+    assert result["plain_text_response_wrapped"] is True
+    assert result["tool_calls"][0]["function"] == {
+        "name": "respond",
+        "arguments": {
+            "message": "Please confirm whether you want me to proceed with this exchange."
+        },
+    }
+
+
+@pytest.mark.fast
 def test_model_backend_strips_qwen_channel_suffix_from_tool_call_name():
     class QwenChannelSuffixBackend:
         def invoke(self, payload):
