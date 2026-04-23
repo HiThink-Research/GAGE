@@ -271,6 +271,30 @@ def test_model_backend_extracts_qwen_xml_function_call():
 
 
 @pytest.mark.fast
+def test_model_backend_extracts_qwen_arg_key_value_tool_call():
+    class ArgKeyToolCallBackend:
+        def invoke(self, payload):
+            return {
+                "answer": (
+                    "</think>"
+                    "<tool_call>respond"
+                    "<arg_key>message</arg_key>"
+                    "<arg_value>Hello! Please provide your account email.</arg_value>"
+                    "</tool_call>"
+                )
+            }
+
+    backend = ModelBackend({"backend": ArgKeyToolCallBackend(), "tool_format": "qwen"})
+    result = backend.invoke({"messages": []})
+
+    assert result["answer"] == ""
+    assert result["tool_calls"][0]["function"]["name"] == "respond"
+    assert result["tool_calls"][0]["function"]["arguments"] == {
+        "message": "Hello! Please provide your account email."
+    }
+
+
+@pytest.mark.fast
 def test_model_backend_extracts_qwen_json_parameter_values():
     class QwenToolCallBackend:
         def invoke(self, payload):

@@ -618,6 +618,9 @@ def _extract_balanced_json(text: str) -> Optional[str]:
 
 def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
     calls: List[Dict[str, Any]] = []
+    for name, body in _extract_qwen_arg_key_tool_blocks(answer):
+        arguments = _extract_arg_key_value_arguments(body)
+        calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
     function_blocks = re.findall(
         (
             r"<function(?:\s+name=\"([^\"]+)\"|="
@@ -638,6 +641,39 @@ def _extract_xml_function_calls(answer: str) -> List[Dict[str, Any]]:
             arguments = parsed_body.get("arguments", parsed_body) if isinstance(parsed_body, dict) else {}
         calls.append(_build_openai_tool_call(name, arguments, call_id=f"call_{len(calls)}"))
     return calls
+
+
+def _extract_qwen_arg_key_tool_blocks(answer: str) -> List[tuple[str, str]]:
+    tool_blocks = re.findall(
+        (
+            r"<tool_call>\s*"
+            r"([A-Za-z_][\w.-]*(?:<\|channel\|>[A-Za-z_][\w.-]*)?)"
+            r"\s*(.*?)\s*</tool_call>"
+        ),
+        answer,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return [
+        (name, body)
+        for name, body in tool_blocks
+        if re.search(r"<arg_key\s*>", body, flags=re.IGNORECASE)
+    ]
+
+
+def _extract_arg_key_value_arguments(body: str) -> Dict[str, Any]:
+    arguments: Dict[str, Any] = {}
+    argument_blocks = re.findall(
+        r"<arg_key\s*>\s*(.*?)\s*</arg_key\s*>\s*<arg_value\s*>\s*(.*?)\s*</arg_value\s*>",
+        body,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for raw_name, raw_value in argument_blocks:
+        name = raw_name.strip()
+        if not name:
+            continue
+        parsed_value = _parse_tool_payload(raw_value)
+        arguments[name] = parsed_value if parsed_value is not None else raw_value.strip()
+    return arguments
 
 
 def _extract_minimax_tool_calls(answer: str) -> List[Dict[str, Any]]:
