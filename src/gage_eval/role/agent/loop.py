@@ -16,6 +16,17 @@ from gage_eval.role.agent.tool_router import ToolRouter
 from gage_eval.sandbox.manager import SandboxHandle
 from gage_eval.sandbox.provider import SandboxProvider
 
+_TOOL_RETRY_BUDGET_FAILURE_CATEGORY = "client_execution.tool_retry_budget_exhausted"
+_STRUCTURED_INVALID_TOOL_ERRORS = {
+    "command_missing",
+    "path_missing",
+    "replace_in_file_missing_args",
+    "meta_tool_payload_invalid",
+    "meta_tool_endpoint_missing",
+    "meta_tool_params_invalid",
+}
+_STRUCTURED_INVALID_TOOL_ERROR_PREFIXES = ("invalid_endpoint:",)
+
 
 class AgentLoop:
     """Runs a tool-calling agent until it reaches a stop condition."""
@@ -27,6 +38,7 @@ class AgentLoop:
         *,
         max_turns: int = 8,
         tool_call_retry_budget: int = 3,
+        max_total_invalid_tool_calls: int = 20,
         pre_hooks: Optional[Sequence[Any]] = None,
         post_hooks: Optional[Sequence[Any]] = None,
     ) -> None:
@@ -34,6 +46,7 @@ class AgentLoop:
         self._tool_router = tool_router
         self._max_turns = max(1, int(max_turns))
         self._tool_call_retry_budget = max(1, int(tool_call_retry_budget))
+        self._max_total_invalid_tool_calls = max(1, int(max_total_invalid_tool_calls))
         self._pre_hooks = build_hook_chain(pre_hooks)
         self._post_hooks = build_hook_chain(post_hooks)
 
@@ -92,7 +105,9 @@ class AgentLoop:
             artifacts = []
             required_tool_retry_active = False
             required_tool_retry_count = 0
+            total_invalid_tool_calls = 0
             loop_exit_reason: Optional[str] = None
+            failure_category: Optional[str] = None
             observability_events: List[Dict[str, Any]] = []
             logger.debug(
                 "AgentLoop start max_turns={} messages={} tools={}",
@@ -178,6 +193,25 @@ class AgentLoop:
                                 tool_result.get("name"),
                                 tool_result.get("status"),
                             )
+                        if _is_invalid_tool_result(tool_result):
+                            total_invalid_tool_calls += 1
+                            if total_invalid_tool_calls >= self._max_total_invalid_tool_calls:
+                                loop_exit_reason = "tool_call_retry_budget"
+                                failure_category = _TOOL_RETRY_BUDGET_FAILURE_CATEGORY
+                                observability_events.append(
+                                    _build_retry_budget_exhausted_event(
+                                        turn_index=turn,
+                                        loop_exit_reason=loop_exit_reason,
+                                        budget=self._max_total_invalid_tool_calls,
+                                        budget_kind="total_invalid_tool_calls",
+                                        total_invalid_tool_calls=total_invalid_tool_calls,
+                                        consecutive_retries=required_tool_retry_count,
+                                    )
+                                )
+                                answer = ""
+                                stop_after_tool = True
+                                step_index += 1
+                                break
                         step_index += 1
                         if _uses_assistant_tool_responses(self._backend):
                             _append_assistant_tool_response(
@@ -217,9 +251,11 @@ class AgentLoop:
                         turn,
                     )
                     required_tool_retry_count += 1
+                    total_invalid_tool_calls += 1
                     trace_output = _build_agent_output_payload(output, answer)
                     trace_output["error"] = _required_tool_call_missing_error(output)
                     trace_output["retry_count"] = required_tool_retry_count
+                    trace_output["total_invalid_tool_calls"] = total_invalid_tool_calls
                     agent_trace.append(
                         _build_trace_step(
                             step_index,
@@ -247,22 +283,38 @@ class AgentLoop:
                                 "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
                                 "tool_call_parse_error_type": output.get("tool_call_parse_error_type"),
                                 "backend_has_raw_response": "raw_response" in output,
+                                "total_invalid_tool_calls": total_invalid_tool_calls,
                             },
                         }
                     )
                     step_index += 1
                     if required_tool_retry_count >= self._tool_call_retry_budget:
                         loop_exit_reason = "tool_call_retry_budget"
+                        failure_category = _TOOL_RETRY_BUDGET_FAILURE_CATEGORY
                         observability_events.append(
-                            {
-                                "event": "agent_loop_exhausted",
-                                "payload": {
-                                    "reason": loop_exit_reason,
-                                    "turn_index": turn,
-                                    "consecutive_retries": required_tool_retry_count,
-                                    "budget": self._tool_call_retry_budget,
-                                },
-                            }
+                            _build_retry_budget_exhausted_event(
+                                turn_index=turn,
+                                loop_exit_reason=loop_exit_reason,
+                                budget=self._tool_call_retry_budget,
+                                budget_kind="consecutive_retries",
+                                total_invalid_tool_calls=total_invalid_tool_calls,
+                                consecutive_retries=required_tool_retry_count,
+                            )
+                        )
+                        answer = ""
+                        break
+                    if total_invalid_tool_calls >= self._max_total_invalid_tool_calls:
+                        loop_exit_reason = "tool_call_retry_budget"
+                        failure_category = _TOOL_RETRY_BUDGET_FAILURE_CATEGORY
+                        observability_events.append(
+                            _build_retry_budget_exhausted_event(
+                                turn_index=turn,
+                                loop_exit_reason=loop_exit_reason,
+                                budget=self._max_total_invalid_tool_calls,
+                                budget_kind="total_invalid_tool_calls",
+                                total_invalid_tool_calls=total_invalid_tool_calls,
+                                consecutive_retries=required_tool_retry_count,
+                            )
                         )
                         answer = ""
                         break
@@ -307,6 +359,7 @@ class AgentLoop:
                 "usage": usage,
                 "artifacts": artifacts,
                 "loop_exit_reason": loop_exit_reason,
+                "failure_category": failure_category,
                 "observability_events": observability_events,
             }
         except BaseException as exc:
@@ -377,7 +430,9 @@ class AgentLoop:
             artifacts = []
             required_tool_retry_active = False
             required_tool_retry_count = 0
+            total_invalid_tool_calls = 0
             loop_exit_reason: Optional[str] = None
+            failure_category: Optional[str] = None
             observability_events: List[Dict[str, Any]] = []
             logger.debug(
                 "AgentLoop start max_turns={} messages={} tools={}",
@@ -463,6 +518,25 @@ class AgentLoop:
                                 tool_result.get("name"),
                                 tool_result.get("status"),
                             )
+                        if _is_invalid_tool_result(tool_result):
+                            total_invalid_tool_calls += 1
+                            if total_invalid_tool_calls >= self._max_total_invalid_tool_calls:
+                                loop_exit_reason = "tool_call_retry_budget"
+                                failure_category = _TOOL_RETRY_BUDGET_FAILURE_CATEGORY
+                                observability_events.append(
+                                    _build_retry_budget_exhausted_event(
+                                        turn_index=turn,
+                                        loop_exit_reason=loop_exit_reason,
+                                        budget=self._max_total_invalid_tool_calls,
+                                        budget_kind="total_invalid_tool_calls",
+                                        total_invalid_tool_calls=total_invalid_tool_calls,
+                                        consecutive_retries=required_tool_retry_count,
+                                    )
+                                )
+                                answer = ""
+                                stop_after_tool = True
+                                step_index += 1
+                                break
                         step_index += 1
                         if _uses_assistant_tool_responses(self._backend):
                             _append_assistant_tool_response(
@@ -502,9 +576,11 @@ class AgentLoop:
                         turn,
                     )
                     required_tool_retry_count += 1
+                    total_invalid_tool_calls += 1
                     trace_output = _build_agent_output_payload(output, answer)
                     trace_output["error"] = _required_tool_call_missing_error(output)
                     trace_output["retry_count"] = required_tool_retry_count
+                    trace_output["total_invalid_tool_calls"] = total_invalid_tool_calls
                     observability_events.append(
                         {
                             "event": "agent_retry_missing_tool_call",
@@ -519,6 +595,7 @@ class AgentLoop:
                                 "invalid_tool_call_names": output.get("invalid_tool_call_names", []),
                                 "tool_call_parse_error_type": output.get("tool_call_parse_error_type"),
                                 "backend_has_raw_response": "raw_response" in output,
+                                "total_invalid_tool_calls": total_invalid_tool_calls,
                             },
                         }
                     )
@@ -538,16 +615,31 @@ class AgentLoop:
                     step_index += 1
                     if required_tool_retry_count >= self._tool_call_retry_budget:
                         loop_exit_reason = "tool_call_retry_budget"
+                        failure_category = _TOOL_RETRY_BUDGET_FAILURE_CATEGORY
                         observability_events.append(
-                            {
-                                "event": "agent_loop_exhausted",
-                                "payload": {
-                                    "reason": loop_exit_reason,
-                                    "turn_index": turn,
-                                    "consecutive_retries": required_tool_retry_count,
-                                    "budget": self._tool_call_retry_budget,
-                                },
-                            }
+                            _build_retry_budget_exhausted_event(
+                                turn_index=turn,
+                                loop_exit_reason=loop_exit_reason,
+                                budget=self._tool_call_retry_budget,
+                                budget_kind="consecutive_retries",
+                                total_invalid_tool_calls=total_invalid_tool_calls,
+                                consecutive_retries=required_tool_retry_count,
+                            )
+                        )
+                        answer = ""
+                        break
+                    if total_invalid_tool_calls >= self._max_total_invalid_tool_calls:
+                        loop_exit_reason = "tool_call_retry_budget"
+                        failure_category = _TOOL_RETRY_BUDGET_FAILURE_CATEGORY
+                        observability_events.append(
+                            _build_retry_budget_exhausted_event(
+                                turn_index=turn,
+                                loop_exit_reason=loop_exit_reason,
+                                budget=self._max_total_invalid_tool_calls,
+                                budget_kind="total_invalid_tool_calls",
+                                total_invalid_tool_calls=total_invalid_tool_calls,
+                                consecutive_retries=required_tool_retry_count,
+                            )
                         )
                         answer = ""
                         break
@@ -592,6 +684,7 @@ class AgentLoop:
                 "usage": usage,
                 "artifacts": artifacts,
                 "loop_exit_reason": loop_exit_reason,
+                "failure_category": failure_category,
                 "observability_events": observability_events,
             }
         except BaseException as exc:
@@ -720,9 +813,46 @@ def _build_required_tool_retry_message() -> Dict[str, Any]:
         "role": "user",
         "content": (
             "Your previous response did not call a tool. You must call exactly one "
-            "available tool now. If you need to speak to the user, call the respond "
-            "tool instead of returning plain text."
+            "available tool now. Do not return plain text instead of a tool call."
         ),
+    }
+
+
+def _is_invalid_tool_result(tool_result: Dict[str, Any]) -> bool:
+    if not isinstance(tool_result, dict):
+        return False
+    output = tool_result.get("output")
+    if not isinstance(output, dict):
+        return False
+    if output.get("error_code") == "tool_argument_invalid":
+        return True
+    error = output.get("error")
+    if not isinstance(error, str):
+        return False
+    if error in _STRUCTURED_INVALID_TOOL_ERRORS:
+        return True
+    return any(error.startswith(prefix) for prefix in _STRUCTURED_INVALID_TOOL_ERROR_PREFIXES)
+
+
+def _build_retry_budget_exhausted_event(
+    *,
+    turn_index: int,
+    loop_exit_reason: str,
+    budget: int,
+    budget_kind: str,
+    total_invalid_tool_calls: int,
+    consecutive_retries: int,
+) -> Dict[str, Any]:
+    return {
+        "event": "agent_loop_exhausted",
+        "payload": {
+            "reason": loop_exit_reason,
+            "turn_index": turn_index,
+            "consecutive_retries": consecutive_retries,
+            "budget": budget,
+            "budget_kind": budget_kind,
+            "total_invalid_tool_calls": total_invalid_tool_calls,
+        },
     }
 
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
-from gage_eval.agent_eval_kits.swebench.artifacts import persist_swebench_artifacts
+from gage_eval.agent_eval_kits.swebench.artifacts import (
+    persist_swebench_artifacts,
+    resolve_swebench_failure_category,
+)
 from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction, build_swebench_tools
 
 
@@ -51,4 +54,11 @@ def _capture_environment_artifacts(*, session, sample, scheduler_output, sandbox
 def _finalize_result(*, session, sample, scheduler_output, artifact_paths):
     output = dict(scheduler_output or {})
     output["artifact_paths"] = dict(artifact_paths or {})
+    resolved_failure_category = resolve_swebench_failure_category(
+        output=output,
+        agent_trace=output.get("agent_trace"),
+        materialized_artifact_paths=output["artifact_paths"],
+    )
+    if resolved_failure_category:
+        output.setdefault("failure_category", resolved_failure_category)
     return output

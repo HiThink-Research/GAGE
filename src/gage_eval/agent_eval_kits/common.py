@@ -43,14 +43,55 @@ def extract_instruction(sample: dict[str, Any]) -> str:
     prompt = sample.get("prompt")
     if isinstance(prompt, str) and prompt.strip():
         return prompt.strip()
+    inputs = sample.get("inputs")
+    if isinstance(inputs, dict):
+        nested_prompt = inputs.get("prompt")
+        if isinstance(nested_prompt, str) and nested_prompt.strip():
+            return nested_prompt.strip()
     messages = sample.get("messages")
     if isinstance(messages, list):
+        fallback_text = ""
         for message in messages:
             if not isinstance(message, dict):
                 continue
+            role = str(message.get("role") or "").strip().lower()
             content = message.get("content")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
+            text = _extract_message_content_text(content)
+            if not text:
+                continue
+            if role == "user":
+                return text
+            if not fallback_text:
+                fallback_text = text
+        if fallback_text:
+            return fallback_text
+    return ""
+
+
+def _extract_message_content_text(content: Any) -> str:
+    if isinstance(content, list):
+        fragments = []
+        for item in content:
+            text = _extract_text_fragment(item)
+            if text:
+                fragments.append(text)
+        return "\n".join(fragments).strip()
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text.strip()
+    return ""
+
+
+def _extract_text_fragment(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text.strip()
     return ""
 
 

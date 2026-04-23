@@ -16,7 +16,7 @@ datasets:
       local_path: ${SWEBENCH_LOCAL_PATH:-./local-datasets/swebench_pro}
       preprocess: swebench_pro_standardizer
       preprocess_kwargs:
-        smoke_ids_path: third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
+        smoke_ids_path: gage-eval-main/third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
       streaming: false
 
 backends:
@@ -27,7 +27,10 @@ backends:
       model: ${OLLAMA_MODEL:-qwen3-vl:2b-instruct}
       api_key: ${OLLAMA_API_KEY:-dummy}
       require_api_key: false
-      max_retries: 6
+      max_retries: 20
+      generation_parameters:
+        temperature: 0.0
+        max_new_tokens: 16384
 
 
 agent_runtimes:
@@ -67,6 +70,7 @@ role_adapters:
       lifecycle: per_sample
     params:
       max_turns: 100
+      max_total_invalid_tool_calls: 20
 
   - adapter_id: swebench_runtime_judge
     role_type: judge_extend
@@ -76,8 +80,8 @@ role_adapters:
     params:
       implementation: swebench_docker
       implementation_params:
-        scripts_dir: third_party/swebench_pro/run_scripts
-        dockerfiles_dir: third_party/swebench_pro/dockerfiles
+        scripts_dir: gage-eval-main/third_party/swebench_pro/run_scripts
+        dockerfiles_dir: gage-eval-main/third_party/swebench_pro/dockerfiles
         dockerhub_username: jefzda
         block_network: true
         test_timeout_s: 900

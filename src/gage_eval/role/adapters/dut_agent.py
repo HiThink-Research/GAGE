@@ -47,6 +47,7 @@ class DUTAgentAdapter(RoleAdapter):
         executor_ref: Optional[Any] = None,
         max_turns: int = 8,
         tool_call_retry_budget: int = 3,
+        max_total_invalid_tool_calls: int = 20,
         **params,
     ) -> None:
         super().__init__(
@@ -60,8 +61,12 @@ class DUTAgentAdapter(RoleAdapter):
         resolved_gateway = human_gateway or build_default_human_gateway()
         self._tool_router = tool_router or ToolRouter(mcp_clients=mcp_clients, human_gateway=resolved_gateway)
         self._sandbox_manager = sandbox_manager or SandboxManager(profiles=sandbox_profiles)
+        normalized_max_total_invalid_tool_calls = int(max_total_invalid_tool_calls)
+        if normalized_max_total_invalid_tool_calls < 1:
+            raise ValueError("max_total_invalid_tool_calls must be a positive integer")
         self._tool_call_retry_budget = max(1, int(tool_call_retry_budget))
         self._max_turns = max(1, int(max_turns))
+        self._max_total_invalid_tool_calls = normalized_max_total_invalid_tool_calls
         self._pre_hooks = build_hook_chain(params.pop("pre_hooks", None) or params.pop("pre_hook", None))
         self._post_hooks = build_hook_chain(params.pop("post_hooks", None) or params.pop("post_hook", None))
         self._prompt_renderer = prompt_renderer
@@ -95,6 +100,7 @@ class DUTAgentAdapter(RoleAdapter):
             tool_router=self._tool_router,
             max_turns=self._max_turns,
             tool_call_retry_budget=self._tool_call_retry_budget,
+            max_total_invalid_tool_calls=self._max_total_invalid_tool_calls,
             pre_hooks=self._pre_hooks,
             post_hooks=self._post_hooks,
         )

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
+from gage_eval.assets.datasets.validation import InputProjectionError
 from gage_eval.utils.benchmark_helpers.swebench import get_dockerhub_image_uri
 
 
@@ -91,6 +92,94 @@ def _format_problem_sections(problem: str, requirements: str, interface: str) ->
     return "\n\n".join(sections).strip()
 
 
+def _coerce_prompt_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _resolve_prompt_projection(record: Dict[str, Any]) -> tuple[str, str | None, list[str]]:
+    prompt_fields = (
+        "problem_statement",
+        "problem",
+        "issue",
+        "description",
+        "instructions",
+        "instruction",
+        "prompt",
+    )
+    present_fields: list[str] = []
+    prompt_text = ""
+    prompt_source: str | None = None
+    for field in prompt_fields:
+        value = _coerce_prompt_text(record.get(field))
+        if value:
+            present_fields.append(field)
+            if not prompt_text:
+                prompt_text = value
+                prompt_source = field
+        elif record.get(field) not in (None, "", [], {}):
+            present_fields.append(field)
+    inputs = record.get("inputs")
+    if isinstance(inputs, dict):
+        value = _coerce_prompt_text(inputs.get("prompt"))
+        if value:
+            present_fields.append("inputs.prompt")
+            if not prompt_text:
+                prompt_text = value
+                prompt_source = "inputs.prompt"
+    messages = record.get("messages")
+    if isinstance(messages, list):
+        message_text = _extract_message_prompt(messages)
+        if message_text:
+            present_fields.append("messages")
+            if not prompt_text:
+                prompt_text = message_text
+                prompt_source = "messages"
+    return prompt_text, prompt_source, present_fields
+
+
+def _extract_message_prompt(messages: list[Any]) -> str:
+    fragments: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            fragments.append(content.strip())
+            continue
+        if isinstance(content, list):
+            for item in content:
+                text = _extract_message_text(item)
+                if text:
+                    fragments.append(text)
+    return "\n".join(fragments).strip()
+
+
+def _extract_message_text(content: Any) -> str:
+    if isinstance(content, dict):
+        if content.get("type") == "text" and isinstance(content.get("text"), str):
+            return content["text"].strip()
+        text = content.get("text")
+        if isinstance(text, str):
+            return text.strip()
+    if isinstance(content, str):
+        return content.strip()
+    return ""
+
+
+def _is_tutanota_record(record: Dict[str, Any], instance_id: str) -> bool:
+    normalized_instance_id = instance_id.lower().removeprefix("instance_")
+    repo = str(record.get("repo") or record.get("repository") or "").strip().lower()
+    normalized_repo = repo.replace("/", "__")
+    return (
+        normalized_instance_id.startswith("tutao__tutanota")
+        or normalized_repo.startswith("tutao__tutanota")
+    )
+
+
 class SwebenchProPreprocessor(BasePreprocessor):
     """Converts SWE-bench Pro records into the standardized Sample schema.
 
@@ -108,9 +197,10 @@ class SwebenchProPreprocessor(BasePreprocessor):
         sandbox_id: str = "swebench_runtime",
         sandbox_runtime: str = "docker",
         sandbox_lifecycle: str = "per_sample",
+        on_error: str = "raise",
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(on_error=on_error, **kwargs)
         # NOTE: In smoke mode we still load the full source dataset, then filter
         # locally by `smoke_instance_ids.txt` (if provided). This keeps the data
         # loading path identical to production runs.
@@ -128,17 +218,21 @@ class SwebenchProPreprocessor(BasePreprocessor):
         if self._smoke_ids is not None and instance_id not in self._smoke_ids:
             # NOTE: Hard allowlist for smoke runs: keep only locally-covered cases.
             return None
-
         return super().transform(sample, **kwargs)
 
     def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Optional[Dict[str, Any]]:
         # STEP 1: Build a stable instance id and user prompt text.
         instance_id = str(record.get("instance_id") or record.get("id") or "").strip()
 
-        problem = str(record.get("problem_statement") or record.get("problem") or "").strip()
+        problem, prompt_source, prompt_fields_present = _resolve_prompt_projection(record)
         requirements = str(record.get("requirements") or "").strip()
         interface = str(record.get("interface") or "").strip()
         user_text = _format_problem_sections(problem, requirements, interface)
+        if not user_text:
+            raise InputProjectionError(
+                "input_projection.missing_problem_statement",
+                f"instance_id={instance_id} is missing a problem statement or prompt alias",
+            )
 
         # STEP 2: Apply dataset-specific normalization/hotfixes.
         # NOTE: Tutanota environment mismatch: upstream `pass_to_pass` expects
@@ -146,7 +240,7 @@ class SwebenchProPreprocessor(BasePreprocessor):
         # which would cause strict matching to fail. Adjust the expectation at
         # preprocess time to avoid false negatives.
         raw_p2p = record.get("pass_to_pass")
-        if instance_id.startswith("tutao__tutanota") and raw_p2p:
+        if _is_tutanota_record(record, instance_id) and raw_p2p:
             coerced = _coerce_list(raw_p2p)
             adjusted = [
                 t.replace("(3065 assertions)", "(3064 assertions)") if "test/api/Suite.ts" in t else t
@@ -161,15 +255,18 @@ class SwebenchProPreprocessor(BasePreprocessor):
                 "instance_id": instance_id,
                 "repo": record.get("repo") or record.get("repository"),
                 "base_commit": record.get("base_commit"),
+                "prompt_source": prompt_source,
+                "prompt_present": bool(user_text),
+                "prompt_length_chars": len(user_text),
+                "prompt_source_length_chars": len(problem),
+                "prompt_fields_present": prompt_fields_present,
                 "fail_to_pass": _coerce_list(record.get("fail_to_pass")),
                 "pass_to_pass": _coerce_list(record.get("pass_to_pass")),
                 "selected_test_files_to_run": _coerce_list(record.get("selected_test_files_to_run")),
-                "test_patch": record.get("test_patch"),
                 "before_repo_set_cmd": record.get("before_repo_set_cmd"),
                 "repo_language": record.get("repo_language"),
                 "issue_specificity": record.get("issue_specificity"),
                 "issue_categories": record.get("issue_categories"),
-                "gold_patch": record.get("patch"),  # analysis-only, not used for evaluation
             }
         )
 
@@ -193,6 +290,8 @@ class SwebenchProPreprocessor(BasePreprocessor):
 
         # STEP 5: Materialize fields expected by the pipeline (id/messages/inputs/metadata).
         record["id"] = instance_id
+        record["instruction"] = user_text
+        record["prompt"] = user_text
         record["messages"] = [
             {
                 "role": "user",

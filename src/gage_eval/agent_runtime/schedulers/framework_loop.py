@@ -21,14 +21,19 @@ class FrameworkLoopScheduler:
         prompt_renderer=None,
         max_turns: int = 8,
         tool_call_retry_budget: int = 3,
+        max_total_invalid_tool_calls: int = 20,
         pre_hooks=None,
         post_hooks=None,
     ) -> None:
+        normalized_max_total_invalid_tool_calls = int(max_total_invalid_tool_calls)
+        if normalized_max_total_invalid_tool_calls < 1:
+            raise ValueError("max_total_invalid_tool_calls must be a positive integer")
         self._backend = backend
         self._tool_router = tool_router
         self._prompt_renderer = prompt_renderer
         self._max_turns = max_turns
         self._tool_call_retry_budget = tool_call_retry_budget
+        self._max_total_invalid_tool_calls = normalized_max_total_invalid_tool_calls
         self._pre_hooks = pre_hooks
         self._post_hooks = post_hooks
         self._failure_mapper = FailureMapper()
@@ -173,6 +178,7 @@ class FrameworkLoopScheduler:
             tool_router=self._tool_router,
             max_turns=self._max_turns,
             tool_call_retry_budget=self._tool_call_retry_budget,
+            max_total_invalid_tool_calls=self._max_total_invalid_tool_calls,
             pre_hooks=self._pre_hooks,
             post_hooks=self._post_hooks,
         )

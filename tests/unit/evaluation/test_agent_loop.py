@@ -1,10 +1,11 @@
 import asyncio
+import json
 from typing import Any
 
 import pytest
 
 from gage_eval.mcp import McpClient
-from gage_eval.role.agent.loop import AgentLoop
+from gage_eval.role.agent.loop import AgentLoop, _build_required_tool_retry_message
 from gage_eval.role.agent.tool_router import ToolRouter
 from gage_eval.sandbox.base import ExecResult
 from gage_eval.sandbox.manager import SandboxManager
@@ -142,6 +143,55 @@ class AsyncRetryBackend:
     async def ainvoke(self, payload):
         self.calls += 1
         return {"answer": "please call a tool", "raw_response": {"content": "please"}}
+
+
+class TotalInvalidBudgetBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.payloads: list[dict[str, Any]] = []
+
+    def invoke(self, payload):
+        self.calls += 1
+        self.payloads.append(json.loads(json.dumps(payload, default=str)))
+        if self.calls == 1:
+            return {"answer": "please call a tool", "raw_response": {"content": "please"}}
+        if self.calls == 2:
+            return {
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "run_shell", "arguments": {"command": ["ls", "-R"]}},
+                    }
+                ]
+            }
+        if self.calls == 3:
+            return {
+                "tool_calls": [
+                    {
+                        "id": "c2",
+                        "function": {"name": "run_shell", "arguments": {"command": "ls"}},
+                    }
+                ]
+            }
+        return {"answer": "still plain text", "raw_response": {"content": "still"}}
+
+
+class CommandMissingBudgetBackend:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def invoke(self, payload):
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "function": {"name": "run_shell", "arguments": "{}"},
+                    }
+                ]
+            }
+        return {"answer": "done"}
 
 
 class AsyncBackend:
@@ -356,11 +406,14 @@ def test_agent_loop_retries_until_budget_exhausted() -> None:
     assert exhausted["payload"]["reason"] == "tool_call_retry_budget"
     assert exhausted["payload"]["consecutive_retries"] == 3
     assert exhausted["payload"]["budget"] == 3
+    assert exhausted["payload"]["budget_kind"] == "consecutive_retries"
+    assert exhausted["payload"]["total_invalid_tool_calls"] == 3
     assert not any(
         event.get("event") == "agent_loop_exhausted" and event["payload"].get("reason") == "max_turns"
         for event in events
     )
     assert all(tc == "required" for tc in backend.tool_choice_required_payloads[:3])
+    assert result["failure_category"] == "client_execution.tool_retry_budget_exhausted"
 
 
 @pytest.mark.fast
@@ -484,6 +537,88 @@ def test_agent_loop_retries_tool_call_parse_error_when_tool_choice_auto() -> Non
     assert result["agent_trace"][0]["output"]["error"].startswith(
         "required_tool_call_missing: gemma4_tool_call_format_error"
     )
+
+
+@pytest.mark.fast
+def test_required_tool_retry_message_does_not_reference_respond_tool() -> None:
+    message = _build_required_tool_retry_message()
+
+    assert "respond" not in str(message["content"]).lower()
+    assert "available tool" in str(message["content"]).lower()
+
+
+@pytest.mark.fast
+def test_agent_loop_total_invalid_budget_exhausts_across_mixed_turns() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = TotalInvalidBudgetBackend()
+    backend._force_tool_choice_mode = "always"
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=10,
+        tool_call_retry_budget=10,
+        max_total_invalid_tool_calls=3,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        tool_choice="required",
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+    provider.release()
+
+    assert backend.calls == 4
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert result["failure_category"] == "client_execution.tool_retry_budget_exhausted"
+    assert result["agent_trace"][1]["output"]["error_code"] == "tool_argument_invalid"
+    exhausted = [event for event in result["observability_events"] if event["event"] == "agent_loop_exhausted"][0]
+    assert exhausted["payload"]["budget_kind"] == "total_invalid_tool_calls"
+    assert exhausted["payload"]["budget"] == 3
+    assert exhausted["payload"]["total_invalid_tool_calls"] == 3
+    assert exhausted["payload"]["consecutive_retries"] == 1
+
+
+@pytest.mark.fast
+def test_agent_loop_total_invalid_budget_counts_command_missing() -> None:
+    manager = SandboxManager()
+    manager.register_runtime("fake", FakeSandbox)
+    provider = SandboxProvider(
+        manager,
+        {"runtime": "fake"},
+        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
+    )
+    backend = CommandMissingBudgetBackend()
+    loop = AgentLoop(
+        backend=backend,
+        tool_router=ToolRouter(),
+        max_turns=3,
+        tool_call_retry_budget=10,
+        max_total_invalid_tool_calls=1,
+    )
+
+    result = loop.run(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "run_shell", "parameters": {}}}],
+        sandbox_config={"runtime": "fake"},
+        sandbox_provider=provider,
+    )
+    provider.release()
+
+    assert backend.calls == 1
+    assert result["loop_exit_reason"] == "tool_call_retry_budget"
+    assert result["failure_category"] == "client_execution.tool_retry_budget_exhausted"
+    assert result["agent_trace"][0]["output"]["error"] == "command_missing"
+    exhausted = [event for event in result["observability_events"] if event["event"] == "agent_loop_exhausted"][0]
+    assert exhausted["payload"]["budget_kind"] == "total_invalid_tool_calls"
+    assert exhausted["payload"]["total_invalid_tool_calls"] == 1
 
 
 @pytest.mark.fast

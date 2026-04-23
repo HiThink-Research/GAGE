@@ -41,7 +41,7 @@ prompts:
       - `submit_patch_tool`: Run `git diff` and return the unified diff in stdout. Set `stage_untracked` if new files were created.
 
       WORKFLOW:
-      1. EXPLORE: Understand the codebase and the issue. Use `ls -R`, `grep`, or `find` to locate relevant files. Read them to understand the context.
+      1. EXPLORE: Understand the codebase and the issue. Prefer `rg --files`, `rg "symbol|function|class" path`, or `find <target_dir> -maxdepth 2` to locate relevant files. Read them to understand the context.
       2. REPRODUCE: Create a reproduction script (reproduce_issue.py) to confirm the bug. Run it to see it fail.
       3. FIX: Modify the source code to fix the bug.
       4. VERIFY: Run the reproduction script again to confirm it passes.
@@ -91,7 +91,10 @@ backends:
       base_url: https://api.openai.com/v1
       model: gpt-5.2
       require_api_key: true
-      max_retries: 6    
+      max_retries: 20
+      generation_parameters:
+        temperature: 0.0
+        max_new_tokens: 16384
 
 
 agent_runtimes:
@@ -162,6 +165,7 @@ role_adapters:
       lifecycle: per_sample
     params:
       max_turns: 100
+      max_total_invalid_tool_calls: 20
       # Tools are injected via the toolchain support step.
 
   - adapter_id: swebench_toolchain

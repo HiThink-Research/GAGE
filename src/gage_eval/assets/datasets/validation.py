@@ -37,6 +37,15 @@ class ValidationFailure:
     errors: tuple[Dict[str, Any], ...] = field(default_factory=tuple)
 
 
+class InputProjectionError(ValueError):
+    """Raised when required input projection fields are missing."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = str(code)
+        self.message = str(message)
+        super().__init__(f"{self.code}: {self.message}")
+
+
 class ValidationMode(str, Enum):
     OFF = "off"
     WARN = "warn"

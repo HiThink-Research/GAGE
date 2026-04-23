@@ -44,3 +44,23 @@ def test_tool_router_submit_patch_stages_untracked_files() -> None:
 
     assert result["status"] == "success"
     assert sandbox.exec_calls == ["git add -N -- .", "git diff"]
+
+
+@pytest.mark.fast
+def test_tool_router_submit_patch_final_answer_uses_full_diff_when_output_truncated() -> None:
+    diff_text = "diff --git a/foo b/foo\n" + ("+" * 64)
+    sandbox = FakeSandbox()
+    sandbox.exec = lambda command, timeout=30: ExecResult(  # type: ignore[method-assign]
+        exit_code=0,
+        stdout=diff_text,
+        stderr="",
+        duration_ms=1.0,
+    )
+    router = ToolRouter(output_budget_bytes=16, output_preview_bytes=6)
+    tool_call = {"function": {"name": "submit_patch_tool", "arguments": {}}}
+
+    result = router.execute(tool_call, sandbox, tool_registry={"submit_patch_tool": {"x-gage": {"final_answer_from": "stdout"}}})
+
+    assert result["status"] == "success"
+    assert result["output"]["truncated"] is True
+    assert result["final_answer"] == diff_text

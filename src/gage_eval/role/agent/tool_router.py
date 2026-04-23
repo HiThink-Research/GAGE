@@ -13,6 +13,27 @@ from gage_eval.mcp import McpClient
 from gage_eval.sandbox.base import BaseSandbox, serialize_exec_result
 
 
+class ToolArgumentError(RuntimeError):
+    """Structured invalid-tool-argument error."""
+
+    def __init__(self, argument: str, expected_type: str, actual_value: Any) -> None:
+        super().__init__("tool_argument_invalid")
+        self.argument = argument
+        self.expected_type = expected_type
+        self.actual_type = type(actual_value).__name__
+        self.actual_value = actual_value
+
+    def to_output(self) -> Dict[str, Any]:
+        return {
+            "error": "tool_argument_invalid",
+            "error_code": "tool_argument_invalid",
+            "argument": self.argument,
+            "expected_type": self.expected_type,
+            "actual_type": self.actual_type,
+            "message": f"argument '{self.argument}' must be {self.expected_type}",
+        }
+
+
 class ToolRouter:
     """Route tool calls to the sandbox execution entry."""
 
@@ -20,10 +41,14 @@ class ToolRouter:
         self,
         *,
         default_timeout_s: int = 30,
+        output_budget_bytes: int = 32_768,
+        output_preview_bytes: int = 512,
         mcp_clients: Optional[Dict[str, McpClient]] = None,
         human_gateway: Optional[HumanGateway] = None,
     ) -> None:
         self._default_timeout_s = max(1, int(default_timeout_s))
+        self._output_budget_bytes = max(1, int(output_budget_bytes))
+        self._output_preview_bytes = max(1, int(output_preview_bytes))
         self._mcp_clients = mcp_clients or {}
         self._human_gateway = human_gateway
 
@@ -53,11 +78,19 @@ class ToolRouter:
         status = "success"
         try:
             output = self._execute_tool(name, arguments, sandbox, tool_registry=tool_registry, tool_call=tool_call)
+        except ToolArgumentError as exc:
+            status = "failed"
+            output = exc.to_output()
         except Exception as exc:
             status = "error"
             output = {"error": str(exc)}
         latency_ms = (time.perf_counter() - start) * 1000.0
-        normalized_output = _normalize_output(output)
+        raw_output = _normalize_output(output)
+        normalized_output = _apply_output_budget(
+            raw_output,
+            total_budget_bytes=self._output_budget_bytes,
+            preview_bytes=self._output_preview_bytes,
+        )
         status = _resolve_tool_status(status, normalized_output)
         result = {
             "name": name,
@@ -66,7 +99,7 @@ class ToolRouter:
             "status": status,
             "latency_ms": latency_ms,
         }
-        final_answer = _resolve_final_answer(result["output"], metadata)
+        final_answer = _resolve_final_answer(raw_output, metadata)
         if status == "success" and final_answer:
             result["final_answer"] = final_answer
         if resolved_tool:
@@ -99,10 +132,12 @@ class ToolRouter:
             return client.call_tool(name, arguments)
         if sandbox is None:
             raise RuntimeError("sandbox_unavailable")
+        normalized = _normalize_tool_arguments(arguments)
+        _validate_builtin_tool_arguments(name, normalized)
         exec_tool = getattr(sandbox, "exec_tool", None)
         if callable(exec_tool):
-            return exec_tool(name, arguments)
-        normalized = _normalize_tool_arguments(arguments)
+            exec_arguments = normalized if _is_builtin_tool(name) else arguments
+            return exec_tool(name, exec_arguments)
         builtin = _execute_builtin_tool(name, normalized, sandbox, self._default_timeout_s)
         if builtin is not None:
             return builtin
@@ -301,7 +336,7 @@ def _execute_builtin_tool(
     default_timeout_s: int,
 ) -> Optional[Any]:
     if name == "run_shell":
-        command = _coerce_string(arguments, ("command", "cmd"))
+        command = _require_string_argument(arguments, ("command", "cmd"))
         if not command:
             raise RuntimeError("command_missing")
         timeout = _coerce_timeout(arguments.get("timeout_s") or arguments.get("timeout"), default_timeout_s)
@@ -390,6 +425,31 @@ def _first_present(arguments: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
     return None
 
 
+def _is_builtin_tool(name: str) -> bool:
+    return name in {"run_shell", "read_file", "write_file", "replace_in_file", "submit_patch_tool"}
+
+
+def _validate_builtin_tool_arguments(name: str, arguments: Dict[str, Any]) -> None:
+    if name == "run_shell":
+        _require_string_argument(arguments, ("command", "cmd"))
+
+
+def _require_string_argument(arguments: Dict[str, Any], keys: Tuple[str, ...]) -> str:
+    selected = ""
+    for key in keys:
+        if key not in arguments:
+            continue
+        value = arguments.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            if not selected:
+                selected = value
+            continue
+        raise ToolArgumentError(argument=key, expected_type="string", actual_value=value)
+    return selected
+
+
 def _coerce_string(arguments: Dict[str, Any], keys: Tuple[str, ...]) -> str:
     for key in keys:
         value = arguments.get(key)
@@ -402,6 +462,54 @@ def _decode_bytes(value: Any) -> str:
     if isinstance(value, (bytes, bytearray)):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+def _apply_output_budget(output: Dict[str, Any], *, total_budget_bytes: int, preview_bytes: int) -> Dict[str, Any]:
+    normalized = dict(output)
+    stdio_keys = [key for key in ("stdout", "stderr") if isinstance(normalized.get(key), str)]
+    if not stdio_keys:
+        return normalized
+    total_size = sum(len(str(normalized[key]).encode("utf-8")) for key in stdio_keys)
+    if total_size <= total_budget_bytes:
+        return normalized
+    per_field_budget = max(1, min(preview_bytes, total_budget_bytes // max(1, len(stdio_keys))))
+    head_preview: Dict[str, str] = {}
+    tail_preview: Dict[str, str] = {}
+    truncated_any = False
+    for key in stdio_keys:
+        value = str(normalized.get(key, ""))
+        raw_len = len(value.encode("utf-8"))
+        normalized[f"{key}_original_length"] = raw_len
+        head = _slice_utf8_prefix(value, per_field_budget)
+        tail = _slice_utf8_suffix(value, per_field_budget)
+        head_preview[key] = head
+        tail_preview[key] = tail
+        if raw_len > len(head.encode("utf-8")):
+            normalized[key] = head
+            truncated_any = True
+    if truncated_any:
+        normalized["truncated"] = True
+        normalized["head_preview"] = head_preview
+        normalized["tail_preview"] = tail_preview
+    return normalized
+
+
+def _slice_utf8_prefix(value: str, limit_bytes: int) -> str:
+    if limit_bytes <= 0:
+        return ""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit_bytes:
+        return value
+    return encoded[:limit_bytes].decode("utf-8", errors="ignore")
+
+
+def _slice_utf8_suffix(value: str, limit_bytes: int) -> str:
+    if limit_bytes <= 0:
+        return ""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit_bytes:
+        return value
+    return encoded[-limit_bytes:].decode("utf-8", errors="ignore")
 
 
 def _resolve_final_answer(output: Dict[str, Any], metadata: Dict[str, Any]) -> str:

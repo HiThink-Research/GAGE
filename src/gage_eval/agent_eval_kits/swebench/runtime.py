@@ -19,6 +19,9 @@ class SwebenchRuntime:
 
         runtime_context = build_swebench_runtime_context(sample)
         prompt_context = {
+            "instruction": runtime_context.get("instruction"),
+            "prompt_present": runtime_context.get("prompt_present"),
+            "prompt_source": runtime_context.get("prompt_source"),
             "repo": runtime_context.get("repo"),
             "base_commit": runtime_context.get("base_commit"),
             "test_command": runtime_context.get("test_command"),

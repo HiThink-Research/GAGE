@@ -227,6 +227,7 @@ def build_compiled_runtime_executor(
     prompt_renderer=None,
     max_turns: int = 8,
     tool_call_retry_budget: int = 3,
+    max_total_invalid_tool_calls: int = 20,
     pre_hooks=None,
     post_hooks=None,
     mcp_clients: dict[str, Any] | None = None,
@@ -252,6 +253,7 @@ def build_compiled_runtime_executor(
             prompt_renderer=prompt_renderer,
             max_turns=max_turns,
             tool_call_retry_budget=tool_call_retry_budget,
+            max_total_invalid_tool_calls=max_total_invalid_tool_calls,
             pre_hooks=pre_hooks,
             post_hooks=post_hooks,
         )
