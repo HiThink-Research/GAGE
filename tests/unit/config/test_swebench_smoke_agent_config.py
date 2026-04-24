@@ -12,6 +12,7 @@ SWE_BENCH_MAX_TURNS_CONFIGS = [
     "swebench_pro_smoke_agent.yaml",
     "swebench_pro_smoke_installed_client_codex.yaml",
     "swebench_pro_smoke_installed_client_ollama_local.yaml",
+    "swebench_pro_smoke_runtime_lmstudio_local.yaml",
     "swebench_pro_smoke_runtime.yaml",
     "swebench_pro_smoke_runtime_ollama_local.yaml",
 ]
@@ -20,6 +21,7 @@ SWE_BENCH_SMOKE_CONFIGS = [
     "swebench_pro_smoke_agent.yaml",
     "swebench_pro_smoke_installed_client_codex.yaml",
     "swebench_pro_smoke_installed_client_ollama_local.yaml",
+    "swebench_pro_smoke_runtime_lmstudio_local.yaml",
     "swebench_pro_smoke_runtime.yaml",
     "swebench_pro_smoke_runtime_ollama_local.yaml",
 ]
