@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -262,6 +263,23 @@ class DockerSandbox(SandboxOptionalMixin, BaseSandbox):
         if completed.returncode != 0:
             return False
         return completed.stdout.strip().lower() == "true"
+
+    def describe_runtime_state(self, timeout_s: float | None = None) -> Dict[str, Any]:
+        details = self._build_runtime_handle()
+        details["runtime"] = "docker"
+        details["running_flag"] = self._running
+        if not self._container_id:
+            return details
+        docker_bin = str(self._runtime_configs.get("docker_bin") or "docker")
+        if not _docker_available(docker_bin):
+            details["inspect_error"] = f"docker_binary_not_found:{docker_bin}"
+            return details
+        timeout = 2 if timeout_s is None else max(0.1, float(timeout_s))
+        details.update(_inspect_container_state(docker_bin, self._container_id, timeout))
+        logs_tail = _read_container_logs_tail(docker_bin, self._container_id, timeout)
+        if logs_tail:
+            details["logs_tail"] = logs_tail
+        return details
 
     def _resolve_container_name(self) -> str:
         explicit = (
@@ -791,3 +809,70 @@ def _decode_output(payload: Any) -> str:
     if isinstance(payload, bytes):
         return payload.decode("utf-8", errors="replace")
     return str(payload)
+
+
+def _inspect_container_state(docker_bin: str, container_id: str, timeout_s: float) -> Dict[str, Any]:
+    completed = subprocess.run(
+        [docker_bin, "inspect", container_id],
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return {
+            "inspect_error": (_decode_output(completed.stderr) or _decode_output(completed.stdout)).strip(),
+        }
+    try:
+        payload = json.loads(completed.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        return {"inspect_error": f"docker_inspect_invalid_json: {exc}"}
+    if not isinstance(payload, list) or not payload:
+        return {"inspect_error": "docker_inspect_empty_payload"}
+    record = payload[0] if isinstance(payload[0], dict) else {}
+    state = record.get("State") if isinstance(record.get("State"), dict) else {}
+    health = state.get("Health") if isinstance(state.get("Health"), dict) else {}
+    return {
+        "container_id": record.get("Id") or container_id,
+        "container_name": str(record.get("Name") or "").lstrip("/") or None,
+        "image": record.get("Config", {}).get("Image") if isinstance(record.get("Config"), dict) else None,
+        "log_path": record.get("LogPath"),
+        "restart_count": record.get("RestartCount"),
+        "state_status": state.get("Status"),
+        "state_running": state.get("Running"),
+        "state_paused": state.get("Paused"),
+        "state_restarting": state.get("Restarting"),
+        "state_oom_killed": state.get("OOMKilled"),
+        "state_dead": state.get("Dead"),
+        "state_pid": state.get("Pid"),
+        "state_exit_code": state.get("ExitCode"),
+        "state_error": state.get("Error") or None,
+        "state_started_at": state.get("StartedAt"),
+        "state_finished_at": state.get("FinishedAt"),
+        "health_status": health.get("Status"),
+        "health_failing_streak": health.get("FailingStreak"),
+    }
+
+
+def _read_container_logs_tail(
+    docker_bin: str,
+    container_id: str,
+    timeout_s: float,
+    *,
+    tail_lines: int = 50,
+    max_chars: int = 4000,
+) -> str:
+    completed = subprocess.run(
+        [docker_bin, "logs", "--tail", str(tail_lines), container_id],
+        capture_output=True,
+        text=False,
+        timeout=timeout_s,
+        check=False,
+    )
+    output = _decode_output(completed.stdout)
+    if not output.strip():
+        output = _decode_output(completed.stderr)
+    output = output.strip()
+    if len(output) > max_chars:
+        output = output[-max_chars:]
+    return output

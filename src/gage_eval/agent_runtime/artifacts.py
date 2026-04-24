@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from gage_eval.agent_runtime.contracts.failure import FailureEnvelope
+from gage_eval.agent_runtime.contracts.failure import FailureEnvelope, FailureEnvelopeError
 from gage_eval.agent_runtime.contracts.scheduler import SchedulerResult
 from gage_eval.agent_runtime.serialization import to_json_compatible
 from gage_eval.agent_runtime.session import AgentRuntimeSession
@@ -89,6 +89,11 @@ class RuntimeArtifactSink:
             "error_type": error.__class__.__name__,
             "error": str(error),
         }
+        details = getattr(error, "details", None)
+        if not isinstance(details, dict) and isinstance(error, FailureEnvelopeError):
+            details = error.failure.details
+        if isinstance(details, dict):
+            payload["details"] = details
         target.write_text(
             json.dumps(to_json_compatible(payload), ensure_ascii=False, indent=2),
             encoding="utf-8",

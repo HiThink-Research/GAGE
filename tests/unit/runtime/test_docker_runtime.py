@@ -107,3 +107,61 @@ def test_docker_start_requires_image_when_start_container_enabled() -> None:
 
     with pytest.raises(RuntimeError, match="docker_image_missing"):
         sandbox.start({"runtime": "docker", "runtime_configs": {"start_container": True}})
+
+
+@pytest.mark.fast
+def test_docker_describe_runtime_state_includes_exit_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspect_payload = """
+    [
+      {
+        "Id": "cid-123",
+        "Name": "/gage-sandbox-test",
+        "RestartCount": 0,
+        "LogPath": "/var/lib/docker/containers/cid-123/cid-123-json.log",
+        "Config": {"Image": "jefzda/sweap-images:test"},
+        "State": {
+          "Status": "exited",
+          "Running": false,
+          "Paused": false,
+          "Restarting": false,
+          "OOMKilled": true,
+          "Dead": false,
+          "Pid": 0,
+          "ExitCode": 137,
+          "Error": "oom-killed",
+          "StartedAt": "2026-04-23T15:00:00Z",
+          "FinishedAt": "2026-04-23T15:12:00Z"
+        }
+      }
+    ]
+    """.strip()
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if args[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(args, 0, stdout=inspect_payload, stderr="")
+        if args[:2] == ["docker", "logs"]:
+            return subprocess.CompletedProcess(args, 0, stdout=b"fatal: container exited", stderr=b"")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime.subprocess.run", fake_run)
+    monkeypatch.setattr("gage_eval.sandbox.docker_runtime._docker_available", lambda _bin: True)
+
+    sandbox = DockerSandbox(runtime_configs={"docker_bin": "docker"})
+    sandbox._container_id = "cid-123"
+    sandbox._container_name = "gage-sandbox-test"
+    sandbox._running = True
+
+    state = sandbox.describe_runtime_state()
+
+    assert calls[0][:2] == ["docker", "inspect"]
+    assert calls[1][:2] == ["docker", "logs"]
+    assert state["state_exit_code"] == 137
+    assert state["state_oom_killed"] is True
+    assert state["state_error"] == "oom-killed"
+    assert state["container_name"] == "gage-sandbox-test"
+    assert state["image"] == "jefzda/sweap-images:test"
+    assert state["logs_tail"] == "fatal: container exited"

@@ -28,6 +28,14 @@ _STRUCTURED_INVALID_TOOL_ERRORS = {
 _STRUCTURED_INVALID_TOOL_ERROR_PREFIXES = ("invalid_endpoint:",)
 
 
+class SandboxCrashedError(RuntimeError):
+    """Raised when the sample-scoped sandbox dies during agent execution."""
+
+    def __init__(self, *, details: Optional[Dict[str, Any]] = None) -> None:
+        self.details = details or {}
+        super().__init__(_build_sandbox_crash_summary(self.details))
+
+
 class AgentLoop:
     """Runs a tool-calling agent until it reaches a stop condition."""
 
@@ -116,9 +124,7 @@ class AgentLoop:
                 len(tools or []),
             )
             for turn in range(1, self._max_turns + 1):
-                if sandbox_handle and hasattr(sandbox_handle.sandbox, "is_alive"):
-                    if not sandbox_handle.sandbox.is_alive():
-                        raise RuntimeError("sandbox_crashed")
+                _raise_if_sandbox_crashed(sandbox_handle)
                 logger.debug(
                     "AgentLoop turn {} begin messages={} tools={}",
                     turn,
@@ -441,9 +447,7 @@ class AgentLoop:
                 len(tools or []),
             )
             for turn in range(1, self._max_turns + 1):
-                if sandbox_handle and hasattr(sandbox_handle.sandbox, "is_alive"):
-                    if not sandbox_handle.sandbox.is_alive():
-                        raise RuntimeError("sandbox_crashed")
+                _raise_if_sandbox_crashed(sandbox_handle)
                 logger.debug(
                     "AgentLoop turn {} begin messages={} tools={}",
                     turn,
@@ -1042,3 +1046,70 @@ def _resolve_trace_status(output: Dict[str, Any]) -> str:
     if output.get("error"):
         return "error"
     return "success"
+
+
+def _raise_if_sandbox_crashed(sandbox_handle: Optional[SandboxHandle]) -> None:
+    if sandbox_handle is None or not hasattr(sandbox_handle.sandbox, "is_alive"):
+        return
+    if sandbox_handle.sandbox.is_alive():
+        return
+    raise SandboxCrashedError(details=_collect_sandbox_crash_details(sandbox_handle))
+
+
+def _collect_sandbox_crash_details(sandbox_handle: SandboxHandle) -> Dict[str, Any]:
+    sandbox = sandbox_handle.sandbox
+    details: Dict[str, Any] = {
+        "sandbox_runtime": _resolve_sandbox_runtime_label(sandbox),
+        "runtime_handle": dict(sandbox_handle.runtime_handle or {}),
+        "runtime_state": {},
+    }
+    describe_runtime_state = getattr(sandbox, "describe_runtime_state", None)
+    if callable(describe_runtime_state):
+        try:
+            runtime_state = describe_runtime_state(timeout_s=2.0)
+        except Exception as exc:
+            runtime_state = {"describe_runtime_state_error": str(exc)}
+        if isinstance(runtime_state, dict):
+            details["runtime_state"] = runtime_state
+    return details
+
+
+def _resolve_sandbox_runtime_label(sandbox: Any) -> str:
+    config = getattr(sandbox, "_config", None)
+    if isinstance(config, dict):
+        runtime = config.get("runtime") or config.get("backend")
+        if runtime:
+            return str(runtime)
+    class_name = sandbox.__class__.__name__.lower()
+    if "docker" in class_name:
+        return "docker"
+    if "remote" in class_name:
+        return "remote"
+    if "local" in class_name:
+        return "local"
+    return "unknown"
+
+
+def _build_sandbox_crash_summary(details: Dict[str, Any]) -> str:
+    runtime_state = details.get("runtime_state")
+    if not isinstance(runtime_state, dict):
+        runtime_state = {}
+    parts: List[str] = []
+    exit_code = runtime_state.get("state_exit_code")
+    if exit_code is not None:
+        parts.append(f"exit_code={exit_code}")
+    oom_killed = runtime_state.get("state_oom_killed")
+    if oom_killed is not None:
+        parts.append(f"oom_killed={str(bool(oom_killed)).lower()}")
+    error = runtime_state.get("state_error")
+    if isinstance(error, str) and error.strip():
+        parts.append(f"error={error.strip()}")
+    if not parts:
+        status = runtime_state.get("state_status")
+        if status:
+            parts.append(f"status={status}")
+    if not parts:
+        runtime = details.get("sandbox_runtime")
+        if runtime:
+            parts.append(f"runtime={runtime}")
+    return "sandbox_crashed" + (f": {' '.join(parts)}" if parts else "")

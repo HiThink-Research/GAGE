@@ -7,7 +7,7 @@ from gage_eval.agent_runtime.contracts.failure import FailureEnvelopeError
 from gage_eval.agent_runtime.contracts.scheduler import SchedulerResult
 from gage_eval.agent_runtime.failure_mapper import FailureMapper
 from gage_eval.agent_runtime.session import AgentRuntimeSession
-from gage_eval.role.agent.loop import AgentLoop
+from gage_eval.role.agent.loop import AgentLoop, SandboxCrashedError
 
 
 class FrameworkLoopScheduler:
@@ -192,6 +192,28 @@ class FrameworkLoopScheduler:
                 metadata=payload.get("metadata") or sample.get("metadata") or {},
                 sample=sample,
             )
+        except SandboxCrashedError as exc:
+            raise FailureEnvelopeError(
+                self._failure_mapper.map_exception(
+                    exc,
+                    failure_domain="environment",
+                    failure_stage="run_scheduler",
+                    component_kind="runtime",
+                    component_id=f"{workflow_bundle.bundle_id}.sandbox",
+                    owner="runtime_sandbox_core",
+                    failure_code=(
+                        f"environment.run_scheduler."
+                        f"{workflow_bundle.bundle_id}.sandbox_crashed"
+                    ),
+                    first_bad_step=f"{workflow_bundle.bundle_id}.agent_loop.run",
+                    suspect_files=(
+                        "src/gage_eval/role/agent/loop.py",
+                        "src/gage_eval/sandbox/docker_runtime.py",
+                        "src/gage_eval/agent_runtime/schedulers/framework_loop.py",
+                    ),
+                    details=exc.details,
+                )
+            ) from exc
         except Exception as exc:
             raise FailureEnvelopeError(
                 self._failure_mapper.map_exception(

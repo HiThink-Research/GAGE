@@ -77,6 +77,11 @@ class SandboxOptionalMixin:
 
         return True
 
+    def describe_runtime_state(self, timeout_s: float | None = None) -> Dict[str, Any]:  # pragma: no cover - optional
+        """Return a JSON-friendly runtime state snapshot for diagnostics."""
+
+        return {}
+
     def renew(self, ttl_s: int | None = None) -> None:  # pragma: no cover - optional
         """Renew or extend the sandbox runtime."""
 
