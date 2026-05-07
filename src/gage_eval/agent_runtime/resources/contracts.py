@@ -11,7 +11,7 @@ class ResourceLease:
     """Represents one acquired runtime resource lease."""
 
     lease_id: str
-    resource_kind: Literal["docker", "local_process"]
+    resource_kind: Literal["docker", "local_process", "e2b"]
     profile_id: str
     lifecycle: Literal["per_sample", "per_task"]
     endpoints: dict[str, str] = field(default_factory=dict)

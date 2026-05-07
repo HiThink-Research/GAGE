@@ -1,0 +1,18 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_top_level_numeric_unsupported_key
+123: unsupported
+backends:
+  - backend_id: model
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+agent_backends:
+  - agent_backend_id: agent_backend
+    type: model_backend
+    backend_id: model
+role_adapters:
+  - adapter_id: agent
+    role_type: dut_agent
+    agent_backend_id: agent_backend

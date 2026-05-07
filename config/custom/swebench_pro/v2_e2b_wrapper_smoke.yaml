@@ -1,0 +1,44 @@
+kind: AgentEvalConfig
+metadata:
+  name: swebench-pro-v2-e2b-wrapper-smoke
+  description: AgentKit v2 SWE-bench Pro E2B wrapper smoke config.
+backends:
+  - backend_id: swebench_litellm
+    type: litellm
+    config:
+      model: ${SWEBENCH_AGENT_MODEL:-openai/qwen/qwen3.5-9b}
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      api_key: ${LMSTUDIO_API_KEY:-dummy}
+      streaming: false
+      timeout: 180
+      max_retries: 2
+      drop_params: true
+agents:
+  - agent_id: swebench_agent
+    scheduler:
+      type: framework_loop
+      backend_id: swebench_litellm
+      config:
+        max_turns: 40
+    config: {}
+benchmarks:
+  - benchmark_id: swebench_pro_smoke
+    kit_id: swebench
+    config:
+      split: test
+environments:
+  - env_id: swebench_e2b
+    provider: e2b
+    profile_id: swebench-e2b-wrapper
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/swebench/environment/e2b
+      capabilities:
+        supports_upload_download: true
+        supports_privileged_dind: false
+    provider_config:
+      template_id: gage-swebench-pro-wrapper
+dut_agents:
+  - dut_id: swebench_dut
+    agent_id: swebench_agent
+    env_id: swebench_e2b
+    benchmark_id: swebench_pro_smoke

@@ -1,0 +1,28 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_unmapped_fields
+backends:
+  - backend_id: model
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+agent_backends:
+  - agent_backend_id: agent_backend
+    type: model_backend
+    backend_id: model
+role_adapters:
+  - adapter_id: agent
+    role_type: dut_agent
+    agent_backend_id: agent_backend
+datasets:
+  - dataset_id: old_dataset
+    loader: jsonl
+    params:
+      path: tests/data/samples/demo.jsonl
+tasks:
+  - task_id: old_task
+    dataset_id: old_dataset
+    steps:
+      - step: inference
+        adapter_id: agent

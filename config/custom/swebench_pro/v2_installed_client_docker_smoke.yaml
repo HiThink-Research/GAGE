@@ -1,0 +1,44 @@
+kind: AgentEvalConfig
+metadata:
+  name: swebench-pro-v2-installed-client-docker-smoke
+  description: AgentKit v2 SWE-bench Pro installed-client Docker smoke config.
+backends: []
+agents:
+  - agent_id: swebench_installed_client
+    scheduler:
+      type: installed_client
+      config:
+        client:
+          command:
+            - codex
+            - run
+          timeout_s: 900
+    config: {}
+benchmarks:
+  - benchmark_id: swebench_pro_smoke
+    kit_id: swebench
+    config:
+      split: test
+environments:
+  - env_id: swebench_docker
+    provider: docker
+    profile_id: swebench_runtime
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/swebench/environment/docker
+    provider_config:
+      network_policy: block
+      docker_platform: linux/amd64
+      entrypoint: []
+      keepalive_command:
+        - sleep
+        - infinity
+      workdir: /workspace
+      exec_workdir: /app
+    resources:
+      cpu: 4
+      memory_gb: 8.0
+dut_agents:
+  - dut_id: swebench_installed_client_dut
+    agent_id: swebench_installed_client
+    env_id: swebench_docker
+    benchmark_id: swebench_pro_smoke

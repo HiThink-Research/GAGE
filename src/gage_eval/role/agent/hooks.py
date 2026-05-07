@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequence
 
 _HOOK_REGISTRY: Dict[str, Callable[..., AgentLoopHook]] = {}
-_BUILTIN_HOOK_MODULES = ("gage_eval.sandbox.integrations.appworld.hooks",)
+_BUILTIN_HOOK_MODULES = ("gage_eval.agent_eval_kits.appworld.hooks",)
 _BUILTIN_HOOKS_LOADED = False
 
 

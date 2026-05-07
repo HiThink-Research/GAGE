@@ -1,0 +1,53 @@
+kind: AgentEvalConfig
+metadata:
+  name: swebench-pro-v2-local-docker-smoke
+  description: AgentKit v2 SWE-bench Pro local Docker smoke config.
+backends:
+  - backend_id: swebench_litellm
+    type: litellm
+    config:
+      model: ${SWEBENCH_AGENT_MODEL:-openai/qwen/qwen3.5-9b}
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      api_key: ${LMSTUDIO_API_KEY:-dummy}
+      streaming: false
+      timeout: 180
+      max_retries: 2
+      drop_params: true
+agents:
+  - agent_id: swebench_agent
+    scheduler:
+      type: framework_loop
+      backend_id: swebench_litellm
+      config:
+        max_turns: 40
+    config: {}
+benchmarks:
+  - benchmark_id: swebench_pro_smoke
+    kit_id: swebench
+    config:
+      split: test
+environments:
+  - env_id: swebench_docker
+    provider: docker
+    profile_id: swebench_runtime
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/swebench/environment/docker
+    provider_config:
+      network_policy: block
+      docker_platform: linux/amd64
+      entrypoint: []
+      keepalive_command:
+        - sleep
+        - infinity
+      workdir: /workspace
+      exec_workdir: /app
+    resources:
+      cpu: 4
+      memory_gb: 8.0
+dut_agents:
+  - dut_id: swebench_dut
+    agent_id: swebench_agent
+    env_id: swebench_docker
+    benchmark_id: swebench_pro_smoke
+    trial_policy:
+      trials: 2

@@ -61,7 +61,7 @@ def _prepare_environment(*, session, sample, sandbox_provider=None):
 
 
 def _capture_environment_artifacts(*, runtime_entry, session, sample, scheduler_output, sandbox_provider=None):
-    saved = runtime_entry.save(sample=sample, sandbox_provider=sandbox_provider)
+    saved = runtime_entry.save(sample=sample, session=session, sandbox_provider=sandbox_provider)
     artifact_paths = dict(scheduler_output.get("artifact_paths") or {})
     artifact_paths.update(
         persist_appworld_artifacts(

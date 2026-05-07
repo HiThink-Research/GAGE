@@ -1,0 +1,32 @@
+kind: AgentEvalConfig
+metadata:
+  name: tau2-local-minimal
+backends:
+  - backend_id: tau2_model
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+      api_key: ${ENV.MODEL_API_KEY}
+agents:
+  - agent_id: tau2_agent
+    scheduler:
+      type: framework_loop
+      backend_id: tau2_model
+    config:
+      temperature: 0
+benchmarks:
+  - benchmark_id: tau2_telecom
+    kit_id: tau2
+    config:
+      domain: telecom
+environments:
+  - env_id: local_tau2
+    provider: local_process
+    profile_id: tau2_local
+    profile:
+      asset_dir: tests/fixtures/agentkit_v2/tau2
+dut_agents:
+  - dut_id: tau2_dut
+    agent_id: tau2_agent
+    env_id: local_tau2
+    benchmark_id: tau2_telecom

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from gage_eval.role.judge.appworld_evaluate import _build_appworld_diagnostics
+from gage_eval.agent_eval_kits.appworld.judge.scoring import build_appworld_diagnostics
 
 
 def test_appworld_diagnostics_surface_failed_assertions() -> None:
-    diagnostic_reason, diagnostic_details = _build_appworld_diagnostics(
+    diagnostic_reason, diagnostic_details = build_appworld_diagnostics(
         {
             "task_id": "task-1",
             "tests": {

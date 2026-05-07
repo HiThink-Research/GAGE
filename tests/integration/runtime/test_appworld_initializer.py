@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from gage_eval.sandbox.integrations.appworld.initializer import AppWorldInitializer
+from gage_eval.agent_eval_kits.appworld.initializer import AppWorldInitializer
 
 
 class StubInitializer:

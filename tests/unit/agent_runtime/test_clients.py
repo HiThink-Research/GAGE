@@ -4,7 +4,6 @@ import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -20,9 +19,9 @@ from gage_eval.agent_runtime.clients import (
     StructuredClientSurfaceAdapter,
     build_client_surface,
 )
+from gage_eval.environment.lease import EnvironmentLease
 from gage_eval.role.adapters.base import RoleAdapterState
 from gage_eval.role.adapters.dut_agent import DUTAgentAdapter
-from gage_eval.sandbox.provider import SandboxProvider
 
 
 class _StructuredClient:
@@ -52,6 +51,32 @@ class _BuiltinInstalledClient(_StructuredClient):
     pass
 
 
+class _ClientTestEnvironment:
+    env_id = "cid-terminal"
+    name = "terminal-runtime"
+    provider = "docker"
+    capabilities = {}
+    metadata = {}
+
+    async def stop(self, *, delete: bool = True) -> None:
+        del delete
+
+
+def _docker_resource_plan() -> dict:
+    return {
+        "resource_kind": "docker",
+        "environment_profile": {
+            "profile_id": "terminal_bench_runtime",
+            "provider": "docker",
+            "config": {},
+        },
+        "provider_config": {},
+        "resources": {},
+        "startup_env": {},
+        "lifecycle": "per_sample",
+    }
+
+
 def test_build_client_surface_prefers_structured_client_contract() -> None:
     surface = build_client_surface(_StructuredClient())
 
@@ -72,7 +97,7 @@ def test_installed_client_runner_uses_setup_then_run(tmp_path, monkeypatch) -> N
         lambda client_id: builtin_client,
     )
     plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
-    plan = replace(plan, resource_plan={"resource_kind": "docker", "sandbox_config": {}})
+    plan = replace(plan, resource_plan={})
     client = _StructuredClient()
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
@@ -117,17 +142,18 @@ def test_installed_client_runner_uses_setup_then_run(tmp_path, monkeypatch) -> N
     assert "sandbox_provider" not in request
     assert request["metadata"]["sample_id"] == "terminal-1"
     assert environment["prepared"] is True
-    runtime_metadata = json.loads(
+    sample_record = json.loads(
         Path(result["runtime_session"]["runtime_metadata_path"]).read_text(encoding="utf-8")
     )
-    assert runtime_metadata["client_id"] == "codex"
-    assert runtime_metadata["scheduler_state"]["client_surface"] == "StructuredClientSurfaceAdapter"
+    assert sample_record["dut_id"] == "terminal_bench_installed_client"
+    assert sample_record["scheduler_result"]["scheduler_type"] == "installed_client"
+    assert sample_record["trial_results"][0]["status"] == "completed"
 
 
 def test_legacy_client_surface_receives_flattened_request_payload(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
     plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
-    plan = replace(plan, resource_plan={"resource_kind": "docker", "sandbox_config": {}})
+    plan = replace(plan, resource_plan={})
     client = _LegacyInvokeClient()
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
@@ -169,14 +195,14 @@ def test_legacy_client_surface_receives_flattened_request_payload(tmp_path, monk
     assert payload["session"].client_id == "codex"
 
 
-def test_runtime_executor_passes_sample_sandbox_to_resource_manager(tmp_path, monkeypatch) -> None:
+def test_runtime_executor_passes_sample_environment_overrides_to_resource_manager(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
     monkeypatch.setattr(
         "gage_eval.agent_runtime.clients.builder.instantiate_builtin_client",
         lambda client_id: _BuiltinInstalledClient(),
     )
     plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
-    plan = replace(plan, resource_plan={"resource_kind": "docker", "sandbox_config": {}})
+    plan = replace(plan, resource_plan=_docker_resource_plan())
     client = _StructuredClient()
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
@@ -189,8 +215,6 @@ def test_runtime_executor_passes_sample_sandbox_to_resource_manager(tmp_path, mo
         captured["sample"] = dict(sample or {})
         return RuntimeLeaseBinding(
             resource_lease=None,
-            sandbox_provider=None,
-            sandbox_handle=None,
         )
 
     executor.resource_manager.acquire = fake_acquire
@@ -202,11 +226,7 @@ def test_runtime_executor_passes_sample_sandbox_to_resource_manager(tmp_path, mo
                 "instruction": "say done",
                 "expected_answer": "done",
                 "messages": [{"role": "user", "content": "say done"}],
-                "sandbox": {
-                    "sandbox_id": "terminal_bench_runtime",
-                    "runtime": "docker",
-                    "image": "fake-image:1",
-                },
+                "metadata": {"environment_overrides": {"image_uri": "fake-image:1"}},
             },
             payload={
                 "sample": {
@@ -224,10 +244,10 @@ def test_runtime_executor_passes_sample_sandbox_to_resource_manager(tmp_path, mo
         )
     )
 
-    assert captured["sample"]["sandbox"]["image"] == "fake-image:1"
+    assert captured["sample"]["metadata"]["environment_overrides"]["image_uri"] == "fake-image:1"
 
 
-def test_runtime_executor_reuses_payload_sandbox_provider_without_resource_reacquire(
+def test_runtime_executor_reuses_payload_environment_lease_without_resource_reacquire(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -237,7 +257,7 @@ def test_runtime_executor_reuses_payload_sandbox_provider_without_resource_reacq
         lambda client_id: _BuiltinInstalledClient(),
     )
     plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
-    plan = replace(plan, resource_plan={"resource_kind": "docker", "sandbox_config": {}})
+    plan = replace(plan, resource_plan=_docker_resource_plan())
     client = _StructuredClient()
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
@@ -249,12 +269,14 @@ def test_runtime_executor_reuses_payload_sandbox_provider_without_resource_reacq
     manager.acquire = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected acquire"))  # type: ignore[method-assign]
     manager.release = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected release"))  # type: ignore[method-assign]
 
-    provider = SandboxProvider.__new__(SandboxProvider)
-    provider._sandbox_config = {"sandbox_id": "terminal_bench_runtime", "runtime": "docker"}  # type: ignore[attr-defined]
-    provider._handle = SimpleNamespace(  # type: ignore[attr-defined]
-        runtime_handle={"container_id": "cid-terminal", "container_name": "terminal-runtime"}
+    lease = EnvironmentLease(
+        lease_id="env-lease-terminal",
+        environment=_ClientTestEnvironment(),
+        provider="docker",
+        profile_id="terminal_bench_runtime",
+        lifecycle="per_sample",
+        exclusive=True,
     )
-    provider.get_handle = lambda: provider._handle  # type: ignore[attr-defined]
 
     result = asyncio.run(
         executor.aexecute(
@@ -271,7 +293,7 @@ def test_runtime_executor_reuses_payload_sandbox_provider_without_resource_reacq
                     "expected_answer": "done",
                     "messages": [{"role": "user", "content": "say done"}],
                 },
-                "sandbox_provider": provider,
+                "environment_lease": lease,
                 "execution_context": {
                     "run_id": "run-terminal",
                     "task_id": "task-terminal",
@@ -281,10 +303,11 @@ def test_runtime_executor_reuses_payload_sandbox_provider_without_resource_reacq
         )
     )
 
-    runtime_metadata = json.loads(
+    sample_record = json.loads(
         Path(result["runtime_session"]["runtime_metadata_path"]).read_text(encoding="utf-8")
     )
-    assert runtime_metadata["resource_lease"]["handle_ref"]["container_name"] == "terminal-runtime"
+    descriptor = sample_record["environment_descriptor"]["handle_ref"]["environment_descriptor"]
+    assert descriptor["name"] == "terminal-runtime"
 
 
 def test_compile_runtime_plan_rejects_installed_client_without_client_id(monkeypatch) -> None:
@@ -312,7 +335,7 @@ def test_runtime_client_source_of_truth_does_not_reintroduce_artifacts_clients()
 
 def test_build_executor_resolves_builtin_codex_client_without_override() -> None:
     plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
-    plan = replace(plan, resource_plan={"resource_kind": "docker", "sandbox_config": {}})
+    plan = replace(plan, resource_plan=_docker_resource_plan())
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
         agent_backend=None,
@@ -327,7 +350,7 @@ def test_build_executor_rejects_unknown_installed_client_id() -> None:
     plan = replace(
         plan,
         runtime_spec=replace(plan.runtime_spec, client_id="unknown_client"),
-        resource_plan={"resource_kind": "docker", "sandbox_config": {}},
+        resource_plan=_docker_resource_plan(),
     )
 
     with pytest.raises(ValueError) as exc_info:

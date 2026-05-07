@@ -21,13 +21,6 @@ backends:
       require_api_key: true
       max_retries: 6
 
-agent_backends:
-  - agent_backend_id: agent_model_main
-    type: model_backend
-    backend_id: gpt52_openai_http
-    config:
-      force_tool_choice: first_turn
-
 sandbox_profiles:
   - sandbox_id: appworld_local
     runtime: docker
@@ -87,7 +80,7 @@ role_adapters:
 
   - adapter_id: dut_agent_main
     role_type: dut_agent
-    agent_backend_id: agent_model_main
+    backend_id: gpt52_openai_http
     agent_runtime_id: appworld_framework_loop
     sandbox:
       sandbox_id: appworld_local

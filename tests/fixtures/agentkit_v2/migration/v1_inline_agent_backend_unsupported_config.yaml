@@ -1,0 +1,13 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_inline_agent_backend_unsupported_config
+agent_backends:
+  - agent_backend_id: agent_backend
+    type: model_backend
+    config:
+      force_tool_choice: first_turn
+role_adapters:
+  - adapter_id: agent
+    role_type: dut_agent
+    agent_backend_id: agent_backend

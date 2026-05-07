@@ -146,3 +146,32 @@ def test_phase1_installed_client_local_configs_do_not_declare_agent_backends(
     adapter = next(spec for spec in config.role_adapters if spec.adapter_id == adapter_id)
     assert adapter.agent_backend_id is None
     assert not config.agent_backends
+
+
+def test_runtime_custom_configs_do_not_use_legacy_agent_backends() -> None:
+    offenders: list[str] = []
+    for config_path in sorted((REPO_ROOT / "config/custom").rglob("*.yaml")):
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        role_adapters = payload.get("role_adapters") if isinstance(payload.get("role_adapters"), list) else []
+        runtime_adapters = [
+            adapter
+            for adapter in role_adapters
+            if isinstance(adapter, dict) and adapter.get("agent_runtime_id")
+        ]
+        if not runtime_adapters:
+            continue
+        if payload.get("agent_backends"):
+            offenders.append(f"{config_path.relative_to(REPO_ROOT)} declares agent_backends")
+        for adapter in runtime_adapters:
+            adapter_id = adapter.get("adapter_id")
+            agent_runtime_id = str(adapter.get("agent_runtime_id") or "")
+            if adapter.get("agent_backend_id"):
+                offenders.append(
+                    f"{config_path.relative_to(REPO_ROOT)}:{adapter_id} declares agent_backend_id"
+                )
+            if agent_runtime_id.endswith("_framework_loop") and not adapter.get("backend_id"):
+                offenders.append(
+                    f"{config_path.relative_to(REPO_ROOT)}:{adapter_id} missing backend_id"
+                )
+
+    assert offenders == []

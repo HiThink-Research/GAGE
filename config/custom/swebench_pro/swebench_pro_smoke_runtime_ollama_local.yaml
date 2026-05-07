@@ -29,11 +29,6 @@ backends:
       require_api_key: false
       max_retries: 6
 
-agent_backends:
-  - agent_backend_id: swebench_agent_main
-    type: model_backend
-    backend_id: ollama_openai_http
-
 sandbox_profiles:
   - sandbox_id: swebench_runtime
     runtime: docker
@@ -54,7 +49,7 @@ sandbox_profiles:
 role_adapters:
   - adapter_id: swebench_dut_agent
     role_type: dut_agent
-    agent_backend_id: swebench_agent_main
+    backend_id: ollama_openai_http
     agent_runtime_id: swebench_framework_loop
     sandbox:
       sandbox_id: swebench_runtime

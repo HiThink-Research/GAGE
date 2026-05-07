@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -34,13 +34,21 @@ def to_json_compatible(value: Any) -> Any:
         }
     if isinstance(value, (list, tuple, set, frozenset)):
         return [to_json_compatible(item) for item in value]
-    if is_dataclass(value):
-        return to_json_compatible(asdict(value))
     if isinstance(value, BaseException):
         return {
             "object_type": f"{value.__class__.__module__}.{value.__class__.__qualname__}",
             "message": str(value),
         }
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return to_json_compatible(model_dump(mode="json"))
+        except TypeError:
+            try:
+                return to_json_compatible(model_dump())
+            except TypeError:
+                pass
 
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
@@ -48,6 +56,19 @@ def to_json_compatible(value: Any) -> Any:
             return to_json_compatible(to_dict())
         except TypeError:
             pass
+
+    to_descriptor = getattr(value, "to_descriptor", None)
+    if callable(to_descriptor):
+        try:
+            return to_json_compatible(to_descriptor())
+        except TypeError:
+            pass
+
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: to_json_compatible(getattr(value, field.name))
+            for field in fields(value)
+        }
 
     return {
         "object_type": f"{value.__class__.__module__}.{value.__class__.__qualname__}",

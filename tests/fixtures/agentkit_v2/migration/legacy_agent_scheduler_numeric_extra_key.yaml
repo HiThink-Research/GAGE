@@ -1,0 +1,9 @@
+kind: AgentEvalConfig
+metadata:
+  name: legacy_agent_scheduler_numeric_extra_key
+agents:
+  - agent_id: agent
+    scheduler:
+      type: framework_loop
+      model: gpt-4.1-mini
+      123: unsupported

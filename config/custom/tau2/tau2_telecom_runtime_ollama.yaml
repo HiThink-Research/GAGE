@@ -44,13 +44,6 @@ backends:
       generation_parameters:
         temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
 
-agent_backends:
-  - agent_backend_id: tau2_agent_backend
-    type: model_backend
-    backend_id: tau2_ollama_http
-    config:
-      force_tool_choice: first_turn
-
 sandbox_profiles:
   - sandbox_id: tau2_local
     runtime: tau2
@@ -68,7 +61,7 @@ sandbox_profiles:
 role_adapters:
   - adapter_id: tau2_agent
     role_type: dut_agent
-    agent_backend_id: tau2_agent_backend
+    backend_id: tau2_ollama_http
     agent_runtime_id: tau2_framework_loop
     prompt_id: dut/tau2@v1
     sandbox:

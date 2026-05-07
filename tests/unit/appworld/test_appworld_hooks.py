@@ -8,14 +8,6 @@ import pytest
 from gage_eval.agent_eval_kits.appworld.runtime import AppWorldRuntime
 
 
-class _StubProvider:
-    def __init__(self, runtime_handle: dict[str, Any]) -> None:
-        self._handle = SimpleNamespace(runtime_handle=runtime_handle, sandbox=None)
-
-    def get_handle(self):
-        return self._handle
-
-
 @pytest.mark.fast
 def test_appworld_runtime_builds_initialize_payload() -> None:
     calls: list[tuple[str, str, dict[str, Any], int]] = []
@@ -39,13 +31,12 @@ def test_appworld_runtime_builds_initialize_payload() -> None:
             }
         }
     }
-    provider = _StubProvider({"env_endpoint": "http://env", "apis_endpoint": "http://apis"})
+    runtime_handle = {"env_endpoint": "http://env", "apis_endpoint": "http://apis"}
 
     result = runtime.bootstrap(
         session=SimpleNamespace(),
         sample=sample,
-        payload={},
-        sandbox_provider=provider,
+        payload={"runtime_handle": runtime_handle},
     )
 
     assert result["benchmark_state"]["initialize"]["task_id"] == "task-1"
@@ -59,7 +50,9 @@ def test_appworld_runtime_builds_initialize_payload() -> None:
 @pytest.mark.fast
 def test_appworld_runtime_save_requires_task_id() -> None:
     runtime = AppWorldRuntime(requester=lambda *_: {"output": {}})
-    provider = _StubProvider({"env_endpoint": "http://env"})
 
     with pytest.raises(ValueError, match="appworld.task_id is required for save"):
-        runtime.save(sample={"metadata": {"appworld": {}}}, sandbox_provider=provider)
+        runtime.save(
+            sample={"metadata": {"appworld": {}}},
+            payload={"runtime_handle": {"env_endpoint": "http://env"}},
+        )

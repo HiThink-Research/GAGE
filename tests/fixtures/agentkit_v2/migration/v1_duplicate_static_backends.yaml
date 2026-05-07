@@ -1,0 +1,21 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_duplicate_static_backends
+backends:
+  - backend_id: model
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+  - backend_id: model
+    type: litellm
+    config:
+      model: gpt-4.1
+agent_backends:
+  - agent_backend_id: agent_backend
+    type: model_backend
+    backend_id: model
+role_adapters:
+  - adapter_id: agent
+    role_type: dut_agent
+    agent_backend_id: agent_backend
