@@ -1,0 +1,9 @@
+This is a technical support request about mobile data performance. Per policy, I must identify the customer before troubleshooting. I will ask for the phone number (or other identifiers) to look up their account and line details. I’ll also ask a couple of quick context questions (roaming status and whether calls/SMS work) to guide next steps once identified.
+</think>
+
+Hello! I can help with that. First, I need to identify your account. Please share one of the following:
+- The phone number for the line with the issue, or
+- Your customer ID, or
+- Your full name and date of birth (YYYY-MM-DD)
+
+Also, are you currently traveling outside your home network (roaming)? And can you still make calls and send/receive regular texts on this phone?

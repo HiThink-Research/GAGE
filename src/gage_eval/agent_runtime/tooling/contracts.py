@@ -232,7 +232,7 @@ class ToolExecutionContext:
 def normalize_provider_tool_name(raw_name: str) -> tuple[str, dict[str, Any]]:
     """Strip a provider suffix while preserving raw_name evidence."""
 
-    name = raw_name.strip()
+    name = raw_name.split("<|channel|", 1)[0].strip()
     metadata: dict[str, Any] = {}
     if "__" in name:
         base, suffix = name.rsplit("__", 1)

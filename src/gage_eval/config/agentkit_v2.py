@@ -577,6 +577,22 @@ def _role_adapter_from_v2_binding(
         params["max_turns"] = scheduler_config["max_turns"]
     if "cost_limit_usd" in scheduler_config:
         params["cost_limit_usd"] = scheduler_config["cost_limit_usd"]
+    for key in (
+        "max_observation_chars",
+        "tool_call_retry_budget",
+        "tool_choice",
+        "force_tool_choice",
+        "tool_dialect",
+        "tooling_dialect",
+        "tool_call_format",
+        "tool_format",
+        "plain_text_response_tool",
+        "plain_text_wrapper_tool",
+        "plain_text_response_formats",
+        "plain_text_wrapper_formats",
+    ):
+        if key in scheduler_config:
+            params[key] = scheduler_config[key]
     if params:
         role_adapter["params"] = params
     return role_adapter

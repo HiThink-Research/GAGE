@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from gage_eval.agent_eval_kits.tau2.tools import build_tool_registry as build_tau2_tool_registry
 from gage_eval.agent_eval_kits.tau2.artifacts import persist_tau2_artifacts
 from gage_eval.agent_eval_kits.tau2.config_schema import (
     Tau2KitConfig,
@@ -20,7 +22,18 @@ from gage_eval.agent_eval_kits.tau2.local_runtime import (
     _normalize_user_tool_name,
     parse_terminal_signal,
 )
+from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
+from gage_eval.agent_runtime.resources.contracts import ResourceLease
+from gage_eval.agent_runtime.schedulers.framework_loop import FrameworkLoopScheduler
+from gage_eval.agent_runtime.session import AgentRuntimeSession
+from gage_eval.agent_runtime.tooling.contracts import ToolSchemaIR
+from gage_eval.agent_runtime.tooling.provider_adapters import Tau2ToolDialectParser
+from gage_eval.agent_runtime.tooling.registry import RuntimeToolRegistry
+from gage_eval.agent_runtime.tooling.router import ToolRouter
 from tests._support.stubs.tau2_stub import install_tau2_stub
+
+
+FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "tau2" / "runtime_samples"
 
 
 def _sample(domain: str = "airline") -> dict:
@@ -81,7 +94,209 @@ def _session(tmp_path: Path) -> SimpleNamespace:
     )
 
 
-def test_tau2_synthetic_prefix_len_not_visible_to_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _fixture_text(name: str) -> str:
+    return (FIXTURE_DIR / name).read_text(encoding="utf-8")
+
+
+def _fixture_json(name: str):
+    return json.loads(_fixture_text(name))
+
+
+class _StaticResponseBackend:
+    def __init__(self, response):
+        self.response = response
+        self.payloads: list[dict] = []
+
+    async def ainvoke(self, payload: dict) -> dict:
+        self.payloads.append(dict(payload))
+        return self.response() if callable(self.response) else self.response
+
+
+class _Tau2RespondLease:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def exec_tool(self, name: str, arguments: dict) -> dict:
+        self.calls.append((name, dict(arguments)))
+        if name == "respond":
+            return {"final_answer": arguments.get("message"), "user_message": arguments.get("message")}
+        return {"ok": True}
+
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        return self.exec_tool(name, arguments)
+
+
+def _framework_session() -> AgentRuntimeSession:
+    return AgentRuntimeSession(
+        session_id="session-1",
+        run_id="run-1",
+        task_id="task-1",
+        sample_id="sample-1",
+        benchmark_kit_id="tau2",
+        scheduler_type="framework_loop",
+        resource_lease=ResourceLease(
+            lease_id="lease-1",
+            resource_kind="local_process",
+            profile_id="tau2",
+            lifecycle="per_sample",
+        ),
+    )
+
+
+def _framework_bundle() -> SchedulerWorkflowBundle:
+    return SchedulerWorkflowBundle(
+        bundle_id="tau2.framework_loop",
+        benchmark_kit_id="tau2",
+        scheduler_type="framework_loop",
+    )
+
+
+def _run_tau2_scheduler(*, backend, registry: RuntimeToolRegistry, lease=None, max_turns: int = 3, payload=None):
+    scheduler = FrameworkLoopScheduler(
+        backend=backend,
+        tool_router=ToolRouter(registry),
+        tool_registry=registry,
+        max_turns=max_turns,
+    )
+    return asyncio.run(
+        scheduler.arun(
+            session=_framework_session(),
+            sample={"messages": [{"role": "user", "content": "hi"}]},
+            payload={"environment_lease": lease or _Tau2RespondLease(), **(payload or {})},
+            workflow_bundle=_framework_bundle(),
+            sandbox_provider=None,
+        )
+    )
+
+
+def test_real_0421_harmony_xml_response_parses_as_respond_tool_call() -> None:
+    calls = Tau2ToolDialectParser().parse(
+        _fixture_text("0421_tau_harmony_xml_respond_response.txt"),
+        dialect="auto",
+        turn_index=1,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].name == "respond"
+    assert "phone number" in calls[0].arguments()["message"].lower()
+
+
+def test_real_0421_think_tail_bare_json_response_parses_as_respond_tool_call() -> None:
+    calls = Tau2ToolDialectParser().parse(
+        _fixture_text("0421_tau2_think_tail_bare_json_respond_response.txt"),
+        dialect="auto",
+        turn_index=1,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].name == "respond"
+    assert "verify your account" in calls[0].arguments()["message"].lower()
+
+
+def test_real_0421_gemma4_bare_call_preserves_full_message() -> None:
+    calls = Tau2ToolDialectParser().parse(
+        _fixture_text("0421_gemma4_airline_bare_call_respond_response.txt"),
+        dialect="gemma",
+        turn_index=1,
+    )
+
+    assert len(calls) == 1
+    message = calls[0].arguments()["message"]
+    assert "reservation EHGLP3" in message
+    assert "reason for the cancellation" in message
+
+
+def test_real_0421_harmony_xml_response_reaches_tool_router_without_retry() -> None:
+    text = _fixture_text("0421_tau_harmony_xml_respond_response.txt")
+    lease = _Tau2RespondLease()
+    result = _run_tau2_scheduler(
+        backend=_StaticResponseBackend({"answer": text}),
+        registry=build_tau2_tool_registry(),
+        lease=lease,
+        max_turns=2,
+    )
+
+    assert result.status == "completed"
+    assert lease.calls[0][0] == "respond"
+    assert "phone number" in lease.calls[0][1]["message"].lower()
+    assert not any(step["name"] == "missing_required_tool_call" for step in result.agent_output["agent_trace"])
+
+
+def test_real_0421_qwen_plain_text_response_reaches_respond_with_think_tail_stripped() -> None:
+    text = _fixture_text("0421_qwen_gpt_airline_plain_text_response.txt")
+    lease = _Tau2RespondLease()
+    result = _run_tau2_scheduler(
+        backend=_StaticResponseBackend({"answer": text}),
+        registry=build_tau2_tool_registry(),
+        lease=lease,
+        max_turns=2,
+    )
+
+    assert result.status == "completed"
+    assert lease.calls[0][0] == "respond"
+    message = lease.calls[0][1]["message"]
+    assert "</think>" not in message
+    assert "reason for cancellation" in message.lower()
+
+
+def test_real_0421_simulation_terminated_failed_tool_result_stops_loop() -> None:
+    trace_step = _fixture_json("0421_qwen_simulation_terminated_tool_trace.json")
+    registry = RuntimeToolRegistry()
+    registry.register_environment_tool(
+        ToolSchemaIR(
+            name=trace_step["name"],
+            description="fixture tool",
+            input_schema={"type": "object", "properties": {"product_id": {"type": "integer"}}},
+            raw_schema={"type": "function", "function": {"name": trace_step["name"], "parameters": {}}},
+        )
+    )
+    lease = _Tau2RespondLease()
+    lease.exec_tool = lambda name, arguments: dict(trace_step["output"])
+    result = _run_tau2_scheduler(
+        backend=_StaticResponseBackend(
+            {
+                "tool_calls": [
+                    {
+                        "id": "call-real-0421",
+                        "type": "function",
+                        "function": {"name": trace_step["name"], "arguments": trace_step["input"]},
+                    }
+                ]
+            }
+        ),
+        registry=registry,
+        lease=lease,
+        max_turns=2,
+        payload={"required_tool": None},
+    )
+
+    assert result.status == "completed"
+    assert result.agent_output["answer"] == "simulation_terminated"
+
+
+def test_real_0421_terminal_signals_parse_from_user_simulator_outputs() -> None:
+    payload = _fixture_json("0421_qwen_real_terminal_signals.json")
+
+    for item in payload["messages"]:
+        signal = parse_terminal_signal(item["content"])
+        assert signal is not None
+        assert signal.kind == item["kind"]
+        assert signal.canonical == CANONICAL[item["kind"]]
+        assert signal.raw == item["raw"]
+
+
+def test_real_0421_fixture_documents_user_side_tool_error() -> None:
+    trace_step = _fixture_json("0421_tau2_unknown_user_side_tool_error.json")
+
+    assert trace_step["name"] == "check_network_status"
+    assert trace_step["status"] == "failed"
+    assert "not found" in trace_step["output"]["content"]
+
+
+def test_tau2_default_greeting_stays_in_trajectory_but_not_agent_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     runtime = Tau2Runtime()
     runtime.start({"data_dir": str(tmp_path)})
@@ -91,6 +306,8 @@ def test_tau2_synthetic_prefix_len_not_visible_to_agent(tmp_path: Path, monkeypa
 
     assert [message["role"] for message in init_output["messages"]] == ["user"]
     assert "Hi! How can I help you today?" not in json.dumps(init_output["messages"])
+    assert init_output["metadata"]["tau2"]["gage_instruction"] == ""
+    assert init_output["metadata"]["tau2"]["gemma4_tool_instruction"] == ""
     assert len(runtime.get_state()["messages"]) == 2
 
 

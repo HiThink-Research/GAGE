@@ -2,11 +2,13 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: agentkit_v2_tau2_local_lmstudio
-  description: Manual AgentKit v2 E2E for Tau2 airline on local_process with LMStudio.
+  name: agentkit_v2_tau2_telecom_vllm_runtime
+  description: >
+    Executable AgentKit v2 wrapper for Tau2 telecom with a local in-process vLLM
+    DUT agent and a generic LiteLLM/OpenAI-compatible Tau2 user simulator.
 
 prompts:
-  - prompt_id: dut/tau2@manual-lmstudio
+  - prompt_id: dut/tau2@vllm-runtime
     renderer: jinja_chat
     template: |
       <instructions>
@@ -20,64 +22,77 @@ prompts:
       include_existing: true
 
 datasets:
-  - dataset_id: tau2_airline_base
+  - dataset_id: tau2_telecom_base
     loader: tau2_tasks
     params:
       source: huggingface
       hub_id: HuggingFaceH4/tau2-bench-data
-      domain: airline
+      domain: telecom
       task_split: base
-      # Tau2 pass^k: expand each task into N independent samples.
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
 backends:
-  - backend_id: lmstudio_litellm
-    type: litellm
+  - backend_id: tau2_vllm
+    type: vllm
     config:
-      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
-      model: ${LMSTUDIO_LITELLM_MODEL:-openai/qwen/qwen3.5-9b}
-      api_key: ${LMSTUDIO_API_KEY:-dummy}
-      streaming: false
-      timeout: 180
-      max_retries: 2
-      drop_params: true
-      generation_parameters:
-        temperature: 0.0
-        max_new_tokens: 8192
+      model_path: ${VLLM_MODEL_PATH:-Qwen/Qwen2.5-7B-Instruct}
+      trust_remote_code: true
+      tokenizer_trust_remote_code: true
+      force_tokenize_prompt: true
+      tensor_parallel_size: ${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      pipeline_parallel_size: ${VLLM_PIPELINE_PARALLEL_SIZE:-1}
+      max_model_len: ${VLLM_MAX_MODEL_LEN:-8192}
+      max_tokens: ${TAU2_AGENT_MAX_TOKENS:-2048}
+      request_timeout: ${VLLM_REQUEST_TIMEOUT:-300}
+      sampling_params:
+        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
 
 agents:
   - agent_id: tau2_agent
     scheduler:
       type: framework_loop
-      backend_id: lmstudio_litellm
+      backend_id: tau2_vllm
       config:
         max_turns: ${TAU2_MAX_TURNS:-200}
+        force_tool_choice: ${TAU2_FORCE_TOOL_CHOICE:-never}
+        tool_dialect: ${TAU2_AGENT_TOOL_FORMAT:-auto}
+        tool_call_retry_budget: ${TAU2_TOOL_CALL_RETRY_BUDGET:-3}
+        plain_text_response_tool: respond
+        plain_text_response_formats:
+          - qwen
+          - qwen3
+          - qwen3.5
+          - qwen3.6
+          - gemma
+          - gemma4
+          - gemma-4
+          - gemma_4
+          - functiongemma
     config:
-      prompt_id: dut/tau2@manual-lmstudio
+      prompt_id: dut/tau2@vllm-runtime
     tooling:
       skill_ids: []
       mcp_servers: []
 
 benchmarks:
-  - benchmark_id: tau2_airline
+  - benchmark_id: tau2_telecom
     kit_id: tau2
     config:
-      domain: airline
+      domain: telecom
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
       user_simulator:
         type: litellm
-        model: ${TAU2_USER_MODEL:-openai/qwen/qwen3.5-9b}
-        api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
-        api_key: ${LMSTUDIO_API_KEY:-dummy}
-        drop_params: true
-        temperature: 0.0
-        max_new_tokens: 8192
+        model: ${TAU2_USER_MODEL:-gpt-4.1}
+        model_args:
+          api_base: ${TAU2_USER_BASE_URL:-https://api.openai.com/v1}
+          api_key: ${TAU2_USER_API_KEY:-}
+          temperature: ${TAU2_USER_TEMPERATURE:-0.0}
 
 environments:
   - env_id: tau2_local_process
@@ -93,9 +108,8 @@ dut_agents:
   - dut_id: tau2_dut
     agent_id: tau2_agent
     env_id: tau2_local_process
-    benchmark_id: tau2_airline
+    benchmark_id: tau2_telecom
     trial_policy:
-      # Same-sample reruns for stability checks; keep separate from pass^k num_trials.
       trials: ${TAU2_TRIAL_REPEATS:-1}
 
 metrics:
@@ -115,11 +129,10 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: manual_tau2_airline_local_lmstudio
-    dataset_id: tau2_airline_base
+  - task_id: tau2_telecom_vllm_runtime
+    dataset_id: tau2_telecom_base
     steps:
       - step: inference
         adapter_id: tau2_dut
       - step: auto_eval
-    max_samples: 4
-    concurrency: 4
+    concurrency: 1

@@ -87,13 +87,14 @@ class Tau2ToolDialectParser:
             if call is None:
                 return []
             if isinstance(call, list):
-                return call
+                return _dedupe_tool_calls(call)
             return [call]
         return self._parse_auto(message, turn_index=turn_index, call_index=call_index)
 
     def _parse_auto(self, message: Any, *, turn_index: int, call_index: int) -> list[ToolCallIR]:
         for dialect in (
             "openai_like",
+            "harmony_xml",
             "qwen_xml",
             "qwen_arg_key",
             "glm_arg_key",
@@ -104,7 +105,10 @@ class Tau2ToolDialectParser:
             "raw_json",
             "pythonic_call",
         ):
-            calls = self.parse(message, dialect=dialect, turn_index=turn_index, call_index=call_index)
+            try:
+                calls = self.parse(message, dialect=dialect, turn_index=turn_index, call_index=call_index)
+            except ToolingError:
+                continue
             if calls:
                 return calls
         return []
@@ -142,6 +146,33 @@ class Tau2ToolDialectParser:
             call_index=call_index,
             provider="qwen_xml",
         )
+
+    def _parse_harmony_xml(self, message: Any, *, turn_index: int, call_index: int) -> list[ToolCallIR] | None:
+        if not isinstance(message, str):
+            return None
+        calls: list[ToolCallIR] = []
+        for match in re.finditer(
+            r"<function=(?P<name>[^>\n]+)>\s*(?P<body>.*?)</function>",
+            message,
+            flags=re.DOTALL,
+        ):
+            arguments = {
+                param.group("key").split("<|channel|>", 1)[0].strip(): param.group("value").strip()
+                for param in re.finditer(
+                    r"<parameter=(?P<key>[^>\n]+)>\s*(?P<value>.*?)\s*</parameter>",
+                    match.group("body"),
+                    flags=re.DOTALL,
+                )
+            }
+            calls.append(
+                ToolCallIR.from_provider_call(
+                    {"name": match.group("name").strip(), "arguments": arguments},
+                    turn_index=turn_index,
+                    call_index=call_index + len(calls),
+                    provider="harmony_xml",
+                )
+            )
+        return calls or None
 
     def _parse_qwen_arg_key(self, message: Any, *, turn_index: int, call_index: int) -> ToolCallIR | None:
         if isinstance(message, str):
@@ -198,22 +229,20 @@ class Tau2ToolDialectParser:
             provider="minimax",
         )
 
-    def _parse_gemma(self, message: Any, *, turn_index: int, call_index: int) -> ToolCallIR | None:
+    def _parse_gemma(self, message: Any, *, turn_index: int, call_index: int) -> ToolCallIR | list[ToolCallIR] | None:
         if not isinstance(message, str):
             return None
         match = re.search(r"<tool_call>(?P<payload>.*?)</tool_call>", message, flags=re.DOTALL)
         if match:
-            payload = _parse_json_text(match.group("payload").strip())
-            return ToolCallIR.from_provider_call(payload, turn_index=turn_index, call_index=call_index, provider="gemma")
-        match = re.search(r"(?:call:)?(?P<name>[A-Za-z_][\w]*)\s*\{(?P<body>.*?)\}\s*$", message.strip(), flags=re.DOTALL)
-        if not match:
-            return None
-        return ToolCallIR.from_provider_call(
-            {"name": match.group("name"), "arguments": _parse_loose_object(match.group("body"))},
-            turn_index=turn_index,
-            call_index=call_index,
-            provider="gemma",
-        )
+            payload_text = match.group("payload").strip()
+            try:
+                payload = _parse_json_text(payload_text)
+                return ToolCallIR.from_provider_call(payload, turn_index=turn_index, call_index=call_index, provider="gemma")
+            except ToolingError:
+                gemma_calls = _parse_gemma_call_chunks(payload_text, turn_index=turn_index, call_index=call_index)
+                return gemma_calls[0] if len(gemma_calls) == 1 else gemma_calls or None
+        calls = _parse_gemma_call_chunks(message, turn_index=turn_index, call_index=call_index)
+        return calls[0] if len(calls) == 1 else calls or None
 
     def _parse_fenced_json(self, message: Any, *, turn_index: int, call_index: int) -> list[ToolCallIR] | None:
         if not isinstance(message, str):
@@ -227,11 +256,17 @@ class Tau2ToolDialectParser:
     def _parse_raw_json(self, message: Any, *, turn_index: int, call_index: int) -> list[ToolCallIR] | None:
         if not isinstance(message, str):
             return None
-        stripped = message.strip()
-        if not stripped.startswith("{"):
-            return None
-        payload = _parse_json_text(stripped)
-        return _calls_from_payload(payload, turn_index=turn_index, call_index=call_index, provider="raw_json")
+        for candidate in _iter_json_text_candidates(message):
+            if not candidate.startswith("{"):
+                continue
+            try:
+                payload = _parse_json_text(candidate)
+            except ToolingError:
+                continue
+            calls = _calls_from_payload(payload, turn_index=turn_index, call_index=call_index, provider="raw_json")
+            if calls:
+                return calls
+        return None
 
     def _parse_pythonic_call(self, message: Any, *, turn_index: int, call_index: int) -> ToolCallIR | None:
         if not isinstance(message, str):
@@ -365,6 +400,91 @@ def _calls_from_payload(payload: dict[str, Any], *, turn_index: int, call_index:
     return [ToolCallIR.from_provider_call(payload, turn_index=turn_index, call_index=call_index, provider=provider)]
 
 
+def _dedupe_tool_calls(calls: list[ToolCallIR]) -> list[ToolCallIR]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[ToolCallIR] = []
+    for call in calls:
+        key = (call.name, call.arguments_json)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(call)
+    return deduped
+
+
+def _iter_json_text_candidates(message: str) -> list[str]:
+    stripped = message.strip()
+    candidates = [stripped] if stripped else []
+    candidates.extend(_iter_think_tails(stripped))
+    return candidates
+
+
+def _iter_think_tails(message: str) -> list[str]:
+    tails: list[str] = []
+    for match in re.finditer(r"</think\s*>\s*(?P<tail>.*)", message, flags=re.DOTALL | re.IGNORECASE):
+        tail = match.group("tail").strip()
+        if tail:
+            tails.append(tail)
+    return tails
+
+
+def _parse_gemma_call_chunks(text: str | None, *, turn_index: int, call_index: int) -> list[ToolCallIR]:
+    if text is None:
+        return []
+    calls: list[ToolCallIR] = []
+    for name, body in _iter_gemma_call_chunks(text):
+        calls.append(
+            ToolCallIR.from_provider_call(
+                {"name": name, "arguments": _parse_loose_object(body)},
+                turn_index=turn_index,
+                call_index=call_index + len(calls),
+                provider="gemma",
+            )
+        )
+    return calls
+
+
+def _iter_gemma_call_chunks(text: str) -> list[tuple[str, str]]:
+    chunks: list[tuple[str, str]] = []
+    for match in re.finditer(
+        r"(?m)(?:^|\n)\s*(?:call:)?(?P<name>[A-Za-z_][\w]*)\s*\{",
+        text,
+    ):
+        open_brace = match.end() - 1
+        body = _extract_balanced_brace_body(text, open_brace)
+        if body is None:
+            continue
+        chunks.append((match.group("name"), body))
+    return chunks
+
+
+def _extract_balanced_brace_body(text: str, open_brace: int) -> str | None:
+    depth = 0
+    quote: str | None = None
+    escape = False
+    for index in range(open_brace, len(text)):
+        char = text[index]
+        if quote:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace + 1 : index]
+    return None
+
+
 def _parse_arg_key_xml(message: str) -> dict[str, Any] | None:
     pairs = list(
         re.finditer(
@@ -395,7 +515,7 @@ def _split_loose_arguments(body: str) -> list[str]:
     parts: list[str] = []
     current: list[str] = []
     quote: str | None = None
-    for char in body:
+    for index, char in enumerate(body):
         if quote:
             current.append(char)
             if char == quote:
@@ -405,7 +525,7 @@ def _split_loose_arguments(body: str) -> list[str]:
             quote = char
             current.append(char)
             continue
-        if char == ",":
+        if char == "," and _looks_like_next_loose_key(body, index + 1):
             parts.append("".join(current))
             current = []
             continue
@@ -413,6 +533,10 @@ def _split_loose_arguments(body: str) -> list[str]:
     if current:
         parts.append("".join(current))
     return parts
+
+
+def _looks_like_next_loose_key(body: str, start: int) -> bool:
+    return re.match(r"\s*['\"]?[A-Za-z_][\w-]*['\"]?\s*:", body[start:]) is not None
 
 
 def _parse_loose_value(value: str) -> Any:

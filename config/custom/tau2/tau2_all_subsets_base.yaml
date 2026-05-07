@@ -22,7 +22,6 @@ prompts:
     template: |
       <instructions>
       {{ sample.metadata.tau2.agent_instruction }}
-      {{ sample.metadata.tau2.gage_instruction }}
       </instructions>
       <policy>
       {{ sample.metadata.tau2.policy }}
@@ -96,7 +95,7 @@ agent_backends:
     type: model_backend
     backend_id: tau2_openai_http
     config:
-      force_tool_choice: first_turn
+      force_tool_choice: never
 
 sandbox_profiles:
   - sandbox_id: tau2_local

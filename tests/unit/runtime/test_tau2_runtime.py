@@ -38,6 +38,7 @@ def test_tau2_runtime_basic_flow(tmp_path: Path, monkeypatch) -> None:
 
     assert init_output["messages"]
     assert len(sample["messages"]) == 1
+    assert sample["messages"][0]["role"] == "user"
     assert len(runtime.get_state()["messages"]) == 2
 
     respond_out = runtime.exec_tool("respond", {"message": "hello"})

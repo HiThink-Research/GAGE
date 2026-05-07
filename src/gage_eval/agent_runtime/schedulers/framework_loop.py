@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 import time
 from dataclasses import replace
 from typing import Any
@@ -555,7 +556,7 @@ async def _run_runtime_tooling_loop(
 ) -> dict[str, Any]:
     adapter = OpenAIProviderAdapter()
     messages = list(loop_payload.get("messages") or [])
-    tool_choice = loop_payload.get("tool_choice")
+    tool_choice = loop_payload.get("tool_choice", payload.get("tool_choice"))
     sampling_params = _resolve_sampling_params(loop_payload=loop_payload, payload=payload, sample=sample)
     metadata = payload.get("metadata") or sample.get("metadata") or {}
     usage: dict[str, Any] | None = None
@@ -571,10 +572,17 @@ async def _run_runtime_tooling_loop(
     retry_count = 0
 
     for turn_index in range(1, max(1, int(max_turns)) + 1):
+        request_tool_choice = _effective_tool_choice(
+            base_tool_choice=tool_choice,
+            payload=payload,
+            loop_payload=loop_payload,
+            turn_index=turn_index,
+            tools=tools,
+        )
         request = adapter.serialize_request(
             messages=messages,
             tools=tools,
-            tool_choice=tool_choice,
+            tool_choice=request_tool_choice,
             sampling_params=sampling_params or {},
             turn_index=turn_index,
             metadata=metadata,
@@ -631,8 +639,10 @@ async def _run_runtime_tooling_loop(
         tool_calls = _extract_runtime_tool_calls(
             adapter,
             raw_response,
+            backend=backend,
             session=session,
             payload=payload,
+            tools=tools,
             turn_index=turn_index,
         )
         _append_tooling_trace(
@@ -653,6 +663,8 @@ async def _run_runtime_tooling_loop(
             answer = adapter.extract_final_answer(raw_response)
             if _should_implicit_tau2_respond(
                 session=session,
+                payload=payload,
+                backend=backend,
                 required_tool=required_tool,
                 answer=answer,
             ):
@@ -991,6 +1003,26 @@ def _usage_cost_usd(usage: dict[str, Any]) -> float:
         return 0.0
 
 
+def _effective_tool_choice(
+    *,
+    base_tool_choice: Any,
+    payload: dict[str, Any],
+    loop_payload: dict[str, Any],
+    turn_index: int,
+    tools: list[dict[str, Any]],
+) -> Any:
+    mode = str(payload.get("force_tool_choice") or loop_payload.get("force_tool_choice") or "never").strip().lower()
+    if mode in {"", "never", "false", "0", "none"}:
+        return base_tool_choice
+    if not tools:
+        return base_tool_choice
+    if mode in {"always", "required", "true", "1"}:
+        return "required"
+    if mode in {"first_turn", "first-turn", "once"} and turn_index <= 1:
+        return "required"
+    return base_tool_choice
+
+
 def _truncate_tool_result_for_model_injection(
     tool_result: ToolResultIR,
     *,
@@ -1059,15 +1091,29 @@ def _final_answer_from_tool_result(
 ) -> str | None:
     if tool_result.status != "success":
         return None
+    output = tool_result.output_json
+    terminal_answer = _terminal_final_answer(output)
+    if terminal_answer is not None:
+        return terminal_answer
     if not _required_tool_call_completed(tool_result, required_tool=required_tool):
         return None
-    output = tool_result.output_json
     if not isinstance(output, dict):
         return None
     value = output.get("final_answer")
     if value is None:
         return None
     return str(value)
+
+
+def _terminal_final_answer(output: Any) -> str | None:
+    if not isinstance(output, dict):
+        return None
+    value = output.get("final_answer")
+    if value is None:
+        return None
+    if output.get("error") == "tau2_simulation_terminated" or str(value) == "simulation_terminated":
+        return str(value)
+    return None
 
 
 def _required_tool_call_completed(tool_result: ToolResultIR, *, required_tool: str | None) -> bool:
@@ -1091,10 +1137,19 @@ def _tool_result_failure_code(tool_result: ToolResultIR) -> str:
 def _should_implicit_tau2_respond(
     *,
     session: AgentRuntimeSession,
+    payload: dict[str, Any],
+    backend: Any,
     required_tool: str | None,
     answer: str,
 ) -> bool:
-    return session.benchmark_kit_id == "tau2" and required_tool == "respond" and bool(str(answer or "").strip())
+    if session.benchmark_kit_id != "tau2" or required_tool != "respond" or not bool(str(answer or "").strip()):
+        return False
+    allowlist = _normalize_string_set(
+        payload.get("plain_text_response_formats") or payload.get("plain_text_wrapper_formats")
+    )
+    if not allowlist:
+        return True
+    return _effective_tau2_tool_dialect(payload=payload, backend=backend) in allowlist
 
 
 def _implicit_tau2_respond_call(answer: str, *, turn_index: int) -> ToolCallIR:
@@ -1104,13 +1159,20 @@ def _implicit_tau2_respond_call(answer: str, *, turn_index: int) -> ToolCallIR:
             "type": "function",
             "function": {
                 "name": "respond",
-                "arguments": {"message": str(answer or "")},
+                "arguments": {"message": _strip_think_tail(str(answer or ""))},
             },
         },
         turn_index=turn_index,
         call_index=1,
         provider="tau2_plain_text",
     )
+
+
+def _strip_think_tail(answer: str) -> str:
+    match = re.search(r"</think\s*>\s*(?P<tail>.*)", answer, flags=re.DOTALL | re.IGNORECASE)
+    if match and match.group("tail").strip():
+        return match.group("tail").strip()
+    return answer
 
 
 def _assistant_text_message(answer: str) -> dict[str, Any]:
@@ -1194,8 +1256,10 @@ def _extract_runtime_tool_calls(
     adapter: OpenAIProviderAdapter,
     raw_response: Any,
     *,
+    backend: Any,
     session: AgentRuntimeSession,
     payload: dict[str, Any],
+    tools: list[dict[str, Any]],
     turn_index: int,
 ) -> list[ToolCallIR]:
     try:
@@ -1205,24 +1269,113 @@ def _extract_runtime_tool_calls(
             raise
         calls = []
     if calls:
-        return calls
+        return _filter_tool_calls_by_schema(calls, tools)
     if not _should_parse_tau2_dialect(session=session, payload=payload):
         return []
 
     parser = Tau2ToolDialectParser()
-    dialect = str(payload.get("tool_dialect") or payload.get("tooling_dialect") or "auto")
+    dialect = _effective_tau2_tool_dialect(payload=payload, backend=backend)
     for candidate in _tool_text_candidates(raw_response):
         try:
             parsed = parser.parse(candidate, dialect=dialect, turn_index=turn_index)
         except ToolingError:
             continue
         if parsed:
-            return parsed
+            return _filter_tool_calls_by_schema(parsed, tools)
     return []
 
 
+def _effective_tau2_tool_dialect(*, payload: dict[str, Any], backend: Any) -> str:
+    explicit = (
+        payload.get("tool_dialect")
+        or payload.get("tooling_dialect")
+        or payload.get("tool_call_format")
+        or payload.get("tool_format")
+    )
+    if explicit:
+        return _normalize_dialect_name(explicit)
+    return _infer_tau2_tool_dialect(backend)
+
+
+def _infer_tau2_tool_dialect(backend: Any) -> str:
+    backend_obj = getattr(backend, "static_backend", backend)
+    config = getattr(backend_obj, "config", None)
+    config_values: list[str] = []
+    if isinstance(config, dict):
+        for key in ("tool_dialect", "tool_call_format", "tool_format", "model", "model_name", "model_path"):
+            value = config.get(key)
+            if value:
+                config_values.append(str(value))
+    for attr in ("model_name", "model", "model_path", "provider", "api_base"):
+        value = getattr(backend_obj, attr, None)
+        if value:
+            config_values.append(str(value))
+    text = " ".join(config_values).lower()
+    if "minimax" in text:
+        return "minimax"
+    if "functiongemma" in text or re.search(r"gemma[_-]?4", text):
+        return "gemma"
+    if "harmony" in text or "gpt-oss" in text:
+        return "harmony_xml"
+    if re.search(r"\bqwen(?:2|3)?(?:[\W_]|$)", text):
+        return "qwen_xml"
+    return "auto"
+
+
+def _normalize_dialect_name(value: Any) -> str:
+    normalized = str(value or "auto").strip().lower()
+    return {
+        "qwen": "qwen_xml",
+        "qwen3": "qwen_xml",
+        "qwen3.5": "qwen_xml",
+        "qwen3.6": "qwen_xml",
+        "gemma4": "gemma",
+        "gemma-4": "gemma",
+        "gemma_4": "gemma",
+        "functiongemma": "gemma",
+        "harmony": "harmony_xml",
+    }.get(normalized, normalized or "auto")
+
+
+def _normalize_string_set(value: Any) -> set[str]:
+    if value in (None, ""):
+        return set()
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        return set()
+    return {_normalize_dialect_name(item) for item in items if str(item or "").strip()}
+
+
+def _filter_tool_calls_by_schema(calls: list[ToolCallIR], tools: list[dict[str, Any]]) -> list[ToolCallIR]:
+    names = _declared_tool_names(tools)
+    if not names:
+        return calls
+    return [call for call in calls if call.name in names]
+
+
+def _declared_tool_names(tools: list[dict[str, Any]]) -> set[str]:
+    names: set[str] = set()
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name"):
+            names.add(str(function["name"]))
+        elif tool.get("name"):
+            names.add(str(tool["name"]))
+    return names
+
+
 def _should_parse_tau2_dialect(*, session: AgentRuntimeSession, payload: dict[str, Any]) -> bool:
-    return session.benchmark_kit_id == "tau2" or bool(payload.get("tool_dialect") or payload.get("tooling_dialect"))
+    return session.benchmark_kit_id == "tau2" or bool(
+        payload.get("tool_dialect")
+        or payload.get("tooling_dialect")
+        or payload.get("tool_call_format")
+        or payload.get("tool_format")
+    )
 
 
 def _tool_text_candidates(raw_response: Any) -> list[Any]:

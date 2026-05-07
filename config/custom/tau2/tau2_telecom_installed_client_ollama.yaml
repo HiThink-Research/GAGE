@@ -11,7 +11,6 @@ prompts:
     template: |
       <instructions>
       {{ sample.metadata.tau2.agent_instruction }}
-      {{ sample.metadata.tau2.gage_instruction }}
       </instructions>
       <policy>
       {{ sample.metadata.tau2.policy }}

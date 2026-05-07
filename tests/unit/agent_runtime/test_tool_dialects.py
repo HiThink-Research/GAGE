@@ -282,3 +282,26 @@ def test_auto_dialect_recognizes_function_gemma_tool_call_tag() -> None:
 
 def test_plain_text_fallback_returns_no_tool_call() -> None:
     assert Tau2ToolDialectParser().parse("I can help with that.", dialect="plain_text", turn_index=1) == []
+
+
+def test_harmony_xml_channel_suffix_normalizes_tool_name() -> None:
+    calls = Tau2ToolDialectParser().parse(
+        "<tool_call><function=respond<|channel|>analysis><parameter=message>hello</parameter></function></tool_call>",
+        dialect="auto",
+        turn_index=7,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].name == "respond"
+    assert calls[0].arguments_json == '{"message":"hello"}'
+
+
+def test_auto_dialect_dedupes_duplicate_gemma_calls() -> None:
+    calls = Tau2ToolDialectParser().parse(
+        'call:respond{message:"hello"}\ncall:respond{message:"hello"}',
+        dialect="auto",
+        turn_index=8,
+    )
+
+    assert len(calls) == 1
+    assert calls[0].name == "respond"

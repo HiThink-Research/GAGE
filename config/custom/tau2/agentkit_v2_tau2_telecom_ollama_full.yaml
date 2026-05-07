@@ -2,11 +2,13 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: agentkit_v2_tau2_local_lmstudio
-  description: Manual AgentKit v2 E2E for Tau2 airline on local_process with LMStudio.
+  name: agentkit_v2_tau2_telecom_ollama_full
+  description: >
+    Executable AgentKit v2 wrapper for Tau2 telecom where both the DUT agent
+    and Tau2 user simulator target a local Ollama OpenAI-compatible endpoint.
 
 prompts:
-  - prompt_id: dut/tau2@manual-lmstudio
+  - prompt_id: dut/tau2@ollama
     renderer: jinja_chat
     template: |
       <instructions>
@@ -20,64 +22,74 @@ prompts:
       include_existing: true
 
 datasets:
-  - dataset_id: tau2_airline_base
+  - dataset_id: tau2_telecom_base
     loader: tau2_tasks
     params:
       source: huggingface
       hub_id: HuggingFaceH4/tau2-bench-data
-      domain: airline
+      domain: telecom
       task_split: base
-      # Tau2 pass^k: expand each task into N independent samples.
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
 backends:
-  - backend_id: lmstudio_litellm
-    type: litellm
+  - backend_id: tau2_ollama_http
+    type: openai_http
     config:
-      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
-      model: ${LMSTUDIO_LITELLM_MODEL:-openai/qwen/qwen3.5-9b}
-      api_key: ${LMSTUDIO_API_KEY:-dummy}
-      streaming: false
-      timeout: 180
-      max_retries: 2
-      drop_params: true
+      base_url: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}
+      model: ${OLLAMA_MODEL:-qwen3-vl:2b-instruct}
+      api_key: ${OLLAMA_API_KEY:-dummy}
+      require_api_key: false
+      max_retries: 6
       generation_parameters:
-        temperature: 0.0
-        max_new_tokens: 8192
+        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+        max_new_tokens: ${TAU2_AGENT_MAX_TOKENS:-4096}
 
 agents:
   - agent_id: tau2_agent
     scheduler:
       type: framework_loop
-      backend_id: lmstudio_litellm
+      backend_id: tau2_ollama_http
       config:
         max_turns: ${TAU2_MAX_TURNS:-200}
+        force_tool_choice: ${TAU2_FORCE_TOOL_CHOICE:-never}
+        tool_dialect: ${TAU2_AGENT_TOOL_FORMAT:-auto}
+        tool_call_retry_budget: ${TAU2_TOOL_CALL_RETRY_BUDGET:-3}
+        plain_text_response_tool: respond
+        plain_text_response_formats:
+          - qwen
+          - qwen3
+          - qwen3.5
+          - qwen3.6
+          - gemma
+          - gemma4
+          - gemma-4
+          - gemma_4
+          - functiongemma
     config:
-      prompt_id: dut/tau2@manual-lmstudio
+      prompt_id: dut/tau2@ollama
     tooling:
       skill_ids: []
       mcp_servers: []
 
 benchmarks:
-  - benchmark_id: tau2_airline
+  - benchmark_id: tau2_telecom
     kit_id: tau2
     config:
-      domain: airline
+      domain: telecom
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
       user_simulator:
         type: litellm
-        model: ${TAU2_USER_MODEL:-openai/qwen/qwen3.5-9b}
-        api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
-        api_key: ${LMSTUDIO_API_KEY:-dummy}
-        drop_params: true
-        temperature: 0.0
-        max_new_tokens: 8192
+        model: ${TAU2_USER_MODEL:-ollama_chat/qwen3-vl:2b-instruct}
+        model_args:
+          api_base: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434/v1}
+          api_key: ${OLLAMA_API_KEY:-dummy}
+          temperature: ${TAU2_USER_TEMPERATURE:-0.0}
 
 environments:
   - env_id: tau2_local_process
@@ -93,9 +105,8 @@ dut_agents:
   - dut_id: tau2_dut
     agent_id: tau2_agent
     env_id: tau2_local_process
-    benchmark_id: tau2_airline
+    benchmark_id: tau2_telecom
     trial_policy:
-      # Same-sample reruns for stability checks; keep separate from pass^k num_trials.
       trials: ${TAU2_TRIAL_REPEATS:-1}
 
 metrics:
@@ -115,11 +126,16 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: manual_tau2_airline_local_lmstudio
-    dataset_id: tau2_airline_base
+  - task_id: tau2_telecom_ollama_full
+    dataset_id: tau2_telecom_base
     steps:
       - step: inference
         adapter_id: tau2_dut
       - step: auto_eval
-    max_samples: 4
-    concurrency: 4
+    concurrency: 1
+    reporting:
+      sinks:
+        - type: console
+        - type: file
+          params:
+            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_telecom_ollama_full_summary.json

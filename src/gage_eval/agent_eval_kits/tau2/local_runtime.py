@@ -240,6 +240,8 @@ class Tau2Runtime:
         if not message_history:
             first_assistant = _build_default_greeting()
             trajectory.append(first_assistant)
+            # Keep the synthetic greeting in the official trajectory while
+            # avoiding assistant-first prompts that local chat templates reject.
             self._synthetic_prefix_len = 1
             user_message, user_state = user_sim.generate_next_message(
                 first_assistant, user_state
@@ -880,10 +882,8 @@ def _update_tau2_metadata(sample: Dict[str, Any], env: Any) -> None:
     tau2_meta = meta.get("tau2") if isinstance(meta.get("tau2"), dict) else {}
     tau2_meta["policy"] = env.get_policy()
     tau2_meta["agent_instruction"] = AGENT_INSTRUCTION
-    tau2_meta["gage_instruction"] = (
-        "When you want to reply to the user, call the respond tool with your message. "
-        "Do not send plain assistant messages directly."
-    )
+    tau2_meta["gage_instruction"] = ""
+    tau2_meta["gemma4_tool_instruction"] = ""
     meta["tau2"] = tau2_meta
     sample["metadata"] = meta
 

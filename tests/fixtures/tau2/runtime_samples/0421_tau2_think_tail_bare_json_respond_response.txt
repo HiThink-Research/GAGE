@@ -1,0 +1,14 @@
+Okay, the user is having issues with their mobile data—it's either stopping or being very slow. They want excellent internet speed. Let me start by recalling the tech support policy.
+
+First, I need to identify the customer. The user didn't provide their phone number or ID, so I should ask for that. But wait, the policy says to first identify the customer. Since they mentioned their phone, maybe I can use the phone number they're using to contact me. But the user hasn't provided it yet. Hmm.
+
+Wait, the tools available include get_customer_by_phone, get_customer_by_id, and get_customer_by_name. Since the user is calling from their phone, maybe their number is known, but the system might not have it. The user hasn't given any details yet, so I need to prompt them for their phone number or customer ID to look up their account.
+
+But the user's message is about mobile data issues. According to the tech support policy, the first step is to check if they have cellular service. So maybe I should guide them through some diagnostic steps. However, the policy says to first identify the customer. Wait, the main policy says: "You must first identify the customer." So before doing anything else, I need to get their customer info.
+
+The user hasn't provided any identifying information yet. So my first step should be to ask for their phone number or customer ID to look up their account. Let me check the tools again. The get_customer_by_phone function requires a phone number. Since the user is contacting me about their phone, it's likely their phone number is the one they're using, but I need to confirm.
+
+Wait, the user might not know their customer ID, so asking for their phone number makes sense. Let me draft a response asking for their phone number to proceed with the lookup.
+</think>
+
+{"name": "respond", "arguments": {"message": "I'll help you troubleshoot your mobile data issue. First, I need to verify your account. Could you please provide your phone number so I can look up your account details?"}}
