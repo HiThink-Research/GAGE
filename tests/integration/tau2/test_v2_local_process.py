@@ -35,8 +35,8 @@ def test_tau2_v2_local_process_bootstrap_and_kit_owned_verifier_smoke(
 ) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     kit = load_kit()
-    runtime = Tau2Runtime(runtime_configs={"data_dir": str(tmp_path)})
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime = Tau2Runtime(runtime_settings={"data_dir": str(tmp_path)})
+    runtime.start({"data_dir": str(tmp_path)})
     environment_lease = EnvironmentLease(
         lease_id="tau2-lease",
         environment=Tau2LocalEnvironment(

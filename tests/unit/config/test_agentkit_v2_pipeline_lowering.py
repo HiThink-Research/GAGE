@@ -3,6 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import logging
+
+import pytest
+
+from gage_eval.config.pipeline_config import RoleAdapterSpec
+from gage_eval.config.registry import ConfigRegistry
 from gage_eval.config.loader import materialize_pipeline_config_payload
 
 
@@ -62,6 +68,10 @@ def _manual_pipeline_payload() -> dict[str, Any]:
                 "kit_id": "tau2",
                 "config": {
                     "domain": "telecom",
+                    "data_dir": "./local-datasets/tau2",
+                    "max_steps": 200,
+                    "max_errors": 10,
+                    "respond_tool_name": "respond",
                     "user_simulator": {
                         "type": "openai_http",
                         "model": "openai/qwen/qwen3.5-9b",
@@ -77,12 +87,6 @@ def _manual_pipeline_payload() -> dict[str, Any]:
                 "provider": "local_process",
                 "profile_id": "tau2-local-process",
                 "profile": {},
-                "provider_config": {
-                    "data_dir": "./local-datasets/tau2",
-                    "max_steps": 200,
-                    "max_errors": 10,
-                    "respond_tool_name": "respond",
-                },
                 "lifecycle": "per_sample",
             }
         ],
@@ -137,14 +141,10 @@ def test_pipeline_config_agentkit_v2_sections_lower_to_thin_role_adapter() -> No
                 "environment_profile": {
                     "provider": "local_process",
                     "profile_id": "tau2-local-process",
-                    "config": {
-                        "data_dir": "./local-datasets/tau2",
-                        "max_steps": 200,
-                        "max_errors": 10,
-                        "respond_tool_name": "respond",
-                    },
                 },
-                "provider_config": {
+                "provider_config": {},
+                "benchmark_config": {
+                    "domain": "telecom",
                     "data_dir": "./local-datasets/tau2",
                     "max_steps": 200,
                     "max_errors": 10,
@@ -165,3 +165,42 @@ def test_pipeline_config_agentkit_v2_sections_lower_to_thin_role_adapter() -> No
             },
         }
     ]
+
+
+def test_pipeline_config_tau2_warns_when_num_trials_and_trial_repeats_multiply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    payload = _manual_pipeline_payload()
+    payload["datasets"][0]["params"]["num_trials"] = 3
+    payload["dut_agents"][0]["trial_policy"] = {"trials": 2}
+
+    with caplog.at_level(logging.WARNING):
+        materialize_pipeline_config_payload(payload, source_path=Path("manual.yaml"))
+
+    assert "Tau2 pass^k should use datasets[].params.num_trials" in caplog.text
+    assert "executions per task=6" in caplog.text
+
+
+def test_pipeline_config_wrapper_threads_benchmark_config_through_compiled_plan() -> None:
+    benchmark_config = {
+        "domain": "telecom",
+        "user_simulator": {"model": "openai/qwen/qwen3.5-9b"},
+    }
+    spec = RoleAdapterSpec(
+        adapter_id="tau2_dut",
+        role_type="dut_agent",
+        agent_runtime_id="tau2_framework_loop",
+        backend_id="model",
+        params={
+            "benchmark_config": benchmark_config,
+            "environment_profile": {
+                "provider": "local_process",
+                "profile_id": "tau2-local-process",
+            },
+            "provider_config": {},
+        },
+    )
+
+    adapter = ConfigRegistry().resolve_role_adapter(spec, backends={"model": object()})
+
+    assert adapter.executor_ref.compiled_plan.kit_config == benchmark_config

@@ -11,8 +11,8 @@ from tests._support.stubs.tau2_stub import install_tau2_stub
 
 def test_tau2_runtime_bootstrap_injects_messages_and_policy(tmp_path: Path, monkeypatch) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
-    runtime = Tau2Runtime(runtime_configs={"data_dir": str(tmp_path)})
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime = Tau2Runtime(runtime_settings={"data_dir": str(tmp_path)})
+    runtime.start({"data_dir": str(tmp_path)})
     environment_lease = EnvironmentLease(
         lease_id="tau2-lease",
         environment=Tau2LocalEnvironment(

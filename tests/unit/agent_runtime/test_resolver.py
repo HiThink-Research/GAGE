@@ -94,6 +94,23 @@ def test_compile_phase1_runtime_matrix(
     assert plan.cache_key
 
 
+def test_compile_agent_runtime_plan_writes_benchmark_config_into_kit_config() -> None:
+    benchmark_config = {"domain": "telecom", "user_simulator": {"model": "x"}}
+
+    plan = compile_agent_runtime_plan(
+        agent_runtime_id="tau2_framework_loop",
+        benchmark_config=benchmark_config,
+    )
+
+    assert plan.kit_config == benchmark_config
+
+
+def test_compile_agent_runtime_plan_keeps_kit_config_empty_when_benchmark_config_omitted() -> None:
+    plan = compile_agent_runtime_plan(agent_runtime_id="swebench_framework_loop")
+
+    assert plan.kit_config == {}
+
+
 def test_swebench_runtime_plan_carries_provider_config_resolver_with_stable_cache_payload() -> None:
     plan = compile_agent_runtime_plan(agent_runtime_id="swebench_framework_loop")
 

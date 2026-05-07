@@ -425,6 +425,45 @@ def test_agentkit_v2_runtime_binding_uses_unredacted_environment_runtime_config(
 
 
 @pytest.mark.fast
+def test_agentkit_v2_runtime_binding_keeps_tau2_runtime_config_out_of_provider_config() -> None:
+    payload = _minimal_payload()
+    payload["benchmarks"][0]["config"] = {
+        "domain": "telecom",
+        "data_dir": "/tmp/tau2",
+        "max_steps": 7,
+        "max_errors": 2,
+        "respond_tool_name": "respond",
+        "user_simulator": {
+            "model": "openai/qwen",
+            "model_args": {"api_key": "dummy"},
+        },
+    }
+    payload["environments"][0]["provider_config"] = {}
+
+    materialized = materialize_agentkit_v2_config_payload(payload, source_path=None)
+    runtime_config = materialize_agentkit_v2_runtime_config_payload(payload, source_path=None)
+    specs = resolve_agentkit_v2_runtime_binding_specs(
+        materialized,
+        runtime_config=runtime_config,
+    )
+    bindings = build_agentkit_v2_runtime_bindings(
+        materialized,
+        runtime_config=runtime_config,
+        backends={"model": object()},
+    )
+
+    spec = specs["dut"]
+    plan = bindings["dut"].executor_ref.compiled_plan
+    assert spec.provider_config == {}
+    assert spec.benchmark_config["data_dir"] == "/tmp/tau2"
+    assert spec.benchmark_config["max_steps"] == 7
+    assert spec.benchmark_config["user_simulator"]["model"] == "openai/qwen"
+    assert plan.provider_config == {}
+    assert plan.kit_config["data_dir"] == "/tmp/tau2"
+    assert plan.resource_plan["provider_config"] == {}
+
+
+@pytest.mark.fast
 def test_agent_scheduler_type_defaults_to_framework_loop() -> None:
     payload = _minimal_payload()
     payload["agents"][0]["scheduler"].pop("type")

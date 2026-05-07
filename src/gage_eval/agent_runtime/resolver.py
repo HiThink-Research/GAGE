@@ -179,6 +179,7 @@ def compile_agent_runtime_plan(
     resources: dict[str, Any] | None = None,
     startup_env: dict[str, Any] | None = None,
     lifecycle: str | None = None,
+    benchmark_config: dict[str, Any] | None = None,
 ) -> CompiledRuntimePlan:
     """Compile a runtime plan from the builtin runtime catalog and benchmark kit."""
 
@@ -281,7 +282,7 @@ def compile_agent_runtime_plan(
         trial_policy={"trials": 1},
         kit_id=runtime_spec.benchmark_kit_id,
         kit_entry=benchmark_kit,
-        kit_config={},
+        kit_config=dict(benchmark_config or {}),
         agent_config={},
         scheduler_type=runtime_spec.scheduler_type,
         scheduler_config={},

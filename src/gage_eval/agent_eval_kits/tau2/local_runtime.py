@@ -78,10 +78,10 @@ class Tau2Runtime:
 
     def __init__(
         self,
-        runtime_configs: Optional[Dict[str, Any]] = None,
+        runtime_settings: Optional[Dict[str, Any]] = None,
         resources: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self._runtime_configs = dict(runtime_configs or {})
+        self._runtime_settings = dict(runtime_settings or {})
         self._resources = dict(resources or {})
         self._running = False
         self._data_dir: Optional[str] = None
@@ -109,14 +109,12 @@ class Tau2Runtime:
         self._termination_detail: Optional[str] = None
 
     def start(self, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        # STEP 1: Merge runtime configs and validate tau2 availability.
-        self._runtime_configs.update(config.get("runtime_configs", {}) or {})
+        # STEP 1: Merge runtime settings and validate tau2 availability.
+        self._runtime_settings.update(config or {})
         ensure_tau2_importable()
 
         # STEP 2: Resolve and validate tau2 data directory.
-        data_dir = resolve_tau2_data_dir(
-            self._runtime_configs.get("data_dir") or config.get("data_dir")
-        )
+        data_dir = resolve_tau2_data_dir(self._runtime_settings.get("data_dir"))
         if not data_dir.exists():
             raise FileNotFoundError(
                 f"Tau2 data directory not found: {data_dir}. "
@@ -126,19 +124,13 @@ class Tau2Runtime:
 
         # STEP 3: Load runtime limits.
         self._max_steps = int(
-            config.get("max_steps")
-            or self._runtime_configs.get("max_steps")
-            or self._max_steps
+            self._runtime_settings.get("max_steps") or self._max_steps
         )
         self._max_errors = int(
-            config.get("max_errors")
-            or self._runtime_configs.get("max_errors")
-            or self._max_errors
+            self._runtime_settings.get("max_errors") or self._max_errors
         )
         self._respond_tool_name = str(
-            config.get("respond_tool_name")
-            or self._runtime_configs.get("respond_tool_name")
-            or self._respond_tool_name
+            self._runtime_settings.get("respond_tool_name") or self._respond_tool_name
         )
         self._running = True
         return {"profile": "tau2_local", "data_dir": self._data_dir}
@@ -202,7 +194,7 @@ class Tau2Runtime:
 
         user_tools = _safe_get_user_tools(env)
         user_simulator_config = _resolve_tau2_user_simulator_runtime_config(
-            self._runtime_configs,
+            self._runtime_settings,
             override=self._user_simulator_config,
         )
         user_sim = _build_tau2_user_simulator(
@@ -636,20 +628,15 @@ def _normalize_tau2_user_model_args(
 
 
 def _resolve_tau2_user_simulator_runtime_config(
-    runtime_configs: Dict[str, Any],
+    runtime_settings: Dict[str, Any],
     *,
     override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    config = dict(runtime_configs.get("user_simulator") or {})
+    config = dict(runtime_settings.get("user_simulator") or {})
     if override:
         config.update(override)
-    model = config.get("model") or runtime_configs.get("user_model") or runtime_configs.get("user_llm")
-    model_args = (
-        config.get("model_args")
-        or runtime_configs.get("user_model_args")
-        or runtime_configs.get("user_llm_args")
-        or {}
-    )
+    model = config.get("model")
+    model_args = config.get("model_args") or {}
     return {
         "model": model,
         "model_args": _normalize_tau2_user_model_args(

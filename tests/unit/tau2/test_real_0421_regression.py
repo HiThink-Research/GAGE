@@ -84,7 +84,7 @@ def _session(tmp_path: Path) -> SimpleNamespace:
 def test_tau2_synthetic_prefix_len_not_visible_to_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     runtime = Tau2Runtime()
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.start({"data_dir": str(tmp_path)})
     sample = _sample()
 
     init_output = runtime.initialize_task(sample)

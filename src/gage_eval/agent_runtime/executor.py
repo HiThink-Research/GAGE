@@ -192,6 +192,9 @@ class AgentRuntimeSessionFactory:
             task_id=task_id,
             sample_id=sample_id,
         )
+        runtime_context: dict[str, Any] = {}
+        if isinstance(plan.kit_config, dict) and plan.kit_config:
+            runtime_context["benchmark_config"] = dict(plan.kit_config)
         return AgentRuntimeSession(
             session_id=f"session-{session_hash[:12]}",
             run_id=run_id,
@@ -200,6 +203,7 @@ class AgentRuntimeSessionFactory:
             benchmark_kit_id=plan.runtime_spec.benchmark_kit_id,
             scheduler_type=plan.runtime_spec.scheduler_type,
             client_id=plan.runtime_spec.client_id,
+            runtime_context=runtime_context,
             artifact_layout=layout,
             artifact_sink=self._artifact_sink,
         )
@@ -1098,13 +1102,17 @@ def _scheduler_payload(
     resource_plan: dict[str, Any],
     lease_binding: Any,
     artifact_sink: RuntimeArtifactSink,
-    ) -> dict[str, Any]:
+) -> dict[str, Any]:
     scheduler_payload = {
         **payload,
         "environment_profile": resource_plan.get("environment_profile"),
         "provider_config": resource_plan.get("provider_config"),
         "artifact_sink": artifact_sink,
     }
+    if scheduler_payload.get("benchmark_config") is None:
+        benchmark_config = session.runtime_context.get("benchmark_config")
+        if isinstance(benchmark_config, dict):
+            scheduler_payload["benchmark_config"] = dict(benchmark_config)
     if scheduler_payload.get("environment_lease") is None:
         environment_lease = session.runtime_context.get("environment_lease")
         if environment_lease is None:
@@ -1333,9 +1341,13 @@ def _payload_with_environment_lease(
             lease_binding,
             artifact_sink=artifact_sink,
         )
-    if environment_lease is None:
-        return dict(payload)
     updated = dict(payload)
+    if updated.get("benchmark_config") is None:
+        benchmark_config = session.runtime_context.get("benchmark_config")
+        if isinstance(benchmark_config, dict):
+            updated["benchmark_config"] = dict(benchmark_config)
+    if environment_lease is None:
+        return updated
     updated["environment_lease"] = environment_lease
     session.runtime_context.setdefault("environment_lease", environment_lease)
     return updated

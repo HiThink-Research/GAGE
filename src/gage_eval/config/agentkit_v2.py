@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
-import json
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -18,6 +19,8 @@ from gage_eval.agent_runtime.clients.contracts import (
     InstalledClientSchedulerConfig,
 )
 from gage_eval.config.loader_cli import CLIIntent
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AgentKitV2ValidationError(ValueError):
@@ -46,6 +49,7 @@ class AgentkitV2RuntimeBindingSpec:
     agent_id: str
     benchmark_id: str
     kit_id: str
+    benchmark_config: dict[str, Any]
     env_id: str
     scheduler_type: str
     scheduler_config: dict[str, Any]
@@ -384,6 +388,7 @@ def build_agentkit_v2_runtime_bindings(
         compiled_plan = _with_environment_provider(compiled_plan, spec.environment_provider)
         compiled_plan = replace(
             compiled_plan,
+            kit_config=dict(spec.benchmark_config or {}),
             scheduler_config=dict(spec.scheduler_config or {}),
             agent_config={
                 **dict(compiled_plan.agent_config or {}),
@@ -461,16 +466,12 @@ def resolve_agentkit_v2_runtime_binding_specs(
                 f"config.environment.provider.unsupported environments.{environment.get('env_id')}"
             )
         provider_config = _provider_config_from_environment(environment)
-        provider_config = _provider_config_with_benchmark_runtime_overrides(
-            provider_config,
-            kit_id=str(benchmark.get("kit_id") or benchmark.get("benchmark_id") or ""),
-            benchmark_config=dict(benchmark.get("config") or {}),
-        )
         specs[dut_id] = AgentkitV2RuntimeBindingSpec(
             dut_id=dut_id,
             agent_id=str(agent.get("agent_id") or ""),
             benchmark_id=str(benchmark.get("benchmark_id") or ""),
             kit_id=str(benchmark.get("kit_id") or benchmark.get("benchmark_id") or ""),
+            benchmark_config=dict(benchmark.get("config") or {}),
             env_id=str(environment.get("env_id") or ""),
             scheduler_type=scheduler_type,
             scheduler_config=dict(scheduler.get("config") or {}),
@@ -515,6 +516,7 @@ def lower_agentkit_v2_pipeline_payload(
         source_path,
         cli_intent=cli_intent,
     )
+    _warn_tau2_trial_multiplication(payload=payload, runtime_config=runtime_config)
     specs = resolve_agentkit_v2_runtime_binding_specs(
         runtime_config,
         runtime_config=runtime_config,
@@ -567,6 +569,7 @@ def _role_adapter_from_v2_binding(
     params: dict[str, Any] = {}
     params["environment_profile"] = deepcopy(spec.environment_profile)
     params["provider_config"] = deepcopy(spec.provider_config)
+    params["benchmark_config"] = deepcopy(spec.benchmark_config)
     params["resources"] = deepcopy(spec.resources)
     params["startup_env"] = deepcopy(spec.startup_env)
     params["lifecycle"] = spec.lifecycle
@@ -577,18 +580,6 @@ def _role_adapter_from_v2_binding(
     if params:
         role_adapter["params"] = params
     return role_adapter
-
-
-def _provider_config_with_benchmark_runtime_overrides(
-    provider_config: dict[str, Any],
-    *,
-    kit_id: str,
-    benchmark_config: dict[str, Any],
-) -> dict[str, Any]:
-    config = deepcopy(provider_config)
-    if kit_id == "tau2" and isinstance(benchmark_config.get("user_simulator"), dict):
-        config.setdefault("user_simulator", deepcopy(benchmark_config["user_simulator"]))
-    return config
 
 
 def _fail_on_legacy_keys(payload: dict[str, Any]) -> None:
@@ -650,7 +641,7 @@ def _environment_profile_from_environment(environment: dict[str, Any]) -> dict[s
     if isinstance(profile_id, str) and profile_id:
         profile.setdefault("profile_id", profile_id)
     provider_config = environment.get("provider_config")
-    if isinstance(provider_config, dict):
+    if isinstance(provider_config, dict) and provider_config:
         profile["config"] = _deep_merge(dict(profile.get("config") or {}), dict(provider_config))
     resources = environment.get("resources")
     if isinstance(resources, dict) and resources:
@@ -672,6 +663,52 @@ def _provider_config_from_environment(environment: dict[str, Any]) -> dict[str, 
     if isinstance(provider_config, dict):
         config = _deep_merge(config, provider_config)
     return config
+
+
+def _warn_tau2_trial_multiplication(
+    *,
+    payload: dict[str, Any],
+    runtime_config: dict[str, Any],
+) -> None:
+    tau2_benchmark_ids = {
+        str(benchmark.get("benchmark_id"))
+        for benchmark in runtime_config.get("benchmarks") or []
+        if isinstance(benchmark, dict) and str(benchmark.get("kit_id") or "") == "tau2"
+    }
+    if not tau2_benchmark_ids:
+        return
+    dataset_trials = [
+        _coerce_positive_int((dataset.get("params") or {}).get("num_trials"))
+        for dataset in payload.get("datasets") or []
+        if isinstance(dataset, dict) and isinstance(dataset.get("params"), dict)
+    ]
+    dataset_num_trials = max((value for value in dataset_trials if value is not None), default=1)
+    if dataset_num_trials <= 1:
+        return
+    for dut in runtime_config.get("dut_agents") or []:
+        if not isinstance(dut, dict) or str(dut.get("benchmark_id")) not in tau2_benchmark_ids:
+            continue
+        trial_policy = dut.get("trial_policy") if isinstance(dut.get("trial_policy"), dict) else {}
+        trial_repeats = _coerce_positive_int(trial_policy.get("trials")) or 1
+        if trial_repeats > 1:
+            _LOGGER.warning(
+                "Tau2 pass^k should use datasets[].params.num_trials with "
+                "dut_agents[].trial_policy.trials=1; got num_trials=%s and trials=%s "
+                "(executions per task=%s).",
+                dataset_num_trials,
+                trial_repeats,
+                dataset_num_trials * trial_repeats,
+            )
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

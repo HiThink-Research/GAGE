@@ -31,7 +31,7 @@ def _build_sample(domain: str = "airline") -> dict:
 def test_tau2_runtime_basic_flow(tmp_path: Path, monkeypatch) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     runtime = Tau2Runtime()
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.start({"data_dir": str(tmp_path)})
 
     sample = _build_sample()
     init_output = runtime.initialize_task(sample)
@@ -50,7 +50,7 @@ def test_tau2_runtime_basic_flow(tmp_path: Path, monkeypatch) -> None:
 def test_tau2_runtime_user_tools_and_stop(tmp_path: Path, monkeypatch) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path, force_user_tool_call=True)
     runtime = Tau2Runtime()
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.start({"data_dir": str(tmp_path)})
 
     sample = _build_sample(domain="telecom")
     runtime.initialize_task(sample)
@@ -66,7 +66,7 @@ def test_tau2_runtime_satisfies_protocols(tmp_path: Path, monkeypatch) -> None:
     """Tau2Runtime satisfies all three tool-protocol runtime contracts."""
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     runtime = Tau2Runtime()
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.start({"data_dir": str(tmp_path)})
 
     assert isinstance(runtime, ToolExecutionProtocol)
     assert isinstance(runtime, StateQueryProtocol)
@@ -79,7 +79,7 @@ def test_tau2_runtime_exec_reports_protocol_mismatch(
     """exec() raises NotImplementedError with a clear protocol-mismatch message."""
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     runtime = Tau2Runtime()
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.start({"data_dir": str(tmp_path)})
 
     with pytest.raises(NotImplementedError, match="exec_tool|tool protocol"):
         runtime.exec("ls")
@@ -125,7 +125,7 @@ def test_tau2_runtime_records_agent_usage_cost_and_tokens_separately(
 ) -> None:
     install_tau2_stub(monkeypatch, data_dir=tmp_path)
     runtime = Tau2Runtime()
-    runtime.start({"runtime_configs": {"data_dir": str(tmp_path)}})
+    runtime.start({"data_dir": str(tmp_path)})
 
     runtime.record_agent_usage({"total_tokens": 42, "cost_usd": 0.125})
 

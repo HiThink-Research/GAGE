@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Tau2KitConfig(BaseModel):
@@ -10,6 +10,10 @@ class Tau2KitConfig(BaseModel):
 
     domain: str | None = None
     user_simulator: dict[str, Any] | None = None
+    data_dir: str | None = None
+    max_steps: int | None = Field(default=None, ge=1)
+    max_errors: int | None = Field(default=None, ge=0)
+    respond_tool_name: str | None = None
 
     @field_validator("user_simulator", mode="before")
     @classmethod

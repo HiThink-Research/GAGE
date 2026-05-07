@@ -26,6 +26,10 @@ benchmarks:
     kit_id: tau2
     config:
       domain: telecom
+      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+      max_steps: ${TAU2_MAX_STEPS:-200}
+      max_errors: ${TAU2_MAX_ERRORS:-10}
+      respond_tool_name: respond
       user_simulator:
         type: litellm
         model: ${TAU2_USER_MODEL:-openai/qwen/qwen3.5-9b}
@@ -40,17 +44,6 @@ environments:
     profile_id: tau2-local-process
     profile:
       asset_dir: src/gage_eval/agent_eval_kits/tau2/environment/local_process
-    provider_config:
-      data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
-      max_steps: ${TAU2_MAX_STEPS:-200}
-      max_errors: ${TAU2_MAX_ERRORS:-10}
-      respond_tool_name: respond
-      user_model: ${TAU2_USER_MODEL:-openai/qwen/qwen3.5-9b}
-      user_model_args:
-        api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
-        api_key: ${LMSTUDIO_API_KEY:-dummy}
-        drop_params: true
-        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
     startup_env:
       TAU2_DATA_DIR: ${TAU2_DATA_DIR:-./local-datasets/tau2}
 dut_agents:
@@ -59,4 +52,5 @@ dut_agents:
     env_id: tau2_local_process
     benchmark_id: tau2_telecom
     trial_policy:
-      trials: ${TAU2_NUM_TRIALS:-1}
+      # Same-sample reruns for stability checks; use dataset num_trials for Tau2 pass^k.
+      trials: ${TAU2_TRIAL_REPEATS:-1}

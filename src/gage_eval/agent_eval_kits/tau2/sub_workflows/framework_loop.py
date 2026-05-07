@@ -26,11 +26,21 @@ def _build_loop_inputs(*, session, sample, payload):
     return {
         "messages": build_tau2_messages(sample),
         "required_tool": "respond",
+        "benchmark_config": _benchmark_config_from_context(session=session, payload=payload),
     }
 
 
 def _inject_prompt_context(*, session, sample, payload):
     return dict(session.prompt_context or {})
+
+
+def _benchmark_config_from_context(*, session, payload) -> dict[str, Any]:
+    benchmark_config = (payload or {}).get("benchmark_config")
+    if isinstance(benchmark_config, dict):
+        return dict(benchmark_config)
+    runtime_context = getattr(session, "runtime_context", {}) or {}
+    benchmark_config = runtime_context.get("benchmark_config")
+    return dict(benchmark_config or {}) if isinstance(benchmark_config, dict) else {}
 
 
 def _inject_tool_schemas(*, session, sample, payload):

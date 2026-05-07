@@ -230,6 +230,7 @@ class ConfigRegistry:
                 resources=adapter_kwargs.get("resources"),
                 startup_env=adapter_kwargs.get("startup_env"),
                 lifecycle=adapter_kwargs.get("lifecycle"),
+                benchmark_config=adapter_kwargs.get("benchmark_config"),
             )
             adapter_kwargs.setdefault("agent_runtime_id", spec.agent_runtime_id)
             adapter_kwargs.setdefault("compat_runtime_id", spec.compat_runtime_id)

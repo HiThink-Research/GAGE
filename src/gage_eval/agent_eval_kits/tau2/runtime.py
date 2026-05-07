@@ -22,9 +22,9 @@ class Tau2RuntimeEntry:
             raise RuntimeError("tau2 environment lease is unavailable")
         runtime = getattr(environment_lease, "environment", None)
         if not _is_tau2_runtime(runtime):
-            runtime_configs = _resolve_tau2_runtime_configs(session=session, payload=payload)
-            runtime = Tau2Runtime(runtime_configs=runtime_configs)
-            runtime.start({"runtime_configs": runtime_configs})
+            runtime_settings = _resolve_tau2_runtime_settings(session=session, payload=payload)
+            runtime = Tau2Runtime(runtime_settings=runtime_settings)
+            runtime.start(runtime_settings)
             runtime_lease = Tau2RuntimeEnvironmentLease(base_lease=environment_lease, runtime=runtime)
         else:
             runtime_lease = environment_lease
@@ -160,13 +160,16 @@ class Tau2RuntimeEnvironmentLease:
         return await _maybe_await(getattr(self._base_lease, "get_logs")(*args, **kwargs))
 
 
-def _resolve_tau2_runtime_configs(*, session: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    provider_config = payload.get("provider_config")
-    if not isinstance(provider_config, dict):
-        resource_lease = getattr(session, "resource_lease", None)
-        metadata = getattr(resource_lease, "metadata", None)
-        provider_config = metadata.get("provider_config") if isinstance(metadata, dict) else {}
-    return dict(provider_config or {}) if isinstance(provider_config, dict) else {}
+def _resolve_tau2_runtime_settings(*, session: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    benchmark_config = payload.get("benchmark_config")
+    if not isinstance(benchmark_config, dict):
+        runtime_context = getattr(session, "runtime_context", None)
+        benchmark_config = (
+            runtime_context.get("benchmark_config")
+            if isinstance(runtime_context, dict)
+            else {}
+        )
+    return dict(benchmark_config or {}) if isinstance(benchmark_config, dict) else {}
 
 
 def _is_tau2_runtime(runtime: Any) -> bool:
