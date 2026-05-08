@@ -24,4 +24,5 @@ class AgentRuntimeSession:
     benchmark_state: dict[str, Any] = field(default_factory=dict)
     scheduler_state: dict[str, Any] = field(default_factory=dict)
     artifact_layout: dict[str, str] = field(default_factory=dict)
+    artifact_sink: Any | None = None
     judge_outcome: RuntimeJudgeOutcome | None = None

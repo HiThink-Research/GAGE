@@ -11,31 +11,43 @@ from gage_eval.config import build_default_registry
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.registry import registry
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from tests._support.stubs.mcp_stub import AppWorldMcpStub
 
 
-class DemoAgent:
-    """Stateful agent stub that emits a tool call then an answer."""
+class DemoModelBackend:
+    """Stateful static model backend that emits a tool call then an answer."""
 
-    def __init__(self) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        del config
         self._calls = 0
 
-    def run(self, payload: dict) -> dict:
+    async def ainvoke(self, payload: dict) -> dict:
+        del payload
         self._calls += 1
         if self._calls == 1:
             return {
-                "tool_calls": [
+                "choices": [
                     {
-                        "id": "tool-1",
-                        "function": {
-                            "name": "step",
-                            "arguments": {"action": "noop"},
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "tool-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "step",
+                                        "arguments": "{\"action\":\"noop\"}",
+                                    },
+                                }
+                            ],
                         },
+                        "finish_reason": "tool_calls",
                     }
                 ]
             }
-        return {"answer": "done"}
+        return {"choices": [{"message": {"content": "done"}, "finish_reason": "stop"}]}
 
 
 class _ResponseStub:
@@ -76,10 +88,7 @@ def test_appworld_agent_demo_end_to_end(
         return stub.requester(method, payload)
 
     monkeypatch.setattr(appworld_runtime_module.requests, "post", fake_post)
-    payload["agent_backends"][0]["type"] = "agent_class"
-    payload["agent_backends"][0]["config"] = {"agent_class": DemoAgent, "method": "run"}
-    payload["backends"][0]["type"] = "dummy"
-    payload["backends"][0]["config"] = {"responses": ["ok"]}
+    _configure_runtime_owned_appworld_agent(payload)
     payload["mcp_clients"][0]["endpoint"] = "http://stub"
     payload["mcp_clients"][0]["params"] = {**payload["mcp_clients"][0].get("params", {}), "requester": requester}
     payload["tasks"][0]["max_samples"] = 1
@@ -113,3 +122,25 @@ def test_appworld_agent_demo_end_to_end(
     assert tool_steps[0]["output"]["observation"]["status"] == "ok"
     assert stub.tool_calls and stub.tool_calls[0]["name"] == "step"
     assert [name for name, _ in lifecycle_calls] == ["initialize", "save"]
+
+
+def _configure_runtime_owned_appworld_agent(payload: dict[str, Any]) -> None:
+    registry.register(
+        "backends",
+        "appworld_demo_tool_backend",
+        DemoModelBackend,
+        desc="AppWorld runtime integration test backend",
+        tags=("test", "agent_runtime"),
+    )
+    backend_id = payload["backends"][0]["backend_id"]
+    payload.pop("agent_backends", None)
+    payload["backends"][0]["type"] = "appworld_demo_tool_backend"
+    payload["backends"][0]["config"] = {}
+    dut = next(adapter for adapter in payload["role_adapters"] if adapter["adapter_id"] == "dut_agent_main")
+    dut.pop("agent_backend_id", None)
+    dut["agent_runtime_id"] = "appworld_framework_loop"
+    dut["backend_id"] = backend_id
+    params = dut.setdefault("params", {})
+    params.pop("pre_hooks", None)
+    params.pop("post_hooks", None)
+    params["max_turns"] = 3

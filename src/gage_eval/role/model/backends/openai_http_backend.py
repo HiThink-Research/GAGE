@@ -396,7 +396,12 @@ class OpenAICompatibleHTTPBackend(EngineBackend):
         return getattr(first_choice, "message", None) is not None
 
     def _is_chat_completion_instance(self, response: Any) -> bool:
-        return isinstance(ChatCompletion, type) and isinstance(response, ChatCompletion)
+        if not isinstance(ChatCompletion, type):
+            return False
+        try:
+            return isinstance(response, ChatCompletion)
+        except TypeError:
+            return False
 
     def _is_sync_stream(self, response: Any) -> bool:
         if isinstance(response, (str, bytes, dict, list, tuple)):

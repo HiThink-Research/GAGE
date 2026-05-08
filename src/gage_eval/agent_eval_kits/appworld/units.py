@@ -88,7 +88,7 @@ def fetch_mcp_tool_schemas(
     client (e.g. ``appworld_env`` from the pipeline config).
     """
 
-    from gage_eval.sandbox.integrations.appworld.mcp_client import AppWorldStreamableMcpClient
+    from gage_eval.agent_eval_kits.appworld.mcp_client import AppWorldStreamableMcpClient
 
     client = AppWorldStreamableMcpClient(
         mcp_client_id=mcp_client_id or "appworld",

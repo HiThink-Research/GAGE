@@ -119,6 +119,87 @@ def _select_summary_entries(cache: EvalCache, *, registry_view=None) -> List[Any
     return list(selected.values())
 
 
+def _build_runtime_health(cache: EvalCache) -> Dict[str, Any]:
+    records = list(cache.iter_samples())
+    health = {
+        "sample_count": len(records),
+        "completed_count": 0,
+        "failed_count": 0,
+        "aborted_count": 0,
+        "verifier_skipped_count": 0,
+        "scheduler_failed_count": 0,
+    }
+    for record in records:
+        judge_output = _record_judge_output(record)
+        scheduler_result = _record_scheduler_result(record)
+        runtime_failure = _record_runtime_failure(record)
+        scheduler_failed = _scheduler_failed(scheduler_result, runtime_failure)
+        verifier_skipped = _verifier_skipped(judge_output)
+        status = str(record.get("status") or judge_output.get("status") or "")
+
+        if scheduler_failed:
+            health["scheduler_failed_count"] += 1
+        if verifier_skipped:
+            health["verifier_skipped_count"] += 1
+        if status == "aborted":
+            health["aborted_count"] += 1
+        elif scheduler_failed or status == "failed":
+            health["failed_count"] += 1
+        elif status == "completed":
+            health["completed_count"] += 1
+    return health
+
+
+def _record_judge_output(record: Dict[str, Any]) -> Dict[str, Any]:
+    judge_output = record.get("judge_output")
+    if isinstance(judge_output, dict):
+        return dict(judge_output)
+    model_output = record.get("model_output")
+    if not isinstance(model_output, dict):
+        return {}
+    runtime_outcome = model_output.get("runtime_judge_outcome")
+    if isinstance(runtime_outcome, dict) and isinstance(runtime_outcome.get("judge_output"), dict):
+        return dict(runtime_outcome["judge_output"])
+    return {}
+
+
+def _record_scheduler_result(record: Dict[str, Any]) -> Dict[str, Any]:
+    model_output = record.get("model_output")
+    if not isinstance(model_output, dict):
+        return {}
+    runtime_outcome = model_output.get("runtime_judge_outcome")
+    if not isinstance(runtime_outcome, dict):
+        return {}
+    verifier_input = runtime_outcome.get("verifier_input")
+    if isinstance(verifier_input, dict) and isinstance(verifier_input.get("scheduler_result"), dict):
+        return dict(verifier_input["scheduler_result"])
+    return {}
+
+
+def _record_runtime_failure(record: Dict[str, Any]) -> Dict[str, Any]:
+    model_output = record.get("model_output")
+    if isinstance(model_output, dict) and isinstance(model_output.get("runtime_failure"), dict):
+        return dict(model_output["runtime_failure"])
+    return {}
+
+
+def _scheduler_failed(scheduler_result: Dict[str, Any], runtime_failure: Dict[str, Any]) -> bool:
+    if scheduler_result.get("status") in {"failed", "aborted"}:
+        return True
+    failure_code = str(
+        runtime_failure.get("failure_code")
+        or scheduler_result.get("failure_code")
+        or ""
+    )
+    return failure_code.startswith("client_execution.")
+
+
+def _verifier_skipped(judge_output: Dict[str, Any]) -> bool:
+    if judge_output.get("status") == "skipped":
+        return True
+    return judge_output.get("failure_code") == "verifier.skipped_due_to_scheduler_failure"
+
+
 @registry.asset(
     "pipeline_steps",
     "report",
@@ -228,6 +309,7 @@ class ReportStep(GlobalStep):
             "run": self._cache.snapshot(),
             "metrics": formatted_metrics,
             "sample_count": self.get_sample_count(),
+            "runtime_health": _build_runtime_health(self._cache),
         }
         execution_summary = self._cache.get_metadata("execution_summary")
         if isinstance(execution_summary, dict):

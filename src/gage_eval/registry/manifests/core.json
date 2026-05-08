@@ -57,37 +57,10 @@
     },
     {
       "kind": "judge_impls",
-      "name": "appworld_evaluate",
-      "module": "gage_eval.role.judge.appworld_evaluate",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/judge/appworld_evaluate.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "judge_impls",
       "name": "gomoku_referee",
       "module": "gage_eval.role.judge.gomoku_referee",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/role/judge/gomoku_referee.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "judge_impls",
-      "name": "swebench_docker",
-      "module": "gage_eval.role.judge.swebench_docker",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/judge/swebench_docker.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "judge_impls",
-      "name": "tau2_eval",
-      "module": "gage_eval.role.judge.tau2_eval",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/judge/tau2_eval.py",
       "aliases": [],
       "optional": false
     },

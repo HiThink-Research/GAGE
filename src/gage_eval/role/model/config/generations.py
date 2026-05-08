@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class GenerationParameters(BaseModel):
     """Common generation parameter set shared across backends."""
 
-    max_new_tokens: Optional[int] = Field(default=512, ge=1)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    max_new_tokens: Optional[int] = Field(
+        default=4096,
+        ge=1,
+        validation_alias=AliasChoices("max_new_tokens", "max_tokens"),
+    )
     temperature: Optional[float] = Field(default=0.7, ge=0.0)
     top_p: Optional[float] = Field(default=0.95, ge=0.0, le=1.0)
     top_k: Optional[int] = Field(default=None, ge=1)

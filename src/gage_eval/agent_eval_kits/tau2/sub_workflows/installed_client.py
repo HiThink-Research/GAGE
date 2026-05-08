@@ -36,12 +36,14 @@ def _prepare_environment(*, session, sample, sandbox_provider=None):
 
 
 def _capture_environment_artifacts(*, session, sample, scheduler_output, sandbox_provider=None):
-    _record_tau2_agent_usage(sandbox_provider=sandbox_provider, scheduler_output=scheduler_output)
+    environment_lease = (getattr(session, "runtime_context", {}) or {}).get("environment_lease")
+    _record_tau2_agent_usage(runtime_source=environment_lease or sandbox_provider, scheduler_output=scheduler_output)
     artifact_paths = dict(scheduler_output.get("artifact_paths") or {})
     artifact_paths.update(
         persist_tau2_artifacts(
             session=session,
             scheduler_output=scheduler_output,
+            environment_lease=environment_lease,
             sandbox_provider=sandbox_provider,
         )
     )
@@ -54,11 +56,13 @@ def _finalize_result(*, session, sample, scheduler_output, artifact_paths):
     return output
 
 
-def _record_tau2_agent_usage(*, sandbox_provider, scheduler_output) -> None:
-    if sandbox_provider is None:
-        return
-    handle = sandbox_provider.get_handle()
-    runtime = handle.sandbox if handle is not None else None
+def _record_tau2_agent_usage(*, runtime_source, scheduler_output) -> None:
+    runtime = getattr(runtime_source, "environment", None)
+    if runtime is None and hasattr(runtime_source, "get_handle"):
+        handle = runtime_source.get_handle()
+        runtime = getattr(handle, "sandbox", None) if handle is not None else None
+    if runtime is None:
+        runtime = runtime_source
     recorder = getattr(runtime, "record_agent_usage", None)
     if not callable(recorder):
         return

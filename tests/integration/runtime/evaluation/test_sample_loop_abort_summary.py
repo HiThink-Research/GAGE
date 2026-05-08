@@ -64,7 +64,8 @@ def test_pipeline_runtime_writes_execution_summary_on_abort(tmp_path) -> None:
     )
     role_manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)]))
     role_manager.register_role_adapter("dut", _FailingRole())
-    trace = ObservabilityTrace(recorder=InMemoryRecorder(run_id="pipeline-abort"))
+    recorder = InMemoryRecorder(run_id="pipeline-abort")
+    trace = ObservabilityTrace(recorder=recorder)
     cache = EvalCache(base_dir=tmp_path, run_id=trace.run_id)
     runtime = PipelineRuntime(
         sample_loop=sample_loop,
@@ -83,6 +84,10 @@ def test_pipeline_runtime_writes_execution_summary_on_abort(tmp_path) -> None:
     assert summary["execution"]["status"] == "aborted"
     assert summary["execution"]["failed_sample_id"] == "s0"
     assert summary["execution"]["cancelled_samples"] >= 1
+    trace.flush()
+    sample_failed = [event for event in recorder.buffered_events() if event["event"] == "sample.failed"]
+    assert sample_failed
+    assert sample_failed[0]["payload"]["failure_code"] == "persistence.sample_record.missing"
 
 
 @pytest.mark.fast

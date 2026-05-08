@@ -21,7 +21,6 @@ from gage_eval.config.pipeline_config import (
     RoleAdapterSpec,
 )
 from gage_eval.registry import RuntimeAssetPlanner, import_asset_from_manifest, import_kind_from_manifest
-from gage_eval.sandbox.manager import SandboxManager
 
 if TYPE_CHECKING:
     from gage_eval.assets.prompts.assets import PromptTemplateAsset
@@ -80,6 +79,7 @@ class ConfigRegistry:
         from gage_eval.assets.prompts.assets import PromptTemplateAsset
         from gage_eval.registry import DiscoveryPolicy, RegistryOverlayAsset
 
+        _preload_agent_runtime_verifier_assets(config)
         discovery_plan = self._asset_planner.build_plan(config)
         overlays = [
             RegistryOverlayAsset(
@@ -223,12 +223,14 @@ class ConfigRegistry:
             adapter_kwargs.setdefault("mcp_clients", mcp_clients)
         if spec.role_type == "dut_agent" and spec.agent_runtime_id:
             sandbox_manager = adapter_kwargs.get("sandbox_manager")
-            if not isinstance(sandbox_manager, SandboxManager):
-                sandbox_manager = SandboxManager(profiles=sandbox_profiles)
-                adapter_kwargs.setdefault("sandbox_manager", sandbox_manager)
             compiled_plan = compile_agent_runtime_plan(
                 agent_runtime_id=spec.agent_runtime_id,
-                sandbox_config=spec.sandbox,
+                environment_profile=adapter_kwargs.get("environment_profile"),
+                provider_config=adapter_kwargs.get("provider_config"),
+                resources=adapter_kwargs.get("resources"),
+                startup_env=adapter_kwargs.get("startup_env"),
+                lifecycle=adapter_kwargs.get("lifecycle"),
+                benchmark_config=adapter_kwargs.get("benchmark_config"),
             )
             adapter_kwargs.setdefault("agent_runtime_id", spec.agent_runtime_id)
             adapter_kwargs.setdefault("compat_runtime_id", spec.compat_runtime_id)
@@ -237,9 +239,10 @@ class ConfigRegistry:
                 build_compiled_runtime_executor(
                     compiled_plan=compiled_plan,
                     agent_backend=agent_backend_obj,
+                    static_model_backend=backend_obj,
                     installed_client_override=None,
                     prompt_renderer=adapter_kwargs.get("prompt_renderer"),
-                    max_turns=int(adapter_kwargs.get("max_turns", 8)),
+                    max_turns=int(adapter_kwargs.get("max_turns", 150)),
                     pre_hooks=adapter_kwargs.get("pre_hooks"),
                     post_hooks=adapter_kwargs.get("post_hooks"),
                     mcp_clients=mcp_clients,
@@ -331,23 +334,13 @@ class ConfigRegistry:
     ) -> Dict[str, Any]:
         """Instantiate agent backend objects declared at the pipeline level."""
 
-        from gage_eval.role.agent.backends import build_agent_backend
-
-        instances: Dict[str, Any] = {}
-        for spec in config.agent_backends:
-            config_payload = dict(spec.config or {})
-            backend_id = spec.backend_id or config_payload.pop("backend_id", None)
-            if spec.backend_id:
-                config_payload.pop("backend_id", None)
-            if spec.type == "model_backend" and backend_id:
-                if not backends or backend_id not in backends:
-                    raise KeyError(
-                        f"Agent backend '{spec.agent_backend_id}' references unknown backend '{backend_id}'"
-                    )
-                config_payload["backend"] = backends[backend_id]
-            instances[spec.agent_backend_id] = build_agent_backend(
-                {"type": spec.type, "config": config_payload}
+        del backends
+        if config.agent_backends:
+            raise RuntimeError(
+                "legacy role-agent backend materialization has been removed; "
+                "AgentKit v2 agents must use agent_runtime scheduler backends"
             )
+        instances: Dict[str, Any] = {}
         return instances
 
     def materialize_sandbox_profiles(self, config: PipelineConfig) -> Dict[str, Dict[str, Any]]:
@@ -434,14 +427,11 @@ class ConfigRegistry:
         return build_backend(backend_payload, registry_view=self._registry_lookup())
 
     def _build_inline_agent_backend(self, spec: Dict[str, Any]) -> Any:
-        from gage_eval.role.agent.backends import build_agent_backend
-
-        backend_payload: Dict[str, Any] = dict(spec)
-        backend_type = backend_payload.get("type")
-        if not backend_type:
-            raise ValueError("Inline agent backend must declare field 'type'")
-        backend_payload.setdefault("config", backend_payload.get("config", {}) or {})
-        return build_agent_backend(backend_payload)
+        del spec
+        raise RuntimeError(
+            "inline legacy agent_backend is no longer supported; "
+            "configure AgentKit v2 scheduler backend_id instead"
+        )
 
     # ------------------------------------------------------------------
     # Convenience utilities
@@ -450,12 +440,18 @@ class ConfigRegistry:
 
 def _resolve_mcp_client_class(transport: Optional[str]) -> Any:
     if transport == "streamable_http":
-        from gage_eval.sandbox.integrations.appworld.mcp_client import AppWorldStreamableMcpClient
+        from gage_eval.agent_eval_kits.appworld.mcp_client import AppWorldStreamableMcpClient
 
         return AppWorldStreamableMcpClient
     from gage_eval.mcp import McpClient
 
     return McpClient
+
+
+def _preload_agent_runtime_verifier_assets(config: PipelineConfig) -> None:
+    """Import verifier modules before the runtime registry view is frozen."""
+
+    del config
 
 
 def _env_truthy(value: Optional[str]) -> bool:

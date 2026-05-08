@@ -16,7 +16,6 @@ from gage_eval.role.toolchain.tool_docs import (
 )
 from gage_eval.mcp import McpClient
 from gage_eval.mcp.utils import sync_mcp_endpoint
-from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -84,9 +83,8 @@ class ToolchainAdapter(RoleAdapter):
         sandbox_provider = payload.get("sandbox_provider") if isinstance(payload, dict) else None
         mcp_tools = []
         raw_mcp_tools: List[Dict[str, Any]] = []
-        if self._mcp_client and isinstance(sandbox_provider, SandboxProvider):
-            handle = sandbox_provider.get_handle()
-            runtime_handle = handle.runtime_handle if handle else {}
+        if self._mcp_client and sandbox_provider is not None:
+            runtime_handle = _runtime_handle_from_provider(sandbox_provider)
             sync_mcp_endpoint(self._mcp_client, runtime_handle)
         if self._mcp_client:
             raw_mcp_tools = list(self._mcp_client.list_tools())
@@ -188,6 +186,19 @@ def _resolve_allowed_apps(sample: Dict[str, Any], fallback: Sequence[str]) -> Li
     if isinstance(allowed, list) and allowed:
         return [str(item) for item in allowed if item]
     return list(fallback)
+
+
+def _runtime_handle_from_provider(provider: Any) -> dict[str, Any]:
+    runtime_handle = getattr(provider, "runtime_handle", None)
+    if callable(runtime_handle):
+        resolved = runtime_handle()
+        return dict(resolved or {}) if isinstance(resolved, dict) else {}
+    get_handle = getattr(provider, "get_handle", None)
+    if callable(get_handle):
+        handle = get_handle()
+        resolved = getattr(handle, "runtime_handle", None) if handle is not None else None
+        return dict(resolved or {}) if isinstance(resolved, dict) else {}
+    return {}
 
 
 class _DynamicToolFilters:

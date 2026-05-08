@@ -1,0 +1,7 @@
+template_id = "gage-swebench-pro-wrapper"
+dockerfile = "Dockerfile.wrapper"
+start_cmd = "/usr/local/bin/gage-swebench-init"
+
+[metadata]
+name = "GAGE SWE-bench Pro wrapper"
+description = "E2B wrapper profile for running the kit-owned SWE-bench verifier without duplicating judge logic."

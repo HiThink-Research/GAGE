@@ -1,0 +1,8 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_top_level_agent_backend_id_unresolved_with_model
+agent_backend_id: missing_backend
+scheduler:
+  type: framework_loop
+  model: gpt-4.1-mini

@@ -1,0 +1,53 @@
+{
+  "source": "agent-eval/0421/qwen3_6_35B_all/tau/samples.jsonl",
+  "messages": [
+    {
+      "source_sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]airplane_mode_on|data_saver_mode_on|user_abroad_roaming_disabled_on[PERSONA:None]__trial_1",
+      "trace_index": 15,
+      "field": "user_message",
+      "kind": "STOP",
+      "raw": "### STOP ###",
+      "content": "### STOP ###"
+    },
+    {
+      "source_sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]data_mode_off|data_usage_exceeded[PERSONA:None]__trial_0",
+      "trace_index": 13,
+      "field": "user_message",
+      "kind": "STOP",
+      "raw": "### STOP###",
+      "content": "### STOP###"
+    },
+    {
+      "source_sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]airplane_mode_on|bad_network_preference|data_mode_off|data_usage_exceeded|user_abroad_roaming_disabled_on[PERSONA:None]__trial_0",
+      "trace_index": 17,
+      "field": "user_message",
+      "kind": "TRANSFER",
+      "raw": "### TRANSFER ###",
+      "content": "### TRANSFER ###"
+    },
+    {
+      "source_sample_id": "tau2_telecom_vllm_full:telecom_[service_issue]airplane_mode_on|overdue_bill_suspension[PERSONA:None]__trial_1",
+      "trace_index": 21,
+      "field": "user_message",
+      "kind": "TRANSFER",
+      "raw": "### TRANSFER###",
+      "content": "### TRANSFER###"
+    },
+    {
+      "source_sample_id": "tau2_retail_vllm_full:retail_5__trial_0",
+      "trace_index": 1,
+      "field": "user_message",
+      "kind": "OUT_OF_SCOPE",
+      "raw": "###OUT-OF-SCOPE###",
+      "content": "###OUT-OF-SCOPE###"
+    },
+    {
+      "source_sample_id": "tau2_telecom_vllm_full:telecom_[mobile_data_issue]data_mode_off|data_usage_exceeded[PERSONA:None]__trial_0",
+      "trace_index": 12,
+      "field": "user_message",
+      "kind": "STOP",
+      "raw": "### STOP###",
+      "content": "Fantastic! The speed test shows an internet speed of 275.00 Mbps, which is excellent. You should now have the fast internet speed you were looking for.\n\nIf you encounter any further issues or need assistance with anything else, feel free to reach out. Thank you for your patience and cooperation!\n\n### STOP###"
+    }
+  ]
+}

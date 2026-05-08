@@ -14,6 +14,9 @@ class CLIIntent:
     max_samples: int | None = None
     skip_judge: bool = False
     metric_ids: tuple[str, ...] | None = None
+    env_provider: str | None = None
+    dut_id: str | None = None
+    env_id: str | None = None
 
 
 def parse_metric_ids_csv(metric_ids_csv: str | None) -> tuple[str, ...] | None:

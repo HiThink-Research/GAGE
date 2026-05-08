@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
-from gage_eval.utils.benchmark_helpers.swebench import get_dockerhub_image_uri
+from gage_eval.agent_eval_kits.swebench._helpers import get_dockerhub_image_uri
 
 
 def _coerce_list(value: Any) -> List[str]:
@@ -105,9 +105,6 @@ class SwebenchProPreprocessor(BasePreprocessor):
         smoke_ids_path: Optional[str] = None,
         dockerhub_username: str = "jefzda",
         registry_prefix: Optional[str] = None,
-        sandbox_id: str = "swebench_runtime",
-        sandbox_runtime: str = "docker",
-        sandbox_lifecycle: str = "per_sample",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -117,9 +114,6 @@ class SwebenchProPreprocessor(BasePreprocessor):
         self._smoke_ids = _load_smoke_ids(smoke_ids_path)
         self._dockerhub_username = dockerhub_username
         self._registry_prefix = registry_prefix
-        self._sandbox_id = sandbox_id
-        self._sandbox_runtime = sandbox_runtime
-        self._sandbox_lifecycle = sandbox_lifecycle
 
     def transform(self, sample: Dict[str, Any], **kwargs: Any) -> Optional[Dict[str, Any]]:
         instance_id = str(sample.get("instance_id") or sample.get("id") or "").strip()
@@ -173,7 +167,7 @@ class SwebenchProPreprocessor(BasePreprocessor):
             }
         )
 
-        # STEP 4: Attach sandbox metadata for per-sample docker runtimes.
+        # STEP 4: Attach sample-level image metadata for per-sample docker runtimes.
         repo = metadata.get("repo") or record.get("repo") or record.get("repository")
         image_uri = None
         if instance_id and repo:
@@ -181,18 +175,13 @@ class SwebenchProPreprocessor(BasePreprocessor):
             if self._registry_prefix:
                 image_name = image_uri.split("/", 1)[-1]
                 image_uri = f"{self._registry_prefix.rstrip('/')}/{image_name}"
-            metadata.setdefault("image_uri", image_uri)
-
-        sandbox = dict(record.get("sandbox") or {})
-        sandbox.setdefault("sandbox_id", self._sandbox_id)
-        sandbox.setdefault("runtime", self._sandbox_runtime)
-        sandbox.setdefault("lifecycle", self._sandbox_lifecycle)
-        if image_uri:
-            sandbox.setdefault("image", image_uri)
-        record["sandbox"] = sandbox
+            environment_overrides = dict(metadata.get("environment_overrides") or {})
+            environment_overrides.setdefault("image_uri", image_uri)
+            metadata["environment_overrides"] = environment_overrides
 
         # STEP 5: Materialize fields expected by the pipeline (id/messages/inputs/metadata).
         record["id"] = instance_id
+        record.pop("sandbox", None)
         record["messages"] = [
             {
                 "role": "user",

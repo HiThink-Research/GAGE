@@ -1,4 +1,4 @@
-"""Agent runtime utilities."""
+"""Agent hook registry retained for benchmark lifecycle adapters."""
 
 from gage_eval.role.agent.hooks import (
     AgentHookContext,
@@ -7,14 +7,8 @@ from gage_eval.role.agent.hooks import (
     register_hook,
     register_hook_aliases,
 )
-from gage_eval.role.agent.human_gateway import HumanGateway
-from gage_eval.role.agent.loop import AgentLoop
-from gage_eval.role.agent.tool_router import ToolRouter
 
 __all__ = [
-    "AgentLoop",
-    "ToolRouter",
-    "HumanGateway",
     "AgentHookContext",
     "AgentLoopHook",
     "build_hook_chain",

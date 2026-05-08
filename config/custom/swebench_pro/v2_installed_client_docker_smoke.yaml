@@ -1,0 +1,105 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: swebench-pro-v2-docker-smoke
+  description: AgentKit v2 SWE-bench Pro local Docker smoke config; replaces the old installed-client variant.
+
+
+datasets:
+  - dataset_id: swebench_pro_smoke
+    hub: huggingface
+    hub_params:
+      hub_id: ScaleAI/SWE-bench_Pro
+      split: test
+    loader: hf_hub
+    params:
+      streaming: false
+      preprocess: swebench_pro_standardizer
+      preprocess_kwargs:
+        smoke_ids_path: third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
+        dockerhub_username: jefzda
+
+
+backends:
+  - backend_id: lmstudio_litellm
+    type: litellm
+    config:
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      model: ${LMSTUDIO_LITELLM_MODEL:-openai/qwen/qwen3.5-9b}
+      api_key: ${LMSTUDIO_API_KEY:-dummy}
+      streaming: false
+      timeout: 180
+      max_retries: 2
+      drop_params: true
+      generation_parameters:
+        temperature: 0.0
+        max_new_tokens: 8192
+
+agents:
+  - agent_id: swebench_agent
+    scheduler:
+      type: framework_loop
+      backend_id: lmstudio_litellm
+      config:
+        max_turns: ${SWEBENCH_MAX_TURNS:-200}
+        cost_limit_usd: ${SWEBENCH_COST_LIMIT:-3.0}
+    config: {}
+    tooling:
+      skill_ids: []
+      mcp_servers: []
+
+benchmarks:
+  - benchmark_id: swebench_pro_smoke
+    kit_id: swebench
+    config:
+      split: test
+
+environments:
+  - env_id: swebench_docker
+    provider: docker
+    profile_id: swebench_runtime
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/swebench/environment/docker
+    provider_config:
+      network_policy: block
+      docker_platform: linux/amd64
+      entrypoint: []
+      keepalive_command:
+        - sleep
+        - infinity
+      workdir: /workspace
+      exec_workdir: /app
+    resources:
+      cpu: 4
+      memory_gb: 8.0
+
+dut_agents:
+  - dut_id: swebench_dut
+    agent_id: swebench_agent
+    env_id: swebench_docker
+    benchmark_id: swebench_pro_smoke
+    trial_policy:
+      trials: ${SWEBENCH_TRIAL_REPEATS:-1}
+
+
+metrics:
+  - metric_id: swebench_resolve_rate
+    implementation: swebench_resolve_rate
+  - metric_id: swebench_failure_reason
+    implementation: swebench_failure_reason
+    aggregation: categorical_count
+
+summary_generators:
+  - swebench_summary
+
+tasks:
+  - task_id: swebench_pro_v2_docker_smoke
+    dataset_id: swebench_pro_smoke
+    steps:
+      - step: inference
+        adapter_id: swebench_dut
+      - step: auto_eval
+    max_samples: 11
+    concurrency: 1

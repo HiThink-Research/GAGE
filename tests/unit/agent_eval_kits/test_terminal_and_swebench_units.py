@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction, build_swebench_messages
+from gage_eval.agent_eval_kits.swebench.tools import build_swebench_instruction, build_swebench_messages
 from gage_eval.agent_eval_kits.terminal_bench.units import build_terminal_instruction, build_terminal_messages
 
 

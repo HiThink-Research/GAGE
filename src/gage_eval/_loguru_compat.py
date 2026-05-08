@@ -49,6 +49,9 @@ def ensure_loguru() -> None:
             self._sinks.append(sink)
             return len(self._sinks)
 
+        def opt(self, **kwargs):
+            return self
+
         def log(self, level, message, *args, **kwargs):
             formatted = message.format(*args, **kwargs) if (args or kwargs) else message
             extra = dict(_CONTEXT_EXTRA.get())

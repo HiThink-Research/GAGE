@@ -12,12 +12,12 @@ datasets:
       path: tests/data/samples/skillsbench_demo.jsonl
       streaming: false
 
-agent_backends:
-  - agent_backend_id: skillsbench_agent
-    type: agent_class
+backends:
+  - backend_id: skillsbench_smoke_dummy
+    type: dummy
     config:
-      agent_class: gage_eval.role.agent.backends.demo_agent.RuntimeSmokeAgent
-
+      responses:
+        - done
 sandbox_profiles:
   - sandbox_id: swebench_runtime
     runtime: docker
@@ -27,7 +27,7 @@ sandbox_profiles:
 role_adapters:
   - adapter_id: skillsbench_agent_main
     role_type: dut_agent
-    agent_backend_id: skillsbench_agent
+    backend_id: skillsbench_smoke_dummy
     agent_runtime_id: skillsbench_framework_loop
     sandbox:
       sandbox_id: swebench_runtime

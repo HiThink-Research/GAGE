@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 import yaml
 
-from gage_eval.sandbox.integrations.appworld.mcp_client import normalize_mcp_call_result
+from gage_eval.agent_eval_kits.appworld.mcp_client import normalize_mcp_call_result
 
 
 class TextContentStub:

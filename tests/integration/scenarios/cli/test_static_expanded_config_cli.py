@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,50 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import run as gage_run
+import gage_eval.config.agentkit_v2 as agentkit_v2_module
+
+
+AGENTKIT_V2_CONFIG = """
+kind: AgentEvalConfig
+metadata:
+  name: agentkit-v2-cli
+backends:
+  - backend_id: model
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+      api_key: ${ENV.MODEL_API_KEY}
+agents:
+  - agent_id: agent
+    scheduler:
+      type: framework_loop
+      backend_id: model
+benchmarks:
+  - benchmark_id: bench
+    kit_id: tau2
+    config: {}
+environments:
+  - env_id: env
+    provider: local_process
+    profile_id: tau2_local
+    profile:
+      asset_dir: tests/fixtures/agentkit_v2/tau2
+dut_agents:
+  - dut_id: dut
+    agent_id: agent
+    env_id: env
+    benchmark_id: bench
+"""
+
+AGENTKIT_V2_DUMMY_BACKEND_CONFIG = AGENTKIT_V2_CONFIG.replace(
+    "type: litellm\n    config:\n      model: gpt-4.1-mini\n      api_key: ${ENV.MODEL_API_KEY}",
+    "type: dummy\n    config:\n      response: ok",
+)
+
+
+class _InteractiveStdin:
+    def isatty(self) -> bool:
+        return True
 
 
 @pytest.mark.io
@@ -127,6 +172,266 @@ task:
     expanded = yaml.safe_load(captured.out)
     assert excinfo.value.code == 0
     assert expanded["tasks"][0]["steps"][0] == {"step": "inference", "adapter_id": "dut_vllm_qwen"}
+
+
+@pytest.mark.io
+def test_build_cli_intent_populates_agentkit_v2_overrides(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--config",
+            "config.yaml",
+            "--env-provider",
+            "docker",
+            "--dut-id",
+            "dut",
+            "--env-id",
+            "env",
+        ],
+    )
+
+    args = gage_run.parse_args()
+    intent = gage_run._build_cli_intent(args)
+
+    assert intent.env_provider == "docker"
+    assert intent.dut_id == "dut"
+    assert intent.env_id == "env"
+
+
+@pytest.mark.io
+def test_show_expanded_agentkit_v2_config_redacts_env_secret(monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", "secret-value")
+    cfg = tmp_path / "agentkit_v2.yaml"
+    cfg.write_text(AGENTKIT_V2_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["run.py", "--config", str(cfg), "--show-expanded-config"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 0
+    assert "secret-value" not in captured.out
+    assert "<redacted:reference:ENV.MODEL_API_KEY>" in captured.out
+    expanded = yaml.safe_load(captured.out)
+    assert expanded["backends"][0]["config"]["api_key"] == "<redacted:reference:ENV.MODEL_API_KEY>"
+
+
+@pytest.mark.io
+def test_show_expanded_agentkit_v2_config_redacts_bare_env_secret(monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", "bare-secret-value")
+    cfg = tmp_path / "agentkit_v2_bare_env.yaml"
+    cfg.write_text(AGENTKIT_V2_CONFIG.replace("${ENV.MODEL_API_KEY}", "${MODEL_API_KEY}"), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["run.py", "--config", str(cfg), "--show-expanded-config"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 0
+    assert "bare-secret-value" not in captured.out
+    assert "<redacted:reference:MODEL_API_KEY>" in captured.out
+    expanded = yaml.safe_load(captured.out)
+    assert expanded["backends"][0]["config"]["api_key"] == "<redacted:reference:MODEL_API_KEY>"
+
+
+@pytest.mark.io
+def test_show_expanded_no_smart_defaults_agentkit_v2_uses_redacted_materializer(
+    monkeypatch,
+    capsys,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", "bare-secret-value")
+    cfg = tmp_path / "agentkit_v2_no_smart.yaml"
+    cfg.write_text(AGENTKIT_V2_CONFIG.replace("${ENV.MODEL_API_KEY}", "${MODEL_API_KEY}"), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--config",
+            str(cfg),
+            "--show-expanded-config",
+            "--no-smart-defaults",
+            "--env-provider",
+            "docker",
+            "--dut-id",
+            "dut",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 0
+    assert "bare-secret-value" not in captured.out
+    assert "<redacted:reference:MODEL_API_KEY>" in captured.out
+    expanded = yaml.safe_load(captured.out)
+    assert expanded["backends"][0]["config"]["api_key"] == "<redacted:reference:MODEL_API_KEY>"
+    assert expanded["environments"][0]["provider"] == "docker"
+    assert expanded["effective_config"]["backends"][0]["config"]["api_key"] == (
+        "<redacted:reference:MODEL_API_KEY>"
+    )
+    assert expanded["effective_config"]["environments"][0]["provider"] == "docker"
+
+
+@pytest.mark.io
+def test_show_expanded_agentkit_v2_validation_error_redacts_bare_env_secret(
+    monkeypatch,
+    capsys,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", "validation-secret-value")
+    cfg = tmp_path / "agentkit_v2_invalid_provider.yaml"
+    cfg.write_text(
+        AGENTKIT_V2_CONFIG.replace("provider: local_process", "provider: ${MODEL_API_KEY}"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["run.py", "--config", str(cfg), "--show-expanded-config"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "validation-secret-value" not in captured.err
+    assert "<redacted:reference:MODEL_API_KEY>" in captured.err
+    assert "environments.0.provider" in captured.err
+
+
+@pytest.mark.io
+@pytest.mark.parametrize("extra_args", [[], ["--max-samples", "0"]])
+def test_agentkit_v2_run_mode_fails_fast_before_legacy_pipeline_validation(
+    monkeypatch,
+    capsys,
+    tmp_path,
+    extra_args,
+) -> None:
+    monkeypatch.setenv("MODEL_API_KEY", "secret-value")
+    cfg = tmp_path / "agentkit_v2_run.yaml"
+    cfg.write_text(AGENTKIT_V2_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(gage_run, "_ensure_spawn_start_method", lambda: None)
+    monkeypatch.setattr(gage_run, "_ensure_default_concurrency", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gage_run, "_detect_hardware_profile", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gage_run, "_apply_hardware_profile_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gage_run, "_preflight_checks", lambda: None)
+    monkeypatch.setattr(gage_run, "_install_signal_handlers", lambda: None)
+    monkeypatch.setattr(
+        gage_run,
+        "_validate_config_wiring",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("legacy wiring validation should not run")),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run.py", "--config", str(cfg), "--gpus", "0", "--cpus", "1", *extra_args],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "AgentEvalConfig execution is not wired yet" in captured.err
+    assert "--show-expanded-config" in captured.err
+    assert "dataset" not in captured.err.lower()
+    assert "role adapter" not in captured.err.lower()
+    assert "custom/builtin" not in captured.err.lower()
+
+
+@pytest.mark.io
+def test_agentkit_v2_run_mode_validates_binding_specs_without_backend_construction(
+    monkeypatch,
+    capsys,
+    tmp_path,
+) -> None:
+    cfg = tmp_path / "agentkit_v2_run_dummy.yaml"
+    cfg.write_text(AGENTKIT_V2_DUMMY_BACKEND_CONFIG, encoding="utf-8")
+    captured_specs = {}
+    original_resolve_specs = agentkit_v2_module.resolve_agentkit_v2_runtime_binding_specs
+
+    def _capture_specs(*args, **kwargs):
+        specs = original_resolve_specs(*args, **kwargs)
+        captured_specs.update(specs)
+        return specs
+
+    monkeypatch.setattr(agentkit_v2_module, "resolve_agentkit_v2_runtime_binding_specs", _capture_specs)
+    monkeypatch.setattr(
+        "gage_eval.role.model.backends.builder.build_backend",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("backend construction should not run")),
+    )
+    monkeypatch.setattr(gage_run, "_ensure_spawn_start_method", lambda: None)
+    monkeypatch.setattr(gage_run, "_ensure_default_concurrency", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gage_run, "_detect_hardware_profile", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gage_run, "_apply_hardware_profile_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gage_run, "_preflight_checks", lambda: None)
+    monkeypatch.setattr(gage_run, "_install_signal_handlers", lambda: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run.py", "--config", str(cfg), "--gpus", "0", "--cpus", "1"],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "AgentEvalConfig execution is not wired yet" in captured.err
+    assert captured_specs["dut"].backend_id == "model"
+    assert captured_specs["dut"].environment_provider == "local_process"
+
+
+@pytest.mark.io
+def test_agentkit_v2_run_mode_skips_runtime_preflight_side_effects(
+    monkeypatch,
+    capsys,
+    tmp_path,
+) -> None:
+    monkeypatch.delenv("GAGE_EVAL_MAX_SAMPLES", raising=False)
+    monkeypatch.delenv("VLLM_NATIVE_MODEL_PATH", raising=False)
+    monkeypatch.delenv("GAGE_EVAL_HUMAN_INPUT", raising=False)
+    monkeypatch.setattr(sys, "stdin", _InteractiveStdin())
+    cfg = tmp_path / "agentkit_v2_run_no_side_effects.yaml"
+    cfg.write_text(AGENTKIT_V2_DUMMY_BACKEND_CONFIG, encoding="utf-8")
+    calls: list[str] = []
+
+    monkeypatch.setattr(gage_run, "_ensure_spawn_start_method", lambda: calls.append("spawn"))
+    monkeypatch.setattr(gage_run, "_detect_hardware_profile", lambda *args, **kwargs: calls.append("detect"))
+    monkeypatch.setattr(gage_run, "_ensure_default_concurrency", lambda *args, **kwargs: calls.append("concurrency"))
+    monkeypatch.setattr(gage_run, "_apply_hardware_profile_env", lambda *args, **kwargs: calls.append("hardware_env"))
+    monkeypatch.setattr(gage_run, "_preflight_checks", lambda: calls.append("preflight"))
+    monkeypatch.setattr(gage_run, "_install_signal_handlers", lambda: calls.append("signals"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--config",
+            str(cfg),
+            "--gpus",
+            "0",
+            "--cpus",
+            "1",
+            "--max-samples",
+            "0",
+            "--model-path",
+            "/tmp/model",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        gage_run.main()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "AgentEvalConfig execution is not wired yet" in captured.err
+    assert calls == []
+    assert "GAGE_EVAL_MAX_SAMPLES" not in os.environ
+    assert "VLLM_NATIVE_MODEL_PATH" not in os.environ
+    assert "GAGE_EVAL_HUMAN_INPUT" not in os.environ
 
 
 @pytest.mark.io

@@ -14,7 +14,7 @@ from gage_eval.assets.datasets.loaders.loader_utils import apply_default_params,
 from gage_eval.assets.datasets.manager import DataSource
 from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.registry import registry
-from gage_eval.utils.benchmark_helpers.tau2 import (
+from gage_eval.agent_eval_kits.tau2._helpers import (
     ensure_tau2_importable,
     load_tau2_split,
     load_tau2_tasks,

@@ -10,12 +10,7 @@ class TerminalBenchRuntime:
     """Owns the terminal benchmark lifecycle and state bootstrap."""
 
     benchmark_kit_id = "terminal_bench"
-    runtime_version = "phase1"
     supported_schedulers = ("installed_client", "framework_loop")
-    verifier_kind = "native"
-    resource_requirements = {"resource_kind": "docker"}
-    lifecycle_policy = {"initialize": "noop", "save": "noop", "teardown": "provider_managed"}
-    state_schema_keys = ("runtime_context", "prompt_context", "benchmark_state", "scheduler_state")
 
     def bootstrap(self, *, session, sample: dict[str, Any], payload: dict[str, Any], sandbox_provider=None) -> dict[str, Any]:
         """Bootstrap terminal benchmark state for one sample."""

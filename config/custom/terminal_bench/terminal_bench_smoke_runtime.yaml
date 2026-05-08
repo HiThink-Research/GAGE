@@ -19,12 +19,12 @@ metrics:
     implementation: gage_eval.metrics.builtin.runtime_judge:RuntimeFailureReasonMetric
     aggregation: categorical_count
 
-agent_backends:
-  - agent_backend_id: terminal_agent
-    type: agent_class
+backends:
+  - backend_id: terminal_smoke_dummy
+    type: dummy
     config:
-      agent_class: gage_eval.role.agent.backends.demo_agent.RuntimeSmokeAgent
-
+      responses:
+        - done
 sandbox_profiles:
   - sandbox_id: terminal_bench_runtime
     runtime: docker
@@ -34,7 +34,7 @@ sandbox_profiles:
 role_adapters:
   - adapter_id: terminal_agent_main
     role_type: dut_agent
-    agent_backend_id: terminal_agent
+    backend_id: terminal_smoke_dummy
     agent_runtime_id: terminal_bench_framework_loop
     sandbox:
       sandbox_id: terminal_bench_runtime
