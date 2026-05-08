@@ -32,18 +32,20 @@ def test_appworld_runtime_config_parses() -> None:
 
 
 def test_tau2_runtime_config_drops_bootstrap_support() -> None:
-    config = _load_config(
+    config_path = (
         Path(__file__).resolve().parents[3]
         / "config"
         / "custom"
         / "tau2"
         / "tau2_telecom_runtime.yaml"
     )
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
-    adapter_ids = {spec.adapter_id for spec in config.role_adapters}
-    assert "tau2_bootstrap" not in adapter_ids
-    dut_agent = next(spec for spec in config.role_adapters if spec.adapter_id == "tau2_agent")
-    assert dut_agent.agent_runtime_id == "tau2_framework_loop"
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert payload["agents"][0]["scheduler"]["type"] == "framework_loop"
+    assert payload["benchmarks"][0]["kit_id"] == "tau2"
+    assert payload["environments"][0]["provider"] == "local_process"
 
 
 def test_terminal_and_skillsbench_runtime_smokes_parse() -> None:
@@ -62,23 +64,31 @@ def test_builtin_codex_installed_client_configs_parse_without_agent_backend() ->
     terminal = _load_config(
         base / "terminal_bench" / "terminal_bench_installed_client_codex.yaml"
     )
-    swebench = _load_config(
-        base / "swebench_pro" / "swebench_pro_smoke_installed_client_codex.yaml"
-    )
     appworld = _load_config(
         base / "appworld" / "appworld_agent_demo_installed_client_codex.yaml"
     )
 
     terminal_agent = next(spec for spec in terminal.role_adapters if spec.adapter_id == "terminal_agent_main")
-    swebench_agent = next(spec for spec in swebench.role_adapters if spec.adapter_id == "swebench_dut_agent")
     appworld_agent = next(spec for spec in appworld.role_adapters if spec.adapter_id == "dut_agent_main")
 
     assert terminal_agent.agent_runtime_id == "terminal_bench_installed_client"
-    assert swebench_agent.agent_runtime_id == "swebench_installed_client"
     assert appworld_agent.agent_runtime_id == "appworld_installed_client"
     assert terminal_agent.agent_backend_id is None
-    assert swebench_agent.agent_backend_id is None
     assert appworld_agent.agent_backend_id is None
+
+
+def test_swebench_installed_client_alias_is_agentkit_v2_wrapper() -> None:
+    base = Path(__file__).resolve().parents[3] / "config" / "custom"
+    payload = yaml.safe_load(
+        (base / "swebench_pro" / "swebench_pro_smoke_installed_client_codex.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert "role_adapters" not in payload
+    assert "agent_backends" not in payload
+    assert payload["agents"][0]["scheduler"]["type"] == "framework_loop"
+    assert payload["benchmarks"][0]["kit_id"] == "swebench"
 
 
 @pytest.mark.parametrize(

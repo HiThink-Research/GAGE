@@ -1,12 +1,13 @@
-api_version: gage/v1
+api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
   name: tau2_telecom_runtime
-  description: Tau2 telecom runtime-owned config.
+  description: AgentKit v2 Tau2 telecom runtime smoke on local_process with LMStudio.
+
 
 prompts:
-  - prompt_id: dut/tau2@v1
+  - prompt_id: dut/tau2@lmstudio
     renderer: jinja_chat
     template: |
       <instructions>
@@ -20,56 +21,98 @@ prompts:
       include_existing: true
 
 datasets:
+
   - dataset_id: tau2_telecom_base
     loader: tau2_tasks
     params:
+      source: huggingface
+      hub_id: HuggingFaceH4/tau2-bench-data
       domain: telecom
       task_split: base
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
-      hub_id: HuggingFaceH4/tau2-bench-data
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
-backends:
-  - backend_id: tau2_openai_http
-    type: openai_http
-    config:
-      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
-      require_api_key: true
-      max_retries: 6
-      generation_parameters:
-        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
 
-sandbox_profiles:
-  - sandbox_id: tau2_local
-    runtime: tau2
-    runtime_configs:
+backends:
+  - backend_id: lmstudio_litellm
+    type: litellm
+    config:
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      model: ${LMSTUDIO_LITELLM_MODEL:-openai/qwen/qwen3.5-9b}
+      api_key: ${LMSTUDIO_API_KEY:-dummy}
+      streaming: false
+      timeout: 180
+      max_retries: 2
+      drop_params: true
+      generation_parameters:
+        temperature: 0.0
+        max_new_tokens: 8192
+
+agents:
+  - agent_id: tau2_agent
+    scheduler:
+      type: framework_loop
+      backend_id: lmstudio_litellm
+      config:
+        max_turns: ${TAU2_MAX_TURNS:-200}
+        force_tool_choice: ${TAU2_FORCE_TOOL_CHOICE:-never}
+        tool_call_retry_budget: ${TAU2_TOOL_CALL_RETRY_BUDGET:-3}
+        plain_text_response_tool: respond
+        plain_text_response_formats:
+          - qwen
+          - qwen3
+          - qwen3.5
+          - qwen3.6
+          - gemma
+          - gemma4
+          - gemma-4
+          - gemma_4
+          - functiongemma
+    config:
+      prompt_id: dut/tau2@lmstudio
+    tooling:
+      skill_ids: []
+      mcp_servers: []
+
+benchmarks:
+  - benchmark_id: tau2_telecom
+    kit_id: tau2
+    config:
+      domain: telecom
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
-      user_model: ${TAU2_USER_MODEL:-gpt-4.1}
-      user_model_args:
-        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+      user_simulator:
+        type: litellm
+        model: ${TAU2_USER_MODEL:-openai/qwen/qwen3.5-9b}
+        api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+        api_key: ${LMSTUDIO_API_KEY:-dummy}
+        drop_params: true
+        temperature: 0.0
+        max_new_tokens: 8192
 
-role_adapters:
-  - adapter_id: tau2_agent
-    role_type: dut_agent
-    backend_id: tau2_openai_http
-    agent_runtime_id: tau2_framework_loop
-    prompt_id: dut/tau2@v1
-    sandbox:
-      sandbox_id: tau2_local
-      lifecycle: per_sample
-    params:
-      max_turns: ${TAU2_MAX_TURNS:-200}
 
-  - adapter_id: tau2_runtime_judge
-    role_type: judge_extend
-    params:
-      implementation: tau2_eval
+environments:
+  - env_id: tau2_local_process
+    provider: local_process
+    profile_id: tau2-local-process
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/tau2/environment/local_process
+    startup_env:
+      TAU2_DATA_DIR: ${TAU2_DATA_DIR:-./local-datasets/tau2}
+
+dut_agents:
+  - dut_id: tau2_dut
+    agent_id: tau2_agent
+    env_id: tau2_local_process
+    benchmark_id: tau2_telecom
+    trial_policy:
+      trials: ${TAU2_TRIAL_REPEATS:-1}
+
 
 metrics:
   - metric_id: tau2_reward
@@ -88,12 +131,12 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: tau2_telecom_runtime
+
+  - task_id: tau2_telecom_runtime_telecom
     dataset_id: tau2_telecom_base
     steps:
       - step: inference
-        adapter_id: tau2_agent
-      - step: judge
-        adapter_id: tau2_runtime_judge
+        adapter_id: tau2_dut
       - step: auto_eval
+    max_samples: ${TAU2_MAX_SAMPLES:-4}
     concurrency: 1

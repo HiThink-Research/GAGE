@@ -32,6 +32,7 @@ backends:
       drop_params: true
       generation_parameters:
         temperature: 0.0
+        max_new_tokens: 8192
 
 agents:
   - agent_id: swebench_agent
@@ -78,7 +79,7 @@ dut_agents:
     env_id: swebench_docker
     benchmark_id: swebench_pro_smoke
     trial_policy:
-      trials: 1
+      trials: ${SWEBENCH_TRIAL_REPEATS:-1}
 
 metrics:
   - metric_id: swebench_resolve_rate
@@ -98,4 +99,4 @@ tasks:
         adapter_id: swebench_dut
       - step: auto_eval
     max_samples: 11
-    concurrency: 1
+    concurrency: 2

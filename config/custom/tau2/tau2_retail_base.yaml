@@ -1,23 +1,13 @@
-api_version: gage/v1
+api_version: gage/v1alpha1
 kind: PipelineConfig
+
 metadata:
   name: tau2_retail_base
-  description: Tau2 retail base split (local runtime)
+  description: AgentKit v2 Tau2 retail base split on local_process with LMStudio.
 
-custom:
-  steps:
-    - step: support
-      adapter_id: tau2_bootstrap
-    - step: support
-      adapter_id: tau2_toolchain
-    - step: inference
-      adapter_id: tau2_agent
-    - step: judge
-      adapter_id: tau2_judge
-    - step: auto_eval
 
 prompts:
-  - prompt_id: dut/tau2@v1
+  - prompt_id: dut/tau2@lmstudio
     renderer: jinja_chat
     template: |
       <instructions>
@@ -31,86 +21,98 @@ prompts:
       include_existing: true
 
 datasets:
+
   - dataset_id: tau2_retail_base
     loader: tau2_tasks
     params:
+      source: huggingface
+      hub_id: HuggingFaceH4/tau2-bench-data
       domain: retail
       task_split: base
       num_trials: ${TAU2_NUM_TRIALS:-1}
       seed: ${TAU2_SEED:-300}
-      hub_id: HuggingFaceH4/tau2-bench-data
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       preprocess: tau2_preprocessor
 
+
 backends:
-  - backend_id: tau2_openai_http
-    type: openai_http
+  - backend_id: lmstudio_litellm
+    type: litellm
     config:
-      base_url: ${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      model: ${TAU2_AGENT_MODEL:-gpt-4.1}
-      require_api_key: true
-      max_retries: 6
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      model: ${LMSTUDIO_LITELLM_MODEL:-openai/qwen/qwen3.5-9b}
+      api_key: ${LMSTUDIO_API_KEY:-dummy}
+      streaming: false
+      timeout: 180
+      max_retries: 2
+      drop_params: true
       generation_parameters:
-        temperature: ${TAU2_AGENT_TEMPERATURE:-0.0}
+        temperature: 0.0
+        max_new_tokens: 8192
 
-agent_backends:
-  - agent_backend_id: tau2_agent_backend
-    type: model_backend
-    backend_id: tau2_openai_http
+agents:
+  - agent_id: tau2_agent
+    scheduler:
+      type: framework_loop
+      backend_id: lmstudio_litellm
+      config:
+        max_turns: ${TAU2_MAX_TURNS:-200}
+        force_tool_choice: ${TAU2_FORCE_TOOL_CHOICE:-never}
+        tool_call_retry_budget: ${TAU2_TOOL_CALL_RETRY_BUDGET:-3}
+        plain_text_response_tool: respond
+        plain_text_response_formats:
+          - qwen
+          - qwen3
+          - qwen3.5
+          - qwen3.6
+          - gemma
+          - gemma4
+          - gemma-4
+          - gemma_4
+          - functiongemma
     config:
-      force_tool_choice: never
+      prompt_id: dut/tau2@lmstudio
+    tooling:
+      skill_ids: []
+      mcp_servers: []
 
-sandbox_profiles:
-  - sandbox_id: tau2_local
-    runtime: tau2
-    runtime_configs:
+benchmarks:
+  - benchmark_id: tau2_retail
+    kit_id: tau2
+    config:
+      domain: retail
       data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}
       max_steps: ${TAU2_MAX_STEPS:-200}
       max_errors: ${TAU2_MAX_ERRORS:-10}
       respond_tool_name: respond
-      user_model: ${TAU2_USER_MODEL:-gpt-4.1}
-      user_model_args:
-        temperature: ${TAU2_USER_TEMPERATURE:-0.0}
+      user_simulator:
+        type: litellm
+        model: ${TAU2_USER_MODEL:-openai/qwen/qwen3.5-9b}
+        api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+        api_key: ${LMSTUDIO_API_KEY:-dummy}
+        drop_params: true
+        temperature: 0.0
+        max_new_tokens: 8192
 
-role_adapters:
-  - adapter_id: tau2_bootstrap
-    role_type: context_provider
-    params:
-      implementation: tau2_bootstrap
 
-  - adapter_id: tau2_toolchain
-    role_type: toolchain
-    params:
-      tools:
-        - type: function
-          function:
-            name: respond
-            description: Send a message to the user and receive the user's reply.
-            parameters:
-              type: object
-              properties:
-                message:
-                  type: string
-                  description: Message text to send to the user.
-              required:
-                - message
-          x-gage:
-            final_answer_from: final_answer
+environments:
+  - env_id: tau2_local_process
+    provider: local_process
+    profile_id: tau2-local-process
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/tau2/environment/local_process
+    startup_env:
+      TAU2_DATA_DIR: ${TAU2_DATA_DIR:-./local-datasets/tau2}
 
-  - adapter_id: tau2_agent
-    role_type: dut_agent
-    agent_backend_id: tau2_agent_backend
-    prompt_id: dut/tau2@v1
-    sandbox:
-      sandbox_id: tau2_local
-      lifecycle: per_sample
-    params:
-      max_turns: ${TAU2_MAX_TURNS:-200}
+dut_agents:
+  - dut_id: tau2_dut
+    agent_id: tau2_agent
+    env_id: tau2_local_process
+    benchmark_id: tau2_retail
+    trial_policy:
+      trials: ${TAU2_TRIAL_REPEATS:-1}
 
-  - adapter_id: tau2_judge
-    role_type: judge_extend
-    params:
-      implementation: tau2_eval
 
 metrics:
   - metric_id: tau2_reward
@@ -129,22 +131,12 @@ summary_generators:
   - tau2_summary
 
 tasks:
-  - task_id: tau2_retail_base
+
+  - task_id: tau2_retail_base_retail
     dataset_id: tau2_retail_base
     steps:
-      - step: support
-        adapter_id: tau2_bootstrap
-      - step: support
-        adapter_id: tau2_toolchain
       - step: inference
-        adapter_id: tau2_agent
-      - step: judge
-        adapter_id: tau2_judge
+        adapter_id: tau2_dut
       - step: auto_eval
+    max_samples: ${TAU2_MAX_SAMPLES:-4}
     concurrency: 1
-    reporting:
-      sinks:
-        - type: console
-        - type: file
-          params:
-            output_path: ${GAGE_EVAL_SAVE_DIR:-./runs}/tau2_retail_base_summary.json

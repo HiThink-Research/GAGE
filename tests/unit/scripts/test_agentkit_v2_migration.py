@@ -23,10 +23,11 @@ RUN_MIGRATION_SCRIPT = REPO_ROOT / "scripts" / "migrate_runs_v1_to_v2.py"
 
 def test_migrates_tau2_legacy_smoke_yaml_to_agent_eval_config(tmp_path: Path) -> None:
     module = _load_module(CONFIG_MIGRATION_SCRIPT, "migrate_agentkit_v1_config_to_v2_task12b")
+    input_path = _write_legacy_tau2_config(tmp_path)
     output_path = tmp_path / "tau2_v2.yaml"
 
     result = module.migrate_file(
-        REPO_ROOT / "config/custom/tau2/tau2_telecom_runtime.yaml",
+        input_path,
         output_path,
     )
 
@@ -64,10 +65,11 @@ def test_migrates_tau2_legacy_smoke_yaml_to_agent_eval_config(tmp_path: Path) ->
 
 def test_migrates_swebench_legacy_smoke_yaml_to_agent_eval_config(tmp_path: Path) -> None:
     module = _load_module(CONFIG_MIGRATION_SCRIPT, "migrate_agentkit_v1_config_to_v2_task12b_swe")
+    input_path = _write_legacy_swebench_config(tmp_path)
     output_path = tmp_path / "swebench_v2.yaml"
 
     result = module.migrate_file(
-        REPO_ROOT / "config/custom/swebench_pro/swebench_pro_smoke_runtime.yaml",
+        input_path,
         output_path,
     )
 
@@ -349,6 +351,7 @@ def test_config_migration_reports_manual_fix_for_unknown_nested_pipeline_field(
 def test_config_migration_cli_reports_write_failure_without_partial_output(
     tmp_path: Path,
 ) -> None:
+    input_path = _write_legacy_tau2_config(tmp_path)
     output_parent = tmp_path / "blocked-output-parent"
     output_parent.write_text("not a directory", encoding="utf-8")
     output_path = output_parent / "migrated.yaml"
@@ -358,7 +361,7 @@ def test_config_migration_cli_reports_write_failure_without_partial_output(
             sys.executable,
             str(CONFIG_MIGRATION_SCRIPT),
             "--input",
-            str(REPO_ROOT / "config/custom/tau2/tau2_telecom_runtime.yaml"),
+            str(input_path),
             "--output",
             str(output_path),
         ],
@@ -409,3 +412,151 @@ def _write_legacy_run_fixture(tmp_path: Path) -> Path:
     (legacy_run / "samples.jsonl").write_text(json.dumps(sample_record) + "\n", encoding="utf-8")
     (legacy_run / "summary.json").write_text(json.dumps({"sample_count": 1}), encoding="utf-8")
     return legacy_run
+
+
+def _write_legacy_tau2_config(tmp_path: Path) -> Path:
+    path = tmp_path / "legacy_tau2_telecom_runtime.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "api_version": "gage/v1",
+                "kind": "PipelineConfig",
+                "metadata": {"name": "tau2_telecom_runtime"},
+                "datasets": [
+                    {
+                        "dataset_id": "tau2_telecom_base",
+                        "loader": "tau2_tasks",
+                        "params": {
+                            "domain": "telecom",
+                            "task_split": "base",
+                            "num_trials": "${TAU2_NUM_TRIALS:-1}",
+                        },
+                    }
+                ],
+                "backends": [
+                    {
+                        "backend_id": "tau2_openai_http",
+                        "type": "openai_http",
+                        "config": {
+                            "base_url": "${TAU2_OPENAI_BASE_URL:-https://api.openai.com/v1}",
+                            "model": "${TAU2_AGENT_MODEL:-gpt-4.1}",
+                        },
+                    }
+                ],
+                "sandbox_profiles": [
+                    {
+                        "sandbox_id": "tau2_local",
+                        "runtime": "tau2",
+                        "runtime_configs": {
+                            "user_model": "${TAU2_USER_MODEL:-gpt-4.1}",
+                            "user_model_args": {"temperature": "${TAU2_USER_TEMPERATURE:-0.0}"},
+                        },
+                    }
+                ],
+                "role_adapters": [
+                    {
+                        "adapter_id": "tau2_agent",
+                        "role_type": "dut_agent",
+                        "backend_id": "tau2_openai_http",
+                        "agent_runtime_id": "tau2_framework_loop",
+                        "sandbox": {"sandbox_id": "tau2_local"},
+                        "params": {"max_turns": 200},
+                    }
+                ],
+                "tasks": [
+                    {
+                        "task_id": "tau2_telecom_runtime",
+                        "dataset_id": "tau2_telecom_base",
+                        "steps": [{"step": "inference", "adapter_id": "tau2_agent"}],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_legacy_swebench_config(tmp_path: Path) -> Path:
+    path = tmp_path / "legacy_swebench_pro_smoke_runtime.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "api_version": "gage/v1alpha1",
+                "kind": "PipelineConfig",
+                "metadata": {"name": "swebench_pro_smoke_runtime"},
+                "datasets": [
+                    {
+                        "dataset_id": "swebench_pro_smoke",
+                        "loader": "hf_hub",
+                        "hub_params": {"split": "test"},
+                        "params": {
+                            "preprocess": "swebench_pro_standardizer",
+                            "preprocess_kwargs": {
+                                "smoke_ids_path": "third_party/swebench_pro/run_scripts/smoke_instance_ids.txt"
+                            },
+                        },
+                    }
+                ],
+                "backends": [
+                    {
+                        "backend_id": "gpt52_openai_http",
+                        "type": "openai_http",
+                        "config": {"base_url": "https://api.openai.com/v1", "model": "gpt-5.2"},
+                    }
+                ],
+                "sandbox_profiles": [
+                    {
+                        "sandbox_id": "swebench_runtime",
+                        "runtime": "docker",
+                        "resources": {"cpu": 4, "memory": "8g"},
+                        "runtime_configs": {
+                            "network_mode": "none",
+                            "platform": "linux/amd64",
+                            "entrypoint": "/bin/bash",
+                            "command": ["-c", "sleep 3600"],
+                            "exec_workdir": "/app",
+                        },
+                    }
+                ],
+                "role_adapters": [
+                    {
+                        "adapter_id": "swebench_dut_agent",
+                        "role_type": "dut_agent",
+                        "backend_id": "gpt52_openai_http",
+                        "agent_runtime_id": "swebench_framework_loop",
+                        "sandbox": {"sandbox_id": "swebench_runtime"},
+                        "params": {"max_turns": 40},
+                    },
+                    {
+                        "adapter_id": "swebench_runtime_judge",
+                        "role_type": "judge_extend",
+                        "sandbox": {"sandbox_id": "swebench_runtime"},
+                        "params": {
+                            "implementation": "swebench_docker",
+                            "implementation_params": {
+                                "scripts_dir": "third_party/swebench_pro/run_scripts",
+                                "dockerfiles_dir": "third_party/swebench_pro/dockerfiles",
+                            },
+                        },
+                    },
+                ],
+                "tasks": [
+                    {
+                        "task_id": "swebench_pro_smoke_runtime_eval",
+                        "dataset_id": "swebench_pro_smoke",
+                        "steps": [
+                            {"step": "inference", "adapter_id": "swebench_dut_agent"},
+                            {"step": "judge", "adapter_id": "swebench_runtime_judge"},
+                            {"step": "auto_eval"},
+                        ],
+                        "max_samples": 11,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path

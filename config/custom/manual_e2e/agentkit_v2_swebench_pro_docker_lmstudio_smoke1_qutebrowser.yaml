@@ -79,7 +79,7 @@ dut_agents:
     env_id: swebench_docker
     benchmark_id: swebench_pro_smoke
     trial_policy:
-      trials: 1
+      trials: ${SWEBENCH_TRIAL_REPEATS:-1}
 
 metrics:
   - metric_id: swebench_resolve_rate
