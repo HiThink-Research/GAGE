@@ -374,24 +374,15 @@ class Tau2Runtime:
         self._trajectory.append(user_msg)
         self._record_user_message_usage(user_msg)
 
+        if getattr(user_msg, "tool_calls", None):
+            user_msg = self._resolve_user_tool_calls(user_msg)
+
         user_signal = parse_terminal_signal(getattr(user_msg, "content", None))
         if _is_user_stop(user_msg) or user_signal is not None:
             self._termination_reason = _termination_reason("user_stop")
             if user_signal is not None:
                 self._termination_detail = _terminal_detail(user_signal)
             return {"final_answer": user_msg.content, "user_message": user_msg.content}
-
-        if getattr(user_msg, "tool_calls", None):
-            user_msg = self._resolve_user_tool_calls(user_msg)
-            user_signal = parse_terminal_signal(getattr(user_msg, "content", None))
-            if _is_user_stop(user_msg) or user_signal is not None:
-                self._termination_reason = _termination_reason("user_stop")
-                if user_signal is not None:
-                    self._termination_detail = _terminal_detail(user_signal)
-                return {
-                    "final_answer": user_msg.content,
-                    "user_message": user_msg.content,
-                }
 
         self._maybe_terminate()
         return {"user_message": user_msg.content}
