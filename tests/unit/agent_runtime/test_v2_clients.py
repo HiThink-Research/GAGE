@@ -151,7 +151,7 @@ def test_acp_client_executor_surfaces_scheduler_failure_as_trial_failure(tmp_pat
     lease = ResourceLease(
         lease_id="lease-1",
         resource_kind="e2b",
-        profile_id="terminal_bench_runtime",
+        profile_id="swebench_runtime",
         lifecycle="per_sample",
         handle_ref={},
     )
@@ -446,7 +446,7 @@ def _session(
         run_id="run-1",
         task_id="task-1",
         sample_id="sample-1",
-        benchmark_kit_id="terminal_bench",
+        benchmark_kit_id="swebench",
         scheduler_type=scheduler_type,
         client_id="codex",
         artifact_layout={
@@ -459,12 +459,12 @@ def _session(
         resource_lease=ResourceLease(
             lease_id="lease-1",
             resource_kind=resource_kind,  # type: ignore[arg-type]
-            profile_id="terminal_bench_runtime",
+            profile_id="swebench_runtime",
             lifecycle="per_sample",
             handle_ref=dict(handle_ref or {}),
             metadata={
                 "environment_profile": {
-                    "profile_id": "terminal_bench_runtime",
+                    "profile_id": "swebench_runtime",
                     "provider": resource_kind,
                     "config": dict(provider_config or {}),
                     "startup_env": dict(startup_env or {}),
@@ -477,8 +477,8 @@ def _session(
 
 def _bundle(*, scheduler_type: str = "installed_client") -> SchedulerWorkflowBundle:
     return SchedulerWorkflowBundle(
-        bundle_id=f"terminal_bench.{scheduler_type}",
-        benchmark_kit_id="terminal_bench",
+        bundle_id=f"swebench.{scheduler_type}",
+        benchmark_kit_id="swebench",
         scheduler_type=scheduler_type,
         prepare_inputs=lambda **_: {"instruction": "say done"},
         failure_normalizer=lambda **_: {},
@@ -510,13 +510,13 @@ def _minimal_agentkit_payload(
                 },
             }
         ],
-        "benchmarks": [{"benchmark_id": "bench", "kit_id": "terminal_bench", "config": {}}],
+        "benchmarks": [{"benchmark_id": "bench", "kit_id": "swebench", "config": {}}],
         "environments": [
             {
                 "env_id": "env",
                 "provider": "docker",
-                "profile_id": "terminal_bench_runtime",
-                "profile": {"asset_dir": "assets/terminal_bench"},
+                "profile_id": "swebench_runtime",
+                "profile": {"asset_dir": "src/gage_eval/agent_eval_kits/swebench/environment/docker"},
             }
         ],
         "dut_agents": [

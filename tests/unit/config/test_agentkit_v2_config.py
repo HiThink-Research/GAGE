@@ -618,7 +618,7 @@ def test_benchmark_kit_entry_carries_required_fields_and_no_runtime_version() ->
 
 
 @pytest.mark.fast
-@pytest.mark.parametrize("kit_id", ["appworld", "swebench", "tau2", "terminal_bench"])
+@pytest.mark.parametrize("kit_id", ["appworld", "swebench", "tau2"])
 def test_builtin_kit_entries_do_not_expose_runtime_version(kit_id: str) -> None:
     loaded_entry = load_benchmark_kit(kit_id)
 
@@ -681,7 +681,7 @@ def test_kit_registry_loading_rejects_missing_explicit_config_schema() -> None:
 
 
 @pytest.mark.fast
-@pytest.mark.parametrize("kit_id", ["appworld", "swebench", "tau2", "terminal_bench"])
+@pytest.mark.parametrize("kit_id", ["appworld", "swebench", "tau2"])
 def test_builtin_kit_entries_have_explicit_extra_forbid_config_schema(kit_id: str) -> None:
     loaded_entry = load_benchmark_kit(kit_id)
 

@@ -20,16 +20,6 @@ def _load_config(config_path: Path) -> PipelineConfig:
     ("config_relpath", "adapter_id", "agent_runtime_id"),
     [
         (
-            "config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml",
-            "terminal_agent_main",
-            "terminal_bench_framework_loop",
-        ),
-        (
-            "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
-            "terminal_agent_main",
-            "terminal_bench_installed_client",
-        ),
-        (
             "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
             "dut_agent_main",
             "appworld_framework_loop",
@@ -76,8 +66,6 @@ def test_phase1_swebench_and_tau2_local_configs_use_agentkit_v2_wrapper(
 @pytest.mark.parametrize(
     "config_relpath",
     [
-        "config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml",
-        "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_installed_client_ollama_local.yaml",
         "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
@@ -99,8 +87,6 @@ def test_phase1_8flow_local_configs_disable_required_api_keys(config_relpath: st
 @pytest.mark.parametrize(
     "config_relpath",
     [
-        "config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml",
-        "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_installed_client_ollama_local.yaml",
         "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
@@ -122,10 +108,6 @@ def test_phase1_8flow_local_configs_pin_ollama_api_key(config_relpath: str) -> N
 @pytest.mark.parametrize(
     ("config_relpath", "adapter_id"),
     [
-        (
-            "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
-            "terminal_agent_main",
-        ),
         (
             "config/custom/appworld/appworld_agent_demo_installed_client_ollama.yaml",
             "dut_agent_main",

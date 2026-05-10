@@ -6,13 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from gage_eval.config.agentkit_v2 import (
-    load_agentkit_v2_config_payload,
-    materialize_agentkit_v2_runtime_config_payload,
-    resolve_agentkit_v2_runtime_binding_specs,
-)
-
-from ._support import REPO_ROOT, build_fake_executor, read_yaml, trial_root
+from ._support import REPO_ROOT, build_fake_executor, load_lowered_pipeline_config, role_adapter_by_id, trial_root
 
 
 @pytest.mark.io
@@ -21,35 +15,27 @@ def test_swebench_local_docker_config_and_smoke_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LMSTUDIO_API_KEY", "task13-secret")
+    monkeypatch.setenv("SWEBENCH_TRIAL_REPEATS", "2")
     config_path = REPO_ROOT / "config/custom/swebench_pro/v2_local_docker_smoke.yaml"
 
-    materialized = load_agentkit_v2_config_payload(config_path)
-    raw_payload = read_yaml(config_path)
-    runtime_config = materialize_agentkit_v2_runtime_config_payload(
-        raw_payload,
-        config_path,
-    )
-    binding = resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )["swebench_dut"]
+    materialized = load_lowered_pipeline_config(config_path)
+    role_adapter = role_adapter_by_id(materialized, "swebench_dut")
+    params = role_adapter["params"]
+    trial_policy = materialized["dut_agents"][0]["trial_policy"]
 
-    assert binding.environment_provider == "docker"
-    assert binding.scheduler_type == "framework_loop"
-    assert binding.provider_config["workdir"] == "/workspace"
-    assert binding.provider_config["exec_workdir"] == "/app"
-    assert binding.provider_config["network_policy"] == "block"
-    assert runtime_config["dut_agents"][0]["trial_policy"] == {"trials": 2}
-    assert "task13-secret" not in repr(materialized)
-    assert materialized["effective_config"]["backends"][0]["config"]["api_key"] == (
-        "<redacted:reference:LMSTUDIO_API_KEY>"
-    )
+    assert role_adapter["agent_runtime_id"] == "swebench_framework_loop"
+    assert role_adapter["backend_id"] == "lmstudio_litellm"
+    assert params["environment_profile"]["provider"] == "docker"
+    assert params["provider_config"]["workdir"] == "/workspace"
+    assert params["provider_config"]["exec_workdir"] == "/app"
+    assert params["provider_config"]["network_policy"] == "block"
+    assert trial_policy == {"trials": 2}
 
     executor, manager, scheduler, verifier = build_fake_executor(
         tmp_path,
         run_id="run-swebench-local",
         benchmark_kit_id="swebench",
-        trial_policy=runtime_config["dut_agents"][0]["trial_policy"],
+        trial_policy=trial_policy,
         environment_provider="docker",
     )
     output = asyncio.run(

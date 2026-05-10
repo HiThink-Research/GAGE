@@ -48,32 +48,23 @@ def test_tau2_runtime_config_drops_bootstrap_support() -> None:
     assert payload["environments"][0]["provider"] == "local_process"
 
 
-def test_terminal_and_skillsbench_runtime_smokes_parse() -> None:
+def test_skillsbench_runtime_smoke_parses() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
-    terminal = _load_config(base / "terminal_bench" / "terminal_bench_smoke_runtime.yaml")
     skills = _load_config(base / "skillsbench" / "skillsbench_smoke_runtime.yaml")
 
-    terminal_agent = next(spec for spec in terminal.role_adapters if spec.adapter_id == "terminal_agent_main")
     skills_agent = next(spec for spec in skills.role_adapters if spec.adapter_id == "skillsbench_agent_main")
-    assert terminal_agent.agent_runtime_id == "terminal_bench_framework_loop"
     assert skills_agent.agent_runtime_id == "skillsbench_framework_loop"
 
 
 def test_builtin_codex_installed_client_configs_parse_without_agent_backend() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
-    terminal = _load_config(
-        base / "terminal_bench" / "terminal_bench_installed_client_codex.yaml"
-    )
     appworld = _load_config(
         base / "appworld" / "appworld_agent_demo_installed_client_codex.yaml"
     )
 
-    terminal_agent = next(spec for spec in terminal.role_adapters if spec.adapter_id == "terminal_agent_main")
     appworld_agent = next(spec for spec in appworld.role_adapters if spec.adapter_id == "dut_agent_main")
 
-    assert terminal_agent.agent_runtime_id == "terminal_bench_installed_client"
     assert appworld_agent.agent_runtime_id == "appworld_installed_client"
-    assert terminal_agent.agent_backend_id is None
     assert appworld_agent.agent_backend_id is None
 
 
@@ -154,7 +145,7 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
             {
                 "dataset_id": "demo_dataset",
                 "loader": "jsonl",
-                "params": {"path": "tests/data/samples/terminal_bench_demo.jsonl"},
+                "params": {"path": "tests/data/samples/skillsbench_demo.jsonl"},
             }
         ],
         "backends": [
@@ -175,7 +166,7 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
             {
                 "adapter_id": "dut_agent_main",
                 "role_type": "dut_agent",
-                "agent_runtime_id": "terminal_bench_installed_client",
+                "agent_runtime_id": "swebench_installed_client",
                 "agent_backend_id": "demo_agent_backend",
             }
         ],
