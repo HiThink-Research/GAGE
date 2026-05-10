@@ -9,6 +9,7 @@ import shlex
 import shutil
 import tarfile
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -102,7 +103,9 @@ class DockerEnvironmentProvider:
                 environment=environment,
                 privileged=config.privileged,
                 network_policy=network_policy,
-                network_mode=_network_mode(network_policy),
+                network_mode=_docker_network_mode(config, network_policy),
+                ports=_docker_ports(config),
+                extra_hosts=list(config.extra_hosts),
                 mounts=mounts,
                 platform=config.docker_platform,
             )
@@ -118,9 +121,22 @@ class DockerEnvironmentProvider:
             network_policy=network_policy,
             metadata={
                 "profile_id": profile_id,
+                **_runtime_handle_metadata(config),
                 **{key: str(value) for key, value in metadata.items() if isinstance(value, str)},
             },
         )
+
+    async def health_check(self, environment: BaseEnvironment) -> bool:
+        config = getattr(environment, "_config", None)
+        if not isinstance(config, DockerEnvironmentConfig) or not config.wait_for_http_endpoints:
+            return True
+        deadline = time.monotonic() + float(config.startup_timeout_s or 0)
+        while True:
+            if await _http_endpoints_available(config.wait_for_http_endpoints, timeout_s=config.startup_interval_s):
+                return True
+            if config.startup_timeout_s <= 0 or time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(float(config.startup_interval_s))
 
 
 class DockerEnvironment:
@@ -489,6 +505,76 @@ def _network_mode(network_policy: str) -> str | None:
     if network_policy in {"allow", "egress_only"}:
         return "bridge"
     return None
+
+
+def _docker_network_mode(config: DockerEnvironmentConfig, network_policy: str) -> str | None:
+    if config.network_mode:
+        return config.network_mode
+    return _network_mode(network_policy)
+
+
+def _docker_ports(config: DockerEnvironmentConfig) -> dict[str, int | None]:
+    ports: dict[str, int | None] = {}
+    for mapping in config.ports:
+        host, container = _parse_port_mapping(mapping)
+        if not container:
+            continue
+        ports[f"{container}/tcp"] = host
+    return ports
+
+
+def _parse_port_mapping(mapping: str) -> tuple[int | None, int | None]:
+    parts = str(mapping).split(":")
+    if len(parts) == 1:
+        return None, _coerce_port(parts[0])
+    return _coerce_port(parts[-2]), _coerce_port(parts[-1])
+
+
+def _coerce_port(value: Any) -> int | None:
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port <= 65535 else None
+
+
+def _runtime_handle_metadata(config: DockerEnvironmentConfig) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for key in (
+        "env_endpoint",
+        "environment_endpoint",
+        "apis_endpoint",
+        "mcp_endpoint",
+        "env_url",
+        "apis_url",
+        "mcp_url",
+    ):
+        value = config.environment.get(key)
+        if isinstance(value, str) and value:
+            metadata[key] = value
+    return metadata
+
+
+async def _http_endpoints_available(endpoints: list[str], *, timeout_s: float) -> bool:
+    for endpoint in endpoints:
+        if not await _http_endpoint_available(endpoint, timeout_s=timeout_s):
+            return False
+    return True
+
+
+async def _http_endpoint_available(endpoint: str, *, timeout_s: float) -> bool:
+    def _probe() -> bool:
+        try:
+            request = urllib.request.Request(
+                endpoint,
+                headers={"Accept": "application/json, text/event-stream, */*"},
+            )
+            with urllib.request.urlopen(request, timeout=max(0.1, float(timeout_s))) as response:
+                return int(getattr(response, "status", 200)) < 500
+        except Exception:
+            return False
+
+    return await asyncio.to_thread(_probe)
 
 
 def _path_is_relative_to(path: Path, root: Path) -> bool:

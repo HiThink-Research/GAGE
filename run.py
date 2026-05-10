@@ -128,15 +128,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--env-provider",
         choices=("local_process", "docker"),
-        help="Override an AgentEvalConfig environment provider.",
+        help="Override an AgentKit v2 environment provider.",
     )
     parser.add_argument(
         "--dut-id",
-        help="Target --env-provider to the AgentEvalConfig dut_agents entry with this dut_id.",
+        help="Target --env-provider to the AgentKit v2 dut_agents entry with this dut_id.",
     )
     parser.add_argument(
         "--env-id",
-        help="Target --env-provider to the AgentEvalConfig environment referenced by this env_id.",
+        help="Target --env-provider to the AgentKit v2 environment referenced by this env_id.",
     )
     parser.add_argument(
         "--distill",
@@ -224,27 +224,6 @@ def _ensure_spawn_start_method() -> None:
 
 def load_config(path: Path) -> dict:
     return _loader_expand_env(load_yaml_mapping(path))
-
-
-def _assemble_agentkit_v2_runtime(
-    materialized: dict,
-    *,
-    config_path: Path,
-    cli_intent: CLIIntent,
-):
-    """Validate AgentEvalConfig runtime bindings before execution is enabled."""
-
-    import gage_eval.config.agentkit_v2 as agentkit_v2
-
-    runtime_config = agentkit_v2.materialize_agentkit_v2_runtime_config_payload(
-        load_yaml_mapping(config_path),
-        config_path,
-        cli_intent=cli_intent,
-    )
-    return agentkit_v2.resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )
 
 
 def _expand_env(value):
@@ -1336,29 +1315,6 @@ def main() -> None:
     except Exception as exc:
         print(f"[gage-eval] failed to load config: {exc}", file=sys.stderr)
         sys.exit(1)
-    if str(raw_run_payload.get("kind") or "") == "AgentEvalConfig":
-        try:
-            materialized = load_pipeline_config_payload(
-                config_path,
-                cli_intent=cli_intent,
-                smart_defaults=not args.no_smart_defaults,
-                run_config_compiler=_compile_run_config,
-            )
-            _assemble_agentkit_v2_runtime(
-                materialized,
-                config_path=config_path,
-                cli_intent=cli_intent,
-            )
-        except Exception as exc:
-            print(f"[gage-eval] failed to assemble AgentEvalConfig runtime: {exc}", file=sys.stderr)
-            sys.exit(1)
-        print(
-            "[gage-eval] AgentEvalConfig execution is not wired yet; "
-            "use --show-expanded-config for config validation",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
         os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
 

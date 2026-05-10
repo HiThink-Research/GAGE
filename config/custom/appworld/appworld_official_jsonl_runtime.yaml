@@ -3,7 +3,7 @@ kind: PipelineConfig
 
 metadata:
   name: appworld_official_jsonl_runtime
-  description: AppWorld official local-first runtime-owned config.
+  description: AgentKit v2 AppWorld official local-first config.
 
 datasets:
   - dataset_id: appworld_dev
@@ -23,19 +23,70 @@ backends:
       require_api_key: true
       max_retries: 6
 
-sandbox_profiles:
-  - sandbox_id: appworld_local
-    runtime: docker
-    image: appworld-mcp:latest
-    runtime_configs:
+agents:
+  - agent_id: appworld_agent
+    scheduler:
+      type: framework_loop
+      backend_id: gpt52_openai_http
+      config:
+        max_turns: 24
+        refresh_tool_schemas: true
+        mcp_client_id: appworld_env
+    config: {}
+    tooling:
+      skill_ids: []
+      mcp_servers: []
+
+benchmarks:
+  - benchmark_id: appworld_dev
+    kit_id: appworld
+    config: {}
+
+environments:
+  - env_id: appworld_local
+    provider: docker
+    profile_id: appworld_local
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/appworld/environment/docker
+      metadata:
+        env_endpoint: http://127.0.0.1:8000
+        apis_endpoint: http://127.0.0.1:9000
+        mcp_endpoint: http://127.0.0.1:5001
+    provider_config:
+      image: appworld-mcp:latest
+      network_policy: allow
+      docker_platform: linux/amd64
+      ports:
+        - "8000:8000"
+        - "9000:9000"
+        - "5001:5001"
+      wait_for_http_endpoints:
+        - http://127.0.0.1:5001/mcp
       startup_timeout_s: 180
       startup_interval_s: 0.5
+      entrypoint:
+        - /usr/local/bin/appworld
+        - serve
+      keepalive_command:
+        - multiple
+        - --environment
+        - "--port 8000"
+        - --apis
+        - "--port 9000"
+        - --mcp
+        - "http --port 5001 --output-type structured_data_only"
+        - --root
+        - /run
+      workdir: /run
+      exec_workdir: /run
+      environment:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    resources:
       cpu: 2
-      memory: 4g
-      ports: ["8000:8000", "9000:9000", "5001:5001"]
-      env_endpoint: http://127.0.0.1:8000
-      apis_endpoint: http://127.0.0.1:9000
-      mcp_endpoint: http://127.0.0.1:5001
+      memory_gb: 4.0
+      network_policy: allow
 
 mcp_clients:
   - mcp_client_id: appworld_env
@@ -57,40 +108,19 @@ metrics:
   - metric_id: appworld_difficulty
     implementation: appworld_difficulty
 
-role_adapters:
-  - adapter_id: appworld_toolchain
-    role_type: toolchain
-    mcp_client_id: appworld_env
-    params:
-      tool_doc_enabled: false
-      allow_runtime_owned_tool_docs: false
-
-  - adapter_id: appworld_agent
-    role_type: dut_agent
-    backend_id: gpt52_openai_http
-    agent_runtime_id: appworld_framework_loop
-    sandbox:
-      sandbox_id: appworld_local
-      lifecycle: per_sample
-    params:
-      max_turns: 24
-
-  - adapter_id: appworld_runtime_judge
-    role_type: judge_extend
-    params:
-      implementation: appworld_evaluate
-      implementation_params:
-        appworld_root: /run
+dut_agents:
+  - dut_id: appworld_agent
+    agent_id: appworld_agent
+    env_id: appworld_local
+    benchmark_id: appworld_dev
+    trial_policy:
+      trials: 1
 
 tasks:
   - task_id: appworld_dev_runtime_eval
     dataset_id: appworld_dev
     steps:
-      - step: support
-        adapter_id: appworld_toolchain
       - step: inference
         adapter_id: appworld_agent
-      - step: judge
-        adapter_id: appworld_runtime_judge
       - step: auto_eval
     concurrency: 1

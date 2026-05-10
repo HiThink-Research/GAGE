@@ -511,6 +511,53 @@ def test_framework_loop_dynamic_workflow_tools_are_registered_then_runtime_loop_
     assert registry.get("legacy") is not None
 
 
+def test_framework_loop_refreshes_dynamic_tools_when_workflow_requests_it() -> None:
+    registry = RuntimeToolRegistry()
+    registry.register_local_function(
+        ToolSchemaIR(
+            name="existing",
+            description="Existing tool",
+            input_schema={"type": "object"},
+            raw_schema={"name": "existing"},
+        ),
+        lambda arguments, context: {"existing": True},
+    )
+    backend = _FinalBackend()
+    scheduler = FrameworkLoopScheduler(
+        backend=backend,
+        tool_router=ToolRouter(registry),
+        tool_registry=registry,
+        max_turns=1,
+    )
+
+    result = asyncio.run(
+        scheduler.arun(
+            session=_session(),
+            sample={"messages": [{"role": "user", "content": "hi"}]},
+            payload={},
+            workflow_bundle=_bundle(
+                build_loop_inputs=lambda **_: {"refresh_tool_schemas": True},
+                inject_tool_schemas=lambda **_: [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "dynamic",
+                            "description": "Dynamic tool",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            ),
+            sandbox_provider=None,
+        )
+    )
+
+    assert result.status == "completed"
+    assert registry.get("existing") is not None
+    assert registry.get("dynamic") is not None
+    assert [tool["function"]["name"] for tool in backend.payloads[0]["tools"]] == ["existing", "dynamic"]
+
+
 def test_framework_loop_dynamic_mcp_schema_registers_matching_client_without_overwriting() -> None:
     registry = RuntimeToolRegistry()
     registry.register_local_function(
@@ -538,6 +585,7 @@ def test_framework_loop_dynamic_mcp_schema_registers_matching_client_without_ove
             sample={"messages": [{"role": "user", "content": "hi"}]},
             payload={},
             workflow_bundle=_bundle(
+                build_loop_inputs=lambda **_: {"refresh_tool_schemas": True},
                 inject_tool_schemas=lambda **_: [
                     {
                         "name": "app__api",
@@ -1178,6 +1226,17 @@ def _bundle(**overrides: Any) -> SchedulerWorkflowBundle:
         "scheduler_type": "framework_loop",
     }
     values.update(overrides)
+    if values["benchmark_kit_id"] == "tau2" and "build_loop_inputs" not in overrides:
+        values["build_loop_inputs"] = lambda **kwargs: {
+            "required_tool": None if (kwargs.get("payload") or {}).get("tool_choice") == "none" else "respond",
+            "plain_text_response_tool": "respond",
+            "plain_text_response_argument": "message",
+            "refresh_tool_schemas": True,
+            "tool_text_parser": "tau2",
+            "tool_result_user_message_field": "user_message",
+        }
+    if values["benchmark_kit_id"] == "appworld" and "build_loop_inputs" not in overrides:
+        values["build_loop_inputs"] = lambda **_: {"refresh_tool_schemas": True}
     return SchedulerWorkflowBundle(**values)
 
 

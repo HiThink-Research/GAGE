@@ -46,7 +46,7 @@ def _load_fixture(name: str) -> dict[str, Any]:
 
 def _minimal_payload() -> dict[str, Any]:
     return {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": {"name": "minimal"},
         "backends": [
             {
@@ -520,6 +520,7 @@ def test_dut_agent_references_missing_raise(field_name: str, missing_id: str) ->
         "agent_backends",
         "agent_backend_id",
         "benchmark_configs",
+        "sandbox_profiles",
         "sandbox_profile_id",
         "kit",
         "scheduler",

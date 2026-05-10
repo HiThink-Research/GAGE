@@ -209,6 +209,9 @@ def _resolve_runtime_handle(*, session: Any | None, payload: dict[str, Any] | No
         handle.update(payload_handle)
 
     resource_lease = getattr(session, "resource_lease", None)
+    resource_metadata = getattr(resource_lease, "metadata", None)
+    if isinstance(resource_metadata, dict):
+        handle.update(_runtime_handle_from_resource_metadata(resource_metadata))
     resource_handle = getattr(resource_lease, "handle_ref", None)
     if isinstance(resource_handle, dict):
         handle.update(_flatten_runtime_descriptor(resource_handle))
@@ -219,6 +222,33 @@ def _resolve_runtime_handle(*, session: Any | None, payload: dict[str, Any] | No
         environment_lease = runtime_context.get("environment_lease")
     if environment_lease is not None and hasattr(environment_lease, "to_descriptor"):
         handle.update(_flatten_runtime_descriptor(environment_lease.to_descriptor()))
+    return handle
+
+
+def _runtime_handle_from_resource_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    handle: dict[str, Any] = {}
+    for source in (
+        metadata.get("provider_config"),
+        (metadata.get("environment_profile") or {}).get("config")
+        if isinstance(metadata.get("environment_profile"), dict)
+        else None,
+        (metadata.get("environment_profile") or {}).get("metadata")
+        if isinstance(metadata.get("environment_profile"), dict)
+        else None,
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key in (
+            "env_endpoint",
+            "environment_endpoint",
+            "apis_endpoint",
+            "mcp_endpoint",
+            "env_url",
+            "apis_url",
+            "mcp_url",
+        ):
+            if source.get(key):
+                handle.setdefault(key, source[key])
     return handle
 
 

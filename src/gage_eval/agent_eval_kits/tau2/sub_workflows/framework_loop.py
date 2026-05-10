@@ -23,9 +23,15 @@ def build_workflow_bundle() -> SchedulerWorkflowBundle:
 
 
 def _build_loop_inputs(*, session, sample, payload):
+    required_tool = None if (payload or {}).get("tool_choice") == "none" else "respond"
     return {
         "messages": build_tau2_messages(sample),
-        "required_tool": "respond",
+        "required_tool": required_tool,
+        "plain_text_response_tool": "respond",
+        "plain_text_response_argument": "message",
+        "refresh_tool_schemas": True,
+        "tool_text_parser": "tau2",
+        "tool_result_user_message_field": "user_message",
         "benchmark_config": _benchmark_config_from_context(session=session, payload=payload),
     }
 

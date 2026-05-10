@@ -56,6 +56,41 @@ def test_appworld_runtime_uses_runtime_handle_endpoints() -> None:
 
 
 @pytest.mark.fast
+def test_appworld_runtime_uses_agentkit_v2_environment_profile_metadata() -> None:
+    calls: list[tuple[str, str, dict[str, Any], int]] = []
+
+    def requester(endpoint: str, method: str, payload: dict[str, Any], timeout_s: int) -> dict[str, Any]:
+        calls.append((endpoint, method, payload, timeout_s))
+        return {"output": {"method": method, "task_id": payload.get("task_id")}}
+
+    session = SimpleNamespace(
+        resource_lease=SimpleNamespace(
+            metadata={
+                "environment_profile": {
+                    "metadata": {
+                        "env_endpoint": "http://env-from-profile",
+                        "apis_endpoint": "http://apis-from-profile",
+                        "mcp_endpoint": "http://mcp-from-profile",
+                    }
+                }
+            },
+            handle_ref={},
+        )
+    )
+
+    runtime = AppWorldRuntime(requester=requester)
+    runtime.bootstrap(
+        session=session,
+        sample={"metadata": {"appworld": {"task_id": "task-1"}}},
+        payload={},
+    )
+
+    assert calls[0][0] == "http://env-from-profile"
+    assert calls[0][2]["remote_apis_url"] == "http://apis-from-profile"
+    assert calls[0][2]["remote_mcp_url"] == "http://mcp-from-profile"
+
+
+@pytest.mark.fast
 def test_appworld_workflows_project_runtime_instruction() -> None:
     session = SimpleNamespace(
         prompt_context={"instruction": "Solve the Spotify task."},

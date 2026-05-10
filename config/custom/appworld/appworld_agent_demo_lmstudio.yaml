@@ -2,37 +2,35 @@ api_version: gage/v1alpha1
 kind: PipelineConfig
 
 metadata:
-  name: appworld_official_jsonl
-  description: AgentKit v2 AppWorld official JSONL evaluation via runtime-owned tools and verifier.
+  name: appworld_agent_demo_lmstudio
+  description: AgentKit v2 AppWorld smoke config for LMStudio OpenAI-compatible local models.
 
 datasets:
-  - dataset_id: appworld_dev
+  - dataset_id: appworld_demo
     loader: jsonl
     params:
-      path: local-datasets/appworld/dev.jsonl
-      missing_hint: "Run: gage-eval-main/docker/appworld/export_datasets.sh --image appworld-mcp:latest --output local-datasets/appworld"
-      preprocess: appworld_preprocessor
-      preprocess_kwargs:
-        subset: dev
-        ground_truth_mode: full
+      path: tests/data/samples/appworld_demo_lmstudio_smoke.jsonl
       streaming: false
 
 backends:
-  - backend_id: gpt52_openai_http
+  - backend_id: lmstudio_qwen35_9b
     type: openai_http
     config:
-      base_url: https://api.openai.com/v1
-      model: gpt-5.2
-      require_api_key: true
-      max_retries: 6
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen/qwen3.5-9b
+      require_api_key: false
+      timeout: 600
+      default_params:
+        temperature: 0
+        max_tokens: 1024
 
 agents:
   - agent_id: appworld_agent
     scheduler:
       type: framework_loop
-      backend_id: gpt52_openai_http
+      backend_id: lmstudio_qwen35_9b
       config:
-        max_turns: 120
+        max_turns: 16
         force_tool_choice: first_turn
         refresh_tool_schemas: true
         mcp_client_id: appworld_env
@@ -42,7 +40,7 @@ agents:
       mcp_servers: []
 
 benchmarks:
-  - benchmark_id: appworld_dev
+  - benchmark_id: appworld_demo
     kit_id: appworld
     config: {}
 
@@ -103,37 +101,26 @@ mcp_clients:
       session_retry_timeout_s: 180
 
 metrics:
-  - metric_id: appworld_tgc
-    implementation: appworld_tgc
-  - metric_id: appworld_sgc
-    implementation: appworld_sgc
-  - metric_id: appworld_pass_count
-    implementation: appworld_pass_count
-  - metric_id: appworld_fail_count
-    implementation: appworld_fail_count
-  - metric_id: appworld_difficulty
-    implementation: appworld_difficulty
-    aggregation: categorical_count
-    params:
-      category_field: difficulty
+  - metric_id: latency
+    implementation: latency
 
 dut_agents:
   - dut_id: dut_agent_main
     agent_id: appworld_agent
     env_id: appworld_local
-    benchmark_id: appworld_dev
+    benchmark_id: appworld_demo
     trial_policy:
       trials: 1
 
 tasks:
-  - task_id: appworld_dev_eval
-    dataset_id: appworld_dev
+  - task_id: appworld_agent_demo_lmstudio
+    dataset_id: appworld_demo
     steps:
       - step: inference
         adapter_id: dut_agent_main
       - step: auto_eval
     concurrency: 1
-    max_samples: 20
+    max_samples: 1
     reporting:
       sinks:
         - type: console

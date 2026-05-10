@@ -31,7 +31,8 @@ def _build_loop_inputs(*, session, sample, payload):
         "messages": build_appworld_messages(
             sample,
             instruction_override=str(session.prompt_context.get("instruction") or ""),
-        )
+        ),
+        "refresh_tool_schemas": True,
     }
 
 
@@ -48,12 +49,17 @@ def _inject_tool_schemas(*, session, sample, payload):
     mcp_endpoint = session.prompt_context.get("mcp_endpoint")
     if not mcp_endpoint:
         return build_appworld_tools(sample)
-    mcp_client_id = resolve_support_field(sample, "mcp_client_id")
+    mcp_client_id = (
+        payload.get("mcp_client_id")
+        or session.prompt_context.get("mcp_client_id")
+        or resolve_support_field(sample, "mcp_client_id")
+        or "appworld_env"
+    )
     allowed_apps = list(session.prompt_context.get("allowed_apps") or [])
     try:
         schemas = fetch_mcp_tool_schemas(
             mcp_endpoint,
-            mcp_client_id,
+            str(mcp_client_id),
             allowed_apps=allowed_apps or None,
         )
         return schemas

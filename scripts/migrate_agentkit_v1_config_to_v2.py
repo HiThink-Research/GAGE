@@ -201,7 +201,7 @@ def migrate_payload(payload: dict[str, Any]) -> MigrationResult:
     used_dut_ids: set[str] = set()
 
     migrated = {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": _metadata(payload),
         "backends": list(backend_specs.values()),
         "agents": agents,
@@ -342,7 +342,7 @@ def _migrate_pipeline_config_payload(payload: dict[str, Any]) -> MigrationResult
         dut_agents.append(dut)
 
     migrated = {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": _pipeline_metadata(payload),
         "backends": migrated_backends,
         "agents": agents,

@@ -16,7 +16,7 @@ import gage_eval.config.agentkit_v2 as agentkit_v2_module
 
 
 AGENTKIT_V2_CONFIG = """
-kind: AgentEvalConfig
+kind: PipelineConfig
 metadata:
   name: agentkit-v2-cli
 backends:
@@ -48,6 +48,28 @@ dut_agents:
 """
 
 AGENTKIT_V2_DUMMY_BACKEND_CONFIG = AGENTKIT_V2_CONFIG.replace(
+    "type: litellm\n    config:\n      model: gpt-4.1-mini\n      api_key: ${ENV.MODEL_API_KEY}",
+    "type: dummy\n    config:\n      response: ok",
+)
+
+AGENTKIT_V2_EXECUTABLE_CONFIG = (
+    AGENTKIT_V2_CONFIG
+    + """
+datasets:
+  - dataset_id: ds
+    loader: jsonl
+    params:
+      path: tests/data/samples/tau2_demo.jsonl
+tasks:
+  - task_id: task
+    dataset_id: ds
+    steps:
+      - step: inference
+        adapter_id: dut
+"""
+)
+
+AGENTKIT_V2_EXECUTABLE_DUMMY_BACKEND_CONFIG = AGENTKIT_V2_EXECUTABLE_CONFIG.replace(
     "type: litellm\n    config:\n      model: gpt-4.1-mini\n      api_key: ${ENV.MODEL_API_KEY}",
     "type: dummy\n    config:\n      response: ok",
 )
@@ -303,7 +325,7 @@ def test_show_expanded_agentkit_v2_validation_error_redacts_bare_env_secret(
 
 @pytest.mark.io
 @pytest.mark.parametrize("extra_args", [[], ["--max-samples", "0"]])
-def test_agentkit_v2_run_mode_fails_fast_before_legacy_pipeline_validation(
+def test_agentkit_v2_show_expanded_lowers_before_legacy_pipeline_validation(
     monkeypatch,
     capsys,
     tmp_path,
@@ -311,7 +333,7 @@ def test_agentkit_v2_run_mode_fails_fast_before_legacy_pipeline_validation(
 ) -> None:
     monkeypatch.setenv("MODEL_API_KEY", "secret-value")
     cfg = tmp_path / "agentkit_v2_run.yaml"
-    cfg.write_text(AGENTKIT_V2_CONFIG, encoding="utf-8")
+    cfg.write_text(AGENTKIT_V2_EXECUTABLE_CONFIG, encoding="utf-8")
     monkeypatch.setattr(gage_run, "_ensure_spawn_start_method", lambda: None)
     monkeypatch.setattr(gage_run, "_ensure_default_concurrency", lambda *args, **kwargs: None)
     monkeypatch.setattr(gage_run, "_detect_hardware_profile", lambda *args, **kwargs: None)
@@ -326,29 +348,40 @@ def test_agentkit_v2_run_mode_fails_fast_before_legacy_pipeline_validation(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--config", str(cfg), "--gpus", "0", "--cpus", "1", *extra_args],
+        [
+            "run.py",
+            "--config",
+            str(cfg),
+            "--show-expanded-config",
+            "--gpus",
+            "0",
+            "--cpus",
+            "1",
+            *extra_args,
+        ],
     )
 
     with pytest.raises(SystemExit) as excinfo:
         gage_run.main()
 
     captured = capsys.readouterr()
-    assert excinfo.value.code == 1
-    assert "AgentEvalConfig execution is not wired yet" in captured.err
-    assert "--show-expanded-config" in captured.err
+    assert excinfo.value.code == 0
+    expanded = yaml.safe_load(captured.out)
+    assert expanded["role_adapters"][0]["adapter_id"] == "dut"
+    assert expanded["role_adapters"][0]["agent_runtime_id"] == "tau2_framework_loop"
     assert "dataset" not in captured.err.lower()
     assert "role adapter" not in captured.err.lower()
     assert "custom/builtin" not in captured.err.lower()
 
 
 @pytest.mark.io
-def test_agentkit_v2_run_mode_validates_binding_specs_without_backend_construction(
+def test_agentkit_v2_show_expanded_validates_binding_specs_without_backend_construction(
     monkeypatch,
     capsys,
     tmp_path,
 ) -> None:
     cfg = tmp_path / "agentkit_v2_run_dummy.yaml"
-    cfg.write_text(AGENTKIT_V2_DUMMY_BACKEND_CONFIG, encoding="utf-8")
+    cfg.write_text(AGENTKIT_V2_EXECUTABLE_DUMMY_BACKEND_CONFIG, encoding="utf-8")
     captured_specs = {}
     original_resolve_specs = agentkit_v2_module.resolve_agentkit_v2_runtime_binding_specs
 
@@ -371,21 +404,21 @@ def test_agentkit_v2_run_mode_validates_binding_specs_without_backend_constructi
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--config", str(cfg), "--gpus", "0", "--cpus", "1"],
+        ["run.py", "--config", str(cfg), "--show-expanded-config", "--gpus", "0", "--cpus", "1"],
     )
 
     with pytest.raises(SystemExit) as excinfo:
         gage_run.main()
 
     captured = capsys.readouterr()
-    assert excinfo.value.code == 1
-    assert "AgentEvalConfig execution is not wired yet" in captured.err
+    assert excinfo.value.code == 0
+    assert captured.err == ""
     assert captured_specs["dut"].backend_id == "model"
     assert captured_specs["dut"].environment_provider == "local_process"
 
 
 @pytest.mark.io
-def test_agentkit_v2_run_mode_skips_runtime_preflight_side_effects(
+def test_agentkit_v2_show_expanded_skips_runtime_preflight_side_effects(
     monkeypatch,
     capsys,
     tmp_path,
@@ -395,7 +428,7 @@ def test_agentkit_v2_run_mode_skips_runtime_preflight_side_effects(
     monkeypatch.delenv("GAGE_EVAL_HUMAN_INPUT", raising=False)
     monkeypatch.setattr(sys, "stdin", _InteractiveStdin())
     cfg = tmp_path / "agentkit_v2_run_no_side_effects.yaml"
-    cfg.write_text(AGENTKIT_V2_DUMMY_BACKEND_CONFIG, encoding="utf-8")
+    cfg.write_text(AGENTKIT_V2_EXECUTABLE_DUMMY_BACKEND_CONFIG, encoding="utf-8")
     calls: list[str] = []
 
     monkeypatch.setattr(gage_run, "_ensure_spawn_start_method", lambda: calls.append("spawn"))
@@ -411,6 +444,7 @@ def test_agentkit_v2_run_mode_skips_runtime_preflight_side_effects(
             "run.py",
             "--config",
             str(cfg),
+            "--show-expanded-config",
             "--gpus",
             "0",
             "--cpus",
@@ -426,8 +460,8 @@ def test_agentkit_v2_run_mode_skips_runtime_preflight_side_effects(
         gage_run.main()
 
     captured = capsys.readouterr()
-    assert excinfo.value.code == 1
-    assert "AgentEvalConfig execution is not wired yet" in captured.err
+    assert excinfo.value.code == 0
+    assert captured.err == ""
     assert calls == []
     assert "GAGE_EVAL_MAX_SAMPLES" not in os.environ
     assert "VLLM_NATIVE_MODEL_PATH" not in os.environ

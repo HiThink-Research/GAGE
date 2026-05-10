@@ -242,7 +242,7 @@ def test_docker_and_e2b_verifier_scoring_payload_field_sets_match(tmp_path: Path
 
 def _swebench_e2b_payload() -> dict[str, Any]:
     return {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": {"name": "swebench-e2b"},
         "backends": [
             {

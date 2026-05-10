@@ -217,7 +217,10 @@ def test_swebench_v2_local_docker_applies_test_patch_after_submission_patch(tmp_
             "+harness\n"
         )
 
-        result = SwebenchVerifierAdapter(scripts_dir=str(tmp_path / "run_scripts")).run(
+        result = SwebenchVerifierAdapter(
+            scripts_dir=str(tmp_path / "run_scripts"),
+            swebench_pro_mode=False,
+        ).run(
             VerifierInput(
                 benchmark_kit_id="swebench",
                 scheduler_type="framework_loop",

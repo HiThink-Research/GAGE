@@ -72,7 +72,7 @@ def test_migrates_agent_backends_and_role_adapter_to_v2_loader_payload(tmp_path:
 
     assert result.ok
     migrated = _read_yaml(output_path)
-    assert migrated["kind"] == "AgentEvalConfig"
+    assert migrated["kind"] == "PipelineConfig"
     assert migrated["backends"] == [
         {
             "backend_id": "tau2_openai_http",

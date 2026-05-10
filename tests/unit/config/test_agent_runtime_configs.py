@@ -6,29 +6,41 @@ import pytest
 import yaml
 
 from gage_eval.agent_runtime.schedulers.framework_loop import StaticModelBackendAdapter
+from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.config.registry import ConfigRegistry
 from gage_eval.config.pipeline_builder import PipelineConfigBuildError
 from gage_eval.config.pipeline_config import PipelineConfig
 
 
 def _load_config(path: Path) -> PipelineConfig:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload = load_pipeline_config_payload(path)
     return PipelineConfig.from_dict(payload)
 
 
 def test_appworld_runtime_config_parses() -> None:
-    config = _load_config(
+    config_path = (
         Path(__file__).resolve().parents[3]
         / "config"
         / "custom"
         / "appworld"
         / "appworld_agent_demo_runtime.yaml"
     )
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert "agent_backends" not in payload
+    assert payload["agents"][0]["scheduler"]["type"] == "framework_loop"
+    assert payload["benchmarks"][0]["kit_id"] == "appworld"
+    assert payload["environments"][0]["provider"] == "docker"
+
+    config = _load_config(config_path)
 
     dut_agent = next(spec for spec in config.role_adapters if spec.adapter_id == "dut_agent_main")
     assert dut_agent.agent_runtime_id == "appworld_framework_loop"
     assert dut_agent.params.get("pre_hooks") is None
     assert dut_agent.params.get("post_hooks") is None
+    assert dut_agent.params["provider_config"]["image"] == "appworld-mcp:latest"
+    assert dut_agent.params["environment_profile"]["metadata"]["mcp_endpoint"] == "http://127.0.0.1:5001"
 
 
 def test_tau2_runtime_config_drops_bootstrap_support() -> None:
@@ -58,6 +70,15 @@ def test_skillsbench_runtime_smoke_parses() -> None:
 
 def test_builtin_codex_installed_client_configs_parse_without_agent_backend() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
+    payload = yaml.safe_load(
+        (base / "appworld" / "appworld_agent_demo_installed_client_codex.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert payload["agents"][0]["scheduler"]["type"] == "installed_client"
+
     appworld = _load_config(
         base / "appworld" / "appworld_agent_demo_installed_client_codex.yaml"
     )

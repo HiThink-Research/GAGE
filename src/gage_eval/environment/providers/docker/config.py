@@ -43,6 +43,9 @@ class DockerEnvironmentConfig(_StrictModel):
     docker_platform: str = "linux/amd64"
     privileged: bool = False
     network_policy: NetworkPolicy | None = None
+    network_mode: str | None = None
+    ports: list[str] = Field(default_factory=list)
+    extra_hosts: list[str] = Field(default_factory=list)
     mounts: list[DockerMount] = Field(default_factory=list)
     workdir: str = "/workspace"
     exec_workdir: str | None = None
@@ -50,6 +53,9 @@ class DockerEnvironmentConfig(_StrictModel):
     keepalive_command: list[str] = Field(default_factory=lambda: ["sleep", "infinity"])
     user: str | None = None
     environment: dict[str, str] = Field(default_factory=dict)
+    wait_for_http_endpoints: list[str] = Field(default_factory=list)
+    startup_timeout_s: float = Field(default=0, ge=0)
+    startup_interval_s: float = Field(default=1, gt=0)
     use_host_workdir_mount: bool = False
     host_workdir: str | None = None
 
@@ -77,6 +83,21 @@ class DockerEnvironmentConfig(_StrictModel):
         normalized = [str(item) for item in value]
         if any(not item.strip() for item in normalized):
             raise ValueError("command items must be non-empty")
+        return normalized
+
+    @field_validator("network_mode")
+    @classmethod
+    def _optional_network_mode_is_non_empty(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("network_mode must be non-empty")
+        return value
+
+    @field_validator("ports", "extra_hosts", "wait_for_http_endpoints")
+    @classmethod
+    def _string_list_items_must_be_non_empty(cls, value: list[str]) -> list[str]:
+        normalized = [str(item) for item in value]
+        if any(not item.strip() for item in normalized):
+            raise ValueError("list items must be non-empty")
         return normalized
 
     @model_validator(mode="after")

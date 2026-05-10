@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 import gage_eval.agent_eval_kits.appworld.runtime as appworld_runtime_module
+import gage_eval.agent_eval_kits.appworld.sub_workflows.framework_loop as appworld_framework_loop_module
 from gage_eval.config import build_default_registry
+from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
@@ -15,9 +16,6 @@ from gage_eval.registry import registry
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.agent_eval_kits.appworld.mcp_client import AppWorldStreamableMcpClient
 from tests._support.stubs.mcp_stub import AppWorldMcpStub
-
-
-pytestmark = pytest.mark.skip(reason="AppWorld runtime issue is tracked separately")
 
 
 class DemoModelBackend:
@@ -77,7 +75,7 @@ def test_appworld_demo_with_streamable_http(
         / "appworld"
         / "appworld_agent_demo.yaml"
     )
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload = load_pipeline_config_payload(config_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     stub = AppWorldMcpStub()
@@ -91,16 +89,26 @@ def test_appworld_demo_with_streamable_http(
     def requester(method: str, payload: dict) -> dict:
         return stub.requester(method, payload)
 
+    def fake_fetch_mcp_tool_schemas(
+        mcp_endpoint: str,
+        mcp_client_id: str | None,
+        *,
+        allowed_apps: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        del mcp_endpoint, allowed_apps
+        return [_tool_schema(tool, mcp_client_id or "appworld_env") for tool in stub.list_tools()]
+
     monkeypatch.setattr(appworld_runtime_module.requests, "post", fake_post)
-    _configure_runtime_owned_appworld_agent(payload)
+    monkeypatch.setattr(
+        appworld_framework_loop_module,
+        "fetch_mcp_tool_schemas",
+        fake_fetch_mcp_tool_schemas,
+    )
+    _configure_runtime_owned_appworld_agent(payload, temp_workspace=temp_workspace)
     payload["mcp_clients"][0]["endpoint"] = "http://stub"
     payload["mcp_clients"][0]["params"] = {**payload["mcp_clients"][0].get("params", {}), "requester": requester}
     payload["tasks"][0]["max_samples"] = 1
-    payload["tasks"][0]["steps"] = [
-        {"step": "support", "adapter_id": "toolchain_main"},
-        {"step": "inference", "adapter_id": "dut_agent_main"},
-    ]
-    payload["sandbox_profiles"][0]["runtime_configs"]["start_container"] = False
+    payload["tasks"][0]["steps"] = [{"step": "inference", "adapter_id": "dut_agent_main"}]
 
     config = PipelineConfig.from_dict(payload)
     registry = build_default_registry()
@@ -116,7 +124,7 @@ def test_appworld_demo_with_streamable_http(
     assert [name for name, _ in lifecycle_calls] == ["initialize", "save"]
 
 
-def _configure_runtime_owned_appworld_agent(payload: dict[str, Any]) -> None:
+def _configure_runtime_owned_appworld_agent(payload: dict[str, Any], *, temp_workspace: Path) -> None:
     registry.register(
         "backends",
         "appworld_demo_tool_backend_official",
@@ -136,3 +144,52 @@ def _configure_runtime_owned_appworld_agent(payload: dict[str, Any]) -> None:
     params.pop("pre_hooks", None)
     params.pop("post_hooks", None)
     params["max_turns"] = 3
+    _configure_stub_environment(payload, params, temp_workspace=temp_workspace)
+
+
+def _configure_stub_environment(
+    payload: dict[str, Any],
+    params: dict[str, Any],
+    *,
+    temp_workspace: Path,
+) -> None:
+    metadata = {
+        "env_endpoint": "http://stub-env",
+        "apis_endpoint": "http://stub-apis",
+        "mcp_endpoint": "http://stub",
+    }
+    provider_config = {"base_cwd": str(temp_workspace)}
+    environment_profile = {
+        "provider": "local_process",
+        "profile_id": "appworld_local_stub",
+        "config": provider_config,
+        "metadata": metadata,
+        "resources": {"cpu": 1, "memory_gb": 1.0},
+    }
+    params["environment_profile"] = environment_profile
+    params["provider_config"] = provider_config
+    params["resources"] = {"cpu": 1, "memory_gb": 1.0}
+    params["startup_env"] = {}
+    params["lifecycle"] = "per_sample"
+    if payload.get("environments"):
+        payload["environments"][0] = {
+            "env_id": "appworld_local_stub",
+            "provider": "local_process",
+            "profile_id": "appworld_local_stub",
+            "profile": {"metadata": metadata},
+            "provider_config": provider_config,
+            "resources": {"cpu": 1, "memory_gb": 1.0},
+            "lifecycle": "per_sample",
+        }
+
+
+def _tool_schema(tool: dict[str, Any], mcp_client_id: str) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": str(tool.get("name") or ""),
+            "description": str(tool.get("description") or ""),
+            "parameters": dict(tool.get("inputSchema") or {}),
+        },
+        "x-gage": {"mcp_client_id": mcp_client_id},
+    }

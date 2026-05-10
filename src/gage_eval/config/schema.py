@@ -80,8 +80,8 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["datasets"] = datasets
     data["models"] = models
     data["backends"] = backends
-    data["agent_backends"] = agent_backends
-    data["sandbox_profiles"] = sandbox_profiles
+    _set_optional_list(data, "agent_backends", agent_backends)
+    _set_optional_list(data, "sandbox_profiles", sandbox_profiles)
     data["mcp_clients"] = mcp_clients
     data["prompts"] = prompts
     data["role_adapters"] = role_adapters
@@ -89,6 +89,13 @@ def normalize_pipeline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["tasks"] = tasks
     data["summary_generators"] = summary_generators
     return data
+
+
+def _set_optional_list(data: Dict[str, Any], key: str, value: List[dict]) -> None:
+    if value:
+        data[key] = value
+    else:
+        data.pop(key, None)
 
 
 def _ensure_list(value: Any, field: str, errors: List[str]) -> List[dict]:

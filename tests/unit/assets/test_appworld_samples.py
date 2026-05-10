@@ -21,7 +21,7 @@ def test_appworld_demo_samples_shape(test_data_dir: Path) -> None:
         assert isinstance(record.get("messages"), list)
         assert record.get("messages")
         assert record.get("tool_choice") == "auto"
-        assert record.get("sandbox", {}).get("sandbox_id") == "appworld_local"
+        assert "sandbox" not in record
         appworld = record.get("metadata", {}).get("appworld", {})
         assert appworld.get("task_id")
         allowed_apps = appworld.get("allowed_apps")

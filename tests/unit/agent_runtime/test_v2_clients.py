@@ -498,7 +498,7 @@ def _minimal_agentkit_payload(
             }
         } if scheduler_type == "acp_client" else {}
     return {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": {"name": "acp-smoke"},
         "backends": [{"backend_id": "model", "type": "litellm", "config": {"model": "demo"}}],
         "agents": [
