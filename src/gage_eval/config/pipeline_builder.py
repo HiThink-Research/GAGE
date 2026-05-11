@@ -114,7 +114,7 @@ class PipelineConfigBuilder:
         self._state["datasets"] = tuple(
             DatasetSpec(
                 dataset_id=item.get("dataset_id"),
-                loader=item.get("loader"),
+                loader=item.get("loader") or item.get("type"),
                 hub=item.get("hub"),
                 hub_params=item.get("hub_params") or item.get("hub_args", {}),
                 preprocess_chain=tuple(item.get("preprocess_chain", [])),
@@ -209,6 +209,8 @@ class PipelineConfigBuilder:
                 backend=dict(item.get("backend", {})) if item.get("backend") else None,
                 agent_backend_id=item.get("agent_backend_id"),
                 agent_backend=dict(item.get("agent_backend", {})) if item.get("agent_backend") else None,
+                env_id=item.get("env_id"),
+                trial_policy=item.get("trial_policy"),
                 agent_runtime_id=item.get("agent_runtime_id"),
                 compat_runtime_id=item.get("compat_runtime_id"),
                 mcp_client_id=item.get("mcp_client_id"),
@@ -276,6 +278,7 @@ class PipelineConfigBuilder:
                     TaskSpec(
                         task_id=item.get("task_id"),
                         dataset_id=item.get("dataset_id") or item.get("dataset_ref"),
+                        execution_mode=item.get("execution_mode", "sample_loop"),
                         steps=steps,
                         metric_overrides=metric_overrides,
                         reporting=item.get("reporting", {}),
@@ -311,8 +314,15 @@ class PipelineConfigBuilder:
         from gage_eval.config.pipeline_config import PipelineConfig
         normalized = self._require_normalized()
 
+        metadata = dict(self._state.get("metadata", {}))
+        if normalized.get("environments"):
+            metadata.setdefault(
+                "_external_harness_environments",
+                [dict(item) for item in normalized.get("environments", []) if isinstance(item, dict)],
+            )
+
         return PipelineConfig(
-            metadata=self._state.get("metadata", {}),
+            metadata=metadata,
             builtin=self._state.get("builtin"),
             custom=self._state.get("custom"),
             datasets=self._state.get("datasets", ()),

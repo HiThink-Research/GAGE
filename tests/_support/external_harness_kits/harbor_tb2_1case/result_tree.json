@@ -1,0 +1,358 @@
+{
+  "source": {
+    "benchmark": "Terminal-Bench 2.0",
+    "spike_job_id": "gage_tb2_1case_lmstudio_20260510_161501",
+    "harbor_version": "0.6.6"
+  },
+  "job_result": {
+    "id": "ed934e6f-2aec-46f3-8fed-0ec0974b93f2",
+    "started_at": "2026-05-10T16:15:08.005778",
+    "updated_at": "2026-05-10T16:19:08.600015",
+    "finished_at": "2026-05-10T16:19:08.600015",
+    "n_total_trials": 1,
+    "stats": {
+      "n_completed_trials": 1,
+      "n_errored_trials": 0,
+      "n_running_trials": 0,
+      "n_pending_trials": 0,
+      "n_cancelled_trials": 0,
+      "n_retries": 0,
+      "evals": {
+        "terminus-2__qwen/qwen3.5-9b__adhoc": {
+          "n_trials": 1,
+          "n_errors": 0,
+          "metrics": [
+            {
+              "mean": 0
+            }
+          ],
+          "pass_at_k": {},
+          "reward_stats": {
+            "reward": {
+              "0.0": [
+                "gpt2-codegolf__sLkuvPz"
+              ]
+            }
+          },
+          "exception_stats": {}
+        }
+      },
+      "n_input_tokens": 2035,
+      "n_cache_tokens": 0,
+      "n_output_tokens": 317,
+      "cost_usd": null
+    }
+  },
+  "trials": [
+    {
+      "name": "gpt2-codegolf__sLkuvPz",
+      "config": {
+        "task": {
+          "path": "tests/data/external_harness_kits/terminal_bench/gpt2-codegolf",
+          "git_url": null,
+          "git_commit_id": null,
+          "name": null,
+          "ref": null,
+          "overwrite": false,
+          "download_dir": null,
+          "source": null
+        },
+        "trial_name": "gpt2-codegolf__sLkuvPz",
+        "trials_dir": "agent-eval/0508/spike/_tmp/tb2_1case_lmstudio_hostapi_nosource/jobs/gage_tb2_1case_lmstudio_20260510_161501",
+        "timeout_multiplier": 1,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+          "name": "terminus-2",
+          "import_path": null,
+          "model_name": "lm_studio/qwen/qwen3.5-9b",
+          "override_timeout_sec": 240,
+          "override_setup_timeout_sec": null,
+          "max_timeout_sec": null,
+          "kwargs": {
+            "api_base": "http://127.0.0.1:1234/v1",
+            "temperature": 0,
+            "max_turns": 2,
+            "suppress_max_turns_warning": true,
+            "record_terminal_session": true,
+            "model_info": {
+              "max_input_tokens": 32768,
+              "max_output_tokens": 4096,
+              "input_cost_per_token": 0,
+              "output_cost_per_token": 0
+            },
+            "llm_call_kwargs": {
+              "max_tokens": 512
+            }
+          },
+          "env": {}
+        },
+        "environment": {
+          "type": "docker",
+          "import_path": null,
+          "force_build": false,
+          "delete": true,
+          "override_cpus": null,
+          "override_memory_mb": null,
+          "override_storage_mb": null,
+          "override_gpus": null,
+          "suppress_override_warnings": false,
+          "mounts_json": null,
+          "env": {},
+          "kwargs": {}
+        },
+        "verifier": {
+          "override_timeout_sec": 300,
+          "max_timeout_sec": null,
+          "env": {},
+          "disable": false
+        },
+        "artifacts": [],
+        "job_id": "ed934e6f-2aec-46f3-8fed-0ec0974b93f2"
+      },
+      "result": {
+        "id": "f1df20ed-46ac-4d5f-9597-5d1f817a4fc6",
+        "task_name": "gpt2-codegolf",
+        "trial_name": "gpt2-codegolf__sLkuvPz",
+        "trial_uri": "file:///Users/panke/AI-learning/eval-framework/new/agent-eval/0508/spike/_tmp/tb2_1case_lmstudio_hostapi_nosource/jobs/gage_tb2_1case_lmstudio_20260510_161501/gpt2-codegolf__sLkuvPz",
+        "task_id": {
+          "path": "tests/data/external_harness_kits/terminal_bench/gpt2-codegolf"
+        },
+        "source": null,
+        "task_checksum": "c3dfea370953fe9b6cb53d368f1f242af2833cf1af623849bdaee8fe026b1cf1",
+        "config": {
+          "task": {
+            "path": "tests/data/external_harness_kits/terminal_bench/gpt2-codegolf",
+            "git_url": null,
+            "git_commit_id": null,
+            "name": null,
+            "ref": null,
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+          },
+          "trial_name": "gpt2-codegolf__sLkuvPz",
+          "trials_dir": "agent-eval/0508/spike/_tmp/tb2_1case_lmstudio_hostapi_nosource/jobs/gage_tb2_1case_lmstudio_20260510_161501",
+          "timeout_multiplier": 1,
+          "agent_timeout_multiplier": null,
+          "verifier_timeout_multiplier": null,
+          "agent_setup_timeout_multiplier": null,
+          "environment_build_timeout_multiplier": null,
+          "agent": {
+            "name": "terminus-2",
+            "import_path": null,
+            "model_name": "lm_studio/qwen/qwen3.5-9b",
+            "override_timeout_sec": 240,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "kwargs": {
+              "api_base": "http://127.0.0.1:1234/v1",
+              "temperature": 0,
+              "max_turns": 2,
+              "suppress_max_turns_warning": true,
+              "record_terminal_session": true,
+              "model_info": {
+                "max_input_tokens": 32768,
+                "max_output_tokens": 4096,
+                "input_cost_per_token": 0,
+                "output_cost_per_token": 0
+              },
+              "llm_call_kwargs": {
+                "max_tokens": 512
+              }
+            },
+            "env": {}
+          },
+          "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "suppress_override_warnings": false,
+            "mounts_json": null,
+            "env": {},
+            "kwargs": {}
+          },
+          "verifier": {
+            "override_timeout_sec": 300,
+            "max_timeout_sec": null,
+            "env": {},
+            "disable": false
+          },
+          "artifacts": [],
+          "job_id": "ed934e6f-2aec-46f3-8fed-0ec0974b93f2"
+        },
+        "agent_info": {
+          "name": "terminus-2",
+          "version": "2.0.0",
+          "model_info": {
+            "name": "qwen/qwen3.5-9b",
+            "provider": "lm_studio"
+          }
+        },
+        "agent_result": {
+          "n_input_tokens": 2035,
+          "n_cache_tokens": 0,
+          "n_output_tokens": 317,
+          "cost_usd": null,
+          "rollout_details": [],
+          "metadata": {
+            "n_episodes": 2,
+            "api_request_times_msec": [
+              12259.39393043518,
+              11050.729274749756
+            ],
+            "summarization_count": 0
+          }
+        },
+        "verifier_result": {
+          "rewards": {
+            "reward": 0
+          }
+        },
+        "exception_info": null,
+        "started_at": "2026-05-10T08:15:10.800609Z",
+        "finished_at": "2026-05-10T08:19:08.596283Z",
+        "environment_setup": {
+          "started_at": "2026-05-10T08:15:10.820660Z",
+          "finished_at": "2026-05-10T08:15:20.583256Z"
+        },
+        "agent_setup": {
+          "started_at": "2026-05-10T08:15:20.583302Z",
+          "finished_at": "2026-05-10T08:16:41.982539Z"
+        },
+        "agent_execution": {
+          "started_at": "2026-05-10T08:16:41.982672Z",
+          "finished_at": "2026-05-10T08:17:07.169986Z"
+        },
+        "verifier": {
+          "started_at": "2026-05-10T08:17:07.305872Z",
+          "finished_at": "2026-05-10T08:19:06.961706Z"
+        },
+        "step_results": null
+      },
+      "agent": {
+        "trajectory": {
+          "schema_version": "ATIF-v1.7",
+          "session_id": "905cbeae-ea46-4ef2-8499-5057fb52d730",
+          "agent": {
+            "name": "terminus-2",
+            "version": "2.0.0",
+            "model_name": "lm_studio/qwen/qwen3.5-9b",
+            "extra": {
+              "parser": "json",
+              "temperature": 0
+            }
+          },
+          "final_metrics": {
+            "total_prompt_tokens": 2035,
+            "total_completion_tokens": 317,
+            "total_cached_tokens": 0
+          },
+          "steps": [
+            {
+              "step_id": 1,
+              "timestamp": "2026-05-10T08:16:42.230838+00:00",
+              "source": "user",
+              "message": "You are an AI assistant tasked with solving command-line tasks in a Linux environment. You will be given a task description and the output from previously executed commands. Your goal is to solve the task by providing ba...[truncated]",
+              "tool_calls": []
+            },
+            {
+              "step_id": 2,
+              "timestamp": "2026-05-10T08:16:55.301878+00:00",
+              "source": "agent",
+              "model_name": "lm_studio/qwen/qwen3.5-9b",
+              "message": "Analysis: I'm starting fresh in the /app directory. I need to create a C program that can load GPT-2 model weights from a .ckpt file and a vocab.bpe file, then sample from the model using arg-max sampling for the next 20...[truncated]",
+              "reasoning_content": "",
+              "tool_calls": [
+                {
+                  "tool_call_id": "call_0_1",
+                  "function_name": "bash_command",
+                  "arguments": {
+                    "keystrokes": "ls -la\n",
+                    "duration": 0.5
+                  }
+                }
+              ],
+              "observation": {
+                "results": [
+                  {
+                    "content": "New Terminal Output:\nroot@e847001019cc:/app# ls -la\ntotal 486552\ndrwxr-xr-x 1 root root      4096 Oct 28  2025 .\ndrwxr-xr-x 1 root root      4096 May 10 08:16 ..\n-rw-r--r-- 1 root root 497759232 Oct 28  2025 gpt2-124M.ck...[truncated]"
+                  }
+                ]
+              },
+              "metrics": {
+                "prompt_tokens": 844,
+                "completion_tokens": 159
+              }
+            },
+            {
+              "step_id": 3,
+              "timestamp": "2026-05-10T08:17:07.169053+00:00",
+              "source": "agent",
+              "model_name": "lm_studio/qwen/qwen3.5-9b",
+              "message": "Analysis: I can see the gpt-124M.ckpt file (about 498MB) and vocab.bpe file (about 456KB). I need to examine these files to understand their format before writing the C program.\nPlan: Let me first look at the structure o...[truncated]",
+              "reasoning_content": "",
+              "tool_calls": [
+                {
+                  "tool_call_id": "call_1_1",
+                  "function_name": "bash_command",
+                  "arguments": {
+                    "keystrokes": "head -50 vocab.bpe\n",
+                    "duration": 0.5
+                  }
+                }
+              ],
+              "observation": {
+                "results": [
+                  {
+                    "content": "New Terminal Output:\n\nroot@e847001019cc:/app# head -50 vocab.bpe\n#version: 0.2\nĠ t\nĠ a\nh e\ni n\nr e\no n\nĠt he\ne r\nĠ s\na t\nĠ w\nĠ o\ne n\nĠ c\ni t\ni s\na n\no r\ne s\nĠ b\ne d\nĠ f\nin g\nĠ p\no u\nĠa n\na l\na r\nĠt o\nĠ m\nĠo f\nĠ in\nĠ d\nĠ ...[truncated]"
+                  }
+                ]
+              },
+              "metrics": {
+                "prompt_tokens": 1191,
+                "completion_tokens": 158
+              }
+            }
+          ]
+        }
+      },
+      "verifier": {
+        "reward_txt": "0",
+        "ctrf": {
+          "results": {
+            "summary": {
+              "tests": 1,
+              "passed": 0,
+              "failed": 1,
+              "skipped": 0,
+              "pending": 0,
+              "other": 0,
+              "start": 1778401146.867284,
+              "stop": 1778401146.9102705
+            },
+            "tests": [
+              {
+                "name": "test_outputs.py::test_gpt2_implementation",
+                "status": "failed",
+                "duration": 0.0007716660001051423,
+                "message": "The test failed in the call phase due to an assertion error"
+              }
+            ]
+          }
+        },
+        "test_stdout": "Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease\nHit:2 http://security.ubuntu.com/ubuntu noble-security InRelease\nHit:3 http://archive.ubuntu.com/ubuntu noble-updates InRelease\nHit:4 http://archive.ubuntu.com/ubunt...[truncated]"
+      },
+      "logs": {
+        "trial_log": "Skipping image OS validation for alexgshaw/gpt2-codegolf:20251031: docker inspect returned 1\nTrajectory dumped to agent-eval/0508/spike/_tmp/tb2_1case_lmstudio_hostapi_nosource/jobs/gage_tb2_1case_lmstudio_20260510_16150...[truncated]"
+      }
+    }
+  ]
+}

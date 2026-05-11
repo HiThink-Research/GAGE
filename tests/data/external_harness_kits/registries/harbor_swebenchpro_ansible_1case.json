@@ -1,0 +1,14 @@
+[
+  {
+    "name": "swebenchpro",
+    "version": "1.0",
+    "description": "One ansible task mirrored from the official Harbor swebenchpro registry for deterministic GAGE live smoke runs.",
+    "tasks": [
+      {
+        "name": "instance_ansible__ansible-11c1777d56664b1acb56b387a1ad6aeadef1391d-v0f01c69f1e2528b935359cfe578530722bca2c59",
+        "path": "tests/data/external_harness_kits/swebench_pro/instance_ansible__ansible-11c1777d56664b1acb56b387a1ad6aeadef1391d-v0f01c69f1e2528b935359cfe578530722bca2c59"
+      }
+    ],
+    "metrics": []
+  }
+]

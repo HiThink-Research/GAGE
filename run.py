@@ -1173,7 +1173,7 @@ def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry
     for spec in config.role_adapters:
         if spec.class_path:
             try:
-                module_name, class_name = spec.class_path.rsplit(".", 1)
+                module_name, class_name = _split_import_class_path(spec.class_path)
                 module = importlib.import_module(module_name)
                 getattr(module, class_name)
             except Exception as exc:
@@ -1200,6 +1200,16 @@ def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry
             errors.append(f"Task '{spec.task_id}' references missing dataset_id '{spec.dataset_id}'")
 
     return errors
+
+
+def _split_import_class_path(class_path: str) -> tuple[str, str]:
+    if ":" in class_path:
+        module_name, class_name = class_path.split(":", 1)
+    else:
+        module_name, class_name = class_path.rsplit(".", 1)
+    if not module_name or not class_name:
+        raise ValueError(f"Invalid class_path '{class_path}'")
+    return module_name, class_name
 
 
 def main() -> None:

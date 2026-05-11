@@ -1,0 +1,74 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  name: external-harness-tb2-installed-client-mock
+
+datasets:
+  - dataset_id: tb2_one_case
+    type: harbor_local_path
+    params:
+      path: tests/data/external_harness_kits/terminal_bench/gpt2-codegolf
+      path_kind: task
+      path_scope: host
+
+environments:
+  - env_id: tb2_docker
+    provider: docker
+    provider_config:
+      docker_image: alexgshaw/gpt2-codegolf:20251031
+
+backends:
+  - backend_id: installed_client_backend
+    type: litellm
+    config:
+      provider: lm_studio
+      custom_llm_provider: lm_studio
+      model: lm_studio/qwen/qwen3.5-9b
+      generation_parameters:
+        temperature: 0.2
+        max_tokens: 4096
+      model_info:
+        max_input_tokens: 32768
+        max_output_tokens: 4096
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+
+role_adapters:
+  - adapter_id: harbor_tb2
+    role_type: external_harness
+    class_path: gage_eval.role.adapters.harbor:HarborAdapter
+    backend_id: installed_client_backend
+    env_id: tb2_docker
+    capabilities:
+      - task_batch_harness
+    trial_policy:
+      trials: 1
+      aggregation: single
+    params:
+      harness:
+        benchmark: terminal-bench
+        agent:
+          kind: installed_client
+          import_path: tests._support.external_harness_kits.fake_installed_client:FakeInstalledClient
+          extra_env:
+            OPENAI_BASE_URL: http://host.docker.internal:1234/v1
+        job_options:
+          timeout_multiplier: 1.0
+          max_retries: 0
+        poll_interval_s: 1
+
+tasks:
+  - task_id: tb2_one_case
+    dataset_id: tb2_one_case
+    execution_mode: task_batch_harness
+    max_samples: 1
+    concurrency: 1
+    steps:
+      - step: harbor_run
+        adapter_id: harbor_tb2
+      - step: harbor_result
+        adapter_id: harbor_tb2
+
+summary_generators:
+  - harbor_summary

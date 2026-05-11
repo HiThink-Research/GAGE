@@ -111,6 +111,24 @@
     },
     {
       "kind": "dataset_loaders",
+      "name": "harbor_local_path",
+      "module": "gage_eval.assets.datasets.loaders.harbor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
+      "name": "harbor_registry",
+      "module": "gage_eval.assets.datasets.loaders.harbor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
       "name": "hf_hub",
       "module": "gage_eval.assets.datasets.loaders.hf_hub_loader",
       "load_phase": "prepare_only",

@@ -17,7 +17,11 @@ from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome
 from gage_eval.observability.trace import ObservabilityTrace
 
 
-_SAMPLE_LEVEL_INFRA_ARTIFACTS = {"effective_config.json", "sample_record.json", "trial_aggregate.json"}
+_SAMPLE_LEVEL_INFRA_ARTIFACTS = {
+    "effective_config.json",
+    "sample_record.json",
+    "trial_aggregate.json",
+}
 _TRIAL_OWNERS = {"agent", "infra", "verifier"}
 _SECRET_KEYNAME_PATTERN = re.compile(
     r"(?i)(?:^|[_\-\s])("
@@ -163,6 +167,7 @@ class RuntimeArtifactSink:
         metadata: dict[str, Any] | None = None,
         mime_type: str | None = None,
         secret_values: dict[str, str] | list[str] | tuple[str, ...] | None = None,
+        sample_level: bool = False,
     ) -> ArtifactRef | dict[str, Any]:
         """Write either a v2 Agent runtime artifact or a legacy lease artifact."""
 
@@ -189,7 +194,7 @@ class RuntimeArtifactSink:
             raise ValueError(f"owner must be one of {sorted(_TRIAL_OWNERS)}")
 
         if trial_id is None:
-            if name_segment not in _SAMPLE_LEVEL_INFRA_ARTIFACTS:
+            if name_segment not in _SAMPLE_LEVEL_INFRA_ARTIFACTS and not sample_level:
                 raise ValueError("trial_id is required for non sample-level artifacts")
             if owner_segment != "infra":
                 raise ValueError("sample-level artifacts must use owner='infra'")

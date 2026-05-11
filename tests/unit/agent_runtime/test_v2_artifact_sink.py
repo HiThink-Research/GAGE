@@ -115,6 +115,27 @@ def test_sample_level_write_without_trial_only_allows_infra_records(tmp_path: Pa
         )
         assert ref.path == f"artifacts/task-1/sample-1/infra/{name}"
 
+    ref = sink.write_artifact(
+        run_id="run-2",
+        task_id="task-1",
+        sample_id="sample-1",
+        owner="infra",
+        name="provider_invocation.json",
+        content={},
+        sample_level=True,
+    )
+    assert ref.path == "artifacts/task-1/sample-1/infra/provider_invocation.json"
+
+    with pytest.raises(ValueError, match="trial_id"):
+        sink.write_artifact(
+            run_id="run-2",
+            task_id="task-1",
+            sample_id="sample-1",
+            owner="infra",
+            name="provider_result.json",
+            content={},
+        )
+
     with pytest.raises(ValueError, match="trial_id"):
         sink.write_artifact(
             run_id="run-2",

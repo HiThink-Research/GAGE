@@ -1,0 +1,122 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  # Second live ExternalHarness example: GAGE delegates one SWE-bench Pro style task
+  # to Harbor, runs Harbor's installed SWE-agent inside the task container, then imports
+  # Harbor outputs back into GAGE samples, metrics, reports, and raw artifacts.
+  name: external-harness-kits-harbor-swebench-pro-lmstudio-1case
+  description: Live one-case SWE-bench Pro ansible run through Harbor, SWE-agent, Docker, and LM Studio.
+
+datasets:
+  - dataset_id: swebench_pro_ansible_1case
+    # Official Harbor registry dataset. This pins one ansible task while keeping the
+    # task definition, Dockerfile, and verifier logic owned by Harbor's dataset adapter.
+    loader: harbor_registry
+    params:
+      ref: swebenchpro@1.0
+      # Local one-case mirror of the official Harbor registry entry. This keeps the
+      # live example deterministic when the remote Supabase registry is slow, while
+      # preserving the official harbor-datasets Git task source below.
+      registry_path: ${HARBOR_SWEBENCH_PRO_REGISTRY_PATH:-tests/data/external_harness_kits/registries/harbor_swebenchpro_ansible_1case.json}
+      # Official task name in harbor-datasets. Keeping this fixed makes the example
+      # reproducible while still exercising the registry adapter path.
+      task_names:
+        - instance_ansible__ansible-11c1777d56664b1acb56b387a1ad6aeadef1391d-v0f01c69f1e2528b935359cfe578530722bca2c59
+      n_tasks: 1
+
+environments:
+  - env_id: swebench_pro_docker
+    # Harbor owns the trial sandbox. The official task Dockerfile supplies the image,
+    # entrypoint reset, workdir, and repo checkout. GAGE only sets resource overrides here.
+    provider: docker
+    # Pull the image referenced by that official Dockerfile before live runs:
+    #   docker pull jefzda/sweap-images:ansible.ansible-ansible__ansible-11c1777d56664b1acb56b387a1ad6aeadef1391d-v0f01c69f1e2528b935359cfe578530722bca2c59
+    resources:
+      # Match the selected official task.toml defaults; override only for local experiments.
+      cpu: ${HARBOR_SWEBENCH_PRO_CPU:-1}
+      memory_mb: ${HARBOR_SWEBENCH_PRO_MEMORY_MB:-4096}
+      storage_mb: ${HARBOR_SWEBENCH_PRO_STORAGE_MB:-10240}
+
+backends:
+  - backend_id: lmstudio_openai_compatible
+    # SWE-agent consumes an OpenAI-compatible endpoint from inside the trial container.
+    type: litellm
+    config:
+      provider: openai_compatible
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      # SWE-agent expects a LiteLLM/OpenAI-style model string. The served LM Studio model can still be local.
+      model: ${HARBOR_SWEBENCH_PRO_MODEL:-openai/qwen/qwen3.5-9b}
+      api_key: ${LMSTUDIO_API_KEY:-EMPTY}
+
+role_adapters:
+  - adapter_id: harbor_swebench_pro
+    role_type: external_harness
+    class_path: gage_eval.role.adapters.harbor:HarborAdapter
+    backend_id: lmstudio_openai_compatible
+    env_id: swebench_pro_docker
+    capabilities:
+      - task_batch_harness
+    trial_policy:
+      # One Harbor attempt keeps this as a smoke/E2E config. Raise trials for pass@k experiments.
+      trials: 1
+      aggregation: single
+    params:
+      harness:
+        benchmark: swebench-pro
+        launcher:
+          # Keep Harbor subprocess/job.log mirrored to the operator terminal during long SWE-agent runs.
+          live_log: true
+        agent:
+          # Harbor's built-in "swe-agent" is a BaseInstalledAgent implementation.
+          kind: installed_client
+          name: swe-agent
+          # This endpoint must be reachable from inside Docker Desktop containers on macOS.
+          extra_env:
+            OPENAI_BASE_URL: ${HARBOR_TRIAL_OPENAI_BASE_URL:-http://host.docker.internal:1234/v1}
+            # Harbor 0.6.6 SWE-agent wrapper sources /etc/profile.d/testbed-conda.sh under
+            # `set -u`; define this as empty so images without conda metadata do not abort
+            # before SWE-agent reaches the local model endpoint.
+            CONDA_DEFAULT_ENV: ""
+            # LM Studio Qwen models normally do not expose OpenAI function calling. Harbor's
+            # installed swe-agent copies this config during setup; using backticks keeps the
+            # smoke run on SWE-agent's text action protocol.
+            SWEAGENT_CONFIG: /opt/sweagent-configs/default_backticks.yaml
+          kwargs:
+            # These map to Harbor SweAgent CLI flags and avoid local smoke runs stopping on synthetic cost.
+            per_instance_cost_limit: ${HARBOR_SWEBENCH_PRO_COST_LIMIT:-0}
+            total_cost_limit: ${HARBOR_SWEBENCH_PRO_TOTAL_COST_LIMIT:-0}
+            max_input_tokens: ${HARBOR_SWEBENCH_PRO_MAX_INPUT_TOKENS:-0}
+            temperature: ${HARBOR_SWEBENCH_PRO_TEMPERATURE:-0.0}
+        job_options:
+          # Respect task.toml agent/verifier timeouts while giving SWE-agent installation enough setup time.
+          timeout_multiplier: 1.0
+          agent_timeout_multiplier: 1.0
+          verifier_timeout_multiplier: 1.0
+          agent_setup_timeout_multiplier: ${HARBOR_SWEBENCH_PRO_AGENT_SETUP_TIMEOUT_MULTIPLIER:-5.0}
+          max_retries: 0
+        # Must stay >=1s for Harbor polling; lower values create busy polling.
+        poll_interval_s: ${HARBOR_SWEBENCH_PRO_POLL_INTERVAL_S:-1}
+
+tasks:
+  - task_id: swebench_pro_ansible_1case
+    dataset_id: swebench_pro_ansible_1case
+    execution_mode: task_batch_harness
+    max_samples: 1
+    concurrency: 1
+    steps:
+      - step: harbor_run
+        adapter_id: harbor_swebench_pro
+      - step: harbor_result
+        adapter_id: harbor_swebench_pro
+
+metrics:
+  - harbor_resolve_rate
+  - harbor_score_mean
+  - metric_id: external_trial_pass_hat_k
+    implementation: external_trial_pass_hat_k
+    params:
+      k: 1
+
+summary_generators:
+  - harbor_summary

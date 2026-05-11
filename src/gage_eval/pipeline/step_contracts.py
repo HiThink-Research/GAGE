@@ -146,11 +146,13 @@ def collect_step_sequence_issues(
     *,
     owner_label: str,
     adapter_ids: Optional[Iterable[str]] = None,
+    execution_mode: str = "sample_loop",
     registry_view=None,
 ) -> tuple[StepSequenceIssue, ...]:
     """Collect contract violations for an ordered step sequence."""
 
     catalog = get_step_contract_catalog(registry_view=registry_view)
+    expected_step_kind = _expected_step_kind_for_mode(execution_mode)
     adapter_set = {str(adapter_id) for adapter_id in adapter_ids} if adapter_ids is not None else None
     seen_counts: Dict[str, int] = {}
     seen_prerequisites: set[str] = set()
@@ -171,14 +173,31 @@ def collect_step_sequence_issues(
 
         seen_counts[step_type] = seen_counts.get(step_type, 0) + 1
 
-        if contract.step_kind is not StepKind.SAMPLE:
+        if contract.step_kind is StepKind.GLOBAL:
             issues.append(
                 StepSequenceIssue(
                     code="global_step",
-                    message=f"{location} uses global step '{step_type}' which cannot run inside sample steps",
+                    message=(
+                        f"{location} uses global step '{step_type}' which cannot run inside "
+                        f"{expected_step_kind.value} steps; actual kind '{contract.step_kind.value}', "
+                        f"expected kind '{expected_step_kind.value}'"
+                    ),
                 )
             )
-        elif contract.executor_name is None:
+            continue
+        if contract.step_kind is not expected_step_kind:
+            issues.append(
+                StepSequenceIssue(
+                    code="invalid_step_kind",
+                    message=(
+                        f"{location} step '{step_type}' has actual kind "
+                        f"'{contract.step_kind.value}'; expected kind "
+                        f"'{expected_step_kind.value}' for execution_mode '{execution_mode}'"
+                    ),
+                )
+            )
+            continue
+        if expected_step_kind is StepKind.SAMPLE and contract.executor_name is None:
             issues.append(
                 StepSequenceIssue(
                     code="missing_executor",
@@ -230,6 +249,12 @@ def collect_step_sequence_issues(
     return tuple(issues)
 
 
+def _expected_step_kind_for_mode(execution_mode: str) -> StepKind:
+    if execution_mode == "task_batch_harness":
+        return StepKind.TASK
+    return StepKind.SAMPLE
+
+
 def _build_contract(entry: RegistryEntry) -> StepContract:
     defaults = _STEP_DEFAULTS.get(entry.name, _StepDefaults())
     extra = dict(entry.extra)
@@ -271,6 +296,8 @@ def _coerce_step_kind(
     value = str(raw).strip().lower()
     if value == StepKind.SAMPLE.value:
         return StepKind.SAMPLE
+    if value == StepKind.TASK.value:
+        return StepKind.TASK
     if value == StepKind.GLOBAL.value:
         return StepKind.GLOBAL
     raise ValueError(f"Unsupported step_kind '{raw}' for pipeline step '{step_type}'")
