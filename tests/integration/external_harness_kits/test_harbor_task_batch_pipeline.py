@@ -221,12 +221,11 @@ def test_swebench_pro_config_translates_with_builtin_installed_swe_agent(tmp_pat
     assert Path(dataset["registry_path"]).is_absolute()
     assert agent["name"] == "swe-agent"
     assert agent["model_name"].startswith("openai/")
+    assert agent["kwargs"]["per_instance_call_limit"] == 200
     assert agent["env"]["OPENAI_BASE_URL"] == "http://host.docker.internal:1234/v1"
     assert agent["env"]["CONDA_DEFAULT_ENV"] == ""
-    assert agent["env"]["SWEAGENT_CONFIG"] == "/opt/sweagent-configs/default_backticks.yaml"
     assert invocation.environ["OPENAI_BASE_URL"] == "http://host.docker.internal:1234/v1"
     assert invocation.environ["CONDA_DEFAULT_ENV"] == ""
-    assert invocation.environ["SWEAGENT_CONFIG"] == "/opt/sweagent-configs/default_backticks.yaml"
 
 
 def test_raises_installed_client_incompatible_without_trial_side_endpoint(

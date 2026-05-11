@@ -485,10 +485,43 @@ async def _run_harbor_job(job_config_payload: Mapping[str, Any]) -> dict[str, An
     from harbor.job import Job
     from harbor.models.job.config import JobConfig
 
+    _install_harbor_compat_patches()
     config = JobConfig.model_validate(dict(job_config_payload))
     job = await Job.create(config)
     result = await job.run()
     return redact_for_artifact(_model_dump_jsonable(result))
+
+
+def _install_harbor_compat_patches() -> None:
+    """Install small runtime compatibility shims for the pinned Harbor package.
+
+    Harbor 0.6.6 exposes SWE-agent cost/token flags but not SWE-agent's
+    ``agent.model.per_instance_call_limit`` flag. Without this shim, GAGE can
+    pass the setting through JobConfig but Harbor's installed-client base class
+    silently ignores it when building the SWE-agent command line.
+    """
+
+    try:
+        from harbor.agents.installed.base import CliFlag
+        from harbor.agents.installed.swe_agent import SweAgent
+    except Exception as exc:
+        print(
+            "GAGE Harbor compatibility patch skipped: Harbor SWE-agent module "
+            f"unavailable ({type(exc).__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return
+
+    if any(flag.kwarg == "per_instance_call_limit" for flag in SweAgent.CLI_FLAGS):
+        return
+    SweAgent.CLI_FLAGS = [
+        *SweAgent.CLI_FLAGS,
+        CliFlag(
+            "per_instance_call_limit",
+            cli="--agent.model.per_instance_call_limit",
+            type="int",
+        ),
+    ]
 
 
 def _read_launcher_input(config_path: Path) -> dict[str, Any]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gage_eval.external_harness_kits.harbor import launcher as harbor_launcher
 from gage_eval.external_harness_kits.harbor.launcher import (
     RESULT_SCHEMA_VERSION,
     build_launcher_argv,
@@ -84,6 +86,51 @@ def test_launcher_writes_result_json_on_success(
     assert (tmp_path / "launcher.stdout.log").exists()
     assert (tmp_path / "launcher.stderr.log").exists()
     assert result["started_at"] <= result["finished_at"]
+
+
+@pytest.mark.fast
+def test_launcher_installs_swe_agent_call_limit_compat_patch() -> None:
+    from harbor.agents.installed.swe_agent import SweAgent
+
+    original_flags = list(SweAgent.CLI_FLAGS)
+    try:
+        SweAgent.CLI_FLAGS = [
+            flag for flag in SweAgent.CLI_FLAGS if flag.kwarg != "per_instance_call_limit"
+        ]
+
+        harbor_launcher._install_harbor_compat_patches()
+        harbor_launcher._install_harbor_compat_patches()
+
+        matching = [
+            flag for flag in SweAgent.CLI_FLAGS if flag.kwarg == "per_instance_call_limit"
+        ]
+        assert len(matching) == 1
+        assert matching[0].cli == "--agent.model.per_instance_call_limit"
+        assert matching[0].type == "int"
+    finally:
+        SweAgent.CLI_FLAGS = original_flags
+
+
+@pytest.mark.fast
+def test_install_harbor_compat_patches_noop_when_swe_agent_module_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "harbor.agents.installed.swe_agent":
+            raise ModuleNotFoundError("No module named 'harbor.agents.installed.swe_agent'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    harbor_launcher._install_harbor_compat_patches()
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "GAGE Harbor compatibility patch skipped" in captured.err
+    assert "harbor.agents.installed.swe_agent" in captured.err
 
 
 @pytest.mark.fast

@@ -78,11 +78,10 @@ role_adapters:
             # `set -u`; define this as empty so images without conda metadata do not abort
             # before SWE-agent reaches the local model endpoint.
             CONDA_DEFAULT_ENV: ""
-            # LM Studio Qwen models normally do not expose OpenAI function calling. Harbor's
-            # installed swe-agent copies this config during setup; using backticks keeps the
-            # smoke run on SWE-agent's text action protocol.
-            SWEAGENT_CONFIG: /opt/sweagent-configs/default_backticks.yaml
           kwargs:
+            # SWE-agent has no `max_turns` flag; use its API-call cap as the practical
+            # local smoke-run turn limit. Set HARBOR_SWEBENCH_PRO_MAX_TURNS=2 for self-tests.
+            per_instance_call_limit: ${HARBOR_SWEBENCH_PRO_MAX_TURNS:-200}
             # These map to Harbor SweAgent CLI flags and avoid local smoke runs stopping on synthetic cost.
             per_instance_cost_limit: ${HARBOR_SWEBENCH_PRO_COST_LIMIT:-0}
             total_cost_limit: ${HARBOR_SWEBENCH_PRO_TOTAL_COST_LIMIT:-0}
