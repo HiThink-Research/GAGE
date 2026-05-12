@@ -303,5 +303,5 @@ def _request_payload(config: PipelineConfig, *, tmp_path: Path) -> dict:
         "role_adapter": deepcopy(config.role_adapters[0].__dict__),
         "datasets": [deepcopy(dataset.__dict__) for dataset in config.datasets],
         "backends": [deepcopy(backend.__dict__) for backend in config.backends],
-        "environments": deepcopy(config.metadata["_external_harness_environments"]),
+        "environments": deepcopy([item.to_dict() for item in config.environments]),
     }

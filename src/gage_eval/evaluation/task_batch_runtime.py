@@ -171,11 +171,7 @@ class TaskBatchExecutionContext:
             "role_adapter": _dataclass_to_dict(role_adapter) if role_adapter else {},
             "datasets": [_dataclass_to_dict(item) for item in self.config.datasets],
             "backends": [_dataclass_to_dict(item) for item in self.config.backends],
-            "environments": list(
-                self.config.metadata.get("environments")
-                or self.config.metadata.get("_external_harness_environments")
-                or ()
-            ),
+            "environments": [_environment_to_dict(item) for item in self.config.environments],
         }
 
 
@@ -427,6 +423,14 @@ def _dataclass_to_dict(value: Any) -> Dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
     return {}
+
+
+def _environment_to_dict(value: Any) -> Dict[str, Any]:
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        result = to_dict()
+        return dict(result) if isinstance(result, Mapping) else {}
+    return _dataclass_to_dict(value)
 
 
 def _metrics_from_step_result(result: Any) -> Sequence[Dict[str, Any]]:

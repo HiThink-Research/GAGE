@@ -12,6 +12,7 @@ from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.config.pipeline_config import (
     CustomPipelineStep,
     DatasetSpec,
+    EnvironmentSpec,
     PipelineConfig,
     RoleAdapterSpec,
     TaskSpec,
@@ -201,7 +202,11 @@ def _resource_profile() -> ResourceProfile:
     return ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)])
 
 
-def _task_batch_config(*, tasks: tuple[TaskSpec, ...] | None = None) -> PipelineConfig:
+def _task_batch_config(
+    *,
+    tasks: tuple[TaskSpec, ...] | None = None,
+    environments: tuple[EnvironmentSpec, ...] = (),
+) -> PipelineConfig:
     return PipelineConfig(
         datasets=(
             DatasetSpec(
@@ -210,6 +215,7 @@ def _task_batch_config(*, tasks: tuple[TaskSpec, ...] | None = None) -> Pipeline
                 params={"path": "/tmp/harbor-task"},
             ),
         ),
+        environments=environments,
         tasks=tasks
         or (
             TaskSpec(
@@ -372,7 +378,9 @@ def test_task_steps_execute_in_yaml_order(tmp_path: Path) -> None:
 def test_task_batch_request_payload_uses_top_level_external_harness_archive_with_adapter_layer(
     tmp_path: Path,
 ) -> None:
-    config = _task_batch_config()
+    config = _task_batch_config(
+        environments=(EnvironmentSpec(env_id="docker_env", provider="docker"),)
+    )
     task_plan = build_task_plan_specs(config)[0]
     trace = ObservabilityTrace(run_id="task-batch-raw-archive")
     cache = EvalCache(base_dir=tmp_path, run_id="task-batch-raw-archive")
@@ -396,6 +404,7 @@ def test_task_batch_request_payload_uses_top_level_external_harness_archive_with
     assert payload["workdir"] == str(adapter_root)
     assert payload["jobs_dir"] == str(adapter_root / "jobs")
     assert payload["job_config_path"] == str(adapter_root / "harbor_job.json")
+    assert payload["environments"] == [{"env_id": "docker_env", "provider": "docker"}]
 
 
 @pytest.mark.fast

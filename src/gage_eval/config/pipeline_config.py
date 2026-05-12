@@ -79,6 +79,37 @@ class McpClientSpec:
 
 
 @dataclass(frozen=True)
+class EnvironmentSpec:
+    """Describes a reusable runtime environment definition."""
+
+    env_id: str
+    provider: str
+    profile_id: Optional[str] = None
+    lifecycle: Optional[str] = None
+    profile: Dict[str, Any] = field(default_factory=dict)
+    provider_config: Dict[str, Any] = field(default_factory=dict)
+    startup_env: Dict[str, Any] = field(default_factory=dict)
+    resources: Dict[str, Any] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = dict(self.extra)
+        payload.update(
+            {
+                "env_id": self.env_id,
+                "provider": self.provider,
+                "profile_id": self.profile_id,
+                "lifecycle": self.lifecycle,
+                "profile": dict(self.profile),
+                "provider_config": dict(self.provider_config),
+                "startup_env": dict(self.startup_env),
+                "resources": dict(self.resources),
+            }
+        )
+        return {k: v for k, v in payload.items() if v not in (None, {}, ())}
+
+
+@dataclass(frozen=True)
 class RoleAdapterSpec:
     """Declarative description of a role adapter.
 
@@ -237,6 +268,7 @@ class PipelineConfig:
     agent_backends: Sequence[AgentBackendSpec] = field(default_factory=tuple)
     sandbox_profiles: Sequence[SandboxProfileSpec] = field(default_factory=tuple)
     mcp_clients: Sequence[McpClientSpec] = field(default_factory=tuple)
+    environments: Sequence[EnvironmentSpec] = field(default_factory=tuple)
     prompts: Sequence[PromptTemplateSpec] = field(default_factory=tuple)
     role_adapters: Sequence[RoleAdapterSpec] = field(default_factory=tuple)
     metrics: Sequence[MetricSpec] = field(default_factory=tuple)

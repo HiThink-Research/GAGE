@@ -93,6 +93,7 @@ class PipelineConfigBuilder:
             AgentBackendSpec,
             BackendSpec,
             DatasetSpec,
+            EnvironmentSpec,
             McpClientSpec,
             ModelSpec,
             PromptTemplateSpec,
@@ -177,6 +178,34 @@ class PipelineConfigBuilder:
                 params=item.get("params") or {},
             )
             for item in normalized.get("mcp_clients", [])
+        )
+
+        self._state["environments"] = tuple(
+            EnvironmentSpec(
+                env_id=item.get("env_id"),
+                provider=item.get("provider"),
+                profile_id=item.get("profile_id"),
+                lifecycle=item.get("lifecycle"),
+                profile=item.get("profile") or {},
+                provider_config=item.get("provider_config") or {},
+                startup_env=item.get("startup_env") or {},
+                resources=item.get("resources") or {},
+                extra=_strip_known_keys(
+                    item,
+                    {
+                        "env_id",
+                        "provider",
+                        "profile_id",
+                        "lifecycle",
+                        "profile",
+                        "provider_config",
+                        "startup_env",
+                        "resources",
+                    },
+                ),
+            )
+            for item in normalized.get("environments", [])
+            if isinstance(item, dict)
         )
 
         self._state["prompts"] = tuple(
@@ -315,11 +344,6 @@ class PipelineConfigBuilder:
         normalized = self._require_normalized()
 
         metadata = dict(self._state.get("metadata", {}))
-        if normalized.get("environments"):
-            metadata.setdefault(
-                "_external_harness_environments",
-                [dict(item) for item in normalized.get("environments", []) if isinstance(item, dict)],
-            )
 
         return PipelineConfig(
             metadata=metadata,
@@ -331,6 +355,7 @@ class PipelineConfigBuilder:
             agent_backends=self._state.get("agent_backends", ()),
             sandbox_profiles=self._state.get("sandbox_profiles", ()),
             mcp_clients=self._state.get("mcp_clients", ()),
+            environments=self._state.get("environments", ()),
             prompts=self._state.get("prompts", ()),
             role_adapters=self._state.get("role_adapters", ()),
             metrics=self._state.get("metrics", ()),
