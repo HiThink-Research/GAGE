@@ -1,294 +1,242 @@
-# Agent Evaluation Guide (AppWorld / SWE-bench Pro / Tau2)
+# AgentKitV2 Evaluation Guide
 
 English | [中文](agent_evaluation_zh.md)
 
-This guide covers the agent evaluation workflows supported in gage-eval: AppWorld, SWE-bench Pro, and Tau2. It focuses on how to run each evaluation, required setup, key configuration knobs, and where results are written.
+AgentKitV2 is the native GAGE path for per-sample agent evaluation. It keeps the public YAML shape close to the concepts an agent benchmark author thinks about: model backends, agents, benchmark kits, environments, DUT bindings, tasks, metrics, and reports. At load time, GAGE validates those sections, lowers them into the standard `PipelineConfig`, and executes them through the normal step-chain runtime.
 
-> Path note: commands assume you are in the `gage-eval-main/` repo root. Replace placeholder paths (for example, `/path/to/...`) with your local paths.
+Use this guide for AppWorld, SWE-bench Pro, and Tau2 runs that should be managed by GAGE itself. If the benchmark is owned by an external harness such as Harbor, use the [External Harness guide](external_harness.md) instead.
+
+> Path note: commands assume you are in the `gage-eval-main/` repository root.
 
 ## 0. Document Map
 
 - Project overview: [`README.md`](../../README.md)
+- Framework overview: [`framework_overview.md`](framework_overview.md)
 - Sample contract: [`sample.md`](sample.md)
-- AppWorld config: [`config/custom/appworld/appworld_official_jsonl.yaml`](../../config/custom/appworld/appworld_official_jsonl.yaml)
-- SWE-bench config: [`config/custom/swebench_pro/swebench_pro_smoke_agent.yaml`](../../config/custom/swebench_pro/swebench_pro_smoke_agent.yaml)
+- External Harness and Harbor: [`external_harness.md`](external_harness.md)
+- Manual AgentKitV2 E2E configs: [`config/custom/manual_e2e/`](../../config/custom/manual_e2e/)
+- AppWorld configs: [`config/custom/appworld/`](../../config/custom/appworld/)
+- SWE-bench Pro configs: [`config/custom/swebench_pro/`](../../config/custom/swebench_pro/)
 - Tau2 configs: [`config/custom/tau2/`](../../config/custom/tau2/)
 
-## 1. Common Evaluation Chain
+## 1. Where AgentKitV2 Fits
+
+AgentKitV2 is still a `PipelineConfig` workflow. The dedicated top-level sections are a more compact authoring surface, not a separate runtime.
 
 ```mermaid
 flowchart LR
-  Raw[Dataset] --> Pre[Preprocess] --> Sup[Support] --> Inf[Inference] --> Jdg[Judge] --> AE[AutoEval] --> Rep[Report]
-  Sup --> Toolchain[Toolchain]
-  Inf --> DutAgent[Dut Agent]
+  YAML["AgentKitV2 YAML\nkind: PipelineConfig"] --> Validate["validate references\nand environment schema"]
+  Validate --> Lower["lower dut_agents\ninto role_adapters"]
+  Lower --> Runtime["TaskOrchestratorRuntime"]
+  Runtime --> SampleLoop["SampleLoop\nper-sample execution"]
+  SampleLoop --> Scheduler["agent scheduler\nframework_loop / installed_client / acp_client"]
+  Scheduler --> Verifier["benchmark verifier"]
+  Verifier --> Report["samples.jsonl\nsummary.json\nartifacts"]
+
+  classDef input fill:#E8F3FF,stroke:#2F80ED,color:#143A5A;
+  classDef process fill:#F4ECFF,stroke:#7B61FF,color:#2E1A67;
+  classDef output fill:#E9F8EF,stroke:#27AE60,color:#174A2A;
+  class YAML input;
+  class Validate,Lower,Runtime,SampleLoop,Scheduler,Verifier process;
+  class Report output;
 ```
 
-All three benchmarks follow the same step order. Differences live in the dataset loader, sandbox runtime, judge implementation, and metrics.
+The main implementation points are:
 
-## 2. AppWorld Evaluation
+| Area | Code |
+| --- | --- |
+| AgentKitV2 schema, validation, and lowering | `src/gage_eval/config/agentkit_v2.py` |
+| Standard `PipelineConfig` model | `src/gage_eval/config/pipeline_config.py` |
+| Runtime binding resolution | `src/gage_eval/agent_runtime/resolver.py` |
+| Framework-loop scheduler | `src/gage_eval/agent_runtime/schedulers/framework_loop.py` |
+| AppWorld kit | `src/gage_eval/agent_eval_kits/appworld/` |
+| SWE-bench kit | `src/gage_eval/agent_eval_kits/swebench/` |
+| Tau2 kit | `src/gage_eval/agent_eval_kits/tau2/` |
 
-### 2.1 Workflow Snapshot
+## 2. Configuration Shape
 
-```mermaid
-flowchart LR
-  JSONL[AppWorld JSONL] --> Pre[appworld_preprocessor]
-  Pre --> Sup[ApiDocs + Toolchain]
-  Sup --> Inf[DUT Agent]
-  Inf --> HookInit[/initialize/]
-  Inf --> HookSave[/save/]
-  Inf --> Judge[appworld_evaluate]
+An AgentKitV2 config uses `kind: PipelineConfig` and these top-level sections:
+
+| Section | Purpose |
+| --- | --- |
+| `backends` | Reusable model endpoints, commonly `litellm` or another OpenAI-compatible backend. |
+| `agents` | Agent runtime policy: scheduler type, backend reference, max turns, tool behavior, prompt settings. |
+| `benchmarks` | Benchmark kit reference and benchmark-specific config. |
+| `environments` | Runtime environment definition. Providers currently include `local_process`, `docker`, and `e2b`. |
+| `dut_agents` | Binding from one agent to one environment and one benchmark. This becomes a `dut_agent` role adapter after lowering. |
+| `tasks` | Standard GAGE tasks. AgentKitV2 uses the regular `inference` + `auto_eval` step chain from the standard `PipelineConfig` step library, not a v2-specific runtime extension. |
+| `metrics` / `summary_generators` | Benchmark metrics and summary generation. |
+
+Minimal binding pattern:
+
+```yaml
+agents:
+  - agent_id: tau2_agent
+    scheduler:
+      type: framework_loop
+      backend_id: lmstudio_litellm
+      config:
+        max_turns: 200
+
+environments:
+  - env_id: tau2_local_process
+    provider: local_process
+    profile_id: tau2-local-process
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/tau2/environment/local_process
+
+dut_agents:
+  - dut_id: tau2_dut
+    agent_id: tau2_agent
+    env_id: tau2_local_process
+    benchmark_id: tau2_airline
 ```
 
-### 2.2 Prerequisites
+After loading, `dut_agents[]` is lowered into `role_adapters[]`; the public concept remains `PipelineConfig`.
 
-- Docker is required (AppWorld judge runs inside a container).
-- If you build from source, place the official AppWorld repo under a local path and adjust your Docker build context if needed.
+## 3. Scheduler and Environment Choices
 
-### 2.3 Prepare the AppWorld Image and Dataset
+### 3.1 Scheduler Types
 
-1. Build the AppWorld image:
+| Scheduler | Use when | Notes |
+| --- | --- | --- |
+| `framework_loop` | GAGE should run the agent loop, tool calls, observations, and final answer handling. | Most local LM Studio / LiteLLM examples use this path. |
+| `installed_client` | An external local service owns the loop and GAGE exchanges requests/results with it. | Useful for Codex-like or app-specific agent clients. |
+| `acp_client` | An ACP-compatible client owns the loop. | Uses the same binding model but a different client contract. |
+
+### 3.2 Environment Providers
+
+| Provider | Typical benchmark | Notes |
+| --- | --- | --- |
+| `local_process` | Tau2 | Runs local benchmark services or simulators on the host. |
+| `docker` | SWE-bench Pro, AppWorld | Creates per-sample containers for repo workspaces, tools, or verifiers. |
+| `e2b` | SWE-bench Pro wrapper smoke tests | Requires E2B credentials and remote sandbox availability. |
+
+AgentKitV2 currently supports only `lifecycle: per_sample`. Other values fail validation at load time with `config.environment.lifecycle.per_task` or `config.environment.lifecycle.unsupported`.
+
+## 4. Run a 1-Case Tau2 Smoke
+
+This is the lightest live check for the native AgentKitV2 path because it uses a local process environment and an OpenAI-compatible model endpoint.
 
 ```bash
 cd gage-eval-main
-# If building from source, make sure the AppWorld repo is present with LFS files
-# git lfs pull /path/to/appworld-repo
 
+export LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1
+export LMSTUDIO_LITELLM_MODEL=openai/qwen/qwen3.5-9b
+export LMSTUDIO_API_KEY=dummy
+
+TAU2_MAX_TURNS=2 \
+TAU2_MAX_STEPS=2 \
+TAU2_NUM_TRIALS=1 \
+TAU2_TRIAL_REPEATS=1 \
+python run.py \
+  --config config/custom/manual_e2e/agentkit_v2_tau2_local_lmstudio.yaml \
+  --max-samples 1 \
+  --concurrency 1 \
+  --cpus 2 \
+  --gpus 0 \
+  --run-id agentkit-v2-tau2-$(date +%Y%m%d-%H%M%S)
+```
+
+For a real Tau2 run, raise `TAU2_MAX_TURNS` and `TAU2_MAX_STEPS` to match your evaluation budget. The smoke values above only prove that config loading, scheduler execution, model calls, metrics, and report writing are connected.
+
+## 5. Run a 1-Case SWE-bench Pro Smoke
+
+Use the manual LM Studio config when you want to exercise Docker-backed AgentKitV2 execution with one SWE-bench Pro instance.
+
+```bash
+cd gage-eval-main
+
+export LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1
+export LMSTUDIO_LITELLM_MODEL=openai/qwen/qwen3.5-9b
+export LMSTUDIO_API_KEY=dummy
+
+SWEBENCH_MAX_TURNS=2 \
+SWEBENCH_TRIAL_REPEATS=1 \
+python run.py \
+  --config config/custom/manual_e2e/agentkit_v2_swebench_pro_docker_lmstudio_smoke1_qutebrowser.yaml \
+  --max-samples 1 \
+  --concurrency 1 \
+  --cpus 4 \
+  --gpus 0 \
+  --run-id agentkit-v2-swebench-$(date +%Y%m%d-%H%M%S)
+```
+
+Important operational notes:
+
+- Docker must be running.
+- The selected instance may need an image pull the first time it runs.
+- The config blocks network inside the benchmark environment by default.
+- `SWEBENCH_MAX_TURNS=2` is only a smoke cap. It is usually too low for a useful patch.
+
+## 6. AppWorld Paths
+
+AppWorld configs live under `config/custom/appworld/`. The current examples include demo, runtime, LM Studio, and installed-client variants.
+
+Common preparation:
+
+```bash
+cd gage-eval-main
 docker build -t appworld-mcp:latest -f docker/appworld/Dockerfile docker/appworld
-```
 
-2. Export JSONL datasets to the host:
-
-```bash
-cd gage-eval-main
 bash docker/appworld/export_datasets.sh \
   --image appworld-mcp:latest \
   --output ../local-datasets/appworld
 ```
 
-The output directory contains `train.jsonl`, `dev.jsonl`, `test_normal.jsonl`, `test_challenge.jsonl`, and `manifest.json`.
-
-### 2.4 Run Evaluation
+Example run:
 
 ```bash
-cd gage-eval-main
-export OPENAI_API_KEY=your_key
 python run.py \
   --config config/custom/appworld/appworld_official_jsonl.yaml \
-  --run-id appworld_official_jsonl_run_$(date +%H%M%S) \
-  --output-dir runs/appworld_official_jsonl
+  --run-id appworld-$(date +%Y%m%d-%H%M%S) \
+  --output-dir runs
 ```
 
-### 2.5 Metrics and Outputs
+Use an installed-client config only when the external client service is available and intentionally owns the agent loop.
 
-- Metrics: `tgc`, `sgc`, `pass`, `fail`, `difficulty` (see `src/gage_eval/metrics/builtin/appworld.py`).
-- Artifacts: `runs/<run_id>/appworld_artifacts/` stores exported container outputs.
-- Summary: `runs/<run_id>/summary.json`.
+## 7. Outputs and Inspection
 
-### 2.6 Core Configuration Knobs (AppWorld)
+AgentKitV2 writes the same core run files as other GAGE pipelines:
 
-| Config location | Key | Meaning / best practice |
-| --- | --- | --- |
-| `datasets[*].params.path` | JSONL path | Point to `train/dev/test_normal/test_challenge` as needed. |
-| `datasets[*].params.preprocess_kwargs.subset` | subset | Keep aligned with the JSONL file. |
-| `datasets[*].params.preprocess_kwargs.ground_truth_mode` | ground truth | `full` for train/dev; test subsets auto downgrade to minimal. |
-| `sandbox_profiles[*].image` | image | AppWorld image tag (`appworld-mcp:latest`). |
-| `sandbox_profiles[*].runtime_configs.ports` | ports | Ensure host ports are free; update if conflicts exist. |
-| `role_adapters.toolchain.params` | tool docs | `meta_tool_mode`, `tool_doc_enabled`, `tool_doc_format` control tool schema injection. |
-| `role_adapters.dut_agent.params.max_turns` | max turns | Add a safety cap for tool loops. |
-| `role_adapters.appworld_judge.params.implementation_params.export_outputs` | export outputs | Keep `true` if you need container artifacts. |
+```text
+runs/<run_id>/
+  events.jsonl
+  samples.jsonl
+  summary.json
+  samples/
+    task_<task_id>/
+      <sample_id>.json
+```
 
-### 2.7 Official Best Practices → gage-eval Mapping (AppWorld)
+Useful inspection order:
 
-| Official practice | gage-eval implementation |
+1. `summary.json`: task status, sample counts, metrics, and summary generator output.
+2. `samples.jsonl`: normalized sample, `predict_result`, `eval_result`, and agent trace.
+3. `samples/task_<task_id>/...`: per-sample cache artifacts.
+4. `events.jsonl`: step start/end/failure events and runtime health.
+
+Agent traces are carried in `predict_result[0].agent_trace` when the scheduler or imported result can provide them. AgentKitV2 framework-loop steps use a stable trace-step shape; ExternalHarness imports translate provider-native traces into the same general shape.
+
+## 8. Troubleshooting
+
+| Symptom | What to check |
 | --- | --- |
-| Use tool docs and API descriptions to constrain actions | `api_descriptions_context` + `toolchain_main` with `tool_doc_format: schema_yaml` |
-| Separate task initialization and persistence | `appworld_initialize` pre-hook + `appworld_save` post-hook |
-| Isolate each task | `sandbox_profiles` with `lifecycle: per_task` and `concurrency: 1` |
-| Avoid leakage on test splits | `ground_truth_mode` enforced by preprocessor for test subsets |
+| `config.legacy_key.*` | The YAML still contains an old top-level key. Keep `kind: PipelineConfig` and use the current sections. |
+| `config.reference.missing ...` | A `dut_agents[]` binding references a missing `agent_id`, `env_id`, or `benchmark_id`. |
+| `scheduler.backend_id.required` | `framework_loop` agents must reference a declared backend. |
+| Docker run hangs before model calls | The benchmark image may be pulling or initializing. Check Docker Desktop and container logs. |
+| Tau2 sample finishes but reward is 0 | The chain ran, but the agent did not solve the task. Increase turn/step budgets before judging model quality. |
+| Missing `agent_trace` | Confirm the scheduler path emits trace events; for external harness imports, see the provider translator in `external_harness_kits`. |
 
-## 3. SWE-bench Pro Evaluation
+## 9. AgentKitV2 vs ExternalHarness
 
-### 3.1 Workflow Snapshot
+Use AgentKitV2 when GAGE owns the per-sample runtime and scheduler. Use ExternalHarness when another framework owns the task lifecycle and GAGE should delegate, wait, parse, and import results.
 
-```mermaid
-flowchart LR
-  HF[HF Dataset] --> Pre[swebench_pro_standardizer]
-  Pre --> Sup[swebench_repo]
-  Sup --> Inf[DUT Agent]
-  Inf --> Judge[swebench_docker]
-  Judge --> Logs[run_scripts + dockerfiles]
-```
-
-### 3.2 Prerequisites
-
-- Docker is required; the judge runs the official test workflow in containers.
-- SWE-bench run scripts and dockerfiles are bundled under `third_party/swebench_pro/`.
-- The local runtime smoke demo uses a local SWE-bench snapshot plus an Ollama-compatible model endpoint.
-
-### 3.3 Default Config (Smoke Subset)
-
-The local smoke demo config `swebench_pro_smoke_runtime_ollama_local.yaml` is a smoke-only evaluation:
-
-- Filters instances using `third_party/swebench_pro/run_scripts/smoke_instance_ids.txt`.
-- Loads records from `SWEBENCH_LOCAL_PATH`.
-- Uses per-sample Docker containers (`runtime: docker`) with network blocked by default.
-- Calls the DUT agent through an Ollama-compatible OpenAI HTTP backend.
-- Judges with `swebench_docker` (offline test execution).
-
-### 3.4 Run Evaluation
-
-```bash
-cd /path/to/GAGE
-export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
-export OLLAMA_MODEL=qwen3-vl:2b-instruct
-export OLLAMA_API_KEY=dummy
-export SWEBENCH_LOCAL_PATH=/path/to/local-datasets/swebench_pro
-python run.py \
-  --config config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml \
-  --run-id swebench_framework_$(date +%H%M%S) \
-  --output-dir runs \
-  --max-samples 1
-```
-
-Notes:
-
-- This config is the recommended local smoke workflow for a quick SWE-bench demo.
-- `--max-samples 1` is now safe for the local smoke config: before applying the dataset `limit`, the local loader moves smoke-allowlisted instances to the front so the run still selects a valid smoke sample.
-- If you omit `--max-samples`, the run uses the config's built-in smoke subset and `tasks[].max_samples`.
-- `concurrency: 1` only means one sample worker runs at a time. It does not guarantee flat memory usage. The loop still keeps a small prefetch buffer, and each SWE-bench sample may switch to a different per-instance Docker image. If sample 2 triggers a new image pull, unpack, or container startup, host memory can be noticeably higher than sample 1 without any hidden parallel sample execution.
-- A run that looks "stuck" is often still making progress while Docker pulls or starts a per-sample image, or while the verifier executes the official test script for that instance.
-
-### 3.5 Metrics and Outputs
-
-- Metrics: resolve rate (`swebench_resolve_rate`), failure reasons (`swebench_failure_reason`).
-- Judge logs: `runs/<run_id>/logs/` and per-instance workspaces under `runs/<run_id>/logs/<instance_id>/`.
-- Core run artifacts: `runs/<run_id>/events.jsonl`, `runs/<run_id>/samples.jsonl`, `runs/<run_id>/summary.json`.
-
-If you need a full evaluation, remove the smoke allowlist in the dataset preprocessor and adjust `max_samples`/`concurrency`.
-
-### 3.6 Core Configuration Knobs (SWE-bench Pro)
-
-| Config location | Key | Meaning / best practice |
-| --- | --- | --- |
-| `datasets[*].hub_params.hub_id` | dataset hub | Default `ScaleAI/SWE-bench_Pro`. |
-| `datasets[*].params.preprocess_kwargs.smoke_ids_path` | smoke filter | Remove for full runs. |
-| `sandbox_profiles[*].runtime_configs.network_mode` | network | Keep blocked for reproducibility. |
-| `role_adapters.swebench_docker_judge.params.implementation_params` | judge | `scripts_dir`, `dockerfiles_dir`, `dockerhub_username`, `test_timeout_s`, `docker_platform`. |
-| `role_adapters.dut_agent.params.max_turns` | max turns | Prevent runaway tool loops. |
-| `metrics[*].aggregation` | failure counts | `categorical_count` for failure reasons. |
-
-### 3.7 Official Best Practices → gage-eval Mapping (SWE-bench Pro)
-
-| Official practice | gage-eval implementation |
+| Need | Use |
 | --- | --- |
-| Run tests in isolated Docker containers | `swebench_docker` + `runtime: docker` |
-| Use official run scripts and dockerfiles | `implementation_params.scripts_dir` + `dockerfiles_dir` |
-| Block network for reproducibility | `runtime_configs.network_mode: none` and `block_network: true` |
-| Enforce platform compatibility | `docker_platform: linux/amd64` |
-| Respect timeouts and resource limits | `test_timeout_s`, `resources.cpu/memory` |
-
-## 4. Tau2 Evaluation
-
-### 4.1 Workflow Snapshot
-
-```mermaid
-flowchart LR
-  HF[HF Dataset] --> Pre[tau2_preprocessor]
-  Pre --> Sup[tau2_bootstrap]
-  Sup --> Inf[DUT Agent]
-  Inf --> Sim[Tau2Runtime + UserSim]
-  Inf --> Judge[tau2_eval]
-```
-
-### 4.2 Prerequisites (Install Official Tau2 Code)
-
-Tau2 runtime and preprocessing require the official `tau2` Python package. Install it from the official Tau2 repo (clone it to any local path you control):
-
-```bash
-git clone https://github.com/sierra-research/tau2-bench
-cd tau2-bench
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-Important: run gage-eval using the same Python environment where `tau2` is installed (so the import is available).
-
-Optional sanity check:
-
-```bash
-tau2 check-data
-```
-
-### 4.3 Dataset (HF Download) and Data Directory
-
-The Tau2 loader downloads the dataset from HuggingFace (`HuggingFaceH4/tau2-bench-data`) into `TAU2_DATA_DIR` (or the default `./local-datasets/tau2`).
-
-- Default config sets: `data_dir: ${TAU2_DATA_DIR:-./local-datasets/tau2}`
-- Set `HUGGINGFACEHUB_API_TOKEN` if the HF download needs authentication.
-
-### 4.4 Run Evaluation
-
-Example (airline base split):
-
-```bash
-cd gage-eval-main
-export OPENAI_API_KEY=your_key
-export TAU2_DATA_DIR=/path/to/tau2-data
-python run.py \
-  --config config/custom/tau2/tau2_airline_base.yaml \
-  --run-id tau2_airline_base_run_$(date +%H%M%S) \
-  --output-dir runs/tau2_airline_base
-```
-
-Run all subsets with 10 samples each:
-
-```bash
-cd gage-eval-main
-python run.py \
-  --config config/custom/tau2/tau2_all_subsets_base.yaml \
-  --run-id tau2_all_subsets_base_run_$(date +%H%M%S) \
-  --output-dir runs/tau2_all_subsets_base
-```
-
-### 4.5 Metrics and Outputs
-
-- Metrics: `tau2_reward`, `tau2_pass`, `tau2_pass_hat_k`, `tau2_agent_cost`, `tau2_user_cost`.
-- Summary generator: `tau2_summary` produces `pass_hat_k` and per-domain averages in `summary.json`.
-- Tau2 user simulator relies on the official Tau2 runtime (LiteLLM), so API keys must be configured in the environment for the user model.
-
-### 4.6 Core Configuration Knobs (Tau2)
-
-| Config location | Key | Meaning / best practice |
-| --- | --- | --- |
-| `datasets[*].params.domain` | domain | `airline`, `retail`, `telecom`, `mock`. |
-| `datasets[*].params.task_split` | split | Must use `base` for official comparison. |
-| `datasets[*].params.num_trials` | trials | Use `num_trials >= k` if you need `pass@k`. Keep trials consistent across tasks. |
-| `datasets[*].params.seed` | seed | Base seed; trial seed is `seed + trial`. Fix for reproducibility. |
-| `datasets[*].params.num_tasks` | sampling | Use for smoke runs; remove for full evaluation. |
-| `datasets[*].params.data_dir` | data path | Path to HF snapshot or local data directory. |
-| `sandbox_profiles[*].runtime_configs.user_model` | user sim | Configure the user LLM (LiteLLM-compatible). |
-| `sandbox_profiles[*].runtime_configs.max_steps` | max steps | Prevent infinite loops. |
-| `metrics[*]` | pass-hat | `tau2_pass_hat_k` produces `pass_hat@1..k` based on min trials. |
-
-Tau2 pass@k best practice:
-- Fix `seed` for reproducibility.
-- Keep `num_trials` identical across tasks.
-- Ensure `num_trials >= k`; otherwise `pass_hat@k` is capped by the minimum trials across tasks.
-
-## 5. Appendix: Common Concepts
-
-| Term | Explanation |
-| --- | --- |
-| DUT Agent | The “device under test” agent being evaluated. In configs this maps to the `dut_agent` role adapter. |
-| Toolchain | The support step that injects tool schemas and tool docs into the prompt. |
-| Support step | Non-inference steps that prepare context (prompts, tools, docs) before agent execution. |
-| Judge | The evaluation stage that scores agent outputs (for example, AppWorld judge or SWE-bench docker judge). |
-| AutoEval | The aggregation step that turns per-sample metrics into summary metrics. |
-| Sandbox | The isolated execution environment for tools, tests, and external services (Docker or local runtime). |
-| User Simulator | In Tau2, the simulated user that interacts with the agent through the environment. |
-| pass@k / pass_hat@k | Probability estimate that at least one of k trials succeeds; Tau2 computes pass_hat@k from multiple trials. |
-
-## 6. Note on Future Images
-
-We will provide custom Docker images for AppWorld and Tau2 to remove the manual preparation steps (building/installing the official code and datasets).
+| GAGE framework loop, GAGE environments, per-sample execution | AgentKitV2 |
+| Harbor JobConfig, Harbor task registry, Harbor trial tree | ExternalHarness |
+| Native AppWorld / SWE-bench / Tau2 configs | AgentKitV2 |
+| Terminal-Bench 2.0 through Harbor | ExternalHarness |

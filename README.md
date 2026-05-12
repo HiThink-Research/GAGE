@@ -11,7 +11,7 @@
 
 📧 **Contact:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
 
-[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Smart Defaults](docs/guide/smart_defaults.md) · [Game Arena](docs/guide/game_arena.md) · [Arena Visual Control](docs/guide/game_arena_topics/game_arena_visual_control.md) · [Agent Eval](docs/guide/agent_evaluation.md) · [Benchmark](docs/guide/benchmark.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Smart Defaults](docs/guide/smart_defaults.md) · [Game Arena](docs/guide/game_arena.md) · [Arena Visual Control](docs/guide/game_arena_topics/game_arena_visual_control.md) · [AgentKitV2](docs/guide/agent_evaluation.md) · [External Harness](docs/guide/external_harness.md) · [Benchmark](docs/guide/benchmark.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
 
 </div>
 
@@ -35,7 +35,8 @@
 
 - **Fast evaluation engine**: Run local smoke tests, model-backed jobs, and larger benchmark batches through the same pipeline shape.
 - **Unified evaluation surface**: Datasets, backends, role adapters, metrics, and output contracts are configured instead of hand-wired per benchmark.
-- **Game and agent sandboxing**: Game Arena, AppWorld, SWE-bench-style agent tasks, GUI interaction, and tool-augmented workflows share the same run/output model.
+- **Game and agent sandboxing**: Game Arena, AgentKitV2, AppWorld, SWE-bench-style agent tasks, GUI interaction, and tool-augmented workflows share the same run/output model.
+- **External harness integration**: Delegate task-batch benchmarks to Harbor, then import trial evidence back into standard GAGE samples, metrics, reports, and raw artifacts.
 - **Replayable GameKit runtime**: Gomoku, Tic-Tac-Toe, Doudizhu, Mahjong, PettingZoo Space Invaders, Retro Mario, and ViZDoom now emit structured arena traces plus `arena_visual` sessions.
 - **Operational visibility**: Runs write `summary.json`, sample outputs, logs, and visual artifacts so failures can be inspected after the fact.
 
@@ -54,6 +55,14 @@
 ### Game Arena Design
 
 ![GameArena runtime core design](docs/assets/game-arena-runtime-core-design-20260413.png)
+
+### AgentKitV2 Design
+
+![AgentKit v2 pipeline design](docs/assets/agentkit-v2-pipeline-design-20260512.png)
+
+### External Harness Design
+
+![External Harness (Harbor) pipeline design](docs/assets/external-harness-pipeline-design-20260512.png)
 
 ## Quick Start
 
@@ -100,15 +109,17 @@ runs/<run_id>/
 | :--- | :--- | :--- |
 | **GameArena Human-vs-AI** | `config/custom/doudizhu/doudizhu_human_visual_gamekit.yaml` | Browser-controlled Doudizhu match against LLM players |
 | **GameArena Pure Human Control** | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` | Browser-controlled real-time Retro Mario session |
-| **Agent Evaluation** | `config/custom/appworld/appworld_official_jsonl.yaml` | AppWorld sandbox evaluation |
-| **Code Gen** | `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml` | SWE-bench style smoke run; Docker required |
+| **AgentKitV2 Tau2** | `config/custom/manual_e2e/agentkit_v2_tau2_local_lmstudio.yaml` | Native per-sample local-process Tau2 1-case smoke run |
+| **AgentKitV2 SWE-bench Pro** | `config/custom/manual_e2e/agentkit_v2_swebench_pro_docker_lmstudio_smoke1_qutebrowser.yaml` | Native Docker-backed SWE-bench Pro smoke run |
+| **External Harness Harbor** | `config/custom/external_harness_kits/harbor_terminal_bench2_lmstudio_1case.yaml` | Delegates a Terminal-Bench 2.0 task to Harbor and imports results |
+| **AgentKitV2 AppWorld** | `config/custom/appworld/appworld_official_jsonl.yaml` | AppWorld sandbox evaluation through the native AgentKitV2 path |
 | **Text** | `config/custom/aime24/aime2024_chat.yaml` | AIME, GPQA, Math500, and related text benchmarks |
 | **Multimodal** | `config/custom/mathvista/chat.yaml` | MathVista and related multimodal benchmarks |
 | **LLM Judge** | `config/custom/examples/single_task_local_judge_qwen.yaml` | Local LLM judge example |
 
 ## Roadmap
 
-- **Agent evaluation**: Add stronger native agent benchmarking support with trajectory scoring and safety checks.
+- **Agent evaluation**: Continue hardening AgentKitV2 and External Harness trace import, failure diagnostics, and reproducible live smoke configs.
 - **Game Arena expansion**: Grow the GameKit catalog and keep browser control, replay, and output contracts consistent.
 - **Gage-Client**: Add a client tool for configuration management, failure diagnostics, and benchmark onboarding.
 - **Distributed inference**: Support multi-node task sharding and load balancing for large runs.
