@@ -31,7 +31,8 @@ def _build_loop_inputs(*, session, sample, payload):
         "messages": build_appworld_messages(
             sample,
             instruction_override=str(session.prompt_context.get("instruction") or ""),
-        )
+        ),
+        "refresh_tool_schemas": True,
     }
 
 
@@ -45,43 +46,30 @@ def _inject_prompt_context(*, session, sample, payload):
 
 
 def _inject_tool_schemas(*, session, sample, payload):
-    import traceback
     mcp_endpoint = session.prompt_context.get("mcp_endpoint")
     if not mcp_endpoint:
         return build_appworld_tools(sample)
-    mcp_client_id = resolve_support_field(sample, "mcp_client_id")
+    mcp_client_id = (
+        payload.get("mcp_client_id")
+        or session.prompt_context.get("mcp_client_id")
+        or resolve_support_field(sample, "mcp_client_id")
+        or "appworld_env"
+    )
     allowed_apps = list(session.prompt_context.get("allowed_apps") or [])
     try:
         schemas = fetch_mcp_tool_schemas(
             mcp_endpoint,
-            mcp_client_id,
+            str(mcp_client_id),
             allowed_apps=allowed_apps or None,
-        )
-        import pathlib, datetime
-        pathlib.Path("/tmp/gage_inject_tool_schemas_ok.txt").write_text(
-            f"{datetime.datetime.now(datetime.timezone.utc).isoformat()}\n"
-            f"mcp_endpoint={mcp_endpoint!r}\n"
-            f"mcp_client_id={mcp_client_id!r}\n"
-            f"schemas_count={len(schemas)}\n"
-            f"first_tool={schemas[0].get('function', {}).get('name') if schemas else 'NONE'}\n"
         )
         return schemas
     except Exception:
-        import pathlib, datetime
-        log_path = pathlib.Path("/tmp/gage_inject_tool_schemas_error.txt")
-        log_path.write_text(
-            f"{datetime.datetime.now(datetime.timezone.utc).isoformat()}\n"
-            f"mcp_endpoint={mcp_endpoint!r}\n"
-            f"mcp_client_id={mcp_client_id!r}\n"
-            f"allowed_apps={allowed_apps!r}\n"
-            f"{traceback.format_exc()}"
-        )
         return build_appworld_tools(sample)
 
 
 def _finalize_loop_result(*, runtime_entry, session, sample, scheduler_output, sandbox_provider=None):
     output = dict(scheduler_output or {})
-    saved = runtime_entry.save(sample=sample, sandbox_provider=sandbox_provider)
+    saved = runtime_entry.save(sample=sample, session=session, sandbox_provider=sandbox_provider)
     artifact_paths = dict(output.get("artifact_paths") or {})
     artifact_paths.update(
         persist_appworld_artifacts(

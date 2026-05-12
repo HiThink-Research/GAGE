@@ -8,20 +8,11 @@ import pytest
 from gage_eval.registry import registry
 from gage_eval.role.adapters.base import RoleAdapterState
 from gage_eval.role.adapters.judge_extend import JudgeExtendAdapter
-from gage_eval.sandbox.manager import SandboxManager
-from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
 
 
-class FakeSandbox:
-    def __init__(self, runtime_configs: Dict[str, Any] | None = None, resources: Dict[str, Any] | None = None):
-        self.runtime_configs = runtime_configs or {}
-        self.resources = resources or {}
-
-    def start(self, config: Dict[str, Any]) -> Dict[str, Any]:
+class FakeProvider:
+    def runtime_handle(self) -> dict[str, str]:
         return {"env_endpoint": "http://env"}
-
-    def teardown(self) -> None:
-        return None
 
 
 class DummyJudgeImpl:
@@ -40,15 +31,8 @@ def test_judge_extend_injects_runtime_handle() -> None:
         DummyJudgeImpl,
         desc="Dummy judge provider test",
     )
-    manager = SandboxManager()
-    manager.register_runtime("fake", FakeSandbox)
-    provider = SandboxProvider(
-        manager,
-        {"runtime": "fake"},
-        SandboxScope(run_id="run", task_id="task", sample_id="sample"),
-    )
+    provider = FakeProvider()
     adapter = JudgeExtendAdapter(adapter_id="judge_extend_main", implementation="dummy_provider_impl")
     result = asyncio.run(adapter.ainvoke({"sandbox_provider": provider}, RoleAdapterState()))
 
     assert result["runtime_handle"] == {"env_endpoint": "http://env"}
-    provider.release()

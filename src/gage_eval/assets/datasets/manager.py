@@ -19,6 +19,8 @@ from gage_eval.assets.datasets.sample import (
     sample_to_dict,
 )
 
+HARBOR_DATASET_METADATA_KEY = "external_harness_dataset"
+
 
 @dataclass
 class DataSource:
@@ -88,6 +90,12 @@ class DataManager:
 
         logger.debug("Iterating samples for dataset_id='{}'", dataset_id)
         source = self.get(dataset_id)
+        if source.metadata and source.metadata.get(HARBOR_DATASET_METADATA_KEY):
+            raise ValueError(
+                "external_harness.config.invalid_dataset_params: "
+                f"dataset '{dataset_id}' uses a Harbor descriptor loader and cannot be iterated "
+                "by sample_loop; set task execution_mode to task_batch_harness"
+            )
         validator = source.validator
         for index, record in enumerate(source.records):
             if record_seen is not None:

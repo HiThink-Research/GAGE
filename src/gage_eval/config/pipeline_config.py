@@ -12,7 +12,7 @@ but adapted to the new PipelineConfig -> BuiltinPipeline flow.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from gage_eval.observability.logger import ObservableLogger
 
@@ -79,6 +79,37 @@ class McpClientSpec:
 
 
 @dataclass(frozen=True)
+class EnvironmentSpec:
+    """Describes a reusable runtime environment definition."""
+
+    env_id: str
+    provider: str
+    profile_id: Optional[str] = None
+    lifecycle: Optional[str] = None
+    profile: Dict[str, Any] = field(default_factory=dict)
+    provider_config: Dict[str, Any] = field(default_factory=dict)
+    startup_env: Dict[str, Any] = field(default_factory=dict)
+    resources: Dict[str, Any] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload = dict(self.extra)
+        payload.update(
+            {
+                "env_id": self.env_id,
+                "provider": self.provider,
+                "profile_id": self.profile_id,
+                "lifecycle": self.lifecycle,
+                "profile": dict(self.profile),
+                "provider_config": dict(self.provider_config),
+                "startup_env": dict(self.startup_env),
+                "resources": dict(self.resources),
+            }
+        )
+        return {k: v for k, v in payload.items() if v not in (None, {}, ())}
+
+
+@dataclass(frozen=True)
 class RoleAdapterSpec:
     """Declarative description of a role adapter.
 
@@ -102,6 +133,8 @@ class RoleAdapterSpec:
     backend: Optional[Dict[str, Any]] = None
     agent_backend_id: Optional[str] = None
     agent_backend: Optional[Dict[str, Any]] = None
+    env_id: Optional[str] = None
+    trial_policy: Optional[Dict[str, Any]] = None
     agent_runtime_id: Optional[str] = None
     compat_runtime_id: Optional[str] = None
     mcp_client_id: Optional[str] = None
@@ -197,6 +230,7 @@ class TaskSpec:
 
     task_id: str
     dataset_id: str
+    execution_mode: Literal["sample_loop", "task_batch_harness"] = "sample_loop"
     steps: Sequence[CustomPipelineStep] = field(default_factory=tuple)
     metric_overrides: Sequence[MetricSpec] = field(default_factory=tuple)
     reporting: Dict[str, Any] = field(default_factory=dict)
@@ -234,6 +268,7 @@ class PipelineConfig:
     agent_backends: Sequence[AgentBackendSpec] = field(default_factory=tuple)
     sandbox_profiles: Sequence[SandboxProfileSpec] = field(default_factory=tuple)
     mcp_clients: Sequence[McpClientSpec] = field(default_factory=tuple)
+    environments: Sequence[EnvironmentSpec] = field(default_factory=tuple)
     prompts: Sequence[PromptTemplateSpec] = field(default_factory=tuple)
     role_adapters: Sequence[RoleAdapterSpec] = field(default_factory=tuple)
     metrics: Sequence[MetricSpec] = field(default_factory=tuple)
@@ -257,6 +292,7 @@ class PipelineConfig:
         """
         from gage_eval.config.pipeline_builder import PipelineConfigBuilder
 
+        payload = _lower_agentkit_v2_payload_if_needed(payload)
         return (
             PipelineConfigBuilder(payload)
             .normalize()
@@ -267,6 +303,18 @@ class PipelineConfig:
             .build_tasks()
             .build()
         )
+
+
+def _lower_agentkit_v2_payload_if_needed(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if any(payload.get(section) for section in ("datasets", "role_adapters", "tasks", "custom", "builtin")):
+        return payload
+    if not all(payload.get(section) for section in ("agents", "benchmarks", "environments", "dut_agents")):
+        return payload
+    try:
+        from gage_eval.config.agentkit_v2 import lower_agentkit_v2_pipeline_payload
+    except Exception:
+        return payload
+    return lower_agentkit_v2_pipeline_payload(payload, source_path=None)
 
 
 def _normalize_summary_generator_entry(entry: Any) -> str:

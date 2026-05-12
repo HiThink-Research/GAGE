@@ -1,0 +1,125 @@
+{
+  "id": "f1df20ed-46ac-4d5f-9597-5d1f817a4fc6",
+  "task_name": "gpt2-codegolf",
+  "trial_name": "gpt2-codegolf__sLkuvPz",
+  "trial_uri": "file:///Users/panke/AI-learning/eval-framework/new/agent-eval/0508/spike/_tmp/tb2_1case_lmstudio_hostapi_nosource/jobs/gage_tb2_1case_lmstudio_20260510_161501/gpt2-codegolf__sLkuvPz",
+  "task_id": {
+    "path": "tests/data/external_harness_kits/terminal_bench/gpt2-codegolf"
+  },
+  "source": null,
+  "task_checksum": "c3dfea370953fe9b6cb53d368f1f242af2833cf1af623849bdaee8fe026b1cf1",
+  "config": {
+    "task": {
+      "path": "tests/data/external_harness_kits/terminal_bench/gpt2-codegolf",
+      "git_url": null,
+      "git_commit_id": null,
+      "name": null,
+      "ref": null,
+      "overwrite": false,
+      "download_dir": null,
+      "source": null
+    },
+    "trial_name": "gpt2-codegolf__sLkuvPz",
+    "trials_dir": "agent-eval/0508/spike/_tmp/tb2_1case_lmstudio_hostapi_nosource/jobs/gage_tb2_1case_lmstudio_20260510_161501",
+    "timeout_multiplier": 1,
+    "agent_timeout_multiplier": null,
+    "verifier_timeout_multiplier": null,
+    "agent_setup_timeout_multiplier": null,
+    "environment_build_timeout_multiplier": null,
+    "agent": {
+      "name": "terminus-2",
+      "import_path": null,
+      "model_name": "lm_studio/qwen/qwen3.5-9b",
+      "override_timeout_sec": 240,
+      "override_setup_timeout_sec": null,
+      "max_timeout_sec": null,
+      "kwargs": {
+        "api_base": "http://127.0.0.1:1234/v1",
+        "temperature": 0,
+        "max_turns": 2,
+        "suppress_max_turns_warning": true,
+        "record_terminal_session": true,
+        "model_info": {
+          "max_input_tokens": 32768,
+          "max_output_tokens": 4096,
+          "input_cost_per_token": 0,
+          "output_cost_per_token": 0
+        },
+        "llm_call_kwargs": {
+          "max_tokens": 512
+        }
+      },
+      "env": {}
+    },
+    "environment": {
+      "type": "docker",
+      "import_path": null,
+      "force_build": false,
+      "delete": true,
+      "override_cpus": null,
+      "override_memory_mb": null,
+      "override_storage_mb": null,
+      "override_gpus": null,
+      "suppress_override_warnings": false,
+      "mounts_json": null,
+      "env": {},
+      "kwargs": {}
+    },
+    "verifier": {
+      "override_timeout_sec": 300,
+      "max_timeout_sec": null,
+      "env": {},
+      "disable": false
+    },
+    "artifacts": [],
+    "job_id": "ed934e6f-2aec-46f3-8fed-0ec0974b93f2"
+  },
+  "agent_info": {
+    "name": "terminus-2",
+    "version": "2.0.0",
+    "model_info": {
+      "name": "qwen/qwen3.5-9b",
+      "provider": "lm_studio"
+    }
+  },
+  "agent_result": {
+    "n_input_tokens": 2035,
+    "n_cache_tokens": 0,
+    "n_output_tokens": 317,
+    "cost_usd": null,
+    "rollout_details": [],
+    "metadata": {
+      "n_episodes": 2,
+      "api_request_times_msec": [
+        12259.39393043518,
+        11050.729274749756
+      ],
+      "summarization_count": 0
+    }
+  },
+  "verifier_result": {
+    "rewards": {
+      "reward": 0
+    }
+  },
+  "exception_info": null,
+  "started_at": "2026-05-10T08:15:10.800609Z",
+  "finished_at": "2026-05-10T08:19:08.596283Z",
+  "environment_setup": {
+    "started_at": "2026-05-10T08:15:10.820660Z",
+    "finished_at": "2026-05-10T08:15:20.583256Z"
+  },
+  "agent_setup": {
+    "started_at": "2026-05-10T08:15:20.583302Z",
+    "finished_at": "2026-05-10T08:16:41.982539Z"
+  },
+  "agent_execution": {
+    "started_at": "2026-05-10T08:16:41.982672Z",
+    "finished_at": "2026-05-10T08:17:07.169986Z"
+  },
+  "verifier": {
+    "started_at": "2026-05-10T08:17:07.305872Z",
+    "finished_at": "2026-05-10T08:19:06.961706Z"
+  },
+  "step_results": null
+}

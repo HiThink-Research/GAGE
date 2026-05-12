@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+import json
+import subprocess
 from typing import Any, Callable
 
 from gage_eval.agent_runtime.clients.contracts import ClientSurface
@@ -126,6 +128,41 @@ class LegacyInvokeClientSurface:
         return _normalize_result(result)
 
 
+class CommandInstalledClient:
+    """Runs an installed client command with JSON stdin/stdout."""
+
+    def __init__(self, *, command: list[str], timeout_s: int | None = None) -> None:
+        self.command = list(command)
+        self.timeout_s = timeout_s
+
+    def run(
+        self,
+        request: dict[str, Any],
+        environment: dict[str, Any],
+    ) -> dict[str, Any]:
+        completed = subprocess.run(
+            self.command,
+            input=json.dumps({"request": request, "environment": environment}),
+            text=True,
+            capture_output=True,
+            timeout=self.timeout_s,
+            check=False,
+        )
+        if completed.stdout.strip():
+            try:
+                payload = json.loads(completed.stdout)
+            except json.JSONDecodeError:
+                payload = {"stdout": completed.stdout}
+        else:
+            payload = {"stdout": completed.stdout}
+        if not isinstance(payload, dict):
+            payload = {"result": payload}
+        payload.setdefault("exit_code", completed.returncode)
+        payload.setdefault("stderr", completed.stderr)
+        payload.setdefault("status", "completed" if completed.returncode == 0 else "failed")
+        return payload
+
+
 def build_client_surface(client: Any) -> ClientSurface:
     """Build the canonical runtime client surface for installed-client execution."""
 
@@ -161,6 +198,7 @@ def resolve_installed_client(
     *,
     client_id: str | None,
     client_override: Any = None,
+    client_config: dict[str, Any] | None = None,
 ) -> ClientSurface:
     """Resolves one installed client surface from override or builtin id.
 
@@ -177,12 +215,31 @@ def resolve_installed_client(
 
     if client_override is not None:
         return build_client_surface(client_override)
+    configured = _command_client_from_config(client_config)
+    if configured is not None:
+        return build_client_surface(configured)
     if not client_id:
         raise ValueError("installed client resolution requires client_id")
     try:
         return build_client_surface(instantiate_builtin_client(client_id))
     except KeyError as exc:
         raise ValueError(f"Unknown installed client '{client_id}'") from exc
+
+
+def _command_client_from_config(client_config: dict[str, Any] | None) -> CommandInstalledClient | None:
+    if not isinstance(client_config, dict):
+        return None
+    client = client_config.get("client")
+    if not isinstance(client, dict):
+        return None
+    command = client.get("command")
+    if not isinstance(command, list) or not command:
+        return None
+    timeout_s = client.get("timeout_s")
+    return CommandInstalledClient(
+        command=[str(item) for item in command],
+        timeout_s=int(timeout_s) if timeout_s is not None else None,
+    )
 
 
 def _call_client_method(

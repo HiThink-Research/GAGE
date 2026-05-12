@@ -192,6 +192,15 @@
     },
     {
       "kind": "metrics",
+      "name": "external_trial_pass_hat_k",
+      "module": "gage_eval.metrics.builtin.harbor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
       "name": "fin_cal_2",
       "module": "gage_eval.metrics.builtin.biz_fin_bench_v2.fin_cal_2",
       "load_phase": "prepare_only",
@@ -277,6 +286,24 @@
       "module": "gage_eval.metrics.builtin.gsm8k",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/metrics/builtin/gsm8k/__init__.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "harbor_resolve_rate",
+      "module": "gage_eval.metrics.builtin.harbor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "metrics",
+      "name": "harbor_score_mean",
+      "module": "gage_eval.metrics.builtin.harbor",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/metrics/builtin/harbor.py",
       "aliases": [],
       "optional": false
     },

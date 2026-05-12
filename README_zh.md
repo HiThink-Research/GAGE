@@ -8,7 +8,7 @@
 
 📧 **负责人邮箱:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
 
-[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [智能配置简化](docs/guide/smart_defaults_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Arena Visual 控制面](docs/guide/game_arena_topics/game_arena_visual_control_zh.md) · [Agent 模块](docs/guide/agent_evaluation_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
+[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [智能配置简化](docs/guide/smart_defaults_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Arena Visual 控制面](docs/guide/game_arena_topics/game_arena_visual_control_zh.md) · [AgentKitV2](docs/guide/agent_evaluation_zh.md) · [External Harness](docs/guide/external_harness_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
 
 </div>
 
@@ -32,7 +32,8 @@
 
 - **快速评测引擎**：本地冒烟、模型对战和较大批量 Benchmark 都使用同一条 Pipeline。
 - **统一评测接口**：数据集、后端、角色适配器、指标和输出契约通过配置组合，减少每个任务的粘合代码。
-- **Game 与 Agent 沙箱**：Game Arena、AppWorld、SWE-bench 风格任务、GUI 交互和工具增强任务共享同一套运行与产物模型。
+- **Game 与 Agent 沙箱**：Game Arena、AgentKitV2、AppWorld、SWE-bench 风格任务、GUI 交互和工具增强任务共享同一套运行与产物模型。
+- **外部 Harness 集成**：可将 task-batch benchmark 委托给 Harbor，再把 trial evidence 导入为标准 GAGE samples、metrics、reports 和 raw artifacts。
 - **可回放 GameKit 运行时**：五子棋、井字棋、斗地主、麻将、PettingZoo Space Invaders、Retro Mario、ViZDoom 都会写出结构化 arena trace 和 `arena_visual` session。
 - **运行可观测性**：运行产物包含 `summary.json`、样本输出、日志与视觉产物，便于事后排查。
 
@@ -51,6 +52,14 @@
 ### GameArena 设计
 
 ![GameArena 运行时核心设计](docs/assets/game-arena-runtime-core-design-20260413.png)
+
+### AgentKitV2 设计
+
+![AgentKit v2 流水线设计](docs/assets/agentkit-v2-pipeline-design-20260512.png)
+
+### External Harness 设计
+
+![External Harness（Harbor）流水线设计](docs/assets/external-harness-pipeline-design-20260512.png)
 
 ## 快速开始
 
@@ -97,15 +106,17 @@ runs/<run_id>/
 | :--- | :--- | :--- |
 | **GameArena人机对战** | `config/custom/doudizhu/doudizhu_human_visual_gamekit.yaml` | 浏览器控制斗地主，与 LLM 玩家对战 |
 | **GameArena纯人工控制** | `config/custom/retro_mario/retro_mario_human_visual_gamekit.yaml` | 浏览器控制实时 Retro Mario session |
-| **Agent 评测** | `config/custom/appworld/appworld_official_jsonl.yaml` | AppWorld 沙箱评测 |
-| **代码能力** | `config/custom/swebench_pro/swebench_pro_smoke_agent.yaml` | SWE-bench 风格冒烟；需要 Docker |
+| **AgentKitV2 Tau2** | `config/custom/manual_e2e/agentkit_v2_tau2_local_lmstudio.yaml` | 原生逐样本 Agent workflow，使用 local-process Tau2 单样本 smoke |
+| **AgentKitV2 SWE-bench Pro** | `config/custom/manual_e2e/agentkit_v2_swebench_pro_docker_lmstudio_smoke1_qutebrowser.yaml` | 原生 Docker-backed SWE-bench Pro smoke |
+| **External Harness Harbor** | `config/custom/external_harness_kits/harbor_terminal_bench2_lmstudio_1case.yaml` | 将 Terminal-Bench 2.0 任务委托给 Harbor 并导入结果 |
+| **AgentKitV2 AppWorld** | `config/custom/appworld/appworld_official_jsonl.yaml` | 通过原生 AgentKitV2 路径运行的 AppWorld 沙箱评测 |
 | **文本测评** | `config/custom/aime24/aime2024_chat.yaml` | AIME、GPQA、Math500 等文本 Benchmark |
 | **多模态** | `config/custom/mathvista/chat.yaml` | MathVista 等多模态 Benchmark |
 | **LLM 裁判** | `config/custom/examples/single_task_local_judge_qwen.yaml` | 本地 LLM 裁判示例 |
 
 ## 近期计划
 
-- **Agent 评测能力**：完善轨迹评分和安全检查。
+- **Agent 评测能力**：继续增强 AgentKitV2 与 External Harness 的 trace 导入、失败诊断和可复现 live smoke 配置。
 - **Game Arena 扩展**：扩充 GameKit 游戏目录，并保持浏览器控制、回放和输出契约一致。
 - **Gage-Client 工程化**：优化配置管理、失败样本定位和 Benchmark 接入脚手架。
 - **多机分布式推理**：支持超大规模评测任务的任务分片与负载均衡。

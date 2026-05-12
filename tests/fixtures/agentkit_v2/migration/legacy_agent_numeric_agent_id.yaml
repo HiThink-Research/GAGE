@@ -1,0 +1,8 @@
+kind: PipelineConfig
+metadata:
+  name: legacy_agent_numeric_agent_id
+agents:
+  - agent_id: 123
+    scheduler:
+      type: framework_loop
+      model: gpt-4.1-mini

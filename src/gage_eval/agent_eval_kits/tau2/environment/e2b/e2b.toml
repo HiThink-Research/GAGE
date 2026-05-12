@@ -1,0 +1,4 @@
+template = "gage-tau2-wrapper"
+
+[build]
+dockerfile = "Dockerfile.wrapper"

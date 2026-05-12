@@ -5,8 +5,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gage_eval.config.pipeline_config import PipelineConfig
-
 
 @pytest.mark.io
 def test_swebench_smoke_agent_config() -> None:
@@ -18,19 +16,26 @@ def test_swebench_smoke_agent_config() -> None:
         / "swebench_pro_smoke_agent.yaml"
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config = PipelineConfig.from_dict(payload)
 
-    assert config.metadata.get("name") == "swebench_pro_smoke_agent"
-    assert config.agent_backends
-    assert config.agent_backends[0].agent_backend_id == "swebench_agent_main"
+    assert payload["metadata"]["name"] == "swebench_pro_smoke_agent"
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert "agent_backends" not in payload
 
-    steps = [step.step_type for step in config.custom.steps]
-    assert steps == ["support", "support", "inference", "judge", "auto_eval"]
+    assert payload["agents"][0]["scheduler"] == {
+        "type": "framework_loop",
+        "backend_id": "lmstudio_litellm",
+        "config": {
+            "max_turns": "${SWEBENCH_MAX_TURNS:-200}",
+            "cost_limit_usd": "${SWEBENCH_COST_LIMIT:-3.0}",
+        },
+    }
 
-    dut_agent = next(spec for spec in config.role_adapters if spec.adapter_id == "swebench_dut_agent")
-    assert dut_agent.role_type == "dut_agent"
-    assert dut_agent.agent_backend_id == "swebench_agent_main"
-    assert dut_agent.sandbox.get("sandbox_id") == "swebench_runtime"
+    benchmark = payload["benchmarks"][0]
+    assert benchmark["kit_id"] == "swebench"
+    assert benchmark["config"] == {"split": "test"}
 
-    toolchain = next(spec for spec in config.role_adapters if spec.adapter_id == "swebench_toolchain")
-    assert toolchain.role_type == "toolchain"
+    dut_agent = payload["dut_agents"][0]
+    assert dut_agent["agent_id"] == "swebench_agent"
+    assert dut_agent["env_id"] == "swebench_docker"
+    assert dut_agent["benchmark_id"] == "swebench_pro_smoke"

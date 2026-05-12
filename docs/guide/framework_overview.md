@@ -12,7 +12,8 @@ gage-eval is an extensible evaluation framework for large language models. It is
 - Testing: [`TESTING.md`](../../TESTING.md)
 - Example configs: [`config/custom/`](../../config/custom/), [`config/builtin_templates/`](../../config/builtin_templates/), [`config/run_configs/`](../../config/run_configs/)
 - Sample schema: [`sample.md`](sample.md)
-- Agent evaluation: [`agent_evaluation.md`](agent_evaluation.md)
+- Agent evaluation: [`agent_evaluation.md`](agent_evaluation.md) (native AgentKitV2 guide)
+- External Harness: [`external_harness.md`](external_harness.md) (Harbor delegated runs)
 - Game Arena: [`game_arena.md`](game_arena.md)
 
 ## 1. Project Overview

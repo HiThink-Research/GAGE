@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from gage_eval.agent_runtime.clients.contracts import (
+    ClientEnvironmentProjectionError,
+    build_external_client_environment_handle,
+    projection_failure_envelope,
+    validate_external_client_environment_handle_payload,
+)
 from gage_eval.agent_runtime.clients.runner import InstalledClientRunner
 from gage_eval.agent_runtime.contracts.failure import FailureEnvelopeError
 from gage_eval.agent_runtime.contracts.scheduler import SchedulerResult
@@ -29,11 +35,24 @@ class InstalledClientScheduler:
 
         # STEP 1: Build scheduler inputs and environment-specific context.
         request_payload = {"metadata": _build_client_request_metadata(session=session)}
-        environment_payload = _build_client_environment(
-            session=session,
-            sandbox_provider=sandbox_provider,
-        )
         workflow_path = _resolve_workflow_path(session)
+        try:
+            environment_payload = _build_client_environment(
+                session=session,
+                payload=payload,
+            )
+        except ClientEnvironmentProjectionError as exc:
+            raise FailureEnvelopeError(
+                projection_failure_envelope(
+                    exc,
+                    component_id="installed_client.environment_projection",
+                    first_bad_step="installed_client.project_environment_handle",
+                    suspect_files=(
+                        "src/gage_eval/agent_runtime/clients/contracts.py",
+                        "src/gage_eval/agent_runtime/schedulers/installed_client.py",
+                    ),
+                )
+            ) from exc
         if callable(workflow_bundle.prepare_environment):
             try:
                 environment_state = workflow_bundle.prepare_environment(
@@ -50,9 +69,11 @@ class InstalledClientScheduler:
                         component_kind="scheduler",
                         component_id=f"{workflow_bundle.bundle_id}.prepare_environment",
                         owner=f"{session.benchmark_kit_id}_kit",
-                        failure_code=(
-                            f"environment.prepare_inputs."
-                            f"{workflow_bundle.bundle_id}.prepare_environment_failed"
+                        failure_code=_workflow_prepare_failure_code(
+                            session=session,
+                            workflow_bundle=workflow_bundle,
+                            step="prepare_environment",
+                            domain="environment",
                         ),
                         first_bad_step=f"{workflow_bundle.bundle_id}.prepare_environment",
                         suspect_files=(
@@ -85,9 +106,11 @@ class InstalledClientScheduler:
                         component_kind="scheduler",
                         component_id=f"{workflow_bundle.bundle_id}.prepare_inputs",
                         owner=f"{session.benchmark_kit_id}_kit",
-                        failure_code=(
-                            f"input_projection.prepare_inputs."
-                            f"{workflow_bundle.bundle_id}.prepare_inputs_failed"
+                        failure_code=_workflow_prepare_failure_code(
+                            session=session,
+                            workflow_bundle=workflow_bundle,
+                            step="prepare_inputs",
+                            domain="input_projection",
                         ),
                         first_bad_step=f"{workflow_bundle.bundle_id}.prepare_inputs",
                         suspect_files=(
@@ -245,12 +268,42 @@ def _resolve_workflow_path(session: AgentRuntimeSession) -> str:
     )
 
 
+def _workflow_prepare_failure_code(
+    *,
+    session: AgentRuntimeSession,
+    workflow_bundle: Any,
+    step: str,
+    domain: str,
+) -> str:
+    if session.benchmark_kit_id == "swebench":
+        return "input_projection.workflow.prepare_failed"
+    return f"{domain}.prepare_inputs.{workflow_bundle.bundle_id}.{step}_failed"
+
+
 def _build_client_environment(
     *,
     session: AgentRuntimeSession,
-    sandbox_provider,
+    payload: dict[str, Any],
 ) -> dict[str, Any]:
     """Project the benchmark-owned runtime state into one client environment payload."""
+
+    handle_payload = session.runtime_context.get("external_environment_handle")
+    if isinstance(handle_payload, Mapping):
+        handle = validate_external_client_environment_handle_payload(
+            handle_payload,
+            requested_fields=payload.get("external_client_requested_fields"),
+        )
+        handle_payload = handle.model_dump(mode="json")
+        session.runtime_context["external_environment_handle"] = dict(handle_payload)
+    else:
+        handle = build_external_client_environment_handle(
+            session=session,
+            environment_lease=payload.get("environment_lease"),
+            requested_fields=payload.get("external_client_requested_fields"),
+            proxy_starter=payload.get("environment_proxy_starter"),
+        )
+        handle_payload = handle.model_dump(mode="json")
+        session.runtime_context["external_environment_handle"] = dict(handle_payload)
 
     return {
         "session_id": session.session_id,
@@ -261,16 +314,9 @@ def _build_client_environment(
         "scheduler_type": session.scheduler_type,
         "client_id": session.client_id,
         "artifact_layout": dict(session.artifact_layout or {}),
-        "runtime_context": dict(session.runtime_context or {}),
-        "prompt_context": dict(session.prompt_context or {}),
-        "benchmark_state": dict(session.benchmark_state or {}),
+        "environment_handle": dict(handle_payload),
+        "external_environment_handle": dict(handle_payload),
         "scheduler_state": dict(session.scheduler_state or {}),
-        "runtime_handle": (
-            dict(session.resource_lease.handle_ref or {})
-            if session.resource_lease is not None
-            else {}
-        ),
-        "sandbox_provider": sandbox_provider,
     }
 
 

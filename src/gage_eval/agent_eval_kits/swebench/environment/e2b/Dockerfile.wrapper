@@ -1,0 +1,13 @@
+ARG BASE_IMAGE=docker:27-dind
+FROM ${BASE_IMAGE}
+
+RUN apk add --no-cache bash coreutils git openssh-client python3 py3-pip
+
+WORKDIR /workspace
+
+RUN mkdir -p /workspace /logs/agent /logs/verifier /artifacts
+
+COPY init.sh /usr/local/bin/gage-swebench-init
+RUN chmod +x /usr/local/bin/gage-swebench-init
+
+CMD ["/usr/local/bin/gage-swebench-init"]

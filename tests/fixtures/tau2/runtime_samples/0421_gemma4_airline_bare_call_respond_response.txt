@@ -1,0 +1,1 @@
+call:respond{message:Hello Emma Kim! I can certainly help you with that. To proceed with the cancellation of your reservation EHGLP3, could you please provide your user ID and the reason for the cancellation?}

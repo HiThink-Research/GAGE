@@ -1,0 +1,19 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_agent_backend_unsupported_config
+backends:
+  - backend_id: tau2_openai_http
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+agent_backends:
+  - agent_backend_id: tau2_agent_backend
+    type: model_backend
+    backend_id: tau2_openai_http
+    config:
+      force_tool_choice: first_turn
+role_adapters:
+  - adapter_id: tau2_agent
+    role_type: dut_agent
+    agent_backend_id: tau2_agent_backend

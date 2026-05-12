@@ -32,6 +32,50 @@ def test_report_step_exposes_sample_count_from_cache(tmp_path) -> None:
 
 
 @pytest.mark.fast
+def test_report_summary_includes_runtime_health_counts(tmp_path) -> None:
+    cache = EvalCache(base_dir=tmp_path, run_id="runtime-health")
+    report = ReportStep(auto_eval_step=None, cache_store=cache)
+    trace = ObservabilityTrace(
+        recorder=InMemoryRecorder(run_id="runtime-health"),
+        run_id="runtime-health",
+    )
+    cache.write_sample(
+        "sample-1",
+        {
+            "model_output": {
+                "runtime_judge_outcome": {
+                    "verifier_input": {
+                        "scheduler_result": {
+                            "status": "failed",
+                            "failure_code": "client_execution.tool_retry_budget_exhausted",
+                        }
+                    },
+                    "judge_output": {
+                        "status": "skipped",
+                        "failure_code": "verifier.skipped_due_to_scheduler_failure",
+                    },
+                }
+            },
+            "judge_output": {
+                "status": "skipped",
+                "failure_code": "verifier.skipped_due_to_scheduler_failure",
+            },
+        },
+    )
+
+    payload = report.finalize(trace)
+
+    assert payload["runtime_health"] == {
+        "sample_count": 1,
+        "completed_count": 0,
+        "failed_count": 1,
+        "aborted_count": 0,
+        "verifier_skipped_count": 1,
+        "scheduler_failed_count": 1,
+    }
+
+
+@pytest.mark.fast
 def test_pipeline_runtime_resolves_sample_count_via_report_public_api() -> None:
     runtime = PipelineRuntime(
         sample_loop=SimpleNamespace(processed_count=2, shutdown=lambda: None),

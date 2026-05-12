@@ -109,15 +109,7 @@ run_installed_client_workflow() {
   run_workflow "$run_id" "$config_path"
 }
 
-# STEP 1: Run terminal-bench workflows
-run_workflow \
-  "${RUN_PREFIX}_terminal_framework_loop${RUN_ID_SUFFIX}" \
-  "$ROOT_DIR/config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml"
-run_installed_client_workflow \
-  "${RUN_PREFIX}_terminal_installed_client${RUN_ID_SUFFIX}" \
-  "$ROOT_DIR/config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml"
-
-# STEP 2: Run SWE-bench workflows
+# STEP 1: Run SWE-bench workflows
 run_workflow \
   "${RUN_PREFIX}_swebench_framework_loop${RUN_ID_SUFFIX}" \
   "$ROOT_DIR/config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml"
@@ -125,7 +117,7 @@ run_installed_client_workflow \
   "${RUN_PREFIX}_swebench_installed_client${RUN_ID_SUFFIX}" \
   "$ROOT_DIR/config/custom/swebench_pro/swebench_pro_smoke_installed_client_ollama_local.yaml"
 
-# STEP 3: Run Tau2 workflows
+# STEP 2: Run Tau2 workflows
 run_workflow \
   "${RUN_PREFIX}_tau2_framework_loop${RUN_ID_SUFFIX}" \
   "$ROOT_DIR/config/custom/tau2/tau2_telecom_runtime_ollama.yaml"
@@ -133,7 +125,7 @@ run_installed_client_workflow \
   "${RUN_PREFIX}_tau2_installed_client${RUN_ID_SUFFIX}" \
   "$ROOT_DIR/config/custom/tau2/tau2_telecom_installed_client_ollama.yaml"
 
-# STEP 4: Run AppWorld workflows
+# STEP 3: Run AppWorld workflows
 run_workflow \
   "${RUN_PREFIX}_appworld_framework_loop${RUN_ID_SUFFIX}" \
   "$ROOT_DIR/config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml"
@@ -142,5 +134,5 @@ run_installed_client_workflow \
   "$ROOT_DIR/config/custom/appworld/appworld_agent_demo_installed_client_ollama.yaml"
 
 echo
-echo "All 8 workflows finished."
+echo "All 6 workflows finished."
 echo "Output directory: $OUTPUT_DIR"

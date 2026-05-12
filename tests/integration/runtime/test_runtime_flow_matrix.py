@@ -20,7 +20,8 @@ from gage_eval.agent_runtime import build_compiled_runtime_executor, compile_age
 from gage_eval.agent_runtime.resources.contracts import ResourceLease
 from gage_eval.agent_runtime.resources.manager import RuntimeLeaseBinding
 from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome, VerifierInput, VerifierResult
-from gage_eval.role.agent.backends.demo_agent import RuntimeSmokeAgent
+from gage_eval.environment.contracts import ExecResult
+from gage_eval.environment.lease import EnvironmentLease
 
 
 class _InstalledClientStub:
@@ -39,19 +40,65 @@ class _InstalledClientStub:
         return result
 
 
+class _RuntimeSmokeAgent:
+    def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
+        return {"answer": "done", "agent_trace": []}
+
+
+class _Tau2FrameworkAgent:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call-respond",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "respond",
+                                        "arguments": '{"message":"done"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+        return {"answer": "done", "agent_trace": []}
+
+
 class _SwebenchFrameworkAgent:
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
         return {
-            "answer": "diff --git a/foo b/foo\n",
-            "patch_content": "diff --git a/foo b/foo\n",
-            "agent_trace": [
+            "choices": [
                 {
-                    "trace_step": 1,
-                    "trace_role": "tool",
-                    "name": "submit_patch_tool",
-                    "output": {"stdout": "diff --git a/foo b/foo\n"},
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-submit-patch",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_patch_tool",
+                                    "arguments": '{"force":true}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
                 }
-            ],
+            ]
         }
 
     def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -67,6 +114,7 @@ class _PassingVerifierRunner:
         sample,
         scheduler_result,
         sandbox_provider,
+        environment_lease=None,
     ) -> RuntimeJudgeOutcome:
         verifier_input = VerifierInput(
             benchmark_kit_id=session.benchmark_kit_id,
@@ -141,10 +189,37 @@ class _StaticResourceManager:
             endpoints={key: str(value) for key, value in runtime_handle.items() if "endpoint" in key},
             handle_ref=runtime_handle,
         )
+        environment_lease = None
+        if handle is not None:
+            environment = getattr(handle, "sandbox", None)
+            if environment is None:
+                environment = SimpleNamespace(
+                    env_id=f"env-{session.sample_id}",
+                    name=f"env-{session.sample_id}",
+                    provider=self._resource_kind,
+                    capabilities={},
+                    metadata={"runtime_handle": runtime_handle},
+                )
+            else:
+                setattr(environment, "env_id", getattr(environment, "env_id", f"env-{session.sample_id}"))
+                setattr(environment, "name", getattr(environment, "name", f"env-{session.sample_id}"))
+                setattr(environment, "provider", getattr(environment, "provider", self._resource_kind))
+                setattr(environment, "capabilities", getattr(environment, "capabilities", {}))
+                metadata = dict(getattr(environment, "metadata", {}) or {})
+                metadata.setdefault("runtime_handle", runtime_handle)
+                setattr(environment, "metadata", metadata)
+            environment_lease = EnvironmentLease(
+                lease_id=f"env-lease-{session.sample_id}",
+                environment=environment,
+                provider=self._resource_kind,
+                profile_id=self._profile_id,
+                lifecycle="per_sample",
+                exclusive=True,
+            )
         return RuntimeLeaseBinding(
             resource_lease=resource_lease,
-            sandbox_provider=self._sandbox_provider,
-            sandbox_handle=handle,
+            environment_lease=environment_lease,
+            owns_environment_lease=False,
         )
 
     def release(self, binding) -> None:
@@ -185,6 +260,14 @@ class _FakeTau2Runtime:
         if total_tokens is not None:
             self._agent_cost = float(total_tokens)
 
+    def exec_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "respond":
+            return {
+                "final_answer": arguments.get("message"),
+                "user_message": arguments.get("message"),
+            }
+        return {"content": json.dumps({"tool": name, "arguments": arguments}), "error": False}
+
     def get_state(self) -> dict[str, Any]:
         return {
             "domain": "telecom",
@@ -195,15 +278,14 @@ class _FakeTau2Runtime:
         }
 
 
+class _FakeSwebenchRuntime:
+    async def exec(self, command: str, **kwargs: Any) -> ExecResult:
+        del kwargs
+        return ExecResult(command=command, exit_code=0, stdout="diff --git a/foo b/foo\n", stderr="")
+
+
 def _build_sample(agent_runtime_id: str) -> dict[str, Any]:
     sample_id = agent_runtime_id.replace("_", "-")
-    if agent_runtime_id.startswith("terminal_bench"):
-        return {
-            "id": sample_id,
-            "instruction": "say done",
-            "expected_answer": "done",
-            "messages": [{"role": "user", "content": "say done"}],
-        }
     if agent_runtime_id.startswith("swebench"):
         return {
             "id": sample_id,
@@ -275,12 +357,22 @@ def _build_executor(agent_runtime_id: str):
         )
     elif agent_runtime_id.startswith("tau2"):
         sandbox_provider = _StaticProvider(runtime_handle={}, sandbox=_FakeTau2Runtime())
+    elif agent_runtime_id == "swebench_framework_loop":
+        sandbox_provider = _StaticProvider(runtime_handle={}, sandbox=_FakeSwebenchRuntime())
 
     plan = replace(
         plan,
         resource_plan={
             "resource_kind": resource_kind,
-            "sandbox_config": {} if sandbox_provider is not None else None,
+            "environment_profile": {
+                "profile_id": plan.runtime_spec.environment_profile_id or plan.runtime_spec.benchmark_kit_id,
+                "provider": resource_kind,
+                "config": {},
+            },
+            "provider_config": {},
+            "resources": {},
+            "startup_env": {},
+            "lifecycle": "per_sample",
         },
     )
     if agent_runtime_id == "swebench_framework_loop":
@@ -290,10 +382,12 @@ def _build_executor(agent_runtime_id: str):
             answer="diff --git a/foo b/foo\n",
             patch_content="diff --git a/foo b/foo\n",
         )
+    elif agent_runtime_id == "tau2_framework_loop":
+        backend = _Tau2FrameworkAgent()
     elif "installed_client" in agent_runtime_id:
         backend = _InstalledClientStub()
     else:
-        backend = RuntimeSmokeAgent()
+        backend = _RuntimeSmokeAgent()
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
         agent_backend=backend,
@@ -302,7 +396,7 @@ def _build_executor(agent_runtime_id: str):
     )
     executor.resource_manager = _StaticResourceManager(
         resource_kind=resource_kind,
-        profile_id=plan.runtime_spec.sandbox_profile_id or plan.runtime_spec.benchmark_kit_id,
+        profile_id=plan.runtime_spec.environment_profile_id or plan.runtime_spec.benchmark_kit_id,
         sandbox_provider=sandbox_provider,
     )
     executor.verifier_runner = _PassingVerifierRunner()
@@ -313,8 +407,6 @@ def _build_executor(agent_runtime_id: str):
 @pytest.mark.parametrize(
     ("agent_runtime_id", "expected_artifact"),
     [
-        ("terminal_bench_installed_client", "artifacts/tool_trace.json"),
-        ("terminal_bench_framework_loop", "artifacts/tool_trace.json"),
         ("swebench_installed_client", None),
         ("swebench_framework_loop", None),
         ("appworld_installed_client", "artifacts/appworld_save.json"),
@@ -356,21 +448,15 @@ def test_phase1_runtime_flow_matrix_smoke(
     runtime_metadata = json.loads(Path(runtime_session["runtime_metadata_path"]).read_text(encoding="utf-8"))
     verifier_payload = json.loads(Path(runtime_session["verifier_result_path"]).read_text(encoding="utf-8"))
 
-    assert runtime_metadata["session_id"] == runtime_session["session_id"]
+    assert runtime_metadata["run_id"] == "runtime-flow-matrix"
     assert runtime_metadata["sample_id"] == sample["id"]
-    assert runtime_metadata["resource_lease"]["resource_kind"] in {"docker", "local_process"}
+    assert runtime_metadata["dut_id"] == agent_runtime_id
+    assert runtime_metadata["environment_descriptor"]["resource_kind"] in {"docker", "local_process"}
     assert verifier_payload["verifier_input"]["sample_id"] == sample["id"]
     assert verifier_payload["judge_output"]["resolved"] is True
 
     if expected_artifact is not None:
-        assert (Path(runtime_session["sample_root"]) / expected_artifact).exists()
-    if agent_runtime_id.startswith("terminal_bench"):
-        artifact_paths = verifier_payload["judge_output"]["artifact_paths"]
-        assert artifact_paths["tool_trace"] == "artifacts/tool_trace.json"
-        assert artifact_paths["stdout"] == "artifacts/stdout.log"
-        assert artifact_paths["stderr"] == "artifacts/stderr.log"
-        assert artifact_paths["workspace_diff"] == "artifacts/workspace_diff.json"
-        if agent_runtime_id.startswith("swebench"):
-            assert verifier_payload["judge_output"]["artifact_paths"]["submission_patch"] == "artifacts/submission.patch"
+        expected_name = Path(expected_artifact).name
+        assert any(path.name == expected_name for path in Path(runtime_session["sample_root"]).rglob(expected_name))
     if agent_runtime_id.startswith("appworld"):
         assert lifecycle_calls == ["initialize", "save"]

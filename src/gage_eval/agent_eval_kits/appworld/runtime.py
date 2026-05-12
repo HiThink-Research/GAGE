@@ -43,12 +43,7 @@ class AppWorldRuntime:
     """Owns AppWorld initialize/save lifecycle."""
 
     benchmark_kit_id = "appworld"
-    runtime_version = "phase1"
     supported_schedulers = ("installed_client", "framework_loop")
-    verifier_kind = "judge_adapter"
-    resource_requirements = {"resource_kind": "docker"}
-    lifecycle_policy = {"initialize": "http_initialize", "save": "http_save", "teardown": "provider_managed"}
-    state_schema_keys = ("runtime_context", "prompt_context", "benchmark_state", "scheduler_state")
 
     def __init__(
         self,
@@ -73,21 +68,18 @@ class AppWorldRuntime:
             session: Sample-scoped runtime session.
             sample: Current sample payload.
             payload: Invocation payload.
-            sandbox_provider: Sample-scoped sandbox provider.
+            sandbox_provider: Deprecated compatibility parameter; ignored.
 
         Returns:
             Runtime-owned context fragments for the executor session.
 
         Raises:
-            ValueError: If the sandbox provider or AppWorld task id is missing.
+            ValueError: If the AppWorld task id or endpoint is missing.
             RuntimeError: If the AppWorld endpoint returns an invalid response.
         """
 
-        # STEP 1: Resolve runtime handle endpoints from the sandbox lease.
-        if sandbox_provider is None:
-            raise ValueError("appworld runtime requires sandbox_provider")
-        handle = sandbox_provider.get_handle()
-        runtime_handle = handle.runtime_handle if handle is not None else {}
+        del sandbox_provider
+        runtime_handle = _resolve_runtime_handle(session=session, payload=payload)
 
         # STEP 2: Initialize AppWorld state through the runtime-owned HTTP client.
         initialize_output = self._call_initialize(
@@ -108,21 +100,21 @@ class AppWorldRuntime:
             "scheduler_state": {},
         }
 
-    def save(self, *, sample, sandbox_provider=None):
+    def save(self, *, sample, session=None, payload=None, sandbox_provider=None):
         """Persists AppWorld sample state through `/save`.
 
         Args:
             sample: Current sample payload.
-            sandbox_provider: Sample-scoped sandbox provider.
+            sandbox_provider: Deprecated compatibility parameter; ignored.
 
         Returns:
             The normalized AppWorld save payload when available.
         """
 
-        if sandbox_provider is None:
+        del sandbox_provider
+        runtime_handle = _resolve_runtime_handle(session=session, payload=payload or {})
+        if not runtime_handle:
             return {}
-        handle = sandbox_provider.get_handle()
-        runtime_handle = handle.runtime_handle if handle is not None else {}
         return self._call_save(
             metadata=dict(sample.get("metadata") or {}),
             runtime_handle=dict(runtime_handle or {}),
@@ -207,6 +199,82 @@ def _extract_appworld_meta(metadata: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(appworld_meta, dict):
         return {}
     return dict(appworld_meta)
+
+
+def _resolve_runtime_handle(*, session: Any | None, payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+    handle: dict[str, Any] = {}
+    payload_handle = payload.get("runtime_handle")
+    if isinstance(payload_handle, dict):
+        handle.update(payload_handle)
+
+    resource_lease = getattr(session, "resource_lease", None)
+    resource_metadata = getattr(resource_lease, "metadata", None)
+    if isinstance(resource_metadata, dict):
+        handle.update(_runtime_handle_from_resource_metadata(resource_metadata))
+    resource_handle = getattr(resource_lease, "handle_ref", None)
+    if isinstance(resource_handle, dict):
+        handle.update(_flatten_runtime_descriptor(resource_handle))
+
+    environment_lease = payload.get("environment_lease")
+    if environment_lease is None and session is not None:
+        runtime_context = getattr(session, "runtime_context", {}) or {}
+        environment_lease = runtime_context.get("environment_lease")
+    if environment_lease is not None and hasattr(environment_lease, "to_descriptor"):
+        handle.update(_flatten_runtime_descriptor(environment_lease.to_descriptor()))
+    return handle
+
+
+def _runtime_handle_from_resource_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    handle: dict[str, Any] = {}
+    for source in (
+        metadata.get("provider_config"),
+        (metadata.get("environment_profile") or {}).get("config")
+        if isinstance(metadata.get("environment_profile"), dict)
+        else None,
+        (metadata.get("environment_profile") or {}).get("metadata")
+        if isinstance(metadata.get("environment_profile"), dict)
+        else None,
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key in (
+            "env_endpoint",
+            "environment_endpoint",
+            "apis_endpoint",
+            "mcp_endpoint",
+            "env_url",
+            "apis_url",
+            "mcp_url",
+        ):
+            if source.get(key):
+                handle.setdefault(key, source[key])
+    return handle
+
+
+def _flatten_runtime_descriptor(descriptor: dict[str, Any]) -> dict[str, Any]:
+    flattened = dict(descriptor or {})
+    environment_descriptor = flattened.get("environment_descriptor")
+    if isinstance(environment_descriptor, dict):
+        flattened.setdefault("container_name", environment_descriptor.get("name"))
+        flattened.setdefault("container_id", environment_descriptor.get("env_id"))
+        metadata = environment_descriptor.get("metadata")
+        if isinstance(metadata, dict):
+            runtime_handle = metadata.get("runtime_handle")
+            if isinstance(runtime_handle, dict):
+                flattened.update(runtime_handle)
+            for key in (
+                "env_endpoint",
+                "environment_endpoint",
+                "apis_endpoint",
+                "mcp_endpoint",
+                "env_url",
+                "apis_url",
+                "mcp_url",
+            ):
+                if key in metadata:
+                    flattened.setdefault(key, metadata[key])
+    return {key: value for key, value in flattened.items() if value is not None}
 
 
 def _resolve_endpoint(runtime_handle: dict[str, Any], *names: str) -> str | None:

@@ -1,0 +1,21 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_inline_agent_backend_sanitized_backend_id_collision
+backends:
+  - backend_id: model
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+agent_backends:
+  - agent_backend_id: valid_backend
+    type: model_backend
+    backend_id: model
+  - agent_backend_id: a-b
+    type: model_backend
+  - agent_backend_id: a_b
+    type: model_backend
+role_adapters:
+  - adapter_id: valid_agent
+    role_type: dut_agent
+    agent_backend_id: valid_backend

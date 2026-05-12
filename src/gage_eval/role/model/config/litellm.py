@@ -18,6 +18,7 @@ class LiteLLMBackendConfig(BackendConfigBase):
     api_base: Optional[str] = None
     extra_headers: Dict[str, str] = Field(default_factory=dict)
     streaming: bool = False
+    drop_params: bool = True
     timeout: Optional[float] = Field(default=None, ge=0.0)
     max_retries: int = Field(default=6, ge=1)
     retry_sleep: float = Field(default=1.0, ge=0.0)

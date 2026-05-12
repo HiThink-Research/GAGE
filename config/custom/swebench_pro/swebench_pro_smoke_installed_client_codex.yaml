@@ -3,7 +3,8 @@ kind: PipelineConfig
 
 metadata:
   name: swebench_pro_smoke_installed_client_codex
-  description: SWE-bench Pro installed-client config using the builtin Codex CLI client.
+  description: AgentKit v2 SWE-bench Pro smoke11 on local Docker with LMStudio; replaces the old installed-client smoke path.
+
 
 datasets:
   - dataset_id: swebench_pro_smoke
@@ -13,54 +14,75 @@ datasets:
       split: test
     loader: hf_hub
     params:
-      local_path: ${SWEBENCH_LOCAL_PATH:-./local-datasets/swebench_pro}
+      streaming: false
       preprocess: swebench_pro_standardizer
       preprocess_kwargs:
         smoke_ids_path: third_party/swebench_pro/run_scripts/smoke_instance_ids.txt
-      streaming: false
+        dockerhub_username: jefzda
 
-sandbox_profiles:
-  - sandbox_id: swebench_runtime
-    runtime: docker
-    image: ${SWEBENCH_CODEX_IMAGE:-gage-swebench-codex:latest}
+
+backends:
+  - backend_id: lmstudio_litellm
+    type: litellm
+    config:
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      model: ${LMSTUDIO_LITELLM_MODEL:-openai/qwen/qwen3.5-9b}
+      api_key: ${LMSTUDIO_API_KEY:-dummy}
+      streaming: false
+      timeout: 180
+      max_retries: 2
+      drop_params: true
+      generation_parameters:
+        temperature: 0.0
+        max_new_tokens: 8192
+
+agents:
+  - agent_id: swebench_agent
+    scheduler:
+      type: framework_loop
+      backend_id: lmstudio_litellm
+      config:
+        max_turns: ${SWEBENCH_MAX_TURNS:-200}
+        cost_limit_usd: ${SWEBENCH_COST_LIMIT:-3.0}
+    config: {}
+    tooling:
+      skill_ids: []
+      mcp_servers: []
+
+benchmarks:
+  - benchmark_id: swebench_pro_smoke
+    kit_id: swebench
+    config:
+      split: test
+
+environments:
+  - env_id: swebench_docker
+    provider: docker
+    profile_id: swebench_runtime
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/swebench/environment/docker
+    provider_config:
+      network_policy: block
+      docker_platform: linux/amd64
+      entrypoint: []
+      keepalive_command:
+        - sleep
+        - infinity
+      workdir: /workspace
+      exec_workdir: /app
     resources:
       cpu: 4
-      memory: 8g
-    runtime_configs:
-      start_container: true
-      auto_remove: true
-      network_mode: none
-      platform: linux/amd64
-      entrypoint: /bin/bash
-      command:
-        - -c
-        - sleep 3600
-      exec_workdir: /app
+      memory_gb: 8.0
 
-role_adapters:
-  - adapter_id: swebench_dut_agent
-    role_type: dut_agent
-    agent_runtime_id: swebench_installed_client
-    sandbox:
-      sandbox_id: swebench_runtime
-      lifecycle: per_sample
-    params:
-      max_turns: 40
+dut_agents:
+  - dut_id: swebench_dut
+    agent_id: swebench_agent
+    env_id: swebench_docker
+    benchmark_id: swebench_pro_smoke
+    trial_policy:
+      trials: ${SWEBENCH_TRIAL_REPEATS:-1}
 
-  - adapter_id: swebench_runtime_judge
-    role_type: judge_extend
-    sandbox:
-      sandbox_id: swebench_runtime
-      lifecycle: per_sample
-    params:
-      implementation: swebench_docker
-      implementation_params:
-        scripts_dir: third_party/swebench_pro/run_scripts
-        dockerfiles_dir: third_party/swebench_pro/dockerfiles
-        dockerhub_username: jefzda
-        block_network: true
-        test_timeout_s: 900
-        docker_platform: linux/amd64
 
 metrics:
   - metric_id: swebench_resolve_rate
@@ -69,14 +91,15 @@ metrics:
     implementation: swebench_failure_reason
     aggregation: categorical_count
 
+summary_generators:
+  - swebench_summary
+
 tasks:
   - task_id: swebench_pro_smoke_installed_client_codex
     dataset_id: swebench_pro_smoke
     steps:
       - step: inference
-        adapter_id: swebench_dut_agent
-      - step: judge
-        adapter_id: swebench_runtime_judge
+        adapter_id: swebench_dut
       - step: auto_eval
     max_samples: 11
     concurrency: 1

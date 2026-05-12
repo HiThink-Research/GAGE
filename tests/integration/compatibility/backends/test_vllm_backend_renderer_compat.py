@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4] / "src"
-COMPAT_PATH = ROOT / "gage_eval" / "compat" / "vllm_renderer_patch.py"
+COMPAT_PATH = ROOT / "gage_eval" / "role" / "model" / "backends" / "vllm" / "renderer_patch.py"
 COMPAT_SPEC = importlib.util.spec_from_file_location("gage_eval_vllm_renderer_patch_test", COMPAT_PATH)
 if COMPAT_SPEC is None or COMPAT_SPEC.loader is None:
     raise RuntimeError(f"Failed to load compat module from {COMPAT_PATH}")

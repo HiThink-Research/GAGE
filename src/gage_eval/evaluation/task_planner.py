@@ -30,7 +30,6 @@ from gage_eval.role.runtime.invocation import (
     RoleSessionStore,
     SampleExecutionContext,
 )
-from gage_eval.sandbox.provider import SandboxProvider
 
 if TYPE_CHECKING:  # pragma: no cover
     from gage_eval.evaluation.task_plan import TaskPlanSpec
@@ -61,7 +60,7 @@ class TaskPlan:
         role_manager,
         *,
         execution_context: Optional[SampleExecutionContext] = None,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ):
         bundle = self.step_bundle or StepFactory().build_bundle(
             support_steps=self.support_steps,
@@ -289,7 +288,7 @@ class StepExecutionContext:
         auto_eval_enabled: bool = False,
         support_payload_policy: Optional[Dict[str, Any]] = None,
         execution_context: Optional[SampleExecutionContext] = None,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ) -> None:
         self.sample = sample
         self.support = support
@@ -439,7 +438,7 @@ class StepExecutionContext:
         )
         self._sample_artifact_persisted = True
 
-    def _role_payload_sandbox_provider(self) -> Optional[SandboxProvider]:
+    def _role_payload_sandbox_provider(self) -> Optional[Any]:
         if self.execution_context is not None:
             return None
         return self.sandbox_provider

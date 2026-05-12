@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from concurrent.futures import as_completed
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from gage_eval.config.pipeline_config import MetricSpec
 from gage_eval.evaluation.execution_controller import TaskExecutionController
@@ -183,6 +183,20 @@ class AutoEvalStep(SampleStep):
             "judge_output": resolved_judge_output,
             "metrics": dict(metrics or {}),
         }
+        projection_fields = _flatten_samples_jsonl_projection(resolved_model_output)
+        if projection_fields:
+            record.update(projection_fields)
+            record.setdefault(
+                "predict_result",
+                _build_predict_result_summary(resolved_model_output),
+            )
+            record.setdefault(
+                "auto_eval_result",
+                _build_auto_eval_result_summary(
+                    projection_fields=projection_fields,
+                    judge_output=resolved_judge_output,
+                ),
+            )
         cache_id = self._compose_cache_id(task_id, sample_id)
         namespace = self._resolve_cache_namespace(task_id, resolved_judge_output)
         self._cache.write_sample(cache_id, record, namespace=namespace)
@@ -341,3 +355,72 @@ def _env_int(name: str) -> Optional[int]:
         return int(value)
     except ValueError:
         return None
+
+
+def _flatten_samples_jsonl_projection(model_output: Mapping[str, Any]) -> dict[str, Any]:
+    aggregate = _resolve_trial_aggregate(model_output)
+    projection = aggregate.get("samples_jsonl_projection")
+    if not isinstance(projection, Mapping):
+        return {}
+    flattened: dict[str, Any] = {}
+    for key, value in projection.items():
+        if (
+            isinstance(value, Mapping)
+            and "value" in value
+            and "source_trial_id" in value
+        ):
+            flattened[str(key)] = value["value"]
+            flattened[f"{key}_source_trial_id"] = value["source_trial_id"]
+        else:
+            flattened[str(key)] = value
+    return flattened
+
+
+def _resolve_trial_aggregate(model_output: Mapping[str, Any]) -> dict[str, Any]:
+    agent_eval = model_output.get("agent_eval")
+    if not isinstance(agent_eval, Mapping):
+        return {}
+    aggregate = agent_eval.get("trial_aggregate")
+    return dict(aggregate) if isinstance(aggregate, Mapping) else {}
+
+
+def _build_predict_result_summary(model_output: Mapping[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key in (
+        "answer",
+        "patch_source",
+        "patch_content",
+        "submission_patch_source",
+        "runtime_session",
+    ):
+        if key in model_output:
+            summary[key] = model_output[key]
+    if summary:
+        return summary
+    return {"available": bool(model_output)}
+
+
+def _build_auto_eval_result_summary(
+    *,
+    projection_fields: Mapping[str, Any],
+    judge_output: Mapping[str, Any],
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key in (
+        "status",
+        "resolved",
+        "passed",
+        "pass",
+        "score",
+        "reward",
+        "failure_code",
+        "failure_reason",
+        "summary",
+    ):
+        if key in projection_fields:
+            summary[key] = projection_fields[key]
+        elif key in judge_output:
+            summary[key] = judge_output[key]
+    if "judge_source" in judge_output:
+        summary["judge_source"] = judge_output["judge_source"]
+    return summary or dict(judge_output)

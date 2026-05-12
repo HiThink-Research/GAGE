@@ -2,20 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction, build_swebench_messages
-from gage_eval.agent_eval_kits.terminal_bench.units import build_terminal_instruction, build_terminal_messages
-
-
-@pytest.mark.fast
-def test_terminal_instruction_enforces_done_contract() -> None:
-    sample = {"instruction": "Create hello.txt in the workspace."}
-
-    instruction = build_terminal_instruction(sample)
-    messages = build_terminal_messages(sample)
-
-    assert "reply with exactly `done`" in instruction
-    assert messages[0]["role"] == "system"
-    assert "reply with exactly `done`" in str(messages[0]["content"])
+from gage_eval.agent_eval_kits.swebench.tools import build_swebench_instruction, build_swebench_messages
 
 
 @pytest.mark.fast

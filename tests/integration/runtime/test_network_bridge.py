@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gage_eval.config.pipeline_config import PipelineConfig
 from tests._support.helpers.network_probe import probe_host_bridge
 
 
@@ -17,10 +16,8 @@ def test_network_bridge_from_config() -> None:
         / "appworld_agent_demo.yaml"
     )
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config = PipelineConfig.from_dict(payload)
-
-    profile = next(spec for spec in config.sandbox_profiles if spec.sandbox_id == "appworld_local")
-    result = probe_host_bridge(profile.runtime_configs)
+    provider_config = payload["environments"][0]["provider_config"]
+    result = probe_host_bridge({"network_mode": provider_config.get("network_mode", "bridge_host")})
 
     assert result.network_mode == "bridge"
     assert result.host_alias == "host.docker.internal"

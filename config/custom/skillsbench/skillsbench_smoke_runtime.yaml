@@ -12,28 +12,44 @@ datasets:
       path: tests/data/samples/skillsbench_demo.jsonl
       streaming: false
 
-agent_backends:
-  - agent_backend_id: skillsbench_agent
-    type: agent_class
+backends:
+  - backend_id: skillsbench_smoke_dummy
+    type: dummy
     config:
-      agent_class: gage_eval.role.agent.backends.demo_agent.RuntimeSmokeAgent
+      responses:
+        - done
 
-sandbox_profiles:
-  - sandbox_id: swebench_runtime
-    runtime: docker
-    runtime_configs:
-      start_container: false
+agents:
+  - agent_id: skillsbench_agent
+    scheduler:
+      type: framework_loop
+      backend_id: skillsbench_smoke_dummy
+      config:
+        max_turns: 12
+    config: {}
+    tooling:
+      skill_ids: []
+      mcp_servers: []
 
-role_adapters:
-  - adapter_id: skillsbench_agent_main
-    role_type: dut_agent
-    agent_backend_id: skillsbench_agent
-    agent_runtime_id: skillsbench_framework_loop
-    sandbox:
-      sandbox_id: swebench_runtime
-      lifecycle: per_sample
-    params:
-      max_turns: 12
+benchmarks:
+  - benchmark_id: skillsbench_smoke
+    kit_id: skillsbench
+    config: {}
+
+environments:
+  - env_id: swebench_runtime
+    provider: docker
+    profile_id: swebench_runtime
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/swebench/environment/docker
+    provider_config: {}
+
+dut_agents:
+  - dut_id: skillsbench_agent_main
+    agent_id: skillsbench_agent
+    env_id: swebench_runtime
+    benchmark_id: skillsbench_smoke
 
 tasks:
   - task_id: skillsbench_smoke_runtime
