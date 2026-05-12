@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from gage_eval.compat.vllm_renderer_patch import (
+from gage_eval.role.model.backends.vllm.renderer_patch import (
     detect_vllm_engine_multimodal_support as _detect_vllm_engine_multimodal_support,
     install_vllm_renderer_compat_patches as _install_vllm_renderer_compat_patches,
     prime_vllm_engine_renderer_state as _prime_vllm_engine_renderer_state,

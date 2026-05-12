@@ -3,13 +3,12 @@ kind: PipelineConfig
 
 metadata:
   name: appworld_agent_demo
-  description: Minimal AppWorld agent demo with MCP tools.
+  description: AgentKit v2 AppWorld agent demo with runtime-owned MCP tools.
 
 datasets:
   - dataset_id: appworld_demo
     loader: jsonl
     params:
-      # Keep the demo dataset local and deterministic for offline runs.
       path: tests/data/samples/appworld_demo.jsonl
       streaming: false
 
@@ -17,48 +16,58 @@ backends:
   - backend_id: gpt52_openai_http
     type: openai_http
     config:
-      # Use a stable OpenAI-compatible endpoint for the demo workflow.
       base_url: https://api.openai.com/v1
       model: gpt-5-mini
       require_api_key: true
-      max_retries: 6        
+      max_retries: 6
 
-agent_backends:
-  - agent_backend_id: agent_model_main
-    type: model_backend
-    backend_id: gpt52_openai_http
-    config:
-      # Force tool calls early so AppWorld actions are exercised in the demo.
-      force_tool_choice: first_turn
+agents:
+  - agent_id: appworld_agent
+    scheduler:
+      type: framework_loop
+      backend_id: gpt52_openai_http
+      config:
+        max_turns: 16
+        force_tool_choice: first_turn
+        refresh_tool_schemas: true
+        mcp_client_id: appworld_env
+    config: {}
+    tooling:
+      skill_ids: []
+      mcp_servers: []
 
-sandbox_profiles:
-  - sandbox_id: appworld_local
-    runtime: docker
-    image: appworld-mcp:latest
-    resources:
-      cpu: 2
-      memory: 4g
-    runtime_configs:
-      # The container exposes fixed ports; this is required by the AppWorld MCP server.
+benchmarks:
+  - benchmark_id: appworld_demo
+    kit_id: appworld
+    config: {}
+
+environments:
+  - env_id: appworld_local
+    provider: docker
+    profile_id: appworld_local
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/appworld/environment/docker
+      metadata:
+        env_endpoint: http://127.0.0.1:8000
+        apis_endpoint: http://127.0.0.1:9000
+        mcp_endpoint: http://127.0.0.1:5001
+    provider_config:
+      image: appworld-mcp:latest
+      network_policy: allow
+      docker_platform: linux/amd64
+      ports:
+        - "8000:8000"
+        - "9000:9000"
+        - "5001:5001"
+      wait_for_http_endpoints:
+        - http://127.0.0.1:5001/mcp
       startup_timeout_s: 180
       startup_interval_s: 0.5
-      ports: ["8000:8000", "9000:9000", "5001:5001"]
-      platform: linux/amd64
-      network_mode: bridge_host
-      env_endpoint: http://127.0.0.1:8000
-      apis_endpoint: http://127.0.0.1:9000
-      mcp_endpoint: http://127.0.0.1:5001
-      wait_for_http_endpoints:
-        # Gate startup until the MCP health endpoint responds.
-        - http://127.0.0.1:5001/mcp
-      start_container: true
-      entrypoint: /usr/local/bin/appworld
-      env:
-        VIRTUAL_ENV: ""
-        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-      command:
-        # Keep the AppWorld services aligned with the fixed port mappings above.
+      entrypoint:
+        - /usr/local/bin/appworld
         - serve
+      keepalive_command:
         - multiple
         - --environment
         - "--port 8000"
@@ -68,6 +77,15 @@ sandbox_profiles:
         - "http --port 5001 --output-type structured_data_only"
         - --root
         - /run
+      workdir: /run
+      exec_workdir: /run
+      environment:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    resources:
+      cpu: 2
+      memory_gb: 4.0
+      network_policy: allow
 
 mcp_clients:
   - mcp_client_id: appworld_env
@@ -75,7 +93,6 @@ mcp_clients:
     endpoint: http://127.0.0.1:5001
     timeout_s: 180
     params:
-      # Use bounded retries to cover slow MCP startups without hanging forever.
       output_type: structured_data_only
       session_retry_delay_s: 2
       session_retry_timeout_s: 180
@@ -84,44 +101,22 @@ metrics:
   - metric_id: latency
     implementation: latency
 
-role_adapters:
-  - adapter_id: toolchain_main
-    role_type: toolchain
-    mcp_client_id: appworld_env
-    params:
-      # Use schema_yaml to include constraints/response schemas with truncation.
-      meta_tool_mode: false
-      tool_doc_enabled: true
-      tool_doc_format: schema_yaml
-      tool_doc_max_endpoints: 40
-      tool_doc_max_chars: 8000
-
-  - adapter_id: dut_agent_main
-    role_type: dut_agent
-    agent_backend_id: agent_model_main
-    sandbox:
-      sandbox_id: appworld_local
-      # Use per-sample sandboxing for deterministic tests.
-      lifecycle: per_sample
-    params:
-      max_turns: 16
-      # Initialize and persist AppWorld state around each sample.
-      pre_hooks:
-        - type: appworld_initialize
-      post_hooks:
-        - type: appworld_save
+dut_agents:
+  - dut_id: dut_agent_main
+    agent_id: appworld_agent
+    env_id: appworld_local
+    benchmark_id: appworld_demo
+    trial_policy:
+      trials: 1
 
 tasks:
   - task_id: appworld_agent_demo
     dataset_id: appworld_demo
     steps:
-      - step: support
-        adapter_id: toolchain_main
       - step: inference
         adapter_id: dut_agent_main
       - step: auto_eval
-    concurrency: 2
-    # Fixed ports force sequential execution; runtime will clamp concurrency to 1.
+    concurrency: 1
     max_samples: 2
     reporting:
       sinks:

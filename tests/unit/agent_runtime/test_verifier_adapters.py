@@ -8,13 +8,13 @@ from gage_eval.agent_runtime.verifier.adapters import NativeVerifierAdapter
 from gage_eval.agent_runtime.verifier.contracts import VerifierInput
 
 
-def test_native_verifier_requires_expected_answer_for_terminal_bench() -> None:
-    adapter = NativeVerifierAdapter("terminal_bench.native_verifier")
+def test_native_verifier_requires_expected_answer() -> None:
+    adapter = NativeVerifierAdapter("native.verifier")
     verifier_input = VerifierInput(
-        benchmark_kit_id="terminal_bench",
+        benchmark_kit_id="native_demo",
         scheduler_type="installed_client",
-        sample_id="terminal-1",
-        sample={"id": "terminal-1"},
+        sample_id="sample-1",
+        sample={"id": "sample-1"},
         scheduler_result={"agent_output": {"answer": "done"}},
         runtime_context={},
         verifier_resources={},
@@ -27,13 +27,13 @@ def test_native_verifier_requires_expected_answer_for_terminal_bench() -> None:
     assert result.payload["score"] == 0.0
 
 
-def test_native_verifier_matches_expected_answer_for_terminal_bench() -> None:
-    adapter = NativeVerifierAdapter("terminal_bench.native_verifier")
+def test_native_verifier_matches_expected_answer() -> None:
+    adapter = NativeVerifierAdapter("native.verifier")
     verifier_input = VerifierInput(
-        benchmark_kit_id="terminal_bench",
+        benchmark_kit_id="native_demo",
         scheduler_type="installed_client",
-        sample_id="terminal-1",
-        sample={"id": "terminal-1", "expected_answer": "done"},
+        sample_id="sample-1",
+        sample={"id": "sample-1", "expected_answer": "done"},
         scheduler_result={"agent_output": {"answer": "done"}},
         runtime_context={},
         verifier_resources={},

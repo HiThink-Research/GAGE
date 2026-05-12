@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from gage_eval.sandbox.docker_runtime import normalize_runtime_configs
-
 
 @dataclass(frozen=True)
 class HostBridgeInfo:
@@ -37,3 +35,18 @@ def _resolve_host_alias(network_mode: Optional[str], extra_hosts: list[str]) -> 
         if str(entry).startswith("host.docker.internal:"):
             return "host.docker.internal"
     return "127.0.0.1"
+
+
+def normalize_runtime_configs(runtime_configs: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(runtime_configs or {})
+    network_mode = normalized.get("network_mode")
+    if network_mode in {"bridge_host", "host_gateway"}:
+        normalized["network_mode"] = "bridge"
+        extra_hosts = list(normalized.get("extra_hosts") or [])
+        host_gateway = "host.docker.internal:host-gateway"
+        if host_gateway not in extra_hosts:
+            extra_hosts.append(host_gateway)
+        normalized["extra_hosts"] = extra_hosts
+    elif network_mode in {"host", "none"}:
+        normalized["network_mode"] = network_mode
+    return normalized

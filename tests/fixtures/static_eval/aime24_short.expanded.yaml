@@ -46,8 +46,6 @@ tasks:
     - type: console
     - type: file
 models: []
-agent_backends: []
-sandbox_profiles: []
 mcp_clients: []
 prompts: []
 summary_generators: []

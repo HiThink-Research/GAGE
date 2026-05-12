@@ -5,10 +5,14 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Protocol
 
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
-from gage_eval.sandbox.base import BaseSandbox
+
+
+class ExecRuntime(Protocol):
+    def exec(self, command: str, timeout: int = 30) -> Any:
+        ...
 
 
 class SandboxedArenaEnvironment:
@@ -27,7 +31,7 @@ class SandboxedArenaEnvironment:
 
     def __init__(
         self,
-        sandbox: BaseSandbox,
+        sandbox: ExecRuntime,
         env_kwargs: Dict[str, Any],
         *,
         timeout_s: int = 30,

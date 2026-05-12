@@ -40,10 +40,21 @@ from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.runtime_builder import build_runtime
 from gage_eval.observability.trace import ObservabilityTrace
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
+from gage_eval.agent_eval_kits.common import build_agentkit_v2_init_payload
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a gage-eval PipelineConfig.")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        help="Optional positional command. Use 'init <kit>' to print an Agent Eval v2 template.",
+    )
+    parser.add_argument(
+        "command_arg",
+        nargs="?",
+        help="Argument for the positional command.",
+    )
     parser.add_argument(
         "--config",
         "-c",
@@ -115,6 +126,19 @@ def parse_args() -> argparse.Namespace:
         help="Override the static DUT backend used for inference binding.",
     )
     parser.add_argument(
+        "--env-provider",
+        choices=("local_process", "docker"),
+        help="Override an AgentKit v2 environment provider.",
+    )
+    parser.add_argument(
+        "--dut-id",
+        help="Target --env-provider to the AgentKit v2 dut_agents entry with this dut_id.",
+    )
+    parser.add_argument(
+        "--env-id",
+        help="Target --env-provider to the AgentKit v2 environment referenced by this env_id.",
+    )
+    parser.add_argument(
         "--distill",
         "-d",
         action="store_true",
@@ -150,7 +174,13 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
-    if not args.init and not args.config and not args.distill:
+    if args.command and args.command != "init":
+        parser.error(f"unrecognized command: {args.command}")
+    if args.command == "init" and not args.command_arg:
+        parser.error("init requires a benchmark kit id")
+    if args.command == "init" and args.init:
+        parser.error("positional init and --init cannot be used together.")
+    if not args.command and not args.init and not args.config and not args.distill:
         parser.error("--config is required unless running in --init or --distill mode.")
     if args.distill and not args.config:
         parser.error("--distill requires --config to point to a PipelineConfig.")
@@ -206,6 +236,9 @@ def _build_cli_intent(args: argparse.Namespace) -> CLIIntent:
         max_samples=args.max_samples,
         skip_judge=args.skip_judge,
         metric_ids=parse_metric_ids_csv(args.metric_ids),
+        env_provider=args.env_provider,
+        dut_id=args.dut_id,
+        env_id=args.env_id,
     )
 
 
@@ -847,6 +880,11 @@ def _handle_init_mode(args: argparse.Namespace) -> None:
     print(f"[gage-eval][init] run config written to {output}")
 
 
+def _handle_agentkit_v2_init(kit_id: str) -> None:
+    payload = build_agentkit_v2_init_payload(kit_id)
+    print(_yaml_dump(payload, sort_keys=False), end="")
+
+
 def ensure_save_dir(directory: Optional[str]) -> None:
     if not directory:
         return
@@ -965,35 +1003,49 @@ def _preflight_checks() -> None:
 
 
 _RUNTIME_REF: Optional[object] = None
+_SHUTDOWN_SIGNAL_RECEIVED = False
 
 
 def _install_signal_handlers():
+    global _SHUTDOWN_SIGNAL_RECEIVED
+    _SHUTDOWN_SIGNAL_RECEIVED = False
+
     def _handler(signum, frame):
-        global _RUNTIME_REF
-        print(f"[gage-eval] Caught signal {signum}, shutting down…")
+        del frame
+        global _RUNTIME_REF, _SHUTDOWN_SIGNAL_RECEIVED
+        exit_code = 128 + int(signum)
+        if _SHUTDOWN_SIGNAL_RECEIVED:
+            print(f"[gage-eval] Caught signal {signum} again, forcing exit…", file=sys.stderr)
+            _kill_child_processes()
+            os._exit(exit_code)
+        _SHUTDOWN_SIGNAL_RECEIVED = True
+        print(f"[gage-eval] Caught signal {signum}, shutting down…", file=sys.stderr)
         try:
             if _RUNTIME_REF and hasattr(_RUNTIME_REF, "shutdown"):
                 _RUNTIME_REF.shutdown()
-        except Exception:
-            pass
-        try:
-            import psutil  # type: ignore
-
-            me = psutil.Process()
-            for child in me.children(recursive=True):
-                try:
-                    child.kill()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        os._exit(1)
+        except Exception as exc:
+            print(f"[gage-eval] shutdown hook failed after signal {signum}: {exc}", file=sys.stderr)
+        raise SystemExit(exit_code)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             signal.signal(sig, _handler)
         except Exception:
             pass
+
+
+def _kill_child_processes():
+    try:
+        import psutil  # type: ignore
+
+        me = psutil.Process()
+        for child in me.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _detect_hardware_profile() -> Optional[str]:
@@ -1135,7 +1187,7 @@ def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry
     for spec in config.role_adapters:
         if spec.class_path:
             try:
-                module_name, class_name = spec.class_path.rsplit(".", 1)
+                module_name, class_name = _split_import_class_path(spec.class_path)
                 module = importlib.import_module(module_name)
                 getattr(module, class_name)
             except Exception as exc:
@@ -1164,16 +1216,32 @@ def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry
     return errors
 
 
+def _split_import_class_path(class_path: str) -> tuple[str, str]:
+    if ":" in class_path:
+        module_name, class_name = class_path.split(":", 1)
+    else:
+        module_name, class_name = class_path.rsplit(".", 1)
+    if not module_name or not class_name:
+        raise ValueError(f"Invalid class_path '{class_path}'")
+    return module_name, class_name
+
+
 def main() -> None:
     wall_clock_start = time.perf_counter()
     args = parse_args()
     cli_intent = _build_cli_intent(args)
-    if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
-        os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
 
     if args.init:
         try:
             _handle_init_mode(args)
+        except Exception as exc:
+            print(f"[gage-eval][init] {exc}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.command == "init":
+        try:
+            _handle_agentkit_v2_init(args.command_arg)
         except Exception as exc:
             print(f"[gage-eval][init] {exc}", file=sys.stderr)
             sys.exit(1)
@@ -1186,6 +1254,7 @@ def main() -> None:
                 payload = load_pre_smart_defaults_payload(
                     config_path,
                     run_config_compiler=_compile_run_config,
+                    cli_intent=cli_intent,
                 )
             else:
                 payload = load_pipeline_config_payload(
@@ -1260,15 +1329,25 @@ def main() -> None:
         print("[gage-eval] --config is required for run mode (omit only with --init/--distill)", file=sys.stderr)
         sys.exit(2)
 
+    if args.max_samples is not None and args.max_samples < 0:
+        print("[gage-eval] --max-samples must be >= 0", file=sys.stderr)
+        sys.exit(2)
+
+    config_path = Path(args.config).expanduser()
+    try:
+        raw_run_payload = load_yaml_mapping(config_path)
+    except Exception as exc:
+        print(f"[gage-eval] failed to load config: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
+        os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
+
     _ensure_spawn_start_method()
     profile_hint = _detect_hardware_profile()
     _ensure_default_concurrency(args)
     _apply_hardware_profile_env(profile_hint)
     _preflight_checks()
     if args.max_samples is not None:
-        if args.max_samples < 0:
-            print("[gage-eval] --max-samples must be >= 0", file=sys.stderr)
-            sys.exit(2)
         os.environ["GAGE_EVAL_MAX_SAMPLES"] = str(args.max_samples)
     if args.model_path:
         os.environ["VLLM_NATIVE_MODEL_PATH"] = args.model_path

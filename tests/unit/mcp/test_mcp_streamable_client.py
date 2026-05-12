@@ -4,8 +4,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-from gage_eval.sandbox.integrations.appworld import mcp_client as appworld_mcp_client
-from gage_eval.sandbox.integrations.appworld.mcp_client import AppWorldStreamableMcpClient
+from gage_eval.agent_eval_kits.appworld import mcp_client as appworld_mcp_client
+from gage_eval.agent_eval_kits.appworld.mcp_client import AppWorldStreamableMcpClient
 
 
 @pytest.mark.fast

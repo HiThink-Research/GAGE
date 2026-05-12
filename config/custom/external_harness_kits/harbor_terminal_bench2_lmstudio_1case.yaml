@@ -1,0 +1,111 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+
+metadata:
+  # First live ExternalHarness example: GAGE delegates one task-batch run to Harbor,
+  # then imports Harbor's job/trial outputs back into GAGE samples, metrics, and reports.
+  name: external-harness-kits-harbor-terminal-bench2-lmstudio-1case
+  description: Live one-case Terminal-Bench 2.0 run through Harbor and LM Studio with a Terminal-Bench-style turn cap.
+
+datasets:
+  - dataset_id: tb2_one_case
+    # Load a local Harbor/Terminal-Bench task directory instead of sampling from a remote registry.
+    loader: harbor_local_path
+    params:
+      # Override this when validating another cached Terminal-Bench 2.0 task.
+      path: ${HARBOR_TB2_TASK_PATH:-tests/data/external_harness_kits/terminal_bench/gpt2-codegolf}
+      # path_kind=task means this points at one task folder containing task.toml/instruction/tests.
+      path_kind: task
+      # path_scope=host tells GAGE the launcher host can see this repo-local path.
+      path_scope: host
+
+environments:
+  - env_id: tb2_docker
+    # Harbor owns the trial sandbox; GAGE only translates this environment spec into Harbor's environment config.
+    provider: docker
+    provider_config:
+      # Keep this image pre-pulled locally for live runs. The Harbor bridge defaults docker delete=false.
+      docker_image: ${HARBOR_TB2_DOCKER_IMAGE:-alexgshaw/gpt2-codegolf:20251031}
+
+backends:
+  - backend_id: lmstudio_qwen
+    # Harbor Terminus-2 calls the model through LiteLLM's OpenAI-compatible LM Studio provider.
+    type: litellm
+    config:
+      provider: lm_studio
+      custom_llm_provider: lm_studio
+      api_base: ${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}
+      # LiteLLM requires the lm_studio/ prefix; the suffix should match the model served by LM Studio.
+      model: ${LMSTUDIO_LITELLM_MODEL:-lm_studio/qwen/qwen3.5-9b}
+      api_key: ${LMSTUDIO_API_KEY:-EMPTY}
+      generation_parameters:
+        temperature: ${LMSTUDIO_TEMPERATURE:-0.2}
+        max_tokens: ${LMSTUDIO_MAX_TOKENS:-4096}
+      # Passed through to Harbor/Terminus-2 so token budgeting and cost accounting stay explicit.
+      model_info:
+        max_input_tokens: ${LMSTUDIO_MAX_INPUT_TOKENS:-32768}
+        max_output_tokens: ${LMSTUDIO_MAX_OUTPUT_TOKENS:-4096}
+        input_cost_per_token: 0.0
+        output_cost_per_token: 0.0
+
+role_adapters:
+  - adapter_id: harbor_tb2
+    # external_harness adapters run task-level harnesses instead of per-sample inference loops.
+    role_type: external_harness
+    class_path: gage_eval.role.adapters.harbor:HarborAdapter
+    backend_id: lmstudio_qwen
+    env_id: tb2_docker
+    capabilities:
+      - task_batch_harness
+    trial_policy:
+      # One Harbor attempt is enough for the live chain check; pass@k can be raised later by increasing trials.
+      trials: 1
+      aggregation: single
+    params:
+      harness:
+        benchmark: terminal-bench
+        agent:
+          # base_agent maps to Harbor's built-in Terminus-2 agent implementation.
+          kind: base_agent
+          name: terminus-2
+          kwargs:
+            # Terminal-Bench integrations commonly use 200 turns.
+            # For development smoke tests, run with HARBOR_TB2_MAX_TURNS=2 to verify the chain quickly.
+            max_turns: ${HARBOR_TB2_MAX_TURNS:-200}
+            suppress_max_turns_warning: true
+            # Keep terminal session data so imported GAGE samples contain inspectable trajectories/tool calls.
+            record_terminal_session: true
+        job_options:
+          # 1.0 means respect task.toml timeouts such as agent.timeout_sec and verifier.timeout_sec.
+          timeout_multiplier: 1.0
+          agent_timeout_multiplier: 1.0
+          verifier_timeout_multiplier: 1.0
+          max_retries: 0
+        # Must stay >=1s for Harbor polling; lower values create busy polling.
+        poll_interval_s: ${HARBOR_TB2_POLL_INTERVAL_S:-1}
+
+tasks:
+  - task_id: tb2_one_case
+    dataset_id: tb2_one_case
+    execution_mode: task_batch_harness
+    max_samples: 1
+    concurrency: 1
+    steps:
+      # harbor_run writes the Harbor job config and launches the live Harbor job.
+      - step: harbor_run
+        adapter_id: harbor_tb2
+      # harbor_result parses Harbor outputs into samples.jsonl, metrics, report data, and raw artifacts.
+      - step: harbor_result
+        adapter_id: harbor_tb2
+
+metrics:
+  # Harbor-native summary metrics imported from parsed trial/verifier results.
+  - harbor_resolve_rate
+  - harbor_score_mean
+  - metric_id: external_trial_pass_hat_k
+    implementation: external_trial_pass_hat_k
+    params:
+      k: 1
+
+summary_generators:
+  - harbor_summary

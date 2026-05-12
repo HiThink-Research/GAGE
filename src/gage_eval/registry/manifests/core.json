@@ -57,37 +57,10 @@
     },
     {
       "kind": "judge_impls",
-      "name": "appworld_evaluate",
-      "module": "gage_eval.role.judge.appworld_evaluate",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/judge/appworld_evaluate.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "judge_impls",
       "name": "gomoku_referee",
       "module": "gage_eval.role.judge.gomoku_referee",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/role/judge/gomoku_referee.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "judge_impls",
-      "name": "swebench_docker",
-      "module": "gage_eval.role.judge.swebench_docker",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/judge/swebench_docker.py",
-      "aliases": [],
-      "optional": false
-    },
-    {
-      "kind": "judge_impls",
-      "name": "tau2_eval",
-      "module": "gage_eval.role.judge.tau2_eval",
-      "load_phase": "prepare_only",
-      "declared_in": "src/gage_eval/role/judge/tau2_eval.py",
       "aliases": [],
       "optional": false
     },
@@ -142,6 +115,24 @@
       "module": "gage_eval.pipeline.steps.auto_eval",
       "load_phase": "baseline",
       "declared_in": "src/gage_eval/pipeline/steps/auto_eval.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "harbor_result",
+      "module": "gage_eval.pipeline.steps.harbor",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "harbor_run",
+      "module": "gage_eval.pipeline.steps.harbor",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/harbor.py",
       "aliases": [],
       "optional": false
     },
@@ -340,6 +331,15 @@
       "module": "gage_eval.reporting.summary_generators.gomoku",
       "load_phase": "baseline",
       "declared_in": "src/gage_eval/reporting/summary_generators/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "harbor_summary",
+      "module": "gage_eval.reporting.summary_generators.harbor",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/harbor.py",
       "aliases": [],
       "optional": false
     },

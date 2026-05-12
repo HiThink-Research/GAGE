@@ -13,7 +13,7 @@ class AgentRuntimeSpec:
     scheduler_type: Literal["installed_client", "framework_loop", "acp_client"]
     client_id: str | None = None
     role_adapter_id: str | None = None
-    sandbox_profile_id: str | None = None
+    environment_profile_id: str | None = None
     resource_policy: dict[str, Any] = field(default_factory=dict)
     verifier_binding_id: str | None = None
     runtime_overrides: dict[str, Any] = field(default_factory=dict)
@@ -28,7 +28,7 @@ class AgentRuntimeSpec:
             "scheduler_type": self.scheduler_type,
             "client_id": self.client_id,
             "role_adapter_id": self.role_adapter_id,
-            "sandbox_profile_id": self.sandbox_profile_id,
+            "environment_profile_id": self.environment_profile_id,
             "resource_policy": dict(self.resource_policy or {}),
             "verifier_binding_id": self.verifier_binding_id,
             "runtime_overrides": dict(self.runtime_overrides or {}),

@@ -1,0 +1,32 @@
+kind: PipelineConfig
+metadata:
+  name: swebench-docker
+backends:
+  - backend_id: swe_model
+    type: litellm
+    config:
+      model: gpt-4.1
+agents:
+  - agent_id: swe_agent
+    scheduler:
+      type: framework_loop
+      backend_id: swe_model
+    config: {}
+benchmarks:
+  - benchmark_id: swebench_smoke
+    kit_id: swebench
+    config:
+      split: test
+environments:
+  - env_id: swe_docker
+    provider: docker
+    profile_id: swebench_runtime
+    profile:
+      asset_dir: tests/fixtures/agentkit_v2/swebench
+dut_agents:
+  - dut_id: swe_dut
+    agent_id: swe_agent
+    env_id: swe_docker
+    benchmark_id: swebench_smoke
+trial_policy:
+  trials: 3

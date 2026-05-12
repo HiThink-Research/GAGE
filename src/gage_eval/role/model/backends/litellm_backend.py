@@ -190,7 +190,7 @@ class LiteLLMBackend(EngineBackend):
             previous_verbose = getattr(self._litellm, "verbose", None)
             had_drop_params = hasattr(self._litellm, "drop_params")
             had_verbose = hasattr(self._litellm, "verbose")
-            self._litellm.drop_params = True
+            self._litellm.drop_params = bool(self._cfg.drop_params)
             self._litellm.verbose = bool(self._cfg.verbose)
             try:
                 yield

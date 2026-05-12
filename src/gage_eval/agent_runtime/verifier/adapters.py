@@ -47,7 +47,7 @@ class NativeVerifierAdapter(BaseVerifierAdapter):
 
 
 class JudgeVerifierAdapter(BaseVerifierAdapter):
-    """Bridges runtime verifier input into a legacy judge implementation."""
+    """Bridges runtime verifier input into a judge implementation."""
 
     def __init__(self, judge_source: str, judge_impl: Any) -> None:
         super().__init__(judge_source=judge_source)
@@ -60,9 +60,9 @@ class JudgeVerifierAdapter(BaseVerifierAdapter):
             "runtime_handle": verifier_input.runtime_context.get("runtime_handle") or {},
             "params": verifier_input.verifier_resources,
         }
-        sandbox_provider = verifier_input.runtime_context.get("sandbox_provider")
-        if sandbox_provider is not None:
-            payload["sandbox_provider"] = sandbox_provider
+        environment_lease = verifier_input.runtime_context.get("environment_lease")
+        if environment_lease is not None:
+            payload["environment_lease"] = environment_lease
         result = self._judge_impl.invoke(payload)
         if isinstance(result, dict):
             return VerifierResult(status="completed", payload=result)
@@ -73,27 +73,45 @@ class AppWorldVerifierAdapter(JudgeVerifierAdapter):
     """Runtime verifier wrapper for AppWorld."""
 
     def __init__(self) -> None:
-        from gage_eval.role.judge.appworld_evaluate import AppWorldEvaluate
+        from gage_eval.agent_eval_kits.appworld.judge.adapters import (
+            AppWorldVerifierAdapter as KitAppWorldVerifierAdapter,
+        )
 
-        super().__init__("appworld.verifier_adapter.run", AppWorldEvaluate())
+        BaseVerifierAdapter.__init__(self, judge_source="appworld.verifier_adapter.run")
+        self._kit_adapter = KitAppWorldVerifierAdapter()
+
+    def run(self, verifier_input: VerifierInput) -> VerifierResult:
+        return self._kit_adapter.run(verifier_input)
 
 
 class Tau2VerifierAdapter(JudgeVerifierAdapter):
     """Runtime verifier wrapper for Tau2."""
 
     def __init__(self) -> None:
-        from gage_eval.role.judge.tau2_eval import Tau2Evaluate
+        from gage_eval.agent_eval_kits.tau2.judge.adapters import (
+            Tau2VerifierAdapter as KitTau2VerifierAdapter,
+        )
 
-        super().__init__("tau2.verifier_adapter.run", Tau2Evaluate())
+        BaseVerifierAdapter.__init__(self, judge_source="tau2.verifier_adapter.run")
+        self._kit_adapter = KitTau2VerifierAdapter()
+
+    def run(self, verifier_input: VerifierInput) -> VerifierResult:
+        return self._kit_adapter.run(verifier_input)
 
 
 class SwebenchVerifierAdapter(JudgeVerifierAdapter):
     """Runtime verifier wrapper for SWE-bench-style patch evaluation."""
 
     def __init__(self) -> None:
-        from gage_eval.role.judge.swebench_docker import SwebenchDocker
+        from gage_eval.agent_eval_kits.swebench.judge.adapters import (
+            SwebenchVerifierAdapter as KitSwebenchVerifierAdapter,
+        )
 
-        super().__init__("swebench.verifier_adapter.run", SwebenchDocker())
+        BaseVerifierAdapter.__init__(self, judge_source="swebench.verifier_adapter.run")
+        self._kit_adapter = KitSwebenchVerifierAdapter()
+
+    def run(self, verifier_input: VerifierInput) -> VerifierResult:
+        return self._kit_adapter.run(verifier_input)
 
 
 def _resolve_native_verdict(
@@ -109,8 +127,6 @@ def _resolve_native_verdict(
         resolved = expected_text == answer
         return resolved, None if resolved else "answer_mismatch"
 
-    if benchmark_kit_id == "terminal_bench":
-        return False, "missing_expected_answer"
     return False, "missing_expected_answer"
 
 

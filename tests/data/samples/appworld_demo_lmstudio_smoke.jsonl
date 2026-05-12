@@ -1,0 +1,1 @@
+{"schema_version": "gage.v1", "id": "appworld_demo_0002", "task_type": "agent", "messages": [{"role": "user", "content": [{"type": "text", "text": "Solve the AppWorld task and return a final response."}]}], "tools": [], "tool_choice": "auto", "metadata": {"appworld": {"task_id": "07b42fd_1", "allowed_apps": ["supervisor", "spotify", "file_system"], "ground_truth_mode": "auto"}}}

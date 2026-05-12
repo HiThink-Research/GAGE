@@ -8,13 +8,23 @@ from gage_eval.agent_runtime.clients.builder import (
     resolve_installed_client,
 )
 from gage_eval.agent_runtime.clients.codex import CodexClient
-from gage_eval.agent_runtime.clients.contracts import ClientSurface
+from gage_eval.agent_runtime.clients.contracts import (
+    AcpClientSchedulerConfig,
+    ClientEnvironmentProjectionError,
+    ClientSurface,
+    ExternalClientEnvironmentHandle,
+    InstalledClientSchedulerConfig,
+)
 from gage_eval.agent_runtime.clients.runner import InstalledClientRunner
 from gage_eval.agent_runtime.clients.types import ClientRunRequest, ClientRunResult
 
 __all__ = [
     "build_client_surface",
+    "AcpClientSchedulerConfig",
     "ClientSurface",
+    "ClientEnvironmentProjectionError",
+    "ExternalClientEnvironmentHandle",
+    "InstalledClientSchedulerConfig",
     "ClientRunRequest",
     "ClientRunResult",
     "CodexClient",

@@ -7,6 +7,7 @@ from enum import Enum
 
 class StepKind(str, Enum):
     SAMPLE = "sample"
+    TASK = "task"
     GLOBAL = "global"
 
 
@@ -39,6 +40,11 @@ class Step:
 class SampleStep(Step):
     def __init__(self, name: str) -> None:
         super().__init__(name=name, kind=StepKind.SAMPLE)
+
+
+class TaskStep(Step):
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name, kind=StepKind.TASK)
 
 
 class GlobalStep(Step):

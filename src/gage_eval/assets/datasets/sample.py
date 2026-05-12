@@ -37,6 +37,7 @@ class PredictResult:
     raw_response: Optional[Dict[str, Any]] = None
     usage: Optional[Dict[str, Any]] = None
     latency_ms: Optional[float] = None
+    agent_trace: Optional[List[Dict[str, Any]]] = None
 
 @dataclass
 class Sample:
@@ -116,6 +117,7 @@ def sample_from_dict(payload: Dict[str, Any]) -> Sample:
             raw_response=pr.get("raw_response"),
             usage=pr.get("usage"),
             latency_ms=pr.get("latency_ms"),
+            agent_trace=pr.get("agent_trace") if isinstance(pr.get("agent_trace"), list) else None,
         )
         for i, pr in enumerate(payload.get("predict_result", []))
         if isinstance(pr, dict)
@@ -189,6 +191,7 @@ def append_prediction(sample: Sample, model_output: Dict[str, Any]) -> None:
             raw_response=model_output.get("raw_response"),
             usage=model_output.get("usage"),
             latency_ms=model_output.get("latency_ms"),
+            agent_trace=model_output.get("agent_trace") if isinstance(model_output.get("agent_trace"), list) else None,
         )
     )
 

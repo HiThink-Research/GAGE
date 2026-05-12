@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from gage_eval.registry import registry
-from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -18,15 +17,9 @@ class Tau2BootstrapContext:
     """Initialize Tau2 runtime state and seed initial messages."""
 
     def provide(self, payload: Dict[str, Any], _state=None) -> Dict[str, Any]:
-        # STEP 1: Resolve sandbox runtime.
+        # STEP 1: Resolve Tau2 runtime.
         sample = payload.get("sample") or {}
-        sandbox_provider = payload.get("sandbox_provider")
-        if not isinstance(sandbox_provider, SandboxProvider):
-            raise ValueError("tau2_bootstrap requires sandbox_provider")
-        handle = sandbox_provider.get_handle()
-        if handle is None or handle.sandbox is None:
-            raise RuntimeError("tau2_bootstrap sandbox handle missing")
-        runtime = handle.sandbox
+        runtime = _resolve_tau2_runtime(payload)
         initializer = getattr(runtime, "initialize_task", None)
         if not callable(initializer):
             raise RuntimeError("tau2_bootstrap requires a runtime with initialize_task")
@@ -44,3 +37,17 @@ class Tau2BootstrapContext:
             output["metadata"] = metadata
         return output
 
+
+def _resolve_tau2_runtime(payload: Dict[str, Any]) -> Any:
+    environment_lease = payload.get("environment_lease")
+    runtime = getattr(environment_lease, "environment", None)
+    if runtime is not None:
+        return runtime
+    provider = payload.get("sandbox_provider")
+    get_handle = getattr(provider, "get_handle", None)
+    if callable(get_handle):
+        handle = get_handle()
+        runtime = getattr(handle, "sandbox", None) if handle is not None else None
+        if runtime is not None:
+            return runtime
+    raise ValueError("tau2_bootstrap requires environment_lease")

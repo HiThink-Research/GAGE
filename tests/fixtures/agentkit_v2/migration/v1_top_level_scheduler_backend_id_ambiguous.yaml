@@ -1,0 +1,24 @@
+api_version: gage/v1
+kind: PipelineConfig
+metadata:
+  name: v1_top_level_scheduler_backend_id_ambiguous
+backends:
+  - backend_id: model_a
+    type: litellm
+    config:
+      model: gpt-4.1-mini
+  - backend_id: model_b
+    type: litellm
+    config:
+      model: gpt-4.1
+agent_backends:
+  - agent_backend_id: agent_backend
+    type: model_backend
+    backend_id: model_a
+  - agent_backend_id: extra_backend
+    type: model_backend
+    backend_id: model_b
+agent_backend_id: agent_backend
+scheduler:
+  type: framework_loop
+  backend_id: model_b

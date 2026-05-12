@@ -6,7 +6,6 @@ from typing import Any, Dict, Optional
 
 from gage_eval.mcp.utils import sync_mcp_endpoint
 from gage_eval.registry import ensure_async, import_asset_from_manifest, registry
-from gage_eval.sandbox.provider import SandboxProvider
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 
 
@@ -77,8 +76,8 @@ class ContextProviderAdapter(RoleAdapter):
         impl_payload = dict(payload or {})
         sandbox_provider = impl_payload.get("sandbox_provider")
         mcp_client = self._implementation_params.get("mcp_client")
-        if self.allow_sandbox_handle and isinstance(sandbox_provider, SandboxProvider) and mcp_client is not None:
-            runtime_handle = sandbox_provider.runtime_handle()
+        if self.allow_sandbox_handle and sandbox_provider is not None and mcp_client is not None:
+            runtime_handle = _runtime_handle_from_provider(sandbox_provider)
             sync_mcp_endpoint(mcp_client, runtime_handle)
         if self.static_context_only or not self.allow_sandbox_handle:
             impl_payload.pop("sandbox_provider", None)
@@ -118,3 +117,16 @@ class ContextProviderAdapter(RoleAdapter):
         if isinstance(extra_params, dict):
             merged.update(extra_params)
         return merged
+
+
+def _runtime_handle_from_provider(provider: Any) -> dict[str, Any]:
+    runtime_handle = getattr(provider, "runtime_handle", None)
+    if callable(runtime_handle):
+        resolved = runtime_handle()
+        return dict(resolved or {}) if isinstance(resolved, dict) else {}
+    get_handle = getattr(provider, "get_handle", None)
+    if callable(get_handle):
+        handle = get_handle()
+        resolved = getattr(handle, "runtime_handle", None) if handle is not None else None
+        return dict(resolved or {}) if isinstance(resolved, dict) else {}
+    return {}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
 from gage_eval.agent_eval_kits.swebench.artifacts import persist_swebench_artifacts
-from gage_eval.agent_eval_kits.swebench.units import build_swebench_instruction, build_swebench_tools
+from gage_eval.agent_eval_kits.swebench.tools import build_swebench_instruction, build_swebench_tools
 
 
 def build_workflow_bundle() -> SchedulerWorkflowBundle:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import replace
 import os
 from pathlib import Path
 import sys
@@ -38,6 +38,11 @@ from gage_eval.evaluation.runtime_metadata import (
 from gage_eval.evaluation.sample_loop import SampleLoop
 from gage_eval.pipeline.steps.report import ReportStep
 from gage_eval.evaluation.task_plan import TaskPlanSpec, build_task_plan_specs
+from gage_eval.evaluation.task_batch_runtime import (
+    SampleLoopRuntimeEntry,
+    TaskBatchExecutionError,
+    TaskBatchRuntimeEntry,
+)
 from gage_eval.evaluation.task_planner import TaskPlanner
 from gage_eval.observability.config import configure_observability, get_observability_config
 from gage_eval.observability.trace import ObservabilityTrace
@@ -94,11 +99,15 @@ def build_runtime(
         validation_ledger = _ensure_validation_ledger(cache_store)
         data_manager = DataManager()
         dataset_start = time.perf_counter()
-        datasets: Dict[str, DataSource] = registry.materialize_datasets(config, trace=trace)
+        dataset_materialization_config = _dataset_materialization_config(config)
+        datasets: Dict[str, DataSource] = registry.materialize_datasets(
+            dataset_materialization_config,
+            trace=trace,
+        )
         dataset_elapsed = time.perf_counter() - dataset_start
         cache_store.record_timing("dataset_materialization_s", dataset_elapsed)
         registry.materialize_models(config)
-        if not datasets:
+        if not datasets and _requires_sample_loop_dataset_materialization(config):
             raise ValueError("PipelineConfig must declare at least one dataset")
         for source in datasets.values():
             data_manager.register_source(source, trace=trace)
@@ -351,6 +360,30 @@ def _select_dataset_id(
     return next(iter(datasets))
 
 
+def _dataset_materialization_config(config: PipelineConfig) -> PipelineConfig:
+    if not config.tasks:
+        return config
+    sample_loop_dataset_ids = {
+        task.dataset_id
+        for task in config.tasks
+        if task.execution_mode != "task_batch_harness"
+    }
+    if len(sample_loop_dataset_ids) == len({dataset.dataset_id for dataset in config.datasets}):
+        return config
+    datasets = tuple(
+        dataset
+        for dataset in config.datasets
+        if dataset.dataset_id in sample_loop_dataset_ids
+    )
+    return replace(config, datasets=datasets)
+
+
+def _requires_sample_loop_dataset_materialization(config: PipelineConfig) -> bool:
+    if not config.tasks:
+        return True
+    return any(task.execution_mode != "task_batch_harness" for task in config.tasks)
+
+
 def _materialize_role_adapters(
     config: PipelineConfig,
     registry: "ConfigRegistry",
@@ -381,14 +414,7 @@ def _materialize_role_adapters(
         logger.debug("Registered role adapter '{}' with RoleManager", adapter_id)
 
 
-@dataclass
-class _TaskRuntimeEntry:
-    task_id: str
-    dataset_id: str
-    dataset_metadata: Dict[str, Any]
-    sample_loop: SampleLoop
-    task_planner: TaskPlanner
-    reporting: Dict[str, Any]
+_TaskRuntimeEntry = SampleLoopRuntimeEntry | TaskBatchRuntimeEntry
 
 
 class TaskOrchestratorRuntime:
@@ -417,7 +443,7 @@ class TaskOrchestratorRuntime:
             total_start = time.perf_counter()
             wall_start = self._wall_clock_start or total_start
             inference_total = 0.0
-            primary_error: SampleLoopExecutionError | None = None
+            primary_error: BaseException | None = None
             should_report_partial = True
             try:
                 for entry in self._tasks:
@@ -431,26 +457,40 @@ class TaskOrchestratorRuntime:
                     )
                     task_start = time.perf_counter()
                     task_outcome = None
+                    metrics: Sequence[Dict[str, Any]] = ()
                     try:
-                        task_outcome = entry.sample_loop.run(
-                            planner=entry.task_planner,
-                            role_manager=self._role_manager,
-                            trace=self._trace,
-                        )
+                        if isinstance(entry, TaskBatchRuntimeEntry):
+                            task_outcome = entry.run(
+                                role_manager=self._role_manager,
+                                trace=self._trace,
+                            )
+                            metrics = tuple(task_outcome.metrics or ())
+                        else:
+                            task_outcome = entry.sample_loop.run(
+                                planner=entry.task_planner,
+                                role_manager=self._role_manager,
+                                trace=self._trace,
+                            )
                     except SampleLoopExecutionError as exc:
                         primary_error = exc
                         task_outcome = exc.outcome
                         should_report_partial = entry.sample_loop.report_partial_on_failure
+                    except TaskBatchExecutionError as exc:
+                        primary_error = exc
+                        task_outcome = exc.outcome
+                        metrics = tuple(exc.outcome.metrics or ())
+                        should_report_partial = entry.report_partial_on_failure
                     inference_total += time.perf_counter() - task_start
-                    auto_eval = entry.task_planner.get_auto_eval_step()
-                    metrics = auto_eval.aggregated_metrics() if auto_eval else []
+                    if not isinstance(entry, TaskBatchRuntimeEntry):
+                        auto_eval = entry.task_planner.get_auto_eval_step()
+                        metrics = auto_eval.aggregated_metrics() if auto_eval else []
                     summary = {
                         "task_id": entry.task_id,
                         "dataset_id": entry.dataset_id,
                         "dataset_metadata": entry.dataset_metadata,
                         "metrics": metrics,
-                        "sample_count": entry.sample_loop.processed_count,
-                        "shuffle": entry.sample_loop.shuffle_summary,
+                        "sample_count": entry.processed_count,
+                        "shuffle": entry.shuffle_summary,
                         "reporting": entry.reporting,
                     }
                     if task_outcome is not None:
@@ -461,7 +501,7 @@ class TaskOrchestratorRuntime:
                         {
                             "task_id": entry.task_id,
                             "dataset_id": entry.dataset_id,
-                            "sample_count": entry.sample_loop.processed_count,
+                            "sample_count": entry.processed_count,
                         },
                     )
                     if primary_error is not None:
@@ -547,7 +587,7 @@ class TaskOrchestratorRuntime:
         self._shutdown_called = True
         try:
             for entry in self._tasks:
-                entry.sample_loop.shutdown()
+                entry.shutdown()
         finally:
             try:
                 self._role_manager.shutdown()
@@ -560,16 +600,17 @@ class TaskOrchestratorRuntime:
 
     def _handle_finalize_failure(
         self,
-        primary_error: SampleLoopExecutionError,
+        primary_error: BaseException,
         finalize_error: Exception,
     ) -> None:
+        sample_id = getattr(getattr(primary_error, "outcome", None), "failed_sample_id", None)
         self._trace.emit(
             "report_finalize_failed_after_abort",
             {
                 "error_type": finalize_error.__class__.__name__,
                 "error": str(finalize_error),
             },
-            sample_id=primary_error.outcome.failed_sample_id,
+            sample_id=sample_id,
         )
         logger.exception(
             "TaskOrchestrator report finalize failed after abort (run_id={}): {}",
@@ -592,7 +633,7 @@ class TaskOrchestratorRuntime:
         total = 0
         for entry in self._tasks:
             try:
-                total += int(entry.sample_loop.processed_count)
+                total += int(entry.processed_count)
             except Exception:
                 continue
         return total
@@ -631,8 +672,37 @@ def _prepare_task_entries(
     aggregate_validation_ledger: Optional[ValidationLedger] = None,
 ) -> Sequence[_TaskRuntimeEntry]:
     entries: List[_TaskRuntimeEntry] = []
+    task_specs = {task.task_id: task for task in config.tasks}
+    dataset_specs = {dataset.dataset_id: dataset for dataset in config.datasets}
     for plan in task_plans:
         dataset_id = plan.dataset_id
+        if plan.execution_mode == "task_batch_harness":
+            task_spec = task_specs.get(plan.task_id)
+            dataset_spec = dataset_specs.get(dataset_id)
+            if task_spec is None:
+                raise KeyError(f"Task '{plan.task_id}' is not defined")
+            if dataset_spec is None:
+                raise KeyError(f"Dataset '{dataset_id}' referenced by task '{plan.task_id}' is not defined")
+            entries.append(
+                TaskBatchRuntimeEntry(
+                    task_id=plan.task_id,
+                    dataset_id=dataset_id,
+                    dataset_metadata={
+                        "dataset_id": dataset_spec.dataset_id,
+                        "loader": dataset_spec.loader,
+                        "params": dict(dataset_spec.params or {}),
+                    },
+                    task_plan=plan,
+                    task_spec=task_spec,
+                    dataset_spec=dataset_spec,
+                    steps=tuple(plan.steps),
+                    reporting=plan.reporting or {},
+                    config=config,
+                    registry=registry,
+                    cache_store=cache_store,
+                )
+            )
+            continue
         if dataset_id not in datasets:
             raise KeyError(f"Dataset '{dataset_id}' referenced by task '{plan.task_id}' is not registered")
         source = data_manager.get(dataset_id)
@@ -710,7 +780,7 @@ def _prepare_task_entries(
             shuffle_artifact_root=cache_store.run_dir / "shuffle" / plan.task_id,
         )
         entries.append(
-            _TaskRuntimeEntry(
+            SampleLoopRuntimeEntry(
                 task_id=plan.task_id,
                 dataset_id=dataset_id,
                 dataset_metadata=source.metadata or {},

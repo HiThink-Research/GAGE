@@ -7,7 +7,7 @@ from gage_eval.registry import registry
 
 
 @pytest.mark.fast
-def test_swebench_preprocessor_injects_sandbox() -> None:
+def test_swebench_preprocessor_injects_image_uri_without_sandbox() -> None:
     preprocessor = SwebenchProPreprocessor(
         dockerhub_username="tester",
         registry_prefix="registry.local/swebench",
@@ -23,16 +23,12 @@ def test_swebench_preprocessor_injects_sandbox() -> None:
     }
     sample = preprocessor.transform(record)
 
-    assert sample.sandbox is not None
-    assert sample.sandbox["sandbox_id"] == "swebench_runtime"
-    assert sample.sandbox["runtime"] == "docker"
-    assert sample.sandbox["lifecycle"] == "per_sample"
-    assert "image" in sample.sandbox
-    assert sample.metadata["image_uri"].startswith("registry.local/swebench/")
+    assert sample.sandbox is None
+    assert sample.metadata["environment_overrides"]["image_uri"].startswith("registry.local/swebench/")
 
 
 @pytest.mark.fast
-def test_swebench_preprocessor_preserves_sandbox_overrides() -> None:
+def test_swebench_preprocessor_does_not_preserve_legacy_sandbox_overrides() -> None:
     preprocessor = SwebenchProPreprocessor()
     record = {
         "instance_id": "django__django-12345",
@@ -46,9 +42,9 @@ def test_swebench_preprocessor_preserves_sandbox_overrides() -> None:
     }
     sample = preprocessor.transform(record)
 
-    assert sample.sandbox is not None
-    assert sample.sandbox["sandbox_id"] == "custom"
-    assert sample.sandbox["runtime"] == "remote"
+    assert sample.sandbox is None
+    assert "image_uri" not in sample.metadata
+    assert "image_uri" in sample.metadata.get("environment_overrides", {})
 
 
 @pytest.mark.fast

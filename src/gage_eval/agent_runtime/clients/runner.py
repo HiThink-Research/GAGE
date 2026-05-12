@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from gage_eval.agent_runtime.clients.builder import build_client_surface
-from gage_eval.agent_runtime.clients.contracts import ClientSurface
+from gage_eval.agent_runtime.clients.contracts import (
+    ClientSurface,
+    build_external_client_session_context,
+)
 from gage_eval.agent_runtime.session import AgentRuntimeSession
 from gage_eval.registry.utils import ensure_async
 
@@ -32,7 +35,11 @@ class InstalledClientRunner:
         """Execute the bound client through the standardized setup/run flow."""
 
         # STEP 1: Let the client attach any per-session state to the environment.
-        setup_result = await self._setup(environment, session)
+        client_session = build_external_client_session_context(
+            session=session,
+            environment=environment,
+        )
+        setup_result = await self._setup(environment, client_session)
         if isinstance(setup_result, dict):
             environment.update(setup_result)
 

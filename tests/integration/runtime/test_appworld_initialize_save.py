@@ -50,10 +50,10 @@ def test_appworld_runtime_bootstrap_and_save_without_legacy_hooks() -> None:
     bootstrap = runtime.bootstrap(
         session=SimpleNamespace(),
         sample=sample,
-        payload={},
+        payload={"runtime_handle": provider.get_handle().runtime_handle},
         sandbox_provider=provider,
     )
-    saved = runtime.save(sample=sample, sandbox_provider=provider)
+    saved = runtime.save(sample=sample, payload={"runtime_handle": provider.get_handle().runtime_handle})
 
     assert calls[0][0] == "http://env"
     assert calls[0][1] == "initialize"

@@ -1,0 +1,12 @@
+kind: PipelineConfig
+metadata:
+  name: legacy_agent_missing_scheduler_backend
+agents:
+  - agent_id: missing_ref_agent
+    scheduler:
+      type: framework_loop
+      backend_id: missing_backend
+  - agent_id: inline_agent
+    scheduler:
+      type: framework_loop
+      model: gpt-4.1-mini

@@ -1,39 +1,48 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 
 import pytest
 
-from gage_eval.assets.prompts.renderers import PromptContext, PromptRenderResult, PromptRenderer
 from gage_eval.role.adapters.base import RoleAdapterState
 from gage_eval.role.adapters.dut_agent import DUTAgentAdapter
-from gage_eval.role.agent.backends.model_backend import ModelBackend
 
 
-class FakeBackend:
-    def invoke(self, payload):
-        return {"answer": "ok"}
-
-
-class AsyncModelOnlyBackend:
+class RecordingExecutor:
     def __init__(self) -> None:
-        self.thread_id: int | None = None
+        self.calls: list[dict] = []
 
-    async def ainvoke(self, payload):
-        self.thread_id = threading.get_ident()
-        return {"answer": "ok"}
+    async def aexecute(self, *, sample, payload, trace=None):
+        self.calls.append({"sample": sample, "payload": payload, "trace": trace})
+        return {"answer": "runtime"}
 
 
-class ShutdownTrackingBackend:
+class FailingPromptRenderer:
     def __init__(self) -> None:
+        self.render_calls = 0
+
+    def render(self, context):
+        self.render_calls += 1
+        raise AssertionError("DUTAgentAdapter must not render prompts")
+
+
+class FailingLegacyBackend:
+    def __init__(self) -> None:
+        self.invoke_calls = 0
+        self.ainvoke_calls = 0
         self.shutdown_calls = 0
 
     def invoke(self, payload):
-        return {"answer": "ok"}
+        self.invoke_calls += 1
+        raise AssertionError("legacy backend invoke must not be called")
+
+    async def ainvoke(self, payload):
+        self.ainvoke_calls += 1
+        raise AssertionError("legacy backend ainvoke must not be called")
 
     def shutdown(self) -> None:
         self.shutdown_calls += 1
+        raise AssertionError("legacy backend shutdown must not be called")
 
 
 class ShutdownTrackingSandboxManager:
@@ -44,61 +53,59 @@ class ShutdownTrackingSandboxManager:
         self.shutdown_calls += 1
 
 
-class ToolDocPrompt(PromptRenderer):
-    def render(self, context: PromptContext) -> PromptRenderResult:
-        tool_doc = context.to_mapping().get("tool_documentation") or ""
-        return PromptRenderResult(prompt=f"System: {tool_doc}")
-
-
 @pytest.mark.fast
-def test_dut_agent_persists_system_prompt() -> None:
+def test_dut_agent_does_not_render_prompt_and_passes_payload_to_executor_unchanged() -> None:
+    executor = RecordingExecutor()
+    prompt_renderer = FailingPromptRenderer()
     adapter = DUTAgentAdapter(
         adapter_id="dut_agent",
         role_type="dut_agent",
         capabilities=(),
-        agent_backend=FakeBackend(),
-        prompt_renderer=ToolDocPrompt(),
+        prompt_renderer=prompt_renderer,
+        executor_ref=executor,
     )
+    trace = object()
     payload = {
         "sample": {
             "messages": [{"role": "user", "content": "hi"}],
             "prompt_context": {"tool_documentation": "DOCS"},
-        }
+        },
+        "trace": trace,
     }
 
     result = asyncio.run(adapter.ainvoke(payload, RoleAdapterState()))
 
-    assert result["system_prompt"].startswith("System:")
-    assert "DOCS" in result["system_prompt"]
+    assert result == {"answer": "runtime"}
+    assert prompt_renderer.render_calls == 0
+    assert executor.calls == [
+        {"sample": payload["sample"], "payload": payload, "trace": trace}
+    ]
 
 
 @pytest.mark.fast
-def test_dut_agent_awaits_async_model_backend_in_current_thread() -> None:
-    wrapped_backend = AsyncModelOnlyBackend()
+def test_dut_agent_ignores_legacy_backend_when_executor_ref_is_present() -> None:
+    executor = RecordingExecutor()
+    backend = FailingLegacyBackend()
     adapter = DUTAgentAdapter(
         adapter_id="dut_agent",
         role_type="dut_agent",
         capabilities=(),
-        agent_backend=ModelBackend({"backend": wrapped_backend}),
+        agent_backend=backend,
+        executor_ref=executor,
     )
     payload = {"sample": {"messages": [{"role": "user", "content": "hi"}]}}
-    observed_thread_ids: list[int] = []
 
-    async def _run() -> None:
-        observed_thread_ids.append(threading.get_ident())
-        result = await adapter.ainvoke(payload, RoleAdapterState())
+    result = asyncio.run(adapter.ainvoke(payload, RoleAdapterState()))
 
-        assert result["answer"] == "ok"
-
-    asyncio.run(_run())
-
-    assert wrapped_backend.thread_id == observed_thread_ids[0]
+    assert result == {"answer": "runtime"}
+    assert backend.invoke_calls == 0
+    assert backend.ainvoke_calls == 0
 
 
 @pytest.mark.fast
-def test_dut_agent_shutdown_releases_backend_and_sandbox_resources() -> None:
-    backend = ShutdownTrackingBackend()
-    sandbox_manager = ShutdownTrackingSandboxManager()
+def test_dut_agent_shutdown_only_releases_executor_resources() -> None:
+    backend = FailingLegacyBackend()
+    adapter_sandbox_manager = ShutdownTrackingSandboxManager()
     executor_sandbox_manager = ShutdownTrackingSandboxManager()
     executor_ref = type(
         "_ExecutorRef",
@@ -116,12 +123,12 @@ def test_dut_agent_shutdown_releases_backend_and_sandbox_resources() -> None:
         role_type="dut_agent",
         capabilities=(),
         agent_backend=backend,
-        sandbox_manager=sandbox_manager,
+        sandbox_manager=adapter_sandbox_manager,
         executor_ref=executor_ref,
     )
 
     adapter.shutdown()
 
-    assert backend.shutdown_calls == 1
-    assert sandbox_manager.shutdown_calls == 1
     assert executor_sandbox_manager.shutdown_calls == 1
+    assert backend.shutdown_calls == 0
+    assert adapter_sandbox_manager.shutdown_calls == 0

@@ -71,8 +71,14 @@ def materialize_pipeline_config_payload(
 ) -> dict[str, Any]:
     """Expand env vars, compile RunConfig payloads, and normalize PipelineConfig payloads."""
 
+    if _is_standalone_agentkit_v2_payload(payload):
+        from gage_eval.config.agentkit_v2 import materialize_agentkit_v2_config_payload
+
+        return materialize_agentkit_v2_config_payload(payload, source_path, cli_intent=cli_intent)
+
     materialized = _materialize_payload(payload, source_path, run_config_compiler)
     intent = cli_intent or CLIIntent()
+    materialized = _lower_agentkit_v2_pipeline_sections(materialized, source_path, intent)
     if smart_defaults:
         materialized = _apply_smart_defaults(materialized, source_path, intent)
     apply_cli_final_overrides(materialized, intent)
@@ -101,12 +107,53 @@ def load_pipeline_config_payload(
 def load_pre_smart_defaults_payload(
     path: Path,
     run_config_compiler: RunConfigCompiler | None = None,
+    *,
+    cli_intent: CLIIntent | None = None,
 ) -> dict[str, Any]:
     """Load a payload for pre-smart-defaults flows without schema normalization."""
 
-    materialized = _materialize_payload(load_yaml_mapping(path), path, run_config_compiler)
+    raw_payload = load_yaml_mapping(path)
+    if _is_standalone_agentkit_v2_payload(raw_payload):
+        from gage_eval.config.agentkit_v2 import materialize_agentkit_v2_config_payload
+
+        return materialize_agentkit_v2_config_payload(raw_payload, path, cli_intent=cli_intent)
+
+    materialized = _materialize_payload(raw_payload, path, run_config_compiler)
     select_smart_defaults_profile(materialized, path)
     return materialized
+
+
+def _lower_agentkit_v2_pipeline_sections(
+    payload: dict[str, Any],
+    source_path: Path | None,
+    cli_intent: CLIIntent,
+) -> dict[str, Any]:
+    """Lower AgentKit v2 sections in executable PipelineConfig payloads.
+
+    Manual E2E configs still run through the existing PipelineConfig runner, but
+    their public configuration surface is the AgentKit v2 split:
+    agents/benchmarks/environments/dut_agents.  This helper generates the thin
+    role_adapters[] execution glue expected by the current runner.
+    """
+
+    if str(payload.get("kind") or "").lower() != "pipelineconfig":
+        return payload
+    if payload.get("role_adapters"):
+        return payload
+    if not all(payload.get(section) for section in ("agents", "benchmarks", "environments", "dut_agents")):
+        return payload
+
+    from gage_eval.config.agentkit_v2 import lower_agentkit_v2_pipeline_payload
+
+    return lower_agentkit_v2_pipeline_payload(payload, source_path=source_path, cli_intent=cli_intent)
+
+
+def _is_standalone_agentkit_v2_payload(payload: dict[str, Any]) -> bool:
+    if str(payload.get("kind") or "").lower() != "pipelineconfig":
+        return False
+    if not all(payload.get(section) for section in ("agents", "benchmarks", "environments", "dut_agents")):
+        return False
+    return not any(payload.get(section) for section in ("datasets", "tasks", "role_adapters"))
 
 
 def _materialize_payload(

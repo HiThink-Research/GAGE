@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -11,7 +11,6 @@ from gage_eval.pipeline.steps._role_borrow import borrow_role_with_optional_cont
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
-from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -35,7 +34,7 @@ class ArenaStep(SampleStep):
         trace: ObservabilityTrace,
         *,
         execution_context: Optional[SampleExecutionContext] = None,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ):
         trace.emit("arena_start", payload={"adapter_id": self._adapter_id})
         logger.debug("Arena step started adapter_id={}", self._adapter_id)

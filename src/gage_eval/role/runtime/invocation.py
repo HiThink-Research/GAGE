@@ -9,7 +9,6 @@ from gage_eval.role.role_instance import ConversationHistory
 
 if TYPE_CHECKING:  # pragma: no cover
     from gage_eval.observability.trace import ObservabilityTrace
-    from gage_eval.sandbox.session_router import SandboxSessionRouter
 
 
 @dataclass
@@ -121,7 +120,7 @@ class SampleExecutionContext:
     task_id: Optional[str] = None
     trace: Optional["ObservabilityTrace"] = None
     session_store: RoleSessionStore = field(default_factory=lambda: RoleSessionStore(sample={}))
-    sandbox_router: Optional["SandboxSessionRouter"] = None
+    sandbox_router: Optional[Any] = None
     sandbox_provider: Optional[Any] = None
     owns_sandbox_provider: bool = False
     route_cache: Dict[str, RuntimeRouteDecision] = field(default_factory=dict)
@@ -171,7 +170,7 @@ class RoleInvocationContext:
     task_id: Optional[str]
     trace: Optional["ObservabilityTrace"]
     session_store: RoleSessionStore
-    sandbox_router: Optional["SandboxSessionRouter"]
+    sandbox_router: Optional[Any]
     default_sandbox_provider: Optional[Any]
     route_cache: Dict[str, RuntimeRouteDecision]
     step_type: str

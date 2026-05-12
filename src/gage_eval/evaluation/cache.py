@@ -220,7 +220,15 @@ class EvalCache:
 
     @staticmethod
     def _sanitize_sample_id(sample_id: str) -> str:
-        return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
+        sanitized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
+        # Truncate if filename exceeds 245 bytes (leave room for .json suffix)
+        if len(sanitized.encode("utf-8")) > 245:
+            import hashlib
+            digest = hashlib.md5(sanitized.encode("utf-8")).hexdigest()[:8]
+            while len(sanitized.encode("utf-8")) > 237:
+                sanitized = sanitized[:-1]
+            sanitized = sanitized + "_" + digest
+        return sanitized
 
     def _get_writer(self, namespace: str) -> BufferedResultWriter:
         with self._writer_lock:

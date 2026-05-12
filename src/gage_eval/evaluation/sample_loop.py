@@ -46,10 +46,7 @@ from gage_eval.role.runtime.invocation import (
     RoleSessionStore,
     SampleExecutionContext,
 )
-from gage_eval.sandbox.manager import SandboxManager
-from gage_eval.sandbox.session_router import SandboxSessionRouter
-from gage_eval.sandbox.provider import SandboxProvider, SandboxScope
-from gage_eval.assets.datasets.sample import Sample, Message, MessageContent
+from gage_eval.assets.datasets.sample import Sample, sample_to_dict
 
 _DEFAULT_SHUFFLE_STRATEGY = "auto"
 _DEFAULT_SHUFFLE_SMALL_DATASET_THRESHOLD = 20_000
@@ -76,7 +73,7 @@ class SampleLoop:
         max_inflight: Optional[int] = None,
         failure_policy: Optional[str] = None,
         report_partial_on_failure: Optional[bool] = None,
-        sandbox_manager: Optional[SandboxManager] = None,
+        sandbox_manager: Optional[Any] = None,
         sandbox_profiles: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         self._samples = samples
@@ -182,9 +179,7 @@ class SampleLoop:
             ),
         }
         self._sandbox_profiles = sandbox_profiles or {}
-        self._sandbox_manager = sandbox_manager or SandboxManager(
-            profiles=self._sandbox_profiles
-        )
+        self._sandbox_manager = sandbox_manager
         logger.info(
             "SampleLoop initialized (shuffle={}, strategy={}, max_samples={}, concurrency={}, streaming={}, task_id={})",
             self._shuffle,
@@ -293,7 +288,7 @@ class SampleLoop:
     def shutdown(self) -> None:
         if self._execution_controller is not None:
             self._execution_controller.shutdown()
-        if self._sandbox_manager:
+        if self._sandbox_manager and hasattr(self._sandbox_manager, "shutdown"):
             self._sandbox_manager.shutdown()
 
     def _execute_plan(
@@ -366,7 +361,7 @@ class SampleLoop:
         trace: ObservabilityTrace,
         sample_identifier: str,
         *,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ) -> SampleExecutionContext:
         return SampleExecutionContext(
             sample=sample,
@@ -375,13 +370,7 @@ class SampleLoop:
             task_id=plan.metadata.get("task_id") or self._task_id,
             trace=trace,
             session_store=RoleSessionStore(sample),
-            sandbox_router=SandboxSessionRouter(
-                self._sandbox_manager,
-                run_id=trace.run_id,
-                task_id=plan.metadata.get("task_id") or self._task_id,
-                sample_id=sample_identifier,
-                trace=trace,
-            ),
+            sandbox_router=None,
             sandbox_provider=sandbox_provider,
             owns_sandbox_provider=sandbox_provider is not None,
         )
@@ -519,7 +508,7 @@ class SampleLoop:
                 ):
                     if self._max_samples is not None and logical_idx >= self._max_samples:
                         break
-                    yield logical_idx, sample
+                    yield logical_idx, _runtime_sample_dict(sample)
                 return
             samples = self._materialize_samples()
             indices = list(range(len(samples)))
@@ -541,13 +530,15 @@ class SampleLoop:
         for idx, sample in enumerate(self._samples):
             if self._max_samples is not None and idx >= self._max_samples:
                 break
-            yield idx, sample
+            yield idx, _runtime_sample_dict(sample)
 
     def _materialize_samples(self) -> List[dict]:
         if self._streaming:
             raise RuntimeError("Cannot materialize streaming datasets")
         if self._materialized_samples is None:
-            self._materialized_samples = list(self._samples)
+            self._materialized_samples = [
+                _runtime_sample_dict(sample) for sample in self._samples
+            ]
             logger.debug(
                 "Materialized {} samples into memory", len(self._materialized_samples)
             )
@@ -675,9 +666,62 @@ class SampleLoop:
         logger.debug(
             "Processing sample logical_idx={} sample_id={}", logical_idx, sample_id
         )
-        self._execute_plan(sample, plan, role_manager, trace, sample_id)
+        try:
+            self._execute_plan(sample, plan, role_manager, trace, sample_id)
+        except Exception as exc:
+            self._persist_failed_sample_artifact(
+                planner=planner,
+                sample=sample,
+                sample_id=sample_id,
+                trace=trace,
+                error=exc,
+            )
+            raise
         with self._processed_lock:
             self._processed_count += 1
+
+    def _persist_failed_sample_artifact(
+        self,
+        *,
+        planner: TaskPlanner,
+        sample: dict,
+        sample_id: str,
+        trace: ObservabilityTrace,
+        error: BaseException,
+    ) -> None:
+        auto_eval_step = planner.get_auto_eval_step()
+        failure = {
+            "failure_code": "persistence.sample_record.missing",
+            "failure_reason": str(error) or error.__class__.__name__,
+            "error_type": error.__class__.__name__,
+            "summary": "Sample failed before normal sample artifact persistence",
+        }
+        trace.emit(
+            "sample.failed",
+            {
+                "task_id": self._task_id,
+                "sample_id": sample_id,
+                **failure,
+            },
+            sample_id=sample_id,
+        )
+        if auto_eval_step is None:
+            return
+        try:
+            auto_eval_step.persist_sample_artifact(
+                sample_id=sample_id,
+                sample=sample,
+                model_output={"runtime_failure": failure},
+                judge_output={"status": "failed", "failure": failure},
+                trace=trace,
+                task_id=self._task_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist fallback sample artifact (task_id={} sample_id={})",
+                self._task_id,
+                sample_id,
+            )
 
     def _preview_sample_id(self, logical_idx: int, sample: dict) -> str:
         return resolve_runtime_sample_id(
@@ -854,22 +898,9 @@ class SampleLoop:
         role_manager: RoleManager,
         trace: ObservabilityTrace,
         sample_identifier: str,
-    ) -> Optional[SandboxProvider]:
-        config, sandbox_adapter_id = self._resolve_sandbox_target(
-            plan, sample, role_manager
-        )
-        if not config:
-            return None
-        arena_id = None
-        if sandbox_adapter_id and sandbox_adapter_id == plan.arena_role:
-            arena_id = f"{sandbox_adapter_id}_{sample_identifier}"
-        scope = SandboxScope(
-            run_id=trace.run_id,
-            task_id=plan.metadata.get("task_id") or self._task_id,
-            sample_id=sample_identifier,
-            arena_id=arena_id,
-        )
-        return SandboxProvider(self._sandbox_manager, config, scope, trace=trace)
+    ) -> Optional[Any]:
+        del plan, sample, role_manager, trace, sample_identifier
+        return None
 
     def _resolve_sandbox_target(
         self,
@@ -885,9 +916,10 @@ class SampleLoop:
         )
         if not adapter_config and not sample_config:
             return None, None
-        return self._sandbox_manager.resolve_config(
-            adapter_config or {}, sample_config
-        ), adapter_id
+        resolved = dict(adapter_config or {})
+        if sample_config:
+            resolved.update(sample_config)
+        return resolved, adapter_id
 
     def _resolve_adapter_sandbox_config(
         self, plan: TaskPlan, role_manager: RoleManager
@@ -930,6 +962,16 @@ def _env_int(var: str) -> Optional[int]:
     except ValueError:
         logger.warning("Invalid integer for {}={}; ignoring override", var, value)
         return None
+
+
+def _runtime_sample_dict(sample: Union[dict, Sample]) -> dict:
+    """Normalize dataset Sample objects before sample-scoped runtime execution."""
+
+    if isinstance(sample, dict):
+        return sample
+    if isinstance(sample, Sample):
+        return sample_to_dict(sample)
+    return dict(sample) if hasattr(sample, "items") else {"sample": sample}
 
 
 def _normalize_shuffle_strategy(value: Optional[str]) -> str:

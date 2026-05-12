@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterator, Optional, Sequence
 
 from loguru import logger
 from gage_eval.role.auto_pool import AutoPoolPlanner, PoolShardPlan
+from gage_eval.role.adapters.base import RoleAdapter
 from gage_eval.role.role_instance import ConversationHistory, Role
 from gage_eval.role.role_pool import RolePool
 from gage_eval.role.resource_profile import ResourceProfile
@@ -33,6 +34,7 @@ from gage_eval.role.runtime.shard_selection import (
 )
 from gage_eval.role.runtime.strategy import RuntimeStrategyFactory
 from gage_eval.role.runtime.sharded_pool import PoolShard, ShardedRolePool
+from gage_eval.external_harness_kits.base import TaskBatchHarnessAdapter
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ class RoleManager:
         self._resource_profile = resource_profile
         self._auto_pool = AutoPoolPlanner()
         self._adapters: Dict[str, Any] = {}
+        self._task_batch_harness_adapters: Dict[str, TaskBatchHarnessAdapter] = {}
         self._backends: Dict[str, Any] = {}
         self._agent_backends: Dict[str, Any] = {}
         self._role_pools: Dict[str, BasePool] = {}
@@ -86,7 +89,15 @@ class RoleManager:
         self._concurrency_hint = concurrency_hint if concurrency_hint and concurrency_hint > 0 else None
 
     def register_role_adapter(self, adapter_id: str, adapter) -> None:
+        self._clear_adapter_routing_state(adapter_id)
         self._adapters[adapter_id] = adapter
+        if _is_task_batch_harness_adapter(adapter):
+            self._task_batch_harness_adapters[adapter_id] = adapter
+            logger.info(
+                "Registered task-batch harness adapter '{}' outside sample invoke pool",
+                adapter_id,
+            )
+            return
 
         # STEP 1: Build the shard plan and apply the optional concurrency hint.
         shard_plans = self._auto_pool.plan_instances(self._resource_profile, adapter)
@@ -185,6 +196,12 @@ class RoleManager:
         self._concurrency_hint = hint
         logger.info("Updated RoleManager concurrency hint to {}", hint)
 
+    def _clear_adapter_routing_state(self, adapter_id: str) -> None:
+        self._task_batch_harness_adapters.pop(adapter_id, None)
+        self._role_pools.pop(adapter_id, None)
+        self._pool_plans.pop(adapter_id, None)
+        self._route_templates.pop(adapter_id, None)
+
     def borrow_role(
         self,
         adapter_id: Optional[str],
@@ -195,6 +212,10 @@ class RoleManager:
             return nullcontext(None)
         pool = self._role_pools.get(adapter_id)
         if pool is None:
+            if adapter_id in self._task_batch_harness_adapters:
+                raise KeyError(
+                    f"Role '{adapter_id}' is a task-batch harness adapter and is not registered for sample invocation"
+                )
             raise KeyError(f"Role '{adapter_id}' is not registered")
         logger.trace("Borrowing role for adapter '{}'", adapter_id)
         lease = pool.acquire()
@@ -310,6 +331,11 @@ class RoleManager:
         """Return a registered adapter by id if available."""
 
         return self._adapters.get(adapter_id)
+
+    def get_task_batch_harness_adapter(self, adapter_id: str):
+        """Return a task-batch harness adapter by id if one is registered."""
+
+        return self._task_batch_harness_adapters.get(adapter_id)
 
     def per_sample_session(self, context) -> Iterator["PerSampleSession"]:
         return PerSampleSession(context, self)
@@ -633,6 +659,20 @@ def _build_composite_pool(
         selection_policy=selection_policy,
         fallback_policy=fallback_policy,
     )
+
+
+def _is_task_batch_harness_adapter(adapter: Any) -> bool:
+    if not isinstance(adapter, RoleAdapter):
+        return False
+    capabilities = {
+        str(capability)
+        for capability in (getattr(adapter, "capabilities", ()) or ())
+    }
+    if "task_batch_harness" in capabilities:
+        return True
+    if "sample_step_harness" in capabilities:
+        return False
+    return isinstance(adapter, TaskBatchHarnessAdapter)
 
 
 class PerSampleSession:

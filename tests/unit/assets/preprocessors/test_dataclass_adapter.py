@@ -30,6 +30,45 @@ class DataclassAdapterTests(unittest.TestCase):
         self.assertEqual(back["id"], "s1")
         self.assertEqual(back["predict_result"][0]["message"]["content"][0]["text"], "A")
 
+    def test_predict_result_agent_trace_roundtrips_and_append_prediction_preserves_it(self):
+        agent_trace = [
+            {
+                "trace_step": 1,
+                "trace_role": "tool",
+                "name": "bash",
+                "input": {"cmd": "pytest"},
+                "output": {"content": "ok"},
+                "status": "success",
+                "latency_ms": 12.5,
+                "timestamp": 1770000000,
+                "turn_index": 0,
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "cost_usd": 0.01,
+            }
+        ]
+        sample = sample_from_dict(
+            {
+                "id": "s-trace",
+                "messages": [],
+                "predict_result": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+                        "agent_trace": agent_trace,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(sample.predict_result[0].agent_trace, agent_trace)
+        self.assertEqual(sample_to_dict(sample)["predict_result"][0]["agent_trace"], agent_trace)
+
+        append_prediction(sample, {"answer": "next", "agent_trace": agent_trace})
+
+        self.assertEqual(sample.predict_result[1].agent_trace, agent_trace)
+        self.assertEqual(sample_to_dict(sample)["predict_result"][1]["agent_trace"], agent_trace)
+
     def test_string_message_content_stays_as_one_fragment(self):
         raw = {
             "id": "s2",

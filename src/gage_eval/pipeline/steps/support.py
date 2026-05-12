@@ -12,7 +12,6 @@ from gage_eval.pipeline.steps._role_borrow import borrow_role_with_optional_cont
 from gage_eval.pipeline.steps.base import SampleStep
 from gage_eval.registry import registry
 from gage_eval.role.runtime.invocation import SampleExecutionContext
-from gage_eval.sandbox.provider import SandboxProvider
 
 
 @registry.asset(
@@ -39,7 +38,7 @@ class SupportStep(SampleStep):
         *,
         support_payload_policy: Optional[Dict[str, Any]] = None,
         execution_context: Optional[SampleExecutionContext] = None,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ) -> None:
         for step in self._steps:
             self._execute_single(
@@ -61,7 +60,7 @@ class SupportStep(SampleStep):
         *,
         support_payload_policy: Optional[Dict[str, Any]] = None,
         execution_context: Optional[SampleExecutionContext] = None,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ) -> None:
         self._execute_single(
             step,
@@ -82,7 +81,7 @@ class SupportStep(SampleStep):
         *,
         support_payload_policy: Optional[Dict[str, Any]] = None,
         execution_context: Optional[SampleExecutionContext] = None,
-        sandbox_provider: Optional[SandboxProvider] = None,
+        sandbox_provider: Optional[Any] = None,
     ) -> None:
         adapter_id = get_step_adapter_id(step)
         slot_id = _resolve_support_slot_id(step, self._steps)

@@ -1,19 +1,41 @@
 from __future__ import annotations
 
 
-def build_resource_plan(runtime_spec, sandbox_config: dict | None = None) -> dict[str, object]:
+from typing import Any
+
+from gage_eval.agent_eval_kits.common import build_environment_resource_plan
+
+
+_APPWORLD_PROFILES = {
+    "appworld_local": {
+        "asset_dir": "src/gage_eval/agent_eval_kits/appworld/environment/docker",
+        "capabilities": {
+            "supports_upload_download": True,
+            "supports_privileged_dind": False,
+        },
+    }
+}
+
+
+def build_resource_plan(
+    runtime_spec,
+    *,
+    environment_profile: dict[str, Any] | None = None,
+    provider_config: dict[str, Any] | None = None,
+    resources: dict[str, Any] | None = None,
+    startup_env: dict[str, Any] | None = None,
+    lifecycle: str | None = None,
+) -> dict[str, object]:
     """Build the AppWorld resource plan."""
 
-    effective = dict(sandbox_config or {})
-    if not effective:
-        effective = {
-            "runtime": "docker",
-            "sandbox_id": runtime_spec.sandbox_profile_id or "appworld_local",
-            "lifecycle": runtime_spec.resource_policy.get("lifecycle") or "per_sample",
-            "runtime_configs": {},
-        }
-    return {
-        "resource_kind": "docker",
-        "sandbox_config": effective,
-        "cleanup_policy": {"mode": "provider_release"},
-    }
+    return build_environment_resource_plan(
+        runtime_spec=runtime_spec,
+        default_provider=str((environment_profile or {}).get("provider") or "docker"),
+        default_profile_id="appworld_local",
+        environment_profiles=_APPWORLD_PROFILES,
+        environment_profile=environment_profile,
+        provider_config=provider_config,
+        resources=resources,
+        startup_env=startup_env,
+        lifecycle=lifecycle,
+    )

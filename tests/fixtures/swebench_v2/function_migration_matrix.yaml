@@ -1,0 +1,236 @@
+functions:
+  _run_with_sandbox:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/executor.py
+    requirement: Use BaseEnvironment or EnvironmentLease only.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_runs_entryscript_through_base_environment
+  _run_direct_docker:
+    v2_owner: deleted/provider smoke
+    requirement: No kit judge Docker SDK fallback.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_module_does_not_import_docker_sdk
+  _resolve_patch:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Resolve model output patch before fallback sources.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_resolve_patch_prefers_model_output_then_submission_patch_then_git_diff
+  _resolve_patch_from_agent_trace:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Resolve submit_patch_tool stdout from agent trace.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_resolve_patch_extracts_submit_patch_tool_stdout_from_trace
+  _extract_tool_stdout:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Extract nested stdout/content/text payloads.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_resolve_patch_extracts_submit_patch_tool_stdout_from_trace
+  _load_submission_patch:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Read /workspace/submission.patch through BaseEnvironment.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_resolve_patch_prefers_model_output_then_submission_patch_then_git_diff
+  _read_submission_patch:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Decode missing file as absent patch.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_missing_patch_returns_stable_failure_code
+  _emit_patch_fallback_event:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Emit trace event for submission.patch and git diff fallback.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_resolve_patch_prefers_model_output_then_submission_patch_then_git_diff
+  _clean_patch_content:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Clean markdown/apply_patch/binary hunks/diff tails.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _extract_code_block:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Prefer diff or patch fenced blocks.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _strip_apply_patch_markers:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Remove apply_patch envelope markers.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _strip_binary_hunks:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Remove binary patch sections.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _normalize_hunk_context_lines:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Add context prefix inside hunks.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _has_diff_markers:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Detect real unified diffs.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _trim_diff_tail:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/patch_extraction.py
+    requirement: Drop prose after diff content.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_clean_patch_content_strips_code_block_apply_patch_binary_hunks_and_tail
+  _create_entryscript:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/executor.py
+    requirement: Generate official entryscript.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_runs_entryscript_through_base_environment
+  _extract_env_exports:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/executor.py
+    requirement: Preserve Dockerfile ENV export extraction.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_entryscript_extracts_env_exports_and_safe_write_command
+  _build_write_command:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/executor.py
+    requirement: Use safe base64 shell write fallback.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_entryscript_extracts_env_exports_and_safe_write_command
+  _load_output_json:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/scoring.py
+    requirement: Parse output.json bytes and invalid output.
+    covered_by:
+      - tests/unit/swebench/test_judge_scoring.py::test_scoring_parses_output_json_and_preserves_test_lists
+  _evaluate_resolution:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/scoring.py
+    requirement: Preserve resolved/fail/pass tests semantics.
+    covered_by:
+      - tests/unit/swebench/test_judge_scoring.py::test_scoring_parses_output_json_and_preserves_test_lists
+  _parse_list:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/scoring.py
+    requirement: Parse list, repr, CSV, newline and scalar values.
+    covered_by:
+      - tests/unit/swebench/test_judge_scoring.py::test_parse_list_supports_legacy_shapes
+  _resolve_instance_id:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/adapters.py
+    requirement: Resolve instance id from metadata or sample id without legacy judge dependency.
+    covered_by:
+      - tests/unit/swebench/test_judge_adapter.py::test_adapter_runs_kit_owned_verifier_and_emits_result_trace
+  _resolve_image_uri:
+    v2_owner: deleted/provider profile
+    requirement: Image selection belongs to environment provider/profile, not kit judge.
+    covered_by:
+      - tests/unit/judge/test_swebench_v2_judge.py::test_kit_owned_judge_modules_do_not_depend_on_legacy_swebench_docker
+  _get_meta:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/adapters.py
+    requirement: Keep sample metadata lookup local and provider-neutral.
+    covered_by:
+      - tests/unit/swebench/test_judge_adapter.py::test_workflow_prepare_failure_maps_failure_code
+  _resolve_run_id:
+    v2_owner: agent_runtime artifact layout
+    requirement: Run id comes from AgentRuntimeSession, not judge host paths.
+    covered_by:
+      - tests/integration/swebench/test_v2_local_docker.py::test_trials_two_smoke_writes_two_trial_artifacts
+  _host_log_dir:
+    v2_owner: agent_runtime artifact layout
+    requirement: Host log path construction is replaced by RuntimeArtifactSink trial layout.
+    covered_by:
+      - tests/integration/swebench/test_v2_local_docker.py::test_trials_two_smoke_writes_two_trial_artifacts
+  _get_docker_client:
+    v2_owner: deleted/provider
+    requirement: Docker SDK ownership moves to environment provider.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_module_does_not_import_docker_sdk
+  _has_image:
+    v2_owner: deleted/provider
+    requirement: Image existence checks are provider smoke/preflight concern.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_module_does_not_import_docker_sdk
+  _safe_lock_name:
+    v2_owner: deleted/provider
+    requirement: Image lock names are outside kit judge.
+    covered_by:
+      - tests/unit/judge/test_swebench_v2_judge.py::test_kit_owned_judge_modules_do_not_depend_on_legacy_swebench_docker
+  _resolve_run_scripts_mount:
+    v2_owner: deleted/provider profile
+    requirement: Mounted run script optimization is not a judge fallback path.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_runs_entryscript_through_base_environment
+  _release_sandbox_provider:
+    v2_owner: deleted/runtime resource manager
+    requirement: Resource release is owned by RuntimeResourceManager.
+    covered_by:
+      - tests/unit/agent_runtime/test_trial_manager.py::test_executor_single_trial_fresh_verifier_acquires_verifier_profile
+  _exec_sandbox_command:
+    v2_owner: deleted/BaseEnvironment.exec
+    requirement: Command execution uses EnvironmentLease/BaseEnvironment.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_runs_entryscript_through_base_environment
+  _SandboxFallback:
+    v2_owner: deleted
+    requirement: No Docker SDK fallback from kit judge.
+    covered_by:
+      - tests/unit/judge/test_swebench_v2_judge.py::test_kit_owned_judge_modules_do_not_depend_on_legacy_swebench_docker
+  _is_missing_file_error:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/executor.py
+    requirement: Missing optional files map to absent payload without provider-specific string matching.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_runs_entryscript_through_base_environment
+  _read_text:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/adapters.py
+    requirement: Run script reads are local file reads only.
+    covered_by:
+      - tests/unit/swebench/test_judge_adapter.py::test_adapter_runs_kit_owned_verifier_and_emits_result_trace
+  _write_text:
+    v2_owner: deleted/BaseEnvironment.write_file
+    requirement: Verifier file writes use BaseEnvironment.write_file.
+    covered_by:
+      - tests/unit/swebench/test_judge_executor.py::test_executor_runs_entryscript_through_base_environment
+  _build_swebench_diagnostics:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/artifacts.py
+    requirement: Emit the 18-field diagnostic payload.
+    covered_by:
+      - tests/unit/swebench/test_artifacts.py::test_persist_swebench_artifacts_surfaces_missing_commands
+  resolve_swebench_failure_category:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/failure_categories.py
+    requirement: Resolve stable SWE-bench failure categories.
+    covered_by:
+      - tests/unit/judge/test_swebench_v2_judge.py::test_failure_categories_cover_swebench_dind_regressions
+  _resolve_prompt_metadata:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/artifacts.py
+    requirement: Prompt metadata is represented by prompt_source and prompt_present diagnostics.
+    covered_by:
+      - tests/unit/swebench/test_artifacts.py::test_persist_swebench_artifacts_surfaces_missing_commands
+  _collect_trace_stats:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/artifacts.py
+    requirement: Collect retry, max output, spillover, protocol and parse stats.
+    covered_by:
+      - tests/unit/swebench/test_artifacts.py::test_persist_swebench_artifacts_surfaces_missing_commands
+  _estimate_tool_output_bytes:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/artifacts.py
+    requirement: Track maximum tool output bytes.
+    covered_by:
+      - tests/unit/swebench/test_artifacts.py::test_persist_swebench_artifacts_surfaces_missing_commands
+  _extract_command_preview:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/artifacts.py
+    requirement: Command context is summarized through recent_errors and missing_commands diagnostics.
+    covered_by:
+      - tests/unit/swebench/test_artifacts.py::test_persist_swebench_artifacts_surfaces_missing_commands
+  _count_artifact_spillovers:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/artifacts.py
+    requirement: Count trace artifact refs as artifact spillovers.
+    covered_by:
+      - tests/unit/swebench/test_artifacts.py::test_persist_swebench_artifacts_surfaces_missing_commands
+  _resolve_trace_failure_category:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/failure_categories.py
+    requirement: Map tool protocol and parse failures to stable categories.
+    covered_by:
+      - tests/unit/judge/test_swebench_v2_judge.py::test_failure_categories_cover_swebench_dind_regressions
+  _is_tool_argument_invalid_output:
+    v2_owner: src/gage_eval/agent_eval_kits/swebench/judge/failure_categories.py
+    requirement: Treat tool argument invalid output as parse_error.
+    covered_by:
+      - tests/unit/judge/test_swebench_v2_judge.py::test_failure_categories_cover_swebench_dind_regressions
+  _read_submission_patch_from_sandbox:
+    v2_owner: deleted/executor bridge
+    requirement: Scheduler-side submission.patch is carried through EnvironmentLease, not sandbox get_handle.
+    covered_by:
+      - tests/unit/agent_runtime/test_trial_manager.py::test_executor_carries_scheduler_submission_patch_into_fresh_verifier
+  _read_git_diff_from_sandbox:
+    v2_owner: deleted/executor bridge
+    requirement: Scheduler-side git diff fallback is carried through EnvironmentLease, not sandbox get_handle.
+    covered_by:
+      - tests/unit/swebench/test_judge_patch_extraction.py::test_resolve_patch_prefers_model_output_then_submission_patch_then_git_diff
