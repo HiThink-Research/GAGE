@@ -1,0 +1,39 @@
+{
+  "id": "ed934e6f-2aec-46f3-8fed-0ec0974b93f2",
+  "started_at": "2026-05-10T16:15:08.005778",
+  "updated_at": "2026-05-10T16:19:08.600015",
+  "finished_at": "2026-05-10T16:19:08.600015",
+  "n_total_trials": 1,
+  "stats": {
+    "n_completed_trials": 1,
+    "n_errored_trials": 0,
+    "n_running_trials": 0,
+    "n_pending_trials": 0,
+    "n_cancelled_trials": 0,
+    "n_retries": 0,
+    "evals": {
+      "terminus-2__qwen/qwen3.5-9b__adhoc": {
+        "n_trials": 1,
+        "n_errors": 0,
+        "metrics": [
+          {
+            "mean": 0
+          }
+        ],
+        "pass_at_k": {},
+        "reward_stats": {
+          "reward": {
+            "0.0": [
+              "gpt2-codegolf__sLkuvPz"
+            ]
+          }
+        },
+        "exception_stats": {}
+      }
+    },
+    "n_input_tokens": 2035,
+    "n_cache_tokens": 0,
+    "n_output_tokens": 317,
+    "cost_usd": null
+  }
+}

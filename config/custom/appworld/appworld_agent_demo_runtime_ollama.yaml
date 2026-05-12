@@ -3,7 +3,7 @@ kind: PipelineConfig
 
 metadata:
   name: appworld_agent_demo_runtime_ollama
-  description: AppWorld runtime-owned demo config backed by an Ollama OpenAI-compatible endpoint.
+  description: AgentKit v2 AppWorld demo backed by an Ollama OpenAI-compatible endpoint.
 
 datasets:
   - dataset_id: appworld_demo
@@ -22,31 +22,52 @@ backends:
       require_api_key: false
       max_retries: 6
 
-sandbox_profiles:
-  - sandbox_id: appworld_local
-    runtime: docker
-    image: appworld-mcp:latest
-    resources:
-      cpu: 2
-      memory: 4g
-    runtime_configs:
-      startup_timeout_s: 180
-      startup_interval_s: 0.5
-      ports: ["8000:8000", "9000:9000", "5001:5001"]
-      platform: linux/amd64
-      network_mode: bridge_host
-      env_endpoint: http://127.0.0.1:8000
-      apis_endpoint: http://127.0.0.1:9000
-      mcp_endpoint: http://127.0.0.1:5001
+agents:
+  - agent_id: appworld_agent
+    scheduler:
+      type: framework_loop
+      backend_id: ollama_openai_http
+      config:
+        max_turns: 16
+        refresh_tool_schemas: true
+        mcp_client_id: appworld_env
+    config: {}
+    tooling:
+      skill_ids: []
+      mcp_servers: []
+
+benchmarks:
+  - benchmark_id: appworld_demo
+    kit_id: appworld
+    config: {}
+
+environments:
+  - env_id: appworld_local
+    provider: docker
+    profile_id: appworld_local
+    lifecycle: per_sample
+    profile:
+      asset_dir: src/gage_eval/agent_eval_kits/appworld/environment/docker
+      metadata:
+        env_endpoint: http://127.0.0.1:8000
+        apis_endpoint: http://127.0.0.1:9000
+        mcp_endpoint: http://127.0.0.1:5001
+    provider_config:
+      image: appworld-mcp:latest
+      network_policy: allow
+      docker_platform: linux/amd64
+      ports:
+        - "8000:8000"
+        - "9000:9000"
+        - "5001:5001"
       wait_for_http_endpoints:
         - http://127.0.0.1:5001/mcp
-      start_container: true
-      entrypoint: /usr/local/bin/appworld
-      env:
-        VIRTUAL_ENV: ""
-        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-      command:
+      startup_timeout_s: 180
+      startup_interval_s: 0.5
+      entrypoint:
+        - /usr/local/bin/appworld
         - serve
+      keepalive_command:
         - multiple
         - --environment
         - "--port 8000"
@@ -56,6 +77,15 @@ sandbox_profiles:
         - "http --port 5001 --output-type structured_data_only"
         - --root
         - /run
+      workdir: /run
+      exec_workdir: /run
+      environment:
+        VIRTUAL_ENV: ""
+        PATH: /usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    resources:
+      cpu: 2
+      memory_gb: 4.0
+      network_policy: allow
 
 mcp_clients:
   - mcp_client_id: appworld_env
@@ -71,41 +101,20 @@ metrics:
   - metric_id: latency
     implementation: latency
 
-role_adapters:
-  - adapter_id: toolchain_main
-    role_type: toolchain
-    mcp_client_id: appworld_env
-    params:
-      tool_doc_enabled: false
-      allow_runtime_owned_tool_docs: false
-
-  - adapter_id: dut_agent_main
-    role_type: dut_agent
-    backend_id: ollama_openai_http
-    agent_runtime_id: appworld_framework_loop
-    sandbox:
-      sandbox_id: appworld_local
-      lifecycle: per_sample
-    params:
-      max_turns: 16
-
-  - adapter_id: appworld_runtime_judge
-    role_type: judge_extend
-    params:
-      implementation: appworld_evaluate
-      implementation_params:
-        appworld_root: /run
+dut_agents:
+  - dut_id: dut_agent_main
+    agent_id: appworld_agent
+    env_id: appworld_local
+    benchmark_id: appworld_demo
+    trial_policy:
+      trials: 1
 
 tasks:
   - task_id: appworld_agent_demo_runtime_ollama
     dataset_id: appworld_demo
     steps:
-      - step: support
-        adapter_id: toolchain_main
       - step: inference
         adapter_id: dut_agent_main
-      - step: judge
-        adapter_id: appworld_runtime_judge
       - step: auto_eval
     concurrency: 1
     max_samples: 2

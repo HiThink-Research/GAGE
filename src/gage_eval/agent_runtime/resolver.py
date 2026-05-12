@@ -36,32 +36,6 @@ from gage_eval.agent_runtime.verifier.binding import JudgeBinding
 
 
 _BUILTIN_RUNTIME_SPECS: dict[str, AgentRuntimeSpec] = {
-    "terminal_bench_installed_client": AgentRuntimeSpec(
-        agent_runtime_id="terminal_bench_installed_client",
-        benchmark_kit_id="terminal_bench",
-        scheduler_type="installed_client",
-        client_id="codex",
-        environment_profile_id="terminal_bench_runtime",
-        resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
-        verifier_binding_id="terminal_bench_native",
-    ),
-    "terminal_bench_framework_loop": AgentRuntimeSpec(
-        agent_runtime_id="terminal_bench_framework_loop",
-        benchmark_kit_id="terminal_bench",
-        scheduler_type="framework_loop",
-        environment_profile_id="terminal_bench_runtime",
-        resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
-        verifier_binding_id="terminal_bench_native",
-    ),
-    "terminal_bench_acp_client": AgentRuntimeSpec(
-        agent_runtime_id="terminal_bench_acp_client",
-        benchmark_kit_id="terminal_bench",
-        scheduler_type="acp_client",
-        client_id="acp",
-        environment_profile_id="terminal_bench_runtime",
-        resource_policy={"resource_kind": "docker", "lifecycle": "per_sample"},
-        verifier_binding_id="terminal_bench_native",
-    ),
     "swebench_installed_client": AgentRuntimeSpec(
         agent_runtime_id="swebench_installed_client",
         benchmark_kit_id="swebench",

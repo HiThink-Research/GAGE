@@ -120,6 +120,24 @@
     },
     {
       "kind": "pipeline_steps",
+      "name": "harbor_result",
+      "module": "gage_eval.pipeline.steps.harbor",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
+      "name": "harbor_run",
+      "module": "gage_eval.pipeline.steps.harbor",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/pipeline/steps/harbor.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "pipeline_steps",
       "name": "inference",
       "module": "gage_eval.pipeline.steps.inference",
       "load_phase": "baseline",
@@ -313,6 +331,15 @@
       "module": "gage_eval.reporting.summary_generators.gomoku",
       "load_phase": "baseline",
       "declared_in": "src/gage_eval/reporting/summary_generators/gomoku.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
+      "name": "harbor_summary",
+      "module": "gage_eval.reporting.summary_generators.harbor",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/harbor.py",
       "aliases": [],
       "optional": false
     },

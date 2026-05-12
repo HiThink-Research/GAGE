@@ -95,6 +95,103 @@ def test_collect_step_sequence_issues_reports_missing_prerequisite() -> None:
 
 
 @pytest.mark.fast
+def test_sample_loop_accepts_builtin_sample_flow_by_default() -> None:
+    issues = collect_step_sequence_issues(
+        [
+            {"step": "support", "adapter_id": "helper"},
+            {"step": "inference", "adapter_id": "dut"},
+            {"step": "judge", "adapter_id": "judge"},
+            {"step": "auto_eval"},
+        ],
+        owner_label="tasks[0].steps",
+        adapter_ids=("helper", "dut", "judge"),
+    )
+
+    assert issues == ()
+
+
+@pytest.mark.fast
+def test_sample_loop_rejects_task_step() -> None:
+    clone = registry.clone()
+    clone.register(
+        "pipeline_steps",
+        "harbor_run",
+        object(),
+        desc="unit task step",
+        step_kind="task",
+    )
+    view = clone.freeze(view_id=f"view-{uuid4().hex}")
+
+    issues = collect_step_sequence_issues(
+        [{"step": "harbor_run"}],
+        owner_label="tasks[0].steps",
+        registry_view=view,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].code == "invalid_step_kind"
+    assert "tasks[0].steps[0]" in issues[0].message
+    assert "harbor_run" in issues[0].message
+    assert "actual kind 'task'" in issues[0].message
+    assert "expected kind 'sample'" in issues[0].message
+
+
+@pytest.mark.fast
+def test_task_batch_harness_rejects_sample_step() -> None:
+    issues = collect_step_sequence_issues(
+        [{"step": "inference", "adapter_id": "dut"}],
+        owner_label="tasks[0].steps",
+        adapter_ids=("dut",),
+        execution_mode="task_batch_harness",
+    )
+
+    assert len(issues) == 1
+    assert issues[0].code == "invalid_step_kind"
+    assert "tasks[0].steps[0]" in issues[0].message
+    assert "inference" in issues[0].message
+    assert "actual kind 'sample'" in issues[0].message
+    assert "expected kind 'task'" in issues[0].message
+
+
+@pytest.mark.fast
+@pytest.mark.parametrize("execution_mode", ("sample_loop", "task_batch_harness"))
+def test_global_step_is_rejected_in_any_task_steps(execution_mode: str) -> None:
+    issues = collect_step_sequence_issues(
+        [{"step": "report"}],
+        owner_label="tasks[0].steps",
+        execution_mode=execution_mode,
+    )
+
+    assert len(issues) == 1
+    assert issues[0].code == "global_step"
+    assert "tasks[0].steps[0]" in issues[0].message
+    assert "report" in issues[0].message
+    assert "actual kind 'global'" in issues[0].message
+
+
+@pytest.mark.fast
+def test_task_batch_harness_accepts_task_step() -> None:
+    clone = registry.clone()
+    clone.register(
+        "pipeline_steps",
+        "harbor_result",
+        object(),
+        desc="unit task step",
+        step_kind="task",
+    )
+    view = clone.freeze(view_id=f"view-{uuid4().hex}")
+
+    issues = collect_step_sequence_issues(
+        [{"step": "harbor_result"}],
+        owner_label="tasks[0].steps",
+        execution_mode="task_batch_harness",
+        registry_view=view,
+    )
+
+    assert issues == ()
+
+
+@pytest.mark.fast
 def test_step_contract_catalog_supports_view_scoped_cache() -> None:
     clone = registry.clone()
     step_name = f"unit_step_{uuid4().hex}"

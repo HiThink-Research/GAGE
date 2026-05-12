@@ -10,7 +10,6 @@ _KIT_MODULES = {
     "swebench": "gage_eval.agent_eval_kits.swebench.kit",
     "skillsbench": "gage_eval.agent_eval_kits.swebench.kit",
     "tau2": "gage_eval.agent_eval_kits.tau2.kit",
-    "terminal_bench": "gage_eval.agent_eval_kits.terminal_bench.kit",
 }
 
 

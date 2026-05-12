@@ -20,6 +20,7 @@ from gage_eval.agent_runtime import build_compiled_runtime_executor, compile_age
 from gage_eval.agent_runtime.resources.contracts import ResourceLease
 from gage_eval.agent_runtime.resources.manager import RuntimeLeaseBinding
 from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome, VerifierInput, VerifierResult
+from gage_eval.environment.contracts import ExecResult
 from gage_eval.environment.lease import EnvironmentLease
 
 
@@ -78,17 +79,26 @@ class _Tau2FrameworkAgent:
 
 class _SwebenchFrameworkAgent:
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        del payload
         return {
-            "answer": "diff --git a/foo b/foo\n",
-            "patch_content": "diff --git a/foo b/foo\n",
-            "agent_trace": [
+            "choices": [
                 {
-                    "trace_step": 1,
-                    "trace_role": "tool",
-                    "name": "submit_patch_tool",
-                    "output": {"stdout": "diff --git a/foo b/foo\n"},
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-submit-patch",
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_patch_tool",
+                                    "arguments": '{"force":true}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
                 }
-            ],
+            ]
         }
 
     def invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -268,15 +278,14 @@ class _FakeTau2Runtime:
         }
 
 
+class _FakeSwebenchRuntime:
+    async def exec(self, command: str, **kwargs: Any) -> ExecResult:
+        del kwargs
+        return ExecResult(command=command, exit_code=0, stdout="diff --git a/foo b/foo\n", stderr="")
+
+
 def _build_sample(agent_runtime_id: str) -> dict[str, Any]:
     sample_id = agent_runtime_id.replace("_", "-")
-    if agent_runtime_id.startswith("terminal_bench"):
-        return {
-            "id": sample_id,
-            "instruction": "say done",
-            "expected_answer": "done",
-            "messages": [{"role": "user", "content": "say done"}],
-        }
     if agent_runtime_id.startswith("swebench"):
         return {
             "id": sample_id,
@@ -348,6 +357,8 @@ def _build_executor(agent_runtime_id: str):
         )
     elif agent_runtime_id.startswith("tau2"):
         sandbox_provider = _StaticProvider(runtime_handle={}, sandbox=_FakeTau2Runtime())
+    elif agent_runtime_id == "swebench_framework_loop":
+        sandbox_provider = _StaticProvider(runtime_handle={}, sandbox=_FakeSwebenchRuntime())
 
     plan = replace(
         plan,
@@ -396,8 +407,6 @@ def _build_executor(agent_runtime_id: str):
 @pytest.mark.parametrize(
     ("agent_runtime_id", "expected_artifact"),
     [
-        ("terminal_bench_installed_client", "artifacts/tool_trace.json"),
-        ("terminal_bench_framework_loop", "artifacts/tool_trace.json"),
         ("swebench_installed_client", None),
         ("swebench_framework_loop", None),
         ("appworld_installed_client", "artifacts/appworld_save.json"),
@@ -449,13 +458,5 @@ def test_phase1_runtime_flow_matrix_smoke(
     if expected_artifact is not None:
         expected_name = Path(expected_artifact).name
         assert any(path.name == expected_name for path in Path(runtime_session["sample_root"]).rglob(expected_name))
-    if agent_runtime_id.startswith("terminal_bench"):
-        artifact_paths = verifier_payload["judge_output"]["artifact_paths"]
-        assert artifact_paths["tool_trace"] == "artifacts/tool_trace.json"
-        assert artifact_paths["stdout"] == "artifacts/stdout.log"
-        assert artifact_paths["stderr"] == "artifacts/stderr.log"
-        assert artifact_paths["workspace_diff"] == "artifacts/workspace_diff.json"
-        if agent_runtime_id.startswith("swebench"):
-            assert verifier_payload["judge_output"]["artifact_paths"]["submission_patch"] == "artifacts/submission.patch"
     if agent_runtime_id.startswith("appworld"):
         assert lifecycle_calls == ["initialize", "save"]

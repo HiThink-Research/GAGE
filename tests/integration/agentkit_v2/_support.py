@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.agent_runtime.artifacts import RuntimeArtifactSink
 from gage_eval.agent_runtime.compiled_plan import CompiledRuntimePlan, SchedulerWorkflowBundle
 from gage_eval.agent_runtime.contracts.scheduler import SchedulerResult
@@ -33,6 +34,20 @@ def read_yaml(path: Path) -> dict[str, Any]:
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     assert isinstance(payload, dict)
     return payload
+
+
+def load_lowered_pipeline_config(path: Path) -> dict[str, Any]:
+    payload = load_pipeline_config_payload(path)
+    assert payload["kind"] == "PipelineConfig"
+    assert payload.get("role_adapters")
+    return payload
+
+
+def role_adapter_by_id(payload: dict[str, Any], adapter_id: str) -> dict[str, Any]:
+    for role_adapter in payload.get("role_adapters") or []:
+        if role_adapter.get("adapter_id") == adapter_id:
+            return role_adapter
+    raise AssertionError(f"role adapter not found: {adapter_id}")
 
 
 class FakeResourceManager:

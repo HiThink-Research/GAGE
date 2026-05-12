@@ -10,13 +10,8 @@ from gage_eval.agent_runtime.compiled_plan import SchedulerWorkflowBundle
 from gage_eval.agent_runtime.resources.contracts import ResourceLease
 from gage_eval.agent_runtime.schedulers.installed_client import InstalledClientScheduler
 from gage_eval.agent_runtime.session import AgentRuntimeSession
-from gage_eval.config.agentkit_v2 import (
-    load_agentkit_v2_config_payload,
-    materialize_agentkit_v2_runtime_config_payload,
-    resolve_agentkit_v2_runtime_binding_specs,
-)
 
-from ._support import REPO_ROOT, read_yaml
+from ._support import REPO_ROOT, load_lowered_pipeline_config, role_adapter_by_id
 
 
 class _CapturingClient:
@@ -32,22 +27,16 @@ class _CapturingClient:
 @pytest.mark.io
 def test_installed_client_docker_config_and_external_handle_only(tmp_path: Path) -> None:
     config_path = REPO_ROOT / "config/custom/swebench_pro/v2_installed_client_docker_smoke.yaml"
-    materialized = load_agentkit_v2_config_payload(config_path)
-    raw_payload = read_yaml(config_path)
-    runtime_config = materialize_agentkit_v2_runtime_config_payload(
-        raw_payload,
-        config_path,
-    )
-    binding = resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )["swebench_installed_client_dut"]
-    assert binding.scheduler_type == "installed_client"
-    assert binding.backend_id is None
-    assert binding.environment_provider == "docker"
-    assert binding.provider_config["workdir"] == "/workspace"
-    assert binding.provider_config["exec_workdir"] == "/app"
-    assert binding.provider_config["network_policy"] == "block"
+    materialized = load_lowered_pipeline_config(config_path)
+    role_adapter = role_adapter_by_id(materialized, "swebench_dut")
+    params = role_adapter["params"]
+
+    assert role_adapter["agent_runtime_id"] == "swebench_framework_loop"
+    assert role_adapter["backend_id"] == "lmstudio_litellm"
+    assert params["environment_profile"]["provider"] == "docker"
+    assert params["provider_config"]["workdir"] == "/workspace"
+    assert params["provider_config"]["exec_workdir"] == "/app"
+    assert params["provider_config"]["network_policy"] == "block"
 
     client = _CapturingClient()
     scheduler = InstalledClientScheduler(client)

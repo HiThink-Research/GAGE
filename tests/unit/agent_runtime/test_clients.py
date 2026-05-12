@@ -13,7 +13,9 @@ from gage_eval.agent_runtime import (
     build_compiled_runtime_executor,
     compile_agent_runtime_plan,
 )
+from gage_eval.agent_runtime.verifier.binding import JudgeBinding
 from gage_eval.agent_runtime.resources.manager import RuntimeLeaseBinding
+from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome, VerifierInput, VerifierResult
 from gage_eval.agent_runtime.clients import (
     LegacyInvokeClientSurface,
     StructuredClientSurfaceAdapter,
@@ -52,8 +54,8 @@ class _BuiltinInstalledClient(_StructuredClient):
 
 
 class _ClientTestEnvironment:
-    env_id = "cid-terminal"
-    name = "terminal-runtime"
+    env_id = "cid-client"
+    name = "client-runtime"
     provider = "docker"
     capabilities = {}
     metadata = {}
@@ -66,7 +68,7 @@ def _docker_resource_plan() -> dict:
     return {
         "resource_kind": "docker",
         "environment_profile": {
-            "profile_id": "terminal_bench_runtime",
+            "profile_id": "swebench_runtime",
             "provider": "docker",
             "config": {},
         },
@@ -75,6 +77,60 @@ def _docker_resource_plan() -> dict:
         "startup_env": {},
         "lifecycle": "per_sample",
     }
+
+
+class _PassingVerifierRunner:
+    def run(
+        self,
+        *,
+        plan,
+        session,
+        sample,
+        scheduler_result,
+        sandbox_provider=None,
+        environment_lease=None,
+    ) -> RuntimeJudgeOutcome:
+        del plan, sandbox_provider, environment_lease
+        verifier_input = VerifierInput(
+            benchmark_kit_id=session.benchmark_kit_id,
+            scheduler_type=session.scheduler_type,
+            sample_id=session.sample_id,
+            sample=sample,
+            scheduler_result=scheduler_result.to_dict(),
+        )
+        payload = {"status": "completed", "resolved": True, "score": 1.0}
+        return RuntimeJudgeOutcome(
+            verifier_input=verifier_input,
+            verifier_result=VerifierResult(status="completed", payload=payload),
+            judge_output=payload,
+            persisted_path=session.artifact_layout["verifier_result"],
+        )
+
+    def build_failed_outcome(self, *, plan, session, sample, failure):
+        raise AssertionError(f"unexpected runtime failure: {failure}")
+
+
+def _swebench_client_sample() -> dict[str, object]:
+    return {
+        "id": "swebench-1",
+        "instruction": "fix the failing test",
+        "messages": [{"role": "user", "content": "fix the failing test"}],
+        "metadata": {
+            "repo": "example/repo",
+            "base_commit": "abc123",
+            "test_command": "pytest -q",
+        },
+    }
+
+
+def _swebench_installed_client_plan():
+    plan = compile_agent_runtime_plan(agent_runtime_id="swebench_installed_client")
+    return replace(
+        plan,
+        judge_binding=JudgeBinding(judge_mode="disabled"),
+        verifier_environment_policy="reuse",
+        verifier_environment_profile_id=None,
+    )
 
 
 def test_build_client_surface_prefers_structured_client_contract() -> None:
@@ -96,7 +152,7 @@ def test_installed_client_runner_uses_setup_then_run(tmp_path, monkeypatch) -> N
         "gage_eval.agent_runtime.clients.builder.instantiate_builtin_client",
         lambda client_id: builtin_client,
     )
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+    plan = _swebench_installed_client_plan()
     plan = replace(plan, resource_plan={})
     client = _StructuredClient()
     executor = build_compiled_runtime_executor(
@@ -105,26 +161,18 @@ def test_installed_client_runner_uses_setup_then_run(tmp_path, monkeypatch) -> N
         installed_client_override=client,
         max_turns=4,
     )
+    executor.verifier_runner = _PassingVerifierRunner()
+    sample = _swebench_client_sample()
 
     result = __import__("asyncio").run(
         executor.aexecute(
-            sample={
-                "id": "terminal-1",
-                "instruction": "say done",
-                "expected_answer": "done",
-                "messages": [{"role": "user", "content": "say done"}],
-            },
+            sample=sample,
             payload={
-                "sample": {
-                    "id": "terminal-1",
-                    "instruction": "say done",
-                    "expected_answer": "done",
-                    "messages": [{"role": "user", "content": "say done"}],
-                },
+                "sample": sample,
                 "execution_context": {
-                    "run_id": "run-terminal",
-                    "task_id": "task-terminal",
-                    "sample_id": "terminal-1",
+                    "run_id": "run-swebench",
+                    "task_id": "task-swebench",
+                    "sample_id": "swebench-1",
                 },
             },
         )
@@ -135,24 +183,24 @@ def test_installed_client_runner_uses_setup_then_run(tmp_path, monkeypatch) -> N
     assert client.setup_calls
     assert client.run_calls
     request, environment = client.run_calls[0]
-    assert request["instruction"].startswith("say done")
-    assert "reply with exactly `done`" in request["instruction"]
+    assert request["instruction"].startswith("fix the failing test")
+    assert "submit_patch_tool" in request["instruction"]
     assert "session" not in request
     assert "sample" not in request
     assert "sandbox_provider" not in request
-    assert request["metadata"]["sample_id"] == "terminal-1"
+    assert request["metadata"]["sample_id"] == "swebench-1"
     assert environment["prepared"] is True
     sample_record = json.loads(
         Path(result["runtime_session"]["runtime_metadata_path"]).read_text(encoding="utf-8")
     )
-    assert sample_record["dut_id"] == "terminal_bench_installed_client"
+    assert sample_record["dut_id"] == "swebench_installed_client"
     assert sample_record["scheduler_result"]["scheduler_type"] == "installed_client"
     assert sample_record["trial_results"][0]["status"] == "completed"
 
 
 def test_legacy_client_surface_receives_flattened_request_payload(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+    plan = _swebench_installed_client_plan()
     plan = replace(plan, resource_plan={})
     client = _LegacyInvokeClient()
     executor = build_compiled_runtime_executor(
@@ -161,26 +209,18 @@ def test_legacy_client_surface_receives_flattened_request_payload(tmp_path, monk
         installed_client_override=client,
         max_turns=4,
     )
+    executor.verifier_runner = _PassingVerifierRunner()
+    sample = _swebench_client_sample()
 
     __import__("asyncio").run(
         executor.aexecute(
-            sample={
-                "id": "terminal-1",
-                "instruction": "say done",
-                "expected_answer": "done",
-                "messages": [{"role": "user", "content": "say done"}],
-            },
+            sample=sample,
             payload={
-                "sample": {
-                    "id": "terminal-1",
-                    "instruction": "say done",
-                    "expected_answer": "done",
-                    "messages": [{"role": "user", "content": "say done"}],
-                },
+                "sample": sample,
                 "execution_context": {
-                    "run_id": "run-terminal",
-                    "task_id": "task-terminal",
-                    "sample_id": "terminal-1",
+                    "run_id": "run-swebench",
+                    "task_id": "task-swebench",
+                    "sample_id": "swebench-1",
                 },
             },
         )
@@ -188,8 +228,8 @@ def test_legacy_client_surface_receives_flattened_request_payload(tmp_path, monk
 
     assert client.payloads
     payload = client.payloads[0]
-    assert payload["instruction"].startswith("say done")
-    assert "reply with exactly `done`" in payload["instruction"]
+    assert payload["instruction"].startswith("fix the failing test")
+    assert "submit_patch_tool" in payload["instruction"]
     assert payload["request"]["instruction"] == payload["instruction"]
     assert payload["environment"]["client_id"] == "codex"
     assert payload["session"].client_id == "codex"
@@ -201,7 +241,7 @@ def test_runtime_executor_passes_sample_environment_overrides_to_resource_manage
         "gage_eval.agent_runtime.clients.builder.instantiate_builtin_client",
         lambda client_id: _BuiltinInstalledClient(),
     )
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+    plan = _swebench_installed_client_plan()
     plan = replace(plan, resource_plan=_docker_resource_plan())
     client = _StructuredClient()
     executor = build_compiled_runtime_executor(
@@ -209,6 +249,7 @@ def test_runtime_executor_passes_sample_environment_overrides_to_resource_manage
         agent_backend=client,
         max_turns=4,
     )
+    executor.verifier_runner = _PassingVerifierRunner()
     captured: dict[str, object] = {}
 
     def fake_acquire(session, *, resource_plan, trace=None, sample=None):
@@ -222,23 +263,15 @@ def test_runtime_executor_passes_sample_environment_overrides_to_resource_manage
     asyncio.run(
         executor.aexecute(
             sample={
-                "id": "terminal-1",
-                "instruction": "say done",
-                "expected_answer": "done",
-                "messages": [{"role": "user", "content": "say done"}],
+                **_swebench_client_sample(),
                 "metadata": {"environment_overrides": {"image_uri": "fake-image:1"}},
             },
             payload={
-                "sample": {
-                    "id": "terminal-1",
-                    "instruction": "say done",
-                    "expected_answer": "done",
-                    "messages": [{"role": "user", "content": "say done"}],
-                },
+                "sample": _swebench_client_sample(),
                 "execution_context": {
-                    "run_id": "run-terminal",
-                    "task_id": "task-terminal",
-                    "sample_id": "terminal-1",
+                    "run_id": "run-swebench",
+                    "task_id": "task-swebench",
+                    "sample_id": "swebench-1",
                 },
             },
         )
@@ -256,7 +289,7 @@ def test_runtime_executor_reuses_payload_environment_lease_without_resource_reac
         "gage_eval.agent_runtime.clients.builder.instantiate_builtin_client",
         lambda client_id: _BuiltinInstalledClient(),
     )
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+    plan = _swebench_installed_client_plan()
     plan = replace(plan, resource_plan=_docker_resource_plan())
     client = _StructuredClient()
     executor = build_compiled_runtime_executor(
@@ -264,40 +297,32 @@ def test_runtime_executor_reuses_payload_environment_lease_without_resource_reac
         agent_backend=client,
         max_turns=4,
     )
+    executor.verifier_runner = _PassingVerifierRunner()
 
     manager = executor.resource_manager
     manager.acquire = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected acquire"))  # type: ignore[method-assign]
     manager.release = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected release"))  # type: ignore[method-assign]
 
     lease = EnvironmentLease(
-        lease_id="env-lease-terminal",
+        lease_id="env-lease-client",
         environment=_ClientTestEnvironment(),
         provider="docker",
-        profile_id="terminal_bench_runtime",
+        profile_id="swebench_runtime",
         lifecycle="per_sample",
         exclusive=True,
     )
+    sample = _swebench_client_sample()
 
     result = asyncio.run(
         executor.aexecute(
-            sample={
-                "id": "terminal-1",
-                "instruction": "say done",
-                "expected_answer": "done",
-                "messages": [{"role": "user", "content": "say done"}],
-            },
+            sample=sample,
             payload={
-                "sample": {
-                    "id": "terminal-1",
-                    "instruction": "say done",
-                    "expected_answer": "done",
-                    "messages": [{"role": "user", "content": "say done"}],
-                },
+                "sample": sample,
                 "environment_lease": lease,
                 "execution_context": {
-                    "run_id": "run-terminal",
-                    "task_id": "task-terminal",
-                    "sample_id": "terminal-1",
+                    "run_id": "run-swebench",
+                    "task_id": "task-swebench",
+                    "sample_id": "swebench-1",
                 },
             },
         )
@@ -307,7 +332,7 @@ def test_runtime_executor_reuses_payload_environment_lease_without_resource_reac
         Path(result["runtime_session"]["runtime_metadata_path"]).read_text(encoding="utf-8")
     )
     descriptor = sample_record["environment_descriptor"]["handle_ref"]["environment_descriptor"]
-    assert descriptor["name"] == "terminal-runtime"
+    assert descriptor["name"] == "client-runtime"
 
 
 def test_compile_runtime_plan_rejects_installed_client_without_client_id(monkeypatch) -> None:
@@ -315,14 +340,14 @@ def test_compile_runtime_plan_rejects_installed_client_without_client_id(monkeyp
 
     def _resolve(agent_runtime_id: str):
         spec = original(agent_runtime_id)
-        if agent_runtime_id != "terminal_bench_installed_client":
+        if agent_runtime_id != "swebench_installed_client":
             return spec
         return replace(spec, client_id=None)
 
     monkeypatch.setattr(resolver_module, "resolve_agent_runtime_spec", _resolve)
 
     with pytest.raises(RuntimeCompileError) as exc_info:
-        compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+        compile_agent_runtime_plan(agent_runtime_id="swebench_installed_client")
 
     assert exc_info.value.diagnostics[0]["code"] == "installed_client_missing_client_id"
 
@@ -334,7 +359,7 @@ def test_runtime_client_source_of_truth_does_not_reintroduce_artifacts_clients()
 
 
 def test_build_executor_resolves_builtin_codex_client_without_override() -> None:
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+    plan = _swebench_installed_client_plan()
     plan = replace(plan, resource_plan=_docker_resource_plan())
     executor = build_compiled_runtime_executor(
         compiled_plan=plan,
@@ -346,7 +371,7 @@ def test_build_executor_resolves_builtin_codex_client_without_override() -> None
 
 
 def test_build_executor_rejects_unknown_installed_client_id() -> None:
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_installed_client")
+    plan = _swebench_installed_client_plan()
     plan = replace(
         plan,
         runtime_spec=replace(plan.runtime_spec, client_id="unknown_client"),

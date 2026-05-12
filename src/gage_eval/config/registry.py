@@ -175,6 +175,14 @@ class ConfigRegistry:
         adapter_cls = self._resolve_role_class(spec)
         lookup = self._registry_lookup()
         adapter_kwargs = dict(spec.params)
+        if spec.role_type == "external_harness":
+            adapter_kwargs = {"params": dict(spec.params)}
+            if spec.backend_id:
+                adapter_kwargs["backend_id"] = spec.backend_id
+            if spec.env_id:
+                adapter_kwargs["env_id"] = spec.env_id
+            if spec.trial_policy is not None:
+                adapter_kwargs["trial_policy"] = spec.trial_policy
         backend_obj: Any = None
         # NOTE: Inline backend takes precedence: when an inline backend is declared,
         # ignore the `backend_id` reference.
@@ -263,7 +271,7 @@ class ConfigRegistry:
 
     def _resolve_role_class(self, spec: RoleAdapterSpec):
         if spec.class_path:
-            module_name, class_name = spec.class_path.rsplit(".", 1)
+            module_name, class_name = _split_class_path(spec.class_path)
             module = importlib.import_module(module_name)
             return getattr(module, class_name)
 
@@ -285,6 +293,7 @@ class ConfigRegistry:
             raise KeyError(
                 f"RoleAdapter '{spec.adapter_id}' must declare class_path or reference a registered role_type"
             ) from exc
+
 
     # ------------------------------------------------------------------
     # Bulk helpers
@@ -436,6 +445,16 @@ class ConfigRegistry:
     # ------------------------------------------------------------------
     # Convenience utilities
     # ------------------------------------------------------------------
+
+
+def _split_class_path(class_path: str) -> tuple[str, str]:
+    if ":" in class_path:
+        module_name, class_name = class_path.split(":", 1)
+    else:
+        module_name, class_name = class_path.rsplit(".", 1)
+    if not module_name or not class_name:
+        raise ValueError(f"Invalid class_path '{class_path}'")
+    return module_name, class_name
 
 
 def _resolve_mcp_client_class(transport: Optional[str]) -> Any:

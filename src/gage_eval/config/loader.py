@@ -71,7 +71,7 @@ def materialize_pipeline_config_payload(
 ) -> dict[str, Any]:
     """Expand env vars, compile RunConfig payloads, and normalize PipelineConfig payloads."""
 
-    if str(payload.get("kind") or "") == "AgentEvalConfig":
+    if _is_standalone_agentkit_v2_payload(payload):
         from gage_eval.config.agentkit_v2 import materialize_agentkit_v2_config_payload
 
         return materialize_agentkit_v2_config_payload(payload, source_path, cli_intent=cli_intent)
@@ -113,7 +113,7 @@ def load_pre_smart_defaults_payload(
     """Load a payload for pre-smart-defaults flows without schema normalization."""
 
     raw_payload = load_yaml_mapping(path)
-    if str(raw_payload.get("kind") or "") == "AgentEvalConfig":
+    if _is_standalone_agentkit_v2_payload(raw_payload):
         from gage_eval.config.agentkit_v2 import materialize_agentkit_v2_config_payload
 
         return materialize_agentkit_v2_config_payload(raw_payload, path, cli_intent=cli_intent)
@@ -146,6 +146,14 @@ def _lower_agentkit_v2_pipeline_sections(
     from gage_eval.config.agentkit_v2 import lower_agentkit_v2_pipeline_payload
 
     return lower_agentkit_v2_pipeline_payload(payload, source_path=source_path, cli_intent=cli_intent)
+
+
+def _is_standalone_agentkit_v2_payload(payload: dict[str, Any]) -> bool:
+    if str(payload.get("kind") or "").lower() != "pipelineconfig":
+        return False
+    if not all(payload.get(section) for section in ("agents", "benchmarks", "environments", "dut_agents")):
+        return False
+    return not any(payload.get(section) for section in ("datasets", "tasks", "role_adapters"))
 
 
 def _materialize_payload(

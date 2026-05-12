@@ -123,11 +123,9 @@ _KNOWN_RUNTIME_SCHEDULER_TYPES = {
     "installed_client": "installed_client",
     "tau2_framework_loop": "framework_loop",
     "swebench_framework_loop": "framework_loop",
-    "terminal_bench_framework_loop": "framework_loop",
     "appworld_framework_loop": "framework_loop",
     "tau2_installed_client": "installed_client",
     "swebench_installed_client": "installed_client",
-    "terminal_bench_installed_client": "installed_client",
     "appworld_installed_client": "installed_client",
 }
 
@@ -203,7 +201,7 @@ def migrate_payload(payload: dict[str, Any]) -> MigrationResult:
     used_dut_ids: set[str] = set()
 
     migrated = {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": _metadata(payload),
         "backends": list(backend_specs.values()),
         "agents": agents,
@@ -344,7 +342,7 @@ def _migrate_pipeline_config_payload(payload: dict[str, Any]) -> MigrationResult
         dut_agents.append(dut)
 
     migrated = {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": _pipeline_metadata(payload),
         "backends": migrated_backends,
         "agents": agents,
@@ -660,8 +658,6 @@ def _infer_pipeline_kit_id(
         return "swebench"
     if "appworld" in haystack:
         return "appworld"
-    if "terminal_bench" in haystack or "terminal-bench" in haystack:
-        return "terminal_bench"
     return "tau2"
 
 
@@ -1605,14 +1601,6 @@ def _infer_placeholder_kit(payload: dict[str, Any]) -> dict[str, Any]:
             "provider": "docker",
             "profile_id": "swebench_runtime",
             "asset_dir": "tests/fixtures/agentkit_v2/swebench",
-        }
-    if "terminal_bench" in haystack or "terminal-bench" in haystack:
-        return {
-            "kit_id": "terminal_bench",
-            "benchmark_config": {},
-            "provider": "docker",
-            "profile_id": "terminal_bench_runtime",
-            "asset_dir": "tests/fixtures/agentkit_v2/terminal_bench",
         }
     if "appworld" in haystack:
         return {

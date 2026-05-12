@@ -148,6 +148,14 @@ def _framework_bundle() -> SchedulerWorkflowBundle:
         bundle_id="tau2.framework_loop",
         benchmark_kit_id="tau2",
         scheduler_type="framework_loop",
+        build_loop_inputs=lambda **kwargs: {
+            "required_tool": None if (kwargs.get("payload") or {}).get("tool_choice") == "none" else "respond",
+            "plain_text_response_tool": "respond",
+            "plain_text_response_argument": "message",
+            "refresh_tool_schemas": True,
+            "tool_text_parser": "tau2",
+            "tool_result_user_message_field": "user_message",
+        },
     )
 
 

@@ -39,8 +39,6 @@ class _McpClient:
 @pytest.mark.parametrize(
     ("agent_runtime_id", "benchmark_kit_id", "scheduler_type", "resource_kind"),
     [
-        ("terminal_bench_installed_client", "terminal_bench", "installed_client", "docker"),
-        ("terminal_bench_framework_loop", "terminal_bench", "framework_loop", "docker"),
         ("swebench_installed_client", "swebench", "installed_client", "docker"),
         ("swebench_framework_loop", "swebench", "framework_loop", "docker"),
         ("appworld_installed_client", "appworld", "installed_client", "docker"),
@@ -68,8 +66,6 @@ def test_phase1_runtime_spec_matrix(
 @pytest.mark.parametrize(
     ("agent_runtime_id", "benchmark_kit_id", "scheduler_type", "resource_kind"),
     [
-        ("terminal_bench_installed_client", "terminal_bench", "installed_client", "docker"),
-        ("terminal_bench_framework_loop", "terminal_bench", "framework_loop", "docker"),
         ("swebench_installed_client", "swebench", "installed_client", "docker"),
         ("swebench_framework_loop", "swebench", "framework_loop", "docker"),
         ("appworld_installed_client", "appworld", "installed_client", "docker"),
@@ -129,8 +125,8 @@ def test_compile_runtime_plan_exposes_diagnostics_when_verifier_binding_is_missi
 
         def resolve_workflow_bundle(self, scheduler_type: str):
             return SchedulerWorkflowBundle(
-                bundle_id=f"terminal_bench.{scheduler_type}",
-                benchmark_kit_id="terminal_bench",
+                bundle_id=f"swebench.{scheduler_type}",
+                benchmark_kit_id="swebench",
                 scheduler_type=scheduler_type,
                 failure_normalizer=lambda **_: {},
             )
@@ -141,11 +137,11 @@ def test_compile_runtime_plan_exposes_diagnostics_when_verifier_binding_is_missi
     monkeypatch.setattr(resolver_module, "load_benchmark_kit", lambda _benchmark_kit_id: _KitStub())
 
     with pytest.raises(RuntimeCompileError) as exc_info:
-        compile_agent_runtime_plan(agent_runtime_id="terminal_bench_framework_loop")
+        compile_agent_runtime_plan(agent_runtime_id="swebench_framework_loop")
 
     assert exc_info.value.diagnostics
     assert exc_info.value.diagnostics[0]["code"] == "verifier_resources_missing"
-    assert exc_info.value.diagnostics[0]["benchmark_kit_id"] == "terminal_bench"
+    assert exc_info.value.diagnostics[0]["benchmark_kit_id"] == "swebench"
 
 
 def test_static_model_backend_adapter_forwards_agent_loop_payload_to_static_backend() -> None:

@@ -1,4 +1,4 @@
-kind: AgentEvalConfig
+kind: PipelineConfig
 metadata:
   name: legacy_agent_numeric_agent_id
 agents:

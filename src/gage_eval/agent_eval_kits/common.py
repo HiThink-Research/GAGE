@@ -180,7 +180,7 @@ def build_agentkit_v2_init_payload(kit_id: str) -> dict[str, Any]:
     env_id = f"{base_id}_env"
 
     return {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": {"name": f"{base_id}-agent-eval"},
         "backends": [
             {

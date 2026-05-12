@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.config.pipeline_config import PipelineConfig
 
 
@@ -12,23 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _load_config(config_path: Path) -> PipelineConfig:
-    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload = load_pipeline_config_payload(config_path)
     return PipelineConfig.from_dict(payload)
 
 
 @pytest.mark.parametrize(
     ("config_relpath", "adapter_id", "agent_runtime_id"),
     [
-        (
-            "config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml",
-            "terminal_agent_main",
-            "terminal_bench_framework_loop",
-        ),
-        (
-            "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
-            "terminal_agent_main",
-            "terminal_bench_installed_client",
-        ),
         (
             "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
             "dut_agent_main",
@@ -76,8 +67,23 @@ def test_phase1_swebench_and_tau2_local_configs_use_agentkit_v2_wrapper(
 @pytest.mark.parametrize(
     "config_relpath",
     [
-        "config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml",
-        "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
+        "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
+        "config/custom/appworld/appworld_agent_demo_installed_client_ollama.yaml",
+    ],
+)
+def test_phase1_appworld_local_configs_use_agentkit_v2_wrapper(config_relpath: str) -> None:
+    payload = yaml.safe_load((REPO_ROOT / config_relpath).read_text(encoding="utf-8"))
+
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert "agent_backends" not in payload
+    assert payload["benchmarks"][0]["kit_id"] == "appworld"
+    assert payload["environments"][0]["provider"] == "docker"
+
+
+@pytest.mark.parametrize(
+    "config_relpath",
+    [
         "config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_installed_client_ollama_local.yaml",
         "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
@@ -99,8 +105,6 @@ def test_phase1_8flow_local_configs_disable_required_api_keys(config_relpath: st
 @pytest.mark.parametrize(
     "config_relpath",
     [
-        "config/custom/terminal_bench/terminal_bench_framework_loop_ollama.yaml",
-        "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_runtime_ollama_local.yaml",
         "config/custom/swebench_pro/swebench_pro_smoke_installed_client_ollama_local.yaml",
         "config/custom/appworld/appworld_agent_demo_runtime_ollama.yaml",
@@ -122,10 +126,6 @@ def test_phase1_8flow_local_configs_pin_ollama_api_key(config_relpath: str) -> N
 @pytest.mark.parametrize(
     ("config_relpath", "adapter_id"),
     [
-        (
-            "config/custom/terminal_bench/terminal_bench_installed_client_ollama.yaml",
-            "terminal_agent_main",
-        ),
         (
             "config/custom/appworld/appworld_agent_demo_installed_client_ollama.yaml",
             "dut_agent_main",

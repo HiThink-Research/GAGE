@@ -8,14 +8,9 @@ import pytest
 
 from gage_eval.agent_eval_kits.tau2.artifacts import persist_tau2_artifacts
 from gage_eval.agent_eval_kits.tau2.judge.bridges import build_tau2_verifier_request
-from gage_eval.config.agentkit_v2 import (
-    load_agentkit_v2_config_payload,
-    materialize_agentkit_v2_runtime_config_payload,
-    resolve_agentkit_v2_runtime_binding_specs,
-)
 from gage_eval.environment.providers.registry import create_default_provider_registry
 
-from ._support import REPO_ROOT, read_yaml
+from ._support import REPO_ROOT, load_lowered_pipeline_config, role_adapter_by_id
 
 
 class _Tau2Runtime:
@@ -37,25 +32,21 @@ class _Tau2Lease:
 def test_tau2_local_process_config_and_artifact_diagnostics(tmp_path: Path) -> None:
     config_path = REPO_ROOT / "config/custom/tau2/v2_tau2_telecom_local_process.yaml"
 
-    materialized = load_agentkit_v2_config_payload(config_path)
-    raw_payload = read_yaml(config_path)
-    runtime_config = materialize_agentkit_v2_runtime_config_payload(
-        raw_payload,
-        config_path,
-    )
-    binding = resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )["tau2_dut"]
+    materialized = load_lowered_pipeline_config(config_path)
+    role_adapter = role_adapter_by_id(materialized, "tau2_dut")
+    params = role_adapter["params"]
 
-    assert binding.environment_provider == "local_process"
-    assert binding.environment_profile["profile_id"] == "tau2-local-process"
-    assert binding.provider_config["respond_tool_name"] == "respond"
+    assert role_adapter["agent_runtime_id"] == "tau2_framework_loop"
+    assert role_adapter["backend_id"] == "lmstudio_litellm"
+    assert role_adapter["prompt_id"] == "dut/tau2@lmstudio"
+    assert params["environment_profile"]["provider"] == "local_process"
+    assert params["environment_profile"]["profile_id"] == "tau2-local-process"
+    assert params["benchmark_config"]["respond_tool_name"] == "respond"
     registry = create_default_provider_registry()
     assert "tau2" not in registry.registered_provider_ids()
     assert registry.get("local_process").__class__.__name__ == "LocalProcessEnvironmentProvider"
-    assert runtime_config["benchmarks"][0]["config"]["domain"] == "telecom"
-    assert runtime_config["dut_agents"][0]["trial_policy"] == {"trials": 1}
+    assert params["benchmark_config"]["domain"] == "telecom"
+    assert materialized["dut_agents"][0]["trial_policy"] == {"trials": 1}
 
     artifacts_dir = tmp_path / "sample" / "artifacts"
     session = SimpleNamespace(artifact_layout={"artifacts_dir": str(artifacts_dir)})

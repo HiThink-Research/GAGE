@@ -381,7 +381,6 @@ def _scan_kit_entry_keywords(
         Path("src/gage_eval/agent_eval_kits/appworld/kit.py"),
         Path("src/gage_eval/agent_eval_kits/swebench/kit.py"),
         Path("src/gage_eval/agent_eval_kits/tau2/kit.py"),
-        Path("src/gage_eval/agent_eval_kits/terminal_bench/kit.py"),
     }:
         return
     try:

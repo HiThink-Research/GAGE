@@ -26,7 +26,10 @@ from gage_eval.environment.providers.docker import (
     DockerEnvironmentProvider,
     DockerMount,
 )
-from gage_eval.environment.providers.docker.provider import _DockerSDKContainerAdapter
+from gage_eval.environment.providers.docker.provider import (
+    _DockerSDKContainerAdapter,
+    _http_endpoint_available,
+)
 
 
 class FakeDockerClient:
@@ -245,6 +248,61 @@ def test_docker_provider_passes_entrypoint_keepalive_and_exec_workdir() -> None:
     assert create_call["entrypoint"] == []
     assert create_call["command"] == ["sleep", "infinity"]
     assert fake_container.exec_calls[0]["cwd"] == "/app"
+
+
+@pytest.mark.fast
+def test_docker_provider_passes_service_ports_and_startup_command() -> None:
+    fake_client = FakeDockerClient()
+    provider = DockerEnvironmentProvider(client=fake_client)
+
+    asyncio.run(
+        _create_environment(
+            provider,
+            DockerEnvironmentConfig(
+                image="appworld-mcp:latest",
+                network_policy="allow",
+                ports=["8000:8000", "9000:9000", "5001:5001"],
+                entrypoint=["/usr/local/bin/appworld", "serve"],
+                keepalive_command=["multiple", "--environment", "--port 8000"],
+                workdir="/run",
+                exec_workdir="/run",
+            ),
+            resources=_resources(network_policy="block"),
+        )
+    )
+
+    create_call = fake_client.create_calls[0]
+    assert create_call["network_policy"] == "allow"
+    assert create_call["network_mode"] == "bridge"
+    assert create_call["ports"] == {"8000/tcp": 8000, "9000/tcp": 9000, "5001/tcp": 5001}
+    assert create_call["entrypoint"] == ["/usr/local/bin/appworld", "serve"]
+    assert create_call["command"] == ["multiple", "--environment", "--port 8000"]
+    assert create_call["working_dir"] == "/run"
+
+
+@pytest.mark.fast
+def test_docker_http_health_probe_accepts_streamable_http_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_urlopen(request, *, timeout: float):
+        captured["headers"] = dict(request.header_items())
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    assert asyncio.run(_http_endpoint_available("http://127.0.0.1:5001/mcp", timeout_s=0.2)) is True
+    assert "text/event-stream" in captured["headers"]["Accept"]
+    assert captured["timeout"] == 0.2
 
 
 @pytest.mark.fast

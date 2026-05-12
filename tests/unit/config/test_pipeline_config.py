@@ -1,6 +1,6 @@
 import pytest
 
-from gage_eval.config.pipeline_config import PipelineConfig
+from gage_eval.config.pipeline_config import EnvironmentSpec, PipelineConfig
 
 
 @pytest.mark.fast
@@ -71,3 +71,48 @@ def test_pipeline_config_preserves_arena_v2_adapter_params() -> None:
     assert params["env"] == "gomoku_standard"
     assert params["scheduler"] == {"binding_id": "turn/default"}
     assert params["runtime_overrides"] == {"board_size": 9}
+
+
+@pytest.mark.fast
+def test_pipeline_config_exposes_environments_as_first_class_section() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
+            "environments": [
+                {
+                    "env_id": "docker_env",
+                    "provider": "docker",
+                    "resources": {"cpus": 2},
+                }
+            ],
+            "role_adapters": [{"adapter_id": "dut", "role_type": "dut_model"}],
+            "custom": {"steps": [{"step": "inference", "adapter_id": "dut"}]},
+        }
+    )
+
+    assert config.environments == (
+        EnvironmentSpec(
+            env_id="docker_env",
+            provider="docker",
+            resources={"cpus": 2},
+        ),
+    )
+    assert config.environments[0].to_dict() == {
+        "env_id": "docker_env",
+        "provider": "docker",
+        "resources": {"cpus": 2},
+    }
+    assert not any(key.startswith("_external_harness_") for key in config.metadata)
+
+
+@pytest.mark.fast
+def test_pipeline_config_allows_static_configs_without_environments() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
+            "role_adapters": [{"adapter_id": "dut", "role_type": "dut_model"}],
+            "custom": {"steps": [{"step": "inference", "adapter_id": "dut"}]},
+        }
+    )
+
+    assert config.environments == ()

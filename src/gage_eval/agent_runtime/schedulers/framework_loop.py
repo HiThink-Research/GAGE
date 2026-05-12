@@ -206,7 +206,11 @@ class FrameworkLoopScheduler:
             if isinstance(prompt_context, dict):
                 session.prompt_context.update(prompt_context)
         tools_failure: FailureEnvelope | None = None
-        should_collect_dynamic_tools = not runtime_tool_registry.entries() or session.benchmark_kit_id in {"tau2", "appworld"}
+        should_collect_dynamic_tools = _should_collect_dynamic_tool_schemas(
+            runtime_tool_registry,
+            payload=payload,
+            loop_payload=loop_payload,
+        )
         if callable(workflow_bundle.inject_tool_schemas) and should_collect_dynamic_tools:
             try:
                 injected_tools = workflow_bundle.inject_tool_schemas(
@@ -478,15 +482,45 @@ def _resolve_runtime_tool_registry(
     )
 
 
+def _should_collect_dynamic_tool_schemas(
+    registry: RuntimeToolRegistry,
+    *,
+    payload: dict[str, Any],
+    loop_payload: dict[str, Any],
+) -> bool:
+    refresh = loop_payload.get("refresh_tool_schemas", payload.get("refresh_tool_schemas"))
+    if refresh is not None:
+        return _coerce_bool(refresh)
+    return not registry.entries()
+
+
+def _effective_loop_config(*, payload: dict[str, Any], loop_payload: dict[str, Any]) -> dict[str, Any]:
+    config = dict(payload or {})
+    for key, value in (loop_payload or {}).items():
+        if key == "messages":
+            continue
+        config[key] = value
+    return config
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off", "none"}
+    return bool(value)
+
+
 def _workflow_prepare_failure_code(
     *,
     session: AgentRuntimeSession,
     workflow_bundle: Any,
     step: str,
 ) -> str:
-    if session.benchmark_kit_id == "swebench":
-        return "input_projection.workflow.prepare_failed"
-    return f"input_projection.prepare_inputs.{workflow_bundle.bundle_id}.{step}_failed"
+    del session, workflow_bundle, step
+    return "input_projection.workflow.prepare_failed"
 
 
 def _register_raw_tool_schemas(
@@ -564,11 +598,12 @@ async def _run_runtime_tooling_loop(
     answer = ""
     sink = _resolve_artifact_sink(session=session, payload=payload)
     trial_id = _resolve_trial_id(session=session, payload=payload)
-    required_tool = _required_tool_name(session=session, tools=tools, payload=payload, loop_payload=loop_payload)
+    loop_config = _effective_loop_config(payload=payload, loop_payload=loop_payload)
+    required_tool = _required_tool_name(tools=tools, config=loop_config)
     max_observation_chars = _resolve_max_observation_chars(payload=payload, loop_payload=loop_payload)
     cost_limit_usd = _resolve_cost_limit_usd(payload=payload, loop_payload=loop_payload)
     total_cost_usd = 0.0
-    retry_budget = int(payload.get("tool_call_retry_budget") or loop_payload.get("tool_call_retry_budget") or 3)
+    retry_budget = int(loop_config.get("tool_call_retry_budget") or 3)
     retry_count = 0
 
     for turn_index in range(1, max(1, int(max_turns)) + 1):
@@ -640,8 +675,7 @@ async def _run_runtime_tooling_loop(
             adapter,
             raw_response,
             backend=backend,
-            session=session,
-            payload=payload,
+            payload=loop_config,
             tools=tools,
             turn_index=turn_index,
         )
@@ -661,9 +695,8 @@ async def _run_runtime_tooling_loop(
         )
         if not tool_calls:
             answer = adapter.extract_final_answer(raw_response)
-            if _should_implicit_tau2_respond(
-                session=session,
-                payload=payload,
+            if _should_implicit_plain_text_response(
+                config=loop_config,
                 backend=backend,
                 required_tool=required_tool,
                 answer=answer,
@@ -682,7 +715,12 @@ async def _run_runtime_tooling_loop(
                         turn_index=turn_index,
                     )
                 )
-                implicit_call = _implicit_tau2_respond_call(answer, turn_index=turn_index)
+                implicit_call = _implicit_plain_text_tool_call(
+                    answer,
+                    turn_index=turn_index,
+                    config=loop_config,
+                    required_tool=required_tool,
+                )
                 tool_result = await _dispatch_runtime_tool_call(
                     call=implicit_call,
                     tool_router=tool_router,
@@ -714,9 +752,10 @@ async def _run_runtime_tooling_loop(
                         "usage": usage,
                         "artifacts": [],
                     }
-                _append_tau2_user_message_from_tool_result(
+                _append_user_message_from_tool_result(
                     messages=messages,
                     tool_result=tool_result,
+                    config=loop_config,
                     sink=sink,
                     session=session,
                     trial_id=trial_id,
@@ -805,9 +844,10 @@ async def _run_runtime_tooling_loop(
                     "usage": usage,
                     "artifacts": [],
                 }
-            _append_tau2_user_message_from_tool_result(
+            _append_user_message_from_tool_result(
                 messages=messages,
                 tool_result=tool_result,
+                config=loop_config,
                 sink=sink,
                 session=session,
                 trial_id=trial_id,
@@ -1111,7 +1151,8 @@ def _terminal_final_answer(output: Any) -> str | None:
     value = output.get("final_answer")
     if value is None:
         return None
-    if output.get("error") == "tau2_simulation_terminated" or str(value) == "simulation_terminated":
+    error = str(output.get("error") or "")
+    if error == "simulation_terminated" or error.endswith("_simulation_terminated") or str(value) == "simulation_terminated":
         return str(value)
     return None
 
@@ -1134,38 +1175,57 @@ def _tool_result_failure_code(tool_result: ToolResultIR) -> str:
     return "client_execution.tool_router.failed"
 
 
-def _should_implicit_tau2_respond(
+def _should_implicit_plain_text_response(
     *,
-    session: AgentRuntimeSession,
-    payload: dict[str, Any],
+    config: dict[str, Any],
     backend: Any,
     required_tool: str | None,
     answer: str,
 ) -> bool:
-    if session.benchmark_kit_id != "tau2" or required_tool != "respond" or not bool(str(answer or "").strip()):
+    response_tool = _plain_text_response_tool(config=config, required_tool=required_tool)
+    if not response_tool or required_tool != response_tool or not bool(str(answer or "").strip()):
         return False
     allowlist = _normalize_string_set(
-        payload.get("plain_text_response_formats") or payload.get("plain_text_wrapper_formats")
+        config.get("plain_text_response_formats") or config.get("plain_text_wrapper_formats")
     )
     if not allowlist:
         return True
-    return _effective_tau2_tool_dialect(payload=payload, backend=backend) in allowlist
+    return _effective_tau2_tool_dialect(payload=config, backend=backend) in allowlist
 
 
-def _implicit_tau2_respond_call(answer: str, *, turn_index: int) -> ToolCallIR:
+def _implicit_plain_text_tool_call(
+    answer: str,
+    *,
+    turn_index: int,
+    config: dict[str, Any],
+    required_tool: str | None,
+) -> ToolCallIR:
+    tool_name = _plain_text_response_tool(config=config, required_tool=required_tool) or required_tool or "respond"
+    argument_name = str(
+        config.get("plain_text_response_argument")
+        or config.get("plain_text_wrapper_argument")
+        or "message"
+    )
     return ToolCallIR.from_provider_call(
         {
             "id": f"implicit_respond_{turn_index}",
             "type": "function",
             "function": {
-                "name": "respond",
-                "arguments": {"message": _strip_think_tail(str(answer or ""))},
+                "name": tool_name,
+                "arguments": {argument_name: _strip_think_tail(str(answer or ""))},
             },
         },
         turn_index=turn_index,
         call_index=1,
-        provider="tau2_plain_text",
+        provider="plain_text_response",
     )
+
+
+def _plain_text_response_tool(*, config: dict[str, Any], required_tool: str | None) -> str | None:
+    explicit = config.get("plain_text_response_tool") or config.get("plain_text_wrapper_tool")
+    if explicit:
+        return str(explicit)
+    return required_tool if config.get("plain_text_response_formats") or config.get("plain_text_wrapper_formats") else None
 
 
 def _strip_think_tail(answer: str) -> str:
@@ -1179,21 +1239,23 @@ def _assistant_text_message(answer: str) -> dict[str, Any]:
     return {"role": "assistant", "content": str(answer or "")}
 
 
-def _append_tau2_user_message_from_tool_result(
+def _append_user_message_from_tool_result(
     *,
     messages: list[dict[str, Any]],
     tool_result: ToolResultIR,
+    config: dict[str, Any],
     sink: Any | None,
     session: AgentRuntimeSession,
     trial_id: str,
     turn_index: int,
 ) -> bool:
-    if session.benchmark_kit_id != "tau2":
+    field_name = config.get("tool_result_user_message_field") or config.get("user_message_field")
+    if not field_name:
         return False
     output = tool_result.output_json
-    if not isinstance(output, dict) or output.get("user_message") is None:
+    if not isinstance(output, dict) or output.get(str(field_name)) is None:
         return False
-    user_message = {"role": "user", "content": str(output.get("user_message") or "")}
+    user_message = {"role": "user", "content": str(output.get(str(field_name)) or "")}
     messages.append(user_message)
     _append_tooling_trace(
         sink=sink,
@@ -1212,27 +1274,22 @@ def _append_tau2_user_message_from_tool_result(
 
 def _required_tool_name(
     *,
-    session: AgentRuntimeSession,
     tools: list[dict[str, Any]],
-    payload: dict[str, Any],
-    loop_payload: dict[str, Any],
+    config: dict[str, Any],
 ) -> str | None:
-    explicit = payload.get("required_tool") or loop_payload.get("required_tool")
+    explicit = config.get("required_tool")
     if explicit:
         return str(explicit)
-    if session.benchmark_kit_id != "tau2":
-        return None
-    tool_choice = payload.get("tool_choice") or loop_payload.get("tool_choice")
+    tool_choice = config.get("tool_choice")
     if tool_choice in {"none", None}:
-        return None if tool_choice == "none" else "respond"
+        return None
     if isinstance(tool_choice, dict):
         function = tool_choice.get("function")
         if isinstance(function, dict) and function.get("name"):
             return str(function["name"])
-    for tool in tools:
-        function = tool.get("function") if isinstance(tool.get("function"), dict) else {}
-        if function.get("name") == "respond":
-            return "respond"
+    tool_name = config.get("plain_text_response_tool") or config.get("plain_text_wrapper_tool")
+    if tool_name and str(tool_name) in _declared_tool_names(tools):
+        return str(tool_name)
     return None
 
 
@@ -1257,7 +1314,6 @@ def _extract_runtime_tool_calls(
     raw_response: Any,
     *,
     backend: Any,
-    session: AgentRuntimeSession,
     payload: dict[str, Any],
     tools: list[dict[str, Any]],
     turn_index: int,
@@ -1265,12 +1321,12 @@ def _extract_runtime_tool_calls(
     try:
         calls = adapter.extract_tool_calls(raw_response, turn_index=turn_index)
     except ToolingError:
-        if not _should_parse_tau2_dialect(session=session, payload=payload):
+        if not _should_parse_tool_text_dialect(payload=payload):
             raise
         calls = []
     if calls:
         return _filter_tool_calls_by_schema(calls, tools)
-    if not _should_parse_tau2_dialect(session=session, payload=payload):
+    if not _should_parse_tool_text_dialect(payload=payload):
         return []
 
     parser = Tau2ToolDialectParser()
@@ -1369,12 +1425,15 @@ def _declared_tool_names(tools: list[dict[str, Any]]) -> set[str]:
     return names
 
 
-def _should_parse_tau2_dialect(*, session: AgentRuntimeSession, payload: dict[str, Any]) -> bool:
-    return session.benchmark_kit_id == "tau2" or bool(
+def _should_parse_tool_text_dialect(*, payload: dict[str, Any]) -> bool:
+    parser = str(payload.get("tool_text_parser") or "").strip().lower()
+    return parser in {"tau2", "tau2_tool_dialect"} or bool(
         payload.get("tool_dialect")
         or payload.get("tooling_dialect")
         or payload.get("tool_call_format")
         or payload.get("tool_format")
+        or payload.get("plain_text_response_tool")
+        or payload.get("plain_text_wrapper_tool")
     )
 
 

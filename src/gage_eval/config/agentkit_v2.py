@@ -95,6 +95,7 @@ _LEGACY_TOP_LEVEL_KEYS = {
     "agent_backends",
     "agent_backend_id",
     "benchmark_configs",
+    "sandbox_profiles",
     "sandbox_profile_id",
     "kit",
     "scheduler",
@@ -201,7 +202,7 @@ class DutAgentSpec(_StrictModel):
 
 
 class AgentkitV2ConfigModel(_StrictModel):
-    kind: Literal["AgentEvalConfig"]
+    kind: Literal["PipelineConfig"]
     metadata: dict[str, Any] = Field(default_factory=dict)
     backends: list[BackendSpec]
     agents: list[AgentSpec]
@@ -500,7 +501,7 @@ def lower_agentkit_v2_pipeline_payload(
     """
 
     v2_payload = {
-        "kind": "AgentEvalConfig",
+        "kind": "PipelineConfig",
         "metadata": deepcopy(payload.get("metadata") or {}),
         "backends": deepcopy(payload.get("backends") or []),
         "agents": deepcopy(payload.get("agents") or []),
@@ -588,8 +589,14 @@ def _role_adapter_from_v2_binding(
         "tool_format",
         "plain_text_response_tool",
         "plain_text_wrapper_tool",
+        "plain_text_response_argument",
+        "plain_text_wrapper_argument",
         "plain_text_response_formats",
         "plain_text_wrapper_formats",
+        "refresh_tool_schemas",
+        "tool_text_parser",
+        "tool_result_user_message_field",
+        "mcp_client_id",
     ):
         if key in scheduler_config:
             params[key] = scheduler_config[key]

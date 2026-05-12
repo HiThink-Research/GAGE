@@ -18,6 +18,7 @@ from gage_eval.agent_runtime.tooling.contracts import ToolExecutionContext, Tool
 from gage_eval.agent_runtime.tooling.mcp.client import McpServerProcess
 from gage_eval.agent_runtime.tooling.registry import RuntimeToolRegistry
 from gage_eval.agent_runtime.tooling.router import ToolRouter
+from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome, VerifierInput, VerifierResult
 from gage_eval.agent_eval_kits.tau2.tools import build_tool_registry as build_tau2_tool_registry
 from gage_eval.environment.contracts import ExecResult
 from gage_eval.environment.lease import EnvironmentLease
@@ -342,6 +343,37 @@ class _FakeEnvironmentManager:
         await lease.environment.stop(delete=True)
 
 
+class _PassingVerifierRunner:
+    def run(
+        self,
+        *,
+        plan,
+        session,
+        sample,
+        scheduler_result,
+        sandbox_provider=None,
+        environment_lease=None,
+    ) -> RuntimeJudgeOutcome:
+        del plan, sandbox_provider, environment_lease
+        payload = {"status": "completed", "resolved": True, "score": 1.0}
+        verifier_input = VerifierInput(
+            benchmark_kit_id=session.benchmark_kit_id,
+            scheduler_type=session.scheduler_type,
+            sample_id=session.sample_id,
+            sample=sample,
+            scheduler_result=scheduler_result.to_dict(),
+        )
+        return RuntimeJudgeOutcome(
+            verifier_input=verifier_input,
+            verifier_result=VerifierResult(status="completed", payload=payload),
+            judge_output=payload,
+            persisted_path=session.artifact_layout["verifier_result"],
+        )
+
+    def build_failed_outcome(self, *, plan, session, sample, failure):
+        raise AssertionError(f"unexpected runtime failure: {failure}")
+
+
 def test_framework_loop_uses_tool_ir_router_and_injects_provider_tool_result() -> None:
     dispatches: list[tuple[dict[str, Any], ToolExecutionContext]] = []
     registry = RuntimeToolRegistry()
@@ -479,6 +511,53 @@ def test_framework_loop_dynamic_workflow_tools_are_registered_then_runtime_loop_
     assert registry.get("legacy") is not None
 
 
+def test_framework_loop_refreshes_dynamic_tools_when_workflow_requests_it() -> None:
+    registry = RuntimeToolRegistry()
+    registry.register_local_function(
+        ToolSchemaIR(
+            name="existing",
+            description="Existing tool",
+            input_schema={"type": "object"},
+            raw_schema={"name": "existing"},
+        ),
+        lambda arguments, context: {"existing": True},
+    )
+    backend = _FinalBackend()
+    scheduler = FrameworkLoopScheduler(
+        backend=backend,
+        tool_router=ToolRouter(registry),
+        tool_registry=registry,
+        max_turns=1,
+    )
+
+    result = asyncio.run(
+        scheduler.arun(
+            session=_session(),
+            sample={"messages": [{"role": "user", "content": "hi"}]},
+            payload={},
+            workflow_bundle=_bundle(
+                build_loop_inputs=lambda **_: {"refresh_tool_schemas": True},
+                inject_tool_schemas=lambda **_: [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "dynamic",
+                            "description": "Dynamic tool",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            ),
+            sandbox_provider=None,
+        )
+    )
+
+    assert result.status == "completed"
+    assert registry.get("existing") is not None
+    assert registry.get("dynamic") is not None
+    assert [tool["function"]["name"] for tool in backend.payloads[0]["tools"]] == ["existing", "dynamic"]
+
+
 def test_framework_loop_dynamic_mcp_schema_registers_matching_client_without_overwriting() -> None:
     registry = RuntimeToolRegistry()
     registry.register_local_function(
@@ -506,6 +585,7 @@ def test_framework_loop_dynamic_mcp_schema_registers_matching_client_without_ove
             sample={"messages": [{"role": "user", "content": "hi"}]},
             payload={},
             workflow_bundle=_bundle(
+                build_loop_inputs=lambda **_: {"refresh_tool_schemas": True},
                 inject_tool_schemas=lambda **_: [
                     {
                         "name": "app__api",
@@ -591,7 +671,14 @@ def test_compiled_executor_passes_environment_lease_and_artifact_sink_to_framewo
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_framework_loop")
+    plan = compile_agent_runtime_plan(agent_runtime_id="swebench_framework_loop")
+    plan = replace(
+        plan,
+        workflow_bundle=_bundle(benchmark_kit_id="swebench"),
+        resource_plan=_resource_plan_without_provider_config_resolver(plan),
+        verifier_environment_policy="reuse",
+        verifier_environment_profile_id=None,
+    )
     backend = _RunShellBackend()
     environment_manager = _FakeEnvironmentManager()
     executor = build_compiled_runtime_executor(
@@ -599,6 +686,7 @@ def test_compiled_executor_passes_environment_lease_and_artifact_sink_to_framewo
         static_model_backend=backend,
         environment_manager=environment_manager,
     )
+    executor.verifier_runner = _PassingVerifierRunner()
 
     output = asyncio.run(
         executor.aexecute(
@@ -660,9 +748,11 @@ def test_compiled_executor_resets_and_binds_mcp_process_for_trial(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("GAGE_EVAL_SAVE_DIR", str(tmp_path))
-    plan = compile_agent_runtime_plan(agent_runtime_id="terminal_bench_framework_loop")
+    plan = compile_agent_runtime_plan(agent_runtime_id="swebench_framework_loop")
     plan = replace(
         plan,
+        workflow_bundle=_bundle(benchmark_kit_id="swebench"),
+        resource_plan=_resource_plan_without_provider_config_resolver(plan),
         agent_config={"tooling": {"mcp_servers": ["local_mcp"]}},
         judge_binding=replace(plan.judge_binding, judge_mode="disabled"),
     )
@@ -1086,10 +1176,8 @@ def test_framework_loop_source_does_not_import_or_construct_legacy_agent_loop() 
 
 def test_compiled_framework_loop_plans_have_kit_tool_registry_entries() -> None:
     expected = {
-        "terminal_bench_framework_loop": {"run_shell"},
         "swebench_framework_loop": {"run_shell", "submit_patch_tool"},
         "tau2_framework_loop": {"respond"},
-        "appworld_framework_loop": {"run_shell"},
     }
 
     for runtime_id, expected_names in expected.items():
@@ -1101,7 +1189,7 @@ def test_compiled_framework_loop_plans_have_kit_tool_registry_entries() -> None:
 
 def test_resolver_builds_runtime_framework_loop_with_new_tool_router() -> None:
     registry = RuntimeToolRegistry()
-    plan = replace(compile_agent_runtime_plan(agent_runtime_id="terminal_bench_framework_loop"), tool_registry=registry)
+    plan = replace(compile_agent_runtime_plan(agent_runtime_id="swebench_framework_loop"), tool_registry=registry)
 
     executor = build_compiled_runtime_executor(compiled_plan=plan, agent_backend=_FinalBackend())
 
@@ -1120,6 +1208,12 @@ def _record_dispatch(
     return {"echo": arguments["text"]}
 
 
+def _resource_plan_without_provider_config_resolver(plan) -> dict[str, Any]:
+    resource_plan = dict(plan.resource_plan or {})
+    resource_plan.pop("provider_config_resolver", None)
+    return resource_plan
+
+
 def _record_tau2_arguments(arguments: dict[str, Any], observed_arguments: list[dict[str, Any]]) -> dict[str, Any]:
     observed_arguments.append(dict(arguments))
     return {"ok": True}
@@ -1132,6 +1226,17 @@ def _bundle(**overrides: Any) -> SchedulerWorkflowBundle:
         "scheduler_type": "framework_loop",
     }
     values.update(overrides)
+    if values["benchmark_kit_id"] == "tau2" and "build_loop_inputs" not in overrides:
+        values["build_loop_inputs"] = lambda **kwargs: {
+            "required_tool": None if (kwargs.get("payload") or {}).get("tool_choice") == "none" else "respond",
+            "plain_text_response_tool": "respond",
+            "plain_text_response_argument": "message",
+            "refresh_tool_schemas": True,
+            "tool_text_parser": "tau2",
+            "tool_result_user_message_field": "user_message",
+        }
+    if values["benchmark_kit_id"] == "appworld" and "build_loop_inputs" not in overrides:
+        values["build_loop_inputs"] = lambda **_: {"refresh_tool_schemas": True}
     return SchedulerWorkflowBundle(**values)
 
 

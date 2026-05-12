@@ -45,7 +45,7 @@ def test_agentkit_v2_init_swebench_generates_five_section_yaml(
 ) -> None:
     payload = _run_init(monkeypatch, capsys, "swebench")
 
-    assert payload["kind"] == "AgentEvalConfig"
+    assert payload["kind"] == "PipelineConfig"
     assert {"backends", "agents", "benchmarks", "environments", "dut_agents"}.issubset(payload)
     assert all(isinstance(payload[section], list) and payload[section] for section in (
         "backends",

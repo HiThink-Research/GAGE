@@ -6,29 +6,41 @@ import pytest
 import yaml
 
 from gage_eval.agent_runtime.schedulers.framework_loop import StaticModelBackendAdapter
+from gage_eval.config.loader import load_pipeline_config_payload
 from gage_eval.config.registry import ConfigRegistry
 from gage_eval.config.pipeline_builder import PipelineConfigBuildError
 from gage_eval.config.pipeline_config import PipelineConfig
 
 
 def _load_config(path: Path) -> PipelineConfig:
-    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload = load_pipeline_config_payload(path)
     return PipelineConfig.from_dict(payload)
 
 
 def test_appworld_runtime_config_parses() -> None:
-    config = _load_config(
+    config_path = (
         Path(__file__).resolve().parents[3]
         / "config"
         / "custom"
         / "appworld"
         / "appworld_agent_demo_runtime.yaml"
     )
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert "agent_backends" not in payload
+    assert payload["agents"][0]["scheduler"]["type"] == "framework_loop"
+    assert payload["benchmarks"][0]["kit_id"] == "appworld"
+    assert payload["environments"][0]["provider"] == "docker"
+
+    config = _load_config(config_path)
 
     dut_agent = next(spec for spec in config.role_adapters if spec.adapter_id == "dut_agent_main")
     assert dut_agent.agent_runtime_id == "appworld_framework_loop"
     assert dut_agent.params.get("pre_hooks") is None
     assert dut_agent.params.get("post_hooks") is None
+    assert dut_agent.params["provider_config"]["image"] == "appworld-mcp:latest"
+    assert dut_agent.params["environment_profile"]["metadata"]["mcp_endpoint"] == "http://127.0.0.1:5001"
 
 
 def test_tau2_runtime_config_drops_bootstrap_support() -> None:
@@ -48,32 +60,32 @@ def test_tau2_runtime_config_drops_bootstrap_support() -> None:
     assert payload["environments"][0]["provider"] == "local_process"
 
 
-def test_terminal_and_skillsbench_runtime_smokes_parse() -> None:
+def test_skillsbench_runtime_smoke_parses() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
-    terminal = _load_config(base / "terminal_bench" / "terminal_bench_smoke_runtime.yaml")
     skills = _load_config(base / "skillsbench" / "skillsbench_smoke_runtime.yaml")
 
-    terminal_agent = next(spec for spec in terminal.role_adapters if spec.adapter_id == "terminal_agent_main")
     skills_agent = next(spec for spec in skills.role_adapters if spec.adapter_id == "skillsbench_agent_main")
-    assert terminal_agent.agent_runtime_id == "terminal_bench_framework_loop"
     assert skills_agent.agent_runtime_id == "skillsbench_framework_loop"
 
 
 def test_builtin_codex_installed_client_configs_parse_without_agent_backend() -> None:
     base = Path(__file__).resolve().parents[3] / "config" / "custom"
-    terminal = _load_config(
-        base / "terminal_bench" / "terminal_bench_installed_client_codex.yaml"
+    payload = yaml.safe_load(
+        (base / "appworld" / "appworld_agent_demo_installed_client_codex.yaml").read_text(
+            encoding="utf-8"
+        )
     )
+    assert "role_adapters" not in payload
+    assert "sandbox_profiles" not in payload
+    assert payload["agents"][0]["scheduler"]["type"] == "installed_client"
+
     appworld = _load_config(
         base / "appworld" / "appworld_agent_demo_installed_client_codex.yaml"
     )
 
-    terminal_agent = next(spec for spec in terminal.role_adapters if spec.adapter_id == "terminal_agent_main")
     appworld_agent = next(spec for spec in appworld.role_adapters if spec.adapter_id == "dut_agent_main")
 
-    assert terminal_agent.agent_runtime_id == "terminal_bench_installed_client"
     assert appworld_agent.agent_runtime_id == "appworld_installed_client"
-    assert terminal_agent.agent_backend_id is None
     assert appworld_agent.agent_backend_id is None
 
 
@@ -154,7 +166,7 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
             {
                 "dataset_id": "demo_dataset",
                 "loader": "jsonl",
-                "params": {"path": "tests/data/samples/terminal_bench_demo.jsonl"},
+                "params": {"path": "tests/data/samples/skillsbench_demo.jsonl"},
             }
         ],
         "backends": [
@@ -175,7 +187,7 @@ def test_installed_client_runtime_rejects_agent_backend_binding() -> None:
             {
                 "adapter_id": "dut_agent_main",
                 "role_type": "dut_agent",
-                "agent_runtime_id": "terminal_bench_installed_client",
+                "agent_runtime_id": "swebench_installed_client",
                 "agent_backend_id": "demo_agent_backend",
             }
         ],

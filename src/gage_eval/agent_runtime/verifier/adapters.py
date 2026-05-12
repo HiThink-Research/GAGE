@@ -127,8 +127,6 @@ def _resolve_native_verdict(
         resolved = expected_text == answer
         return resolved, None if resolved else "answer_mismatch"
 
-    if benchmark_kit_id == "terminal_bench":
-        return False, "missing_expected_answer"
     return False, "missing_expected_answer"
 
 

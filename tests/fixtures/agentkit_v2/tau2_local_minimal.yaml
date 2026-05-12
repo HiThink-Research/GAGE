@@ -1,4 +1,4 @@
-kind: AgentEvalConfig
+kind: PipelineConfig
 metadata:
   name: tau2-local-minimal
 backends:

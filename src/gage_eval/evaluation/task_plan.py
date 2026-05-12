@@ -21,6 +21,7 @@ from gage_eval.pipeline.step_contracts import (
 
 @dataclass(frozen=True)
 class TaskRuntimePolicy:
+    execution_mode: str
     max_samples: Optional[int]
     shuffle: Optional[bool]
     shuffle_seed: Optional[int]
@@ -40,6 +41,7 @@ class TaskRuntimePolicy:
 class TaskPlanSpec:
     task_id: str
     dataset_id: str
+    execution_mode: str
     dataset_schema: Optional[Dict[str, Any]]
     steps: Sequence[CustomPipelineStep]
     role_bindings: Dict[str, RoleAdapterSpec]
@@ -84,7 +86,12 @@ def _build_task_plan(
         raise ValueError(
             f"Task '{task.task_id}' must declare steps explicitly or via custom pipeline"
         )
-    _validate_task_steps(steps, role_map, task_id=task.task_id)
+    _validate_task_steps(
+        steps,
+        role_map,
+        task_id=task.task_id,
+        execution_mode=task.execution_mode,
+    )
 
     # NOTE: Auto-fill missing `adapter_id` for common cases (currently focused on inference steps).
     resolved_steps = _infer_step_bindings(steps, role_map, task_id=task.task_id)
@@ -101,6 +108,7 @@ def _build_task_plan(
         role_bindings[adapter_id] = role_map[adapter_id]
     metrics = task.metric_overrides or default_metrics
     runtime_policy = TaskRuntimePolicy(
+        execution_mode=task.execution_mode,
         max_samples=task.max_samples,
         shuffle=task.shuffle,
         shuffle_seed=task.shuffle_seed,
@@ -118,6 +126,7 @@ def _build_task_plan(
     return TaskPlanSpec(
         task_id=task.task_id,
         dataset_id=task.dataset_id,
+        execution_mode=task.execution_mode,
         dataset_schema=dataset.schema,
         steps=resolved_steps,
         role_bindings=role_bindings,
@@ -196,11 +205,13 @@ def _validate_task_steps(
     role_map: Dict[str, RoleAdapterSpec],
     *,
     task_id: str,
+    execution_mode: str = "sample_loop",
 ) -> None:
     issues = collect_step_sequence_issues(
         steps,
         owner_label=f"Task '{task_id}' step",
         adapter_ids=role_map.keys(),
+        execution_mode=execution_mode,
     )
     if not issues:
         return

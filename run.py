@@ -128,15 +128,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--env-provider",
         choices=("local_process", "docker"),
-        help="Override an AgentEvalConfig environment provider.",
+        help="Override an AgentKit v2 environment provider.",
     )
     parser.add_argument(
         "--dut-id",
-        help="Target --env-provider to the AgentEvalConfig dut_agents entry with this dut_id.",
+        help="Target --env-provider to the AgentKit v2 dut_agents entry with this dut_id.",
     )
     parser.add_argument(
         "--env-id",
-        help="Target --env-provider to the AgentEvalConfig environment referenced by this env_id.",
+        help="Target --env-provider to the AgentKit v2 environment referenced by this env_id.",
     )
     parser.add_argument(
         "--distill",
@@ -224,27 +224,6 @@ def _ensure_spawn_start_method() -> None:
 
 def load_config(path: Path) -> dict:
     return _loader_expand_env(load_yaml_mapping(path))
-
-
-def _assemble_agentkit_v2_runtime(
-    materialized: dict,
-    *,
-    config_path: Path,
-    cli_intent: CLIIntent,
-):
-    """Validate AgentEvalConfig runtime bindings before execution is enabled."""
-
-    import gage_eval.config.agentkit_v2 as agentkit_v2
-
-    runtime_config = agentkit_v2.materialize_agentkit_v2_runtime_config_payload(
-        load_yaml_mapping(config_path),
-        config_path,
-        cli_intent=cli_intent,
-    )
-    return agentkit_v2.resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )
 
 
 def _expand_env(value):
@@ -1024,35 +1003,49 @@ def _preflight_checks() -> None:
 
 
 _RUNTIME_REF: Optional[object] = None
+_SHUTDOWN_SIGNAL_RECEIVED = False
 
 
 def _install_signal_handlers():
+    global _SHUTDOWN_SIGNAL_RECEIVED
+    _SHUTDOWN_SIGNAL_RECEIVED = False
+
     def _handler(signum, frame):
-        global _RUNTIME_REF
-        print(f"[gage-eval] Caught signal {signum}, shutting down…")
+        del frame
+        global _RUNTIME_REF, _SHUTDOWN_SIGNAL_RECEIVED
+        exit_code = 128 + int(signum)
+        if _SHUTDOWN_SIGNAL_RECEIVED:
+            print(f"[gage-eval] Caught signal {signum} again, forcing exit…", file=sys.stderr)
+            _kill_child_processes()
+            os._exit(exit_code)
+        _SHUTDOWN_SIGNAL_RECEIVED = True
+        print(f"[gage-eval] Caught signal {signum}, shutting down…", file=sys.stderr)
         try:
             if _RUNTIME_REF and hasattr(_RUNTIME_REF, "shutdown"):
                 _RUNTIME_REF.shutdown()
-        except Exception:
-            pass
-        try:
-            import psutil  # type: ignore
-
-            me = psutil.Process()
-            for child in me.children(recursive=True):
-                try:
-                    child.kill()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        os._exit(1)
+        except Exception as exc:
+            print(f"[gage-eval] shutdown hook failed after signal {signum}: {exc}", file=sys.stderr)
+        raise SystemExit(exit_code)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             signal.signal(sig, _handler)
         except Exception:
             pass
+
+
+def _kill_child_processes():
+    try:
+        import psutil  # type: ignore
+
+        me = psutil.Process()
+        for child in me.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _detect_hardware_profile() -> Optional[str]:
@@ -1194,7 +1187,7 @@ def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry
     for spec in config.role_adapters:
         if spec.class_path:
             try:
-                module_name, class_name = spec.class_path.rsplit(".", 1)
+                module_name, class_name = _split_import_class_path(spec.class_path)
                 module = importlib.import_module(module_name)
                 getattr(module, class_name)
             except Exception as exc:
@@ -1221,6 +1214,16 @@ def _validate_config_wiring_with_registry(config: PipelineConfig, asset_registry
             errors.append(f"Task '{spec.task_id}' references missing dataset_id '{spec.dataset_id}'")
 
     return errors
+
+
+def _split_import_class_path(class_path: str) -> tuple[str, str]:
+    if ":" in class_path:
+        module_name, class_name = class_path.split(":", 1)
+    else:
+        module_name, class_name = class_path.rsplit(".", 1)
+    if not module_name or not class_name:
+        raise ValueError(f"Invalid class_path '{class_path}'")
+    return module_name, class_name
 
 
 def main() -> None:
@@ -1336,29 +1339,6 @@ def main() -> None:
     except Exception as exc:
         print(f"[gage-eval] failed to load config: {exc}", file=sys.stderr)
         sys.exit(1)
-    if str(raw_run_payload.get("kind") or "") == "AgentEvalConfig":
-        try:
-            materialized = load_pipeline_config_payload(
-                config_path,
-                cli_intent=cli_intent,
-                smart_defaults=not args.no_smart_defaults,
-                run_config_compiler=_compile_run_config,
-            )
-            _assemble_agentkit_v2_runtime(
-                materialized,
-                config_path=config_path,
-                cli_intent=cli_intent,
-            )
-        except Exception as exc:
-            print(f"[gage-eval] failed to assemble AgentEvalConfig runtime: {exc}", file=sys.stderr)
-            sys.exit(1)
-        print(
-            "[gage-eval] AgentEvalConfig execution is not wired yet; "
-            "use --show-expanded-config for config validation",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     if sys.stdin.isatty() and os.environ.get("GAGE_EVAL_HUMAN_INPUT") is None:
         os.environ["GAGE_EVAL_HUMAN_INPUT"] = "stdin"
 

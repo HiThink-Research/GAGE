@@ -1,4 +1,4 @@
-kind: AgentEvalConfig
+kind: PipelineConfig
 metadata:
   name: legacy_agent_scheduler_non_string_model
 agents:

@@ -1,4 +1,4 @@
-kind: AgentEvalConfig
+kind: PipelineConfig
 metadata:
   name: legacy_agents_one_missing_scheduler
 agents:

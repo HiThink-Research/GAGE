@@ -12,14 +12,9 @@ from gage_eval.agent_eval_kits.swebench.judge.adapters import SwebenchVerifierAd
 from gage_eval.agent_runtime.resources.manager import RuntimeResourceManager
 from gage_eval.agent_runtime.session import AgentRuntimeSession
 from gage_eval.agent_runtime.verifier.contracts import VerifierInput
-from gage_eval.config.agentkit_v2 import (
-    load_agentkit_v2_config_payload,
-    materialize_agentkit_v2_runtime_config_payload,
-    resolve_agentkit_v2_runtime_binding_specs,
-)
 from gage_eval.environment.contracts import ExecResult
 
-from ._support import REPO_ROOT, read_yaml
+from ._support import REPO_ROOT, load_lowered_pipeline_config, role_adapter_by_id
 
 
 DIFF = "diff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n@@ -1 +1 @@\n-old\n+new\n"
@@ -57,21 +52,15 @@ class _FakeVerifierEnvironment:
 def test_swebench_e2b_wrapper_config_materializes_to_e2b_profile() -> None:
     config_path = REPO_ROOT / "config/custom/swebench_pro/v2_e2b_wrapper_smoke.yaml"
 
-    materialized = load_agentkit_v2_config_payload(config_path)
-    raw_payload = read_yaml(config_path)
-    runtime_config = materialize_agentkit_v2_runtime_config_payload(
-        raw_payload,
-        config_path,
-    )
-    binding = resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )["swebench_dut"]
+    materialized = load_lowered_pipeline_config(config_path)
+    role_adapter = role_adapter_by_id(materialized, "swebench_dut")
+    params = role_adapter["params"]
 
-    assert binding.environment_provider == "e2b"
-    assert binding.environment_profile["profile_id"] == "swebench-e2b-wrapper"
-    assert binding.provider_config["template_id"] == "gage-swebench-pro-wrapper"
-    assert binding.environment_profile["capabilities"]["supports_upload_download"] is True
+    assert role_adapter["agent_runtime_id"] == "swebench_framework_loop"
+    assert params["environment_profile"]["provider"] == "e2b"
+    assert params["environment_profile"]["profile_id"] == "swebench-e2b-wrapper"
+    assert params["provider_config"]["template_id"] == "gage-swebench-pro-wrapper"
+    assert params["provider_config"]["network_policy"] == "block"
 
 
 @pytest.mark.io
@@ -92,15 +81,8 @@ def test_live_e2b_wrapper_starts_and_transfers_files(tmp_path: Path) -> None:
     if not os.getenv("E2B_API_KEY"):
         pytest.skip("E2B_API_KEY is required for live E2B wrapper smoke")
     config_path = REPO_ROOT / "config/custom/swebench_pro/v2_e2b_wrapper_smoke.yaml"
-    materialized = load_agentkit_v2_config_payload(config_path)
-    runtime_config = materialize_agentkit_v2_runtime_config_payload(
-        read_yaml(config_path),
-        config_path,
-    )
-    binding = resolve_agentkit_v2_runtime_binding_specs(
-        materialized,
-        runtime_config=runtime_config,
-    )["swebench_dut"]
+    materialized = load_lowered_pipeline_config(config_path)
+    params = role_adapter_by_id(materialized, "swebench_dut")["params"]
     session = AgentRuntimeSession(
         session_id="live-e2b-wrapper-session",
         run_id="live-e2b-wrapper-run",
@@ -115,9 +97,9 @@ def test_live_e2b_wrapper_starts_and_transfers_files(tmp_path: Path) -> None:
         lease_binding = manager.acquire(
             session,
             resource_plan={
-                "resource_kind": binding.environment_provider,
-                "environment_profile": binding.environment_profile,
-                "provider_config": binding.provider_config,
+                "resource_kind": params["environment_profile"]["provider"],
+                "environment_profile": params["environment_profile"],
+                "provider_config": params["provider_config"],
             },
         )
         assert lease_binding.sandbox_provider is None
