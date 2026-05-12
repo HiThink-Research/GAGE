@@ -215,6 +215,44 @@ def test_timeout_path_terminates_subprocess_and_writes_structured_error(tmp_path
 
 
 @pytest.mark.fast
+def test_subprocess_is_terminated_when_parent_wait_is_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_package = tmp_path / "fake_harbor"
+    _write_fake_slow_harbor(fake_package)
+    config_path = _write_launcher_input(tmp_path)
+    result_path = tmp_path / "launcher_result.json"
+    repo_src = Path(__file__).resolve().parents[3] / "src"
+    env = {
+        "PYTHONPATH": f"{fake_package}{os.pathsep}{repo_src}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+    }
+    captured: dict[str, Any] = {}
+
+    def interrupt_wait(process, **_kwargs):
+        captured["process"] = process
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(harbor_launcher, "_wait_for_subprocess_with_heartbeats", interrupt_wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_launcher_subprocess(
+            config_path=config_path,
+            result_file=result_path,
+            timeout_s=5,
+            environ=env,
+            python=sys.executable,
+            workdir=tmp_path,
+        )
+
+    process = captured["process"]
+    assert process.poll() is not None
+    stderr_text = (tmp_path / "launcher.stderr.log").read_text(encoding="utf-8")
+    assert "Launcher interrupted while subprocess pgid=" in stderr_text
+    assert "sending SIGTERM" in stderr_text
+
+
+@pytest.mark.fast
 def test_subprocess_overwrites_stale_result_when_child_exits_without_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

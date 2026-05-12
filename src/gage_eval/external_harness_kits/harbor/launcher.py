@@ -35,6 +35,8 @@ LIVE_LOG_STDOUT_PREFIX = "[harbor-stdout] "
 LIVE_LOG_STDERR_PREFIX = "[harbor-stderr] "
 LIVE_LOG_JOB_PREFIX = "[harbor-job] "
 SUBPROCESS_HEARTBEAT_INTERVAL_S = 15.0
+GRACEFUL_TERMINATE_TIMEOUT_S = 30.0
+FORCE_KILL_TIMEOUT_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -216,6 +218,13 @@ def run_launcher_subprocess(
             else:
                 exit_code = exit_code_or_none
         finally:
+            if process.poll() is None:
+                _terminate_process_group_gracefully(
+                    process,
+                    stderr_fh=stderr_fh,
+                    graceful_timeout_s=GRACEFUL_TERMINATE_TIMEOUT_S,
+                    force_timeout_s=FORCE_KILL_TIMEOUT_S,
+                )
             _join_threads(tee_threads)
             job_log_stop_event.set()
             if job_log_thread is not None:
@@ -737,6 +746,48 @@ def _launcher_result_file_valid(path: Path, *, expected_pid: int, expected_exit_
 def _reject_secret_like_argv_path(path: Path | str, *, environ: Mapping[str, str] | None) -> None:
     if contains_secret_like_text(str(path), environ=environ):
         raise ValueError("launcher argv paths must not contain secret-like values")
+
+
+def _terminate_process_group_gracefully(
+    process: subprocess.Popen[bytes],
+    *,
+    stderr_fh: BinaryIO,
+    graceful_timeout_s: float,
+    force_timeout_s: float,
+) -> int | None:
+    if process.poll() is not None:
+        return process.returncode
+
+    message = (
+        f"Launcher interrupted while subprocess pgid={process.pid} still running; "
+        f"sending SIGTERM (graceful_s={graceful_timeout_s})"
+    )
+    logger.warning(message)
+    _write_stderr_notice(stderr_fh, message)
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return process.poll()
+
+    try:
+        return process.wait(timeout=max(0.0, float(graceful_timeout_s)))
+    except subprocess.TimeoutExpired:
+        message = "Subprocess did not exit after SIGTERM; escalating to SIGKILL"
+        logger.warning(message)
+        _write_stderr_notice(stderr_fh, message)
+        _kill_process_group(process.pid)
+        try:
+            return process.wait(timeout=max(0.0, float(force_timeout_s)))
+        except subprocess.TimeoutExpired:
+            return process.poll()
+
+
+def _write_stderr_notice(stderr_fh: BinaryIO, message: str) -> None:
+    try:
+        stderr_fh.write(f"{message}\n".encode("utf-8", errors="replace"))
+        stderr_fh.flush()
+    except Exception:
+        return
 
 
 def _kill_process_group(pid: int) -> None:
