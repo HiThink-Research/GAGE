@@ -36,6 +36,7 @@ def _build_harbor_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     trial_count = 0
     completed_count = 0
     failed_count = 0
+    aborted_count = 0
     skipped_count = 0
     resolve_values: list[float] = []
     score_values: list[float] = []
@@ -62,6 +63,10 @@ def _build_harbor_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         trial_count += _int_or_default(aggregate.get("trial_count"), len(trials))
         completed_count += _int_or_default(aggregate.get("completed_trial_count"), _count_status(trials, "completed"))
         failed_count += _int_or_default(aggregate.get("failed_trial_count"), _count_non_completed(trials))
+        aborted_count += _int_or_default(
+            _mapping(_mapping(aggregate.get("failure_rollup")).get("status_counts")).get("aborted"),
+            _count_status(trials, "aborted"),
+        )
         skipped_count += len(_skipped_failed_trials(aggregate, eval_result))
         _merge_failure_rollup(failure_rollup, _mapping(aggregate.get("failure_rollup")))
 
@@ -83,6 +88,7 @@ def _build_harbor_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         "trial_count": trial_count,
         "completed": completed_count,
         "failed": failed_count,
+        "aborted": aborted_count,
         "skipped": skipped_count,
         "harbor_resolve_rate": _mean_or_none(resolve_values),
         "harbor_score_mean": _mean_or_none(score_values),

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import inspect
 import importlib
 import json
@@ -113,6 +114,7 @@ class HarborAdapter(RoleAdapter):
         self._docker_probe = docker_probe
         self._e2b_probe = e2b_probe
         self._artifact_pull_probe = artifact_pull_probe
+        self._active_invocations: dict[str, HarborInvocation] = {}
 
     def translate(self, request: TaskBatchHarnessRequest) -> TaskBatchHarnessPlan:
         payload = dict(request.payload)
@@ -193,16 +195,20 @@ class HarborAdapter(RoleAdapter):
         _stage_local_registry_mirrors(invocation)
         _write_launcher_input(invocation, adapter_id=self.adapter_id)
         _write_raw_input_artifacts(invocation)
-        launcher_result = harbor_launcher.run_launcher_subprocess(
-            config_path=invocation.job_config_path,
-            result_file=invocation.launcher_argv[-1],
-            timeout_s=_launcher_timeout_s(self.params),
-            environ=invocation.environ,
-            python=invocation.launcher_argv[0] if invocation.launcher_argv else None,
-            workdir=invocation.workdir,
-            live_log=_launcher_live_log(self.params),
-            job_log_path=invocation.jobs_dir / invocation.job_name / harbor_launcher.JOB_LOG_FILENAME,
-        )
+        self._active_invocations[invocation.job_name] = invocation
+        try:
+            launcher_result = harbor_launcher.run_launcher_subprocess(
+                config_path=invocation.job_config_path,
+                result_file=invocation.launcher_argv[-1],
+                timeout_s=_launcher_timeout_s(self.params),
+                environ=invocation.environ,
+                python=invocation.launcher_argv[0] if invocation.launcher_argv else None,
+                workdir=invocation.workdir,
+                live_log=_launcher_live_log(self.params),
+                job_log_path=invocation.jobs_dir / invocation.job_name / harbor_launcher.JOB_LOG_FILENAME,
+            )
+        finally:
+            self._active_invocations.pop(invocation.job_name, None)
         return TaskBatchHarnessHandle(
             adapter_id=self.adapter_id,
             payload={
@@ -262,6 +268,10 @@ class HarborAdapter(RoleAdapter):
             trace_translator=self._trace_translator,
         )
         return bundle.samples
+
+    def shutdown(self) -> None:
+        for invocation in list(self._active_invocations.values()):
+            _write_cancelled_marker(invocation, reason="adapter_shutdown")
 
     async def ainvoke(self, payload: dict[str, Any], state: RoleAdapterState) -> dict[str, Any]:
         raise NotImplementedError("HarborAdapter is not a sample-loop role adapter")
@@ -1312,6 +1322,26 @@ def _write_raw_input_artifacts(invocation: HarborInvocation) -> None:
         json.dumps(invocation.job_config, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
+
+
+def _write_cancelled_marker(invocation: HarborInvocation, *, reason: str) -> None:
+    marker = {
+        "status": "cancelled",
+        "reason": reason,
+        "cancelled_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "job_name": invocation.job_name,
+        "jobs_dir": str(invocation.jobs_dir),
+        "job_dir": str(invocation.jobs_dir / invocation.job_name),
+        "workdir": str(invocation.workdir),
+        "job_config_path": str(invocation.job_config_path),
+        "launcher_result_path": str(_launcher_result_path_from_invocation(invocation)),
+    }
+    for marker_path in (
+        invocation.workdir / "cancelled.json",
+        invocation.jobs_dir / invocation.job_name / "cancelled.json",
+    ):
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _launcher_timeout_s(params: Mapping[str, Any]) -> float | None:

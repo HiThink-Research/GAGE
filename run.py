@@ -1003,35 +1003,49 @@ def _preflight_checks() -> None:
 
 
 _RUNTIME_REF: Optional[object] = None
+_SHUTDOWN_SIGNAL_RECEIVED = False
 
 
 def _install_signal_handlers():
+    global _SHUTDOWN_SIGNAL_RECEIVED
+    _SHUTDOWN_SIGNAL_RECEIVED = False
+
     def _handler(signum, frame):
-        global _RUNTIME_REF
-        print(f"[gage-eval] Caught signal {signum}, shutting down…")
+        del frame
+        global _RUNTIME_REF, _SHUTDOWN_SIGNAL_RECEIVED
+        exit_code = 128 + int(signum)
+        if _SHUTDOWN_SIGNAL_RECEIVED:
+            print(f"[gage-eval] Caught signal {signum} again, forcing exit…", file=sys.stderr)
+            _kill_child_processes()
+            os._exit(exit_code)
+        _SHUTDOWN_SIGNAL_RECEIVED = True
+        print(f"[gage-eval] Caught signal {signum}, shutting down…", file=sys.stderr)
         try:
             if _RUNTIME_REF and hasattr(_RUNTIME_REF, "shutdown"):
                 _RUNTIME_REF.shutdown()
-        except Exception:
-            pass
-        try:
-            import psutil  # type: ignore
-
-            me = psutil.Process()
-            for child in me.children(recursive=True):
-                try:
-                    child.kill()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        os._exit(1)
+        except Exception as exc:
+            print(f"[gage-eval] shutdown hook failed after signal {signum}: {exc}", file=sys.stderr)
+        raise SystemExit(exit_code)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             signal.signal(sig, _handler)
         except Exception:
             pass
+
+
+def _kill_child_processes():
+    try:
+        import psutil  # type: ignore
+
+        me = psutil.Process()
+        for child in me.children(recursive=True):
+            try:
+                child.kill()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _detect_hardware_profile() -> Optional[str]:

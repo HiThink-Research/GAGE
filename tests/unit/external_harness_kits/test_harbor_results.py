@@ -9,6 +9,7 @@ from gage_eval.evaluation.cache import EvalCache
 from gage_eval.external_harness_kits.errors import ExternalHarnessParseError
 from gage_eval.external_harness_kits.harbor.trace_translation import HarborATIFTranslator
 from gage_eval.external_harness_kits.harbor.results import (
+    EXTERNAL_HARNESS_CANCELLED,
     HARBOR_JOB_RESULT_MISSING,
     HARBOR_LAUNCHER_FAILED,
     HARBOR_TRIAL_EXCEPTION,
@@ -201,6 +202,66 @@ def test_job_result_missing_without_trials_raises_harbor_job_result_missing(tmp_
         parse_harbor_results(_result(handle), context=_Context(tmp_path), handle=handle)
 
     assert exc_info.value.code == HARBOR_JOB_RESULT_MISSING
+
+
+@pytest.mark.fast
+def test_cancelled_marker_without_trials_imports_aborted_sample(tmp_path: Path) -> None:
+    handle = _synthetic_tree(tmp_path, trials=[], write_job_result=False)
+    task_dir = tmp_path / "sample-task"
+    handle = HarborJobHandle.from_dict(
+        {
+            **handle.to_dict(),
+            "invocation_metadata": {
+                **handle.invocation_metadata,
+                "job_config": {"tasks": [{"path": str(task_dir), "source": "terminal-bench"}]},
+            },
+        }
+    )
+    (handle.workdir / "cancelled.json").write_text(
+        json.dumps(
+            {
+                "status": "cancelled",
+                "reason": "adapter_shutdown",
+                "job_name": handle.job_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = parse_harbor_results(_result(handle), context=_Context(tmp_path), handle=handle)
+
+    sample = bundle.samples[0]
+    trial = sample.trial_results[0]
+    assert sample.sample_id == "sample-task"
+    assert trial.status == "aborted"
+    assert trial.failure["failure_code"] == EXTERNAL_HARNESS_CANCELLED
+    assert sample.sample["eval_result"]["status"]["value"] == "aborted"
+    assert sample.sample["eval_result"]["external_harness_cancelled"]["reason"] == "adapter_shutdown"
+    assert bundle.task_metrics["aborted_count"] == 1
+
+
+@pytest.mark.fast
+def test_cancelled_marker_does_not_override_completed_trial_results(tmp_path: Path) -> None:
+    handle = _synthetic_tree(tmp_path, trials=[_trial_payload(task_name="completed-after-marker", reward=1.0)])
+    (handle.workdir / "cancelled.json").write_text(
+        json.dumps(
+            {
+                "status": "cancelled",
+                "reason": "stale_marker",
+                "job_name": handle.job_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = parse_harbor_results(_result(handle), context=_Context(tmp_path), handle=handle)
+
+    sample = bundle.samples[0]
+    trial = sample.trial_results[0]
+    assert trial.status == "completed"
+    assert trial.failure is None
+    assert sample.sample["eval_result"]["harbor_resolve_rate"] == 1.0
+    assert "external_harness_cancelled" not in sample.sample["eval_result"]
 
 
 @pytest.mark.fast

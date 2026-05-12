@@ -47,6 +47,22 @@ def test_report_output_includes_external_harness_harbor_section(tmp_path: Path) 
 
 
 @pytest.mark.fast
+def test_summary_generator_reports_cancelled_harbor_trials_as_aborted(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=tmp_path, run_id="harbor-cancelled-summary")
+    _write_cancelled_harbor_sample(cache)
+
+    payload = HarborSummaryGenerator().generate(cache)
+
+    summary = payload["external_harness"]["harbor"]
+    assert summary["sample_count"] == 1
+    assert summary["trial_count"] == 1
+    assert summary["completed"] == 0
+    assert summary["aborted"] == 1
+    assert summary["failure_rollup"]["status_counts"]["aborted"] == 1
+    assert summary["failure_rollup"]["failure_codes"]["external_harness.cancelled.subprocess_aborted"] == 1
+
+
+@pytest.mark.fast
 def test_user_facing_summary_does_not_expose_launcher_implementation_detail(tmp_path: Path) -> None:
     cache = EvalCache(base_dir=tmp_path, run_id="harbor-summary-clean")
     _write_harbor_sample(cache)
@@ -148,6 +164,54 @@ def _write_harbor_sample(cache: EvalCache) -> None:
                     "sha256": "0" * 64,
                 },
             ],
+        },
+        namespace="task/tb2_one_case",
+    )
+
+
+def _write_cancelled_harbor_sample(cache: EvalCache) -> None:
+    cache.write_sample(
+        "gpt2-codegolf",
+        {
+            "sample": {
+                "id": "gpt2-codegolf",
+                "task_type": "external_harness.harbor",
+                "dataset_id": "terminal_bench_2_0",
+                "metadata": {
+                    "_harness": {
+                        "kit_id": "harbor",
+                        "job_name": "gage_tb2",
+                        "harbor_task_key": "gpt2-codegolf",
+                    },
+                    "dataset_id": "terminal_bench_2_0",
+                },
+                "eval_result": {
+                    "harbor_resolve_rate": None,
+                    "harbor_score_mean": None,
+                    "external_trial_pass_values": [None],
+                },
+            },
+            "trial_results": [
+                {
+                    "trial_id": "trial_0001",
+                    "status": "aborted",
+                    "verifier_result": {"score": None, "passed": None, "resolved": None},
+                    "failure": {
+                        "failure_code": "external_harness.cancelled.subprocess_aborted",
+                        "failure_domain": "external_harness",
+                    },
+                },
+            ],
+            "aggregate_result": {
+                "trial_count": 1,
+                "completed_trial_count": 0,
+                "failed_trial_count": 1,
+                "failure_rollup": {
+                    "status_counts": {"aborted": 1},
+                    "failure_codes": {"external_harness.cancelled.subprocess_aborted": 1},
+                    "failure_domains": {"external_harness": 1},
+                },
+            },
         },
         namespace="task/tb2_one_case",
     )

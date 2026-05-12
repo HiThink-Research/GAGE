@@ -10,6 +10,8 @@ import pytest
 
 from gage_eval.external_harness_kits.errors import ExternalHarnessError
 from gage_eval.external_harness_kits.harbor import launcher as harbor_launcher
+from gage_eval.role.resource_profile import NodeResource, ResourceProfile
+from gage_eval.role.role_manager import RoleManager
 from gage_eval.role.adapters.harbor import HarborAdapter, HarborInvocation
 from gage_eval.external_harness_kits.base import TaskBatchHarnessRequest
 
@@ -275,6 +277,107 @@ def test_launch_stages_local_registry_mirror_with_absolute_task_paths(
     assert staged_registry_path.parent == Path(payload["workdir"]) / "registry_mirrors"
     assert staged_registry[0]["tasks"][0]["path"] == str(task_path.resolve())
     assert json.loads(registry_path.read_text(encoding="utf-8"))[0]["tasks"][0]["path"] == task_path.name
+
+
+@pytest.mark.fast
+def test_shutdown_marks_active_harbor_invocation_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _base_payload(tmp_path)
+    adapter = HarborAdapter(adapter_id="harbor_tb2")
+    plan = adapter.translate(TaskBatchHarnessRequest(adapter_id="harbor_tb2", payload=payload))
+
+    def fake_launcher(**kwargs: Any) -> harbor_launcher.LauncherSubprocessResult:
+        adapter.shutdown()
+        result_file = Path(kwargs["result_file"])
+        result_file.parent.mkdir(parents=True, exist_ok=True)
+        result_file.write_text(json.dumps({"exit_code": 0}), encoding="utf-8")
+        return harbor_launcher.LauncherSubprocessResult(
+            argv=[],
+            exit_code=0,
+            timed_out=False,
+            result_file=result_file,
+            stdout_path=result_file.parent / "launcher.stdout.log",
+            stderr_path=result_file.parent / "launcher.stderr.log",
+        )
+
+    monkeypatch.setattr(harbor_launcher, "run_launcher_subprocess", fake_launcher)
+
+    adapter.launch(plan)
+
+    invocation = plan.payload["invocation"]
+    workdir_marker = invocation.workdir / "cancelled.json"
+    job_marker = invocation.jobs_dir / invocation.job_name / "cancelled.json"
+    workdir_payload = json.loads(workdir_marker.read_text(encoding="utf-8"))
+    job_payload = json.loads(job_marker.read_text(encoding="utf-8"))
+    assert workdir_payload["status"] == "cancelled"
+    assert workdir_payload["reason"] == "adapter_shutdown"
+    assert workdir_payload["job_name"] == invocation.job_name
+    assert job_payload == workdir_payload
+
+
+@pytest.mark.fast
+def test_launch_removes_active_invocation_when_launcher_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _base_payload(tmp_path)
+    adapter = HarborAdapter(adapter_id="harbor_tb2")
+    plan = adapter.translate(TaskBatchHarnessRequest(adapter_id="harbor_tb2", payload=payload))
+
+    def fake_launcher(**_kwargs: Any) -> harbor_launcher.LauncherSubprocessResult:
+        raise RuntimeError("launcher crashed")
+
+    monkeypatch.setattr(harbor_launcher, "run_launcher_subprocess", fake_launcher)
+
+    with pytest.raises(RuntimeError, match="launcher crashed"):
+        adapter.launch(plan)
+
+    assert adapter._active_invocations == {}
+
+
+@pytest.mark.fast
+def test_role_manager_shutdown_invokes_harbor_adapter_shutdown_marker(tmp_path: Path) -> None:
+    payload = _base_payload(tmp_path)
+    adapter = HarborAdapter(adapter_id="harbor_tb2")
+    plan = adapter.translate(TaskBatchHarnessRequest(adapter_id="harbor_tb2", payload=payload))
+    invocation = plan.payload["invocation"]
+    invocation.workdir.mkdir(parents=True, exist_ok=True)
+    invocation.jobs_dir.mkdir(parents=True, exist_ok=True)
+    adapter._active_invocations[invocation.job_name] = invocation
+    manager = RoleManager(ResourceProfile([NodeResource(node_id="local", gpus=0, cpus=1)]))
+    manager._adapters = {adapter.adapter_id: adapter}
+    manager._role_pools = {}
+
+    manager.shutdown()
+
+    assert (invocation.workdir / "cancelled.json").is_file()
+    assert json.loads((invocation.workdir / "cancelled.json").read_text(encoding="utf-8"))["reason"] == "adapter_shutdown"
+
+
+@pytest.mark.fast
+def test_shutdown_marks_all_active_harbor_invocations_cancelled(tmp_path: Path) -> None:
+    adapter = HarborAdapter(adapter_id="harbor_tb2")
+    invocations = []
+    for index in range(2):
+        payload = _base_payload(tmp_path / f"case-{index}")
+        payload["run_id"] = f"run-{index}"
+        payload["workdir"] = str(tmp_path / f"run-{index}" / "external_harness")
+        plan = adapter.translate(TaskBatchHarnessRequest(adapter_id="harbor_tb2", payload=payload))
+        invocation = plan.payload["invocation"]
+        invocation.workdir.mkdir(parents=True, exist_ok=True)
+        invocation.jobs_dir.mkdir(parents=True, exist_ok=True)
+        adapter._active_invocations[invocation.job_name] = invocation
+        invocations.append(invocation)
+
+    adapter.shutdown()
+
+    assert len(invocations) == 2
+    for invocation in invocations:
+        marker = json.loads((invocation.workdir / "cancelled.json").read_text(encoding="utf-8"))
+        assert marker["status"] == "cancelled"
+        assert marker["job_name"] == invocation.job_name
 
 
 @pytest.mark.fast

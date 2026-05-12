@@ -30,11 +30,13 @@ HARBOR_LAUNCHER_FAILED = "harbor.launcher_failed"
 HARBOR_JOB_RESULT_MISSING = "harbor.job_result_missing"
 HARBOR_TRIAL_EXCEPTION = "harbor.trial_exception"
 HARBOR_VERIFIER_RESULT_MISSING = "harbor.verifier_result_missing"
+EXTERNAL_HARNESS_CANCELLED = "external_harness.cancelled.subprocess_aborted"
 
 MISSING_RESULT_WARNING = "external_harness.parse.missing_result"
 MALFORMED_RESULT_WARNING = "external_harness.parse.malformed_output"
 TRIAL_COUNT_MISMATCH_WARNING = "external_harness.parse.trial_count_mismatch"
 PARTIAL_JOB_WARNING = "external_harness.parse.job_result_missing_partial"
+CANCELLED_JOB_WARNING = "external_harness.cancelled.job_marked_cancelled"
 
 
 @dataclass(frozen=True)
@@ -162,8 +164,18 @@ def parse_harbor_results(
     )
     warnings: list[HarborParseWarning] = []
 
+    cancelled_marker, cancelled_marker_path = _read_cancelled_marker(resolved_handle)
+    if cancelled_marker:
+        warnings.append(
+            HarborParseWarning(
+                CANCELLED_JOB_WARNING,
+                "Harbor job was marked cancelled; importing available aborted evidence",
+                str(cancelled_marker_path) if cancelled_marker_path else None,
+            )
+        )
+
     launcher_result = _read_launcher_result(resolved_handle, payload)
-    if _launcher_failed(launcher_result):
+    if _launcher_failed(launcher_result) and not cancelled_marker:
         raise ExternalHarnessParseError(
             HARBOR_LAUNCHER_FAILED,
             f"Harbor launcher failed for job {resolved_handle.job_name}",
@@ -171,6 +183,8 @@ def parse_harbor_results(
 
     job_result, job_result_missing = _read_job_result(resolved_handle)
     raw_trials = _scan_trial_results(resolved_handle.job_dir, warnings)
+    if cancelled_marker and not raw_trials:
+        raw_trials = [_synthetic_cancelled_trial(resolved_handle, cancelled_marker)]
     if job_result_missing:
         if not raw_trials:
             raise ExternalHarnessParseError(
@@ -180,7 +194,11 @@ def parse_harbor_results(
         warnings.append(
             HarborParseWarning(
                 PARTIAL_JOB_WARNING,
-                "Harbor job result is missing; continuing with trial result files",
+                (
+                    "Harbor job result is missing; continuing with cancelled marker"
+                    if cancelled_marker
+                    else "Harbor job result is missing; continuing with trial result files"
+                ),
                 str(resolved_handle.job_dir / "result.json"),
             )
         )
@@ -393,7 +411,16 @@ def _build_trial_result(
     resolved = rewards.get("resolved", passed)
     failure: dict[str, Any] | None = None
     status: Literal["completed", "failed", "aborted"] = "completed"
-    if raw.malformed:
+    cancelled_marker = _mapping(payload.get("_cancelled_marker"))
+    if cancelled_marker:
+        status = "aborted"
+        failure = _failure(
+            EXTERNAL_HARNESS_CANCELLED,
+            f"Harbor job was cancelled: {cancelled_marker.get('reason') or 'unknown'}",
+            stage="adapter_shutdown",
+            details={"cancelled": cancelled_marker, "trial_name": payload.get("trial_name")},
+        )
+    elif raw.malformed:
         status = "failed"
         failure = _failure(
             MALFORMED_RESULT_WARNING,
@@ -568,13 +595,18 @@ def _append_trial_trace(
     failure: Mapping[str, Any] | None,
 ) -> ArtifactRef:
     if failure is not None:
+        failure_code = str(failure.get("failure_code") or failure.get("code") or "")
         return parser_context.artifact_sink.append_trace_event(
             run_id=parser_context.run_id,
             task_id=parser_context.task_id,
             sample_id=sample_id,
             trial_id=trial_id,
             actor="runtime",
-            event_type="external_harness.trial_exception",
+            event_type=(
+                "external_harness.cancelled"
+                if failure_code == EXTERNAL_HARNESS_CANCELLED
+                else "external_harness.trial_exception"
+            ),
             payload={
                 "trial_name": raw.payload.get("trial_name"),
                 "failure": to_json_compatible(dict(failure)),
@@ -633,6 +665,7 @@ def _build_sample(
     final_answer = _final_answer(primary_raw, trajectory)
     pass_values = [_trial_pass_value(trial) for trial in trial_results]
     aggregate_payload = aggregate.to_dict() if hasattr(aggregate, "to_dict") else to_json_compatible(aggregate)
+    cancelled_marker = _mapping(primary_raw.get("_cancelled_marker"))
     sample = Sample(
         schema_version=SCHEMA_VERSION,
         id=sample_id,
@@ -696,6 +729,11 @@ def _build_sample(
             "external_trial_pass_values": pass_values,
             "external_trial_metric_projection": aggregate.metric_projection,
             "external_harness_warnings": [warning.to_dict() for warning in warnings],
+            **(
+                {"external_harness_cancelled": to_json_compatible(dict(cancelled_marker))}
+                if cancelled_marker
+                else {}
+            ),
         },
     )
     payload = sample_to_dict(sample)
@@ -767,6 +805,60 @@ def _read_launcher_result(handle: _HarborHandle, payload: Mapping[str, Any]) -> 
             return {}
         return dict(data) if isinstance(data, Mapping) else {}
     return {}
+
+
+def _read_cancelled_marker(handle: _HarborHandle) -> tuple[dict[str, Any], Path | None]:
+    for path in (handle.job_dir / "cancelled.json", handle.workdir / "cancelled.json"):
+        if not path.exists():
+            continue
+        try:
+            payload = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, Mapping) and str(payload.get("status") or "").lower() == "cancelled":
+            return dict(payload), path
+    return {}, None
+
+
+def _synthetic_cancelled_trial(handle: _HarborHandle, marker: Mapping[str, Any]) -> _RawTrial:
+    job_config = _mapping(handle.invocation_metadata.get("job_config"))
+    task_config = _first_mapping(job_config.get("tasks"))
+    datasets = job_config.get("datasets")
+    dataset_config = _first_mapping(datasets)
+    task_path = task_config.get("path")
+    task_key = _safe_segment(
+        str(
+            marker.get("task_name")
+            or marker.get("task_id")
+            or (Path(str(task_path)).name if task_path else "")
+            or handle.job_name
+        )
+    )
+    trial_dir = handle.job_dir / f"{task_key}__cancelled"
+    trial_name = trial_dir.name
+    payload = {
+        "task_name": task_key,
+        "task_id": {"path": str(task_path)} if task_path else {"name": task_key},
+        "source": task_config.get("source") or dataset_config.get("name") or "harbor",
+        "task_checksum": None,
+        "trial_name": trial_name,
+        "trial_uri": _path_uri(trial_dir),
+        "config": {
+            "task": to_json_compatible(dict(task_config)),
+            "environment": to_json_compatible(dict(handle.environment)),
+        },
+        "agent_result": {
+            "final_answer": "",
+            "metadata": {"cancelled": True},
+        },
+        "_cancelled_marker": to_json_compatible(dict(marker)),
+    }
+    return _RawTrial(
+        path=trial_dir / "result.json",
+        trial_dir=trial_dir,
+        task_key=task_key,
+        payload=payload,
+    )
 
 
 def _resolve_handle(*, handle: Any, result_payload: Mapping[str, Any]) -> _HarborHandle:
@@ -868,12 +960,27 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _first_mapping(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, Mapping):
+                return item
+    return {}
+
+
 def _optional_path(value: Any) -> Path | None:
     return Path(str(value)) if value else None
 
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _path_uri(path: Path) -> str:
+    try:
+        return path.as_uri()
+    except ValueError:
+        return str(path)
 
 
 def _launcher_failed(payload: Mapping[str, Any]) -> bool:
@@ -1169,7 +1276,9 @@ def _sample_failure(trial_results: Iterable[TrialResult]) -> dict[str, Any] | No
 def _task_metrics(samples: list[HarborImportedSample]) -> dict[str, Any]:
     pass_values: list[bool | None] = []
     scores: list[float] = []
+    aborted_count = 0
     for sample in samples:
+        aborted_count += sum(1 for trial in sample.trial_results if trial.status == "aborted")
         pass_values.extend(
             value
             for value in sample.sample.get("eval_result", {}).get("external_trial_pass_values", [])
@@ -1180,6 +1289,7 @@ def _task_metrics(samples: list[HarborImportedSample]) -> dict[str, Any]:
             scores.append(float(score))
     return {
         "sample_count": len(samples),
+        "aborted_count": aborted_count,
         "harbor_resolve_rate": (sum(1 for value in pass_values if value) / len(pass_values)) if pass_values else None,
         "harbor_score_mean": (sum(scores) / len(scores)) if scores else None,
     }
@@ -1204,6 +1314,7 @@ def _safe_segment(value: str) -> str:
 
 
 __all__ = [
+    "EXTERNAL_HARNESS_CANCELLED",
     "HARBOR_JOB_RESULT_MISSING",
     "HARBOR_LAUNCHER_FAILED",
     "HARBOR_TRIAL_EXCEPTION",
