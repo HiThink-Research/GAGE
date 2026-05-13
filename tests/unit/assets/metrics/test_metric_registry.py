@@ -142,6 +142,7 @@ def test_build_metric_prefers_explicit_aggregation(mock_trace) -> None:
     [
         ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator"),
         ("tau2_pass_hat", "gage_eval.metrics.builtin.tau2_aggregator"),
+        ("forecastbench_probability_summary", "gage_eval.metrics.builtin.forecastbench_aggregator"),
     ],
 )
 def test_metric_registry_defers_optional_aggregator_imports_until_needed(
@@ -171,6 +172,7 @@ def test_metric_registry_defers_optional_aggregator_imports_until_needed(
     [
         ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator"),
         ("tau2_pass_hat", "gage_eval.metrics.builtin.tau2_aggregator"),
+        ("forecastbench_probability_summary", "gage_eval.metrics.builtin.forecastbench_aggregator"),
     ],
 )
 def test_build_metric_reports_optional_aggregator_import_failures(
@@ -214,6 +216,20 @@ def test_build_metric_reports_optional_aggregator_import_failures(
     assert target_warnings[0][1][0] == aggregation_id
     assert target_warnings[0][1][1] == module_name
     assert str(target_warnings[0][1][2]) == error_message
+
+
+def test_build_metric_lazy_loads_forecastbench_optional_aggregator() -> None:
+    spec = MetricSpec(
+        metric_id="test_forecastbench_summary",
+        implementation="_test_registry_default_aggregation_metric",
+        aggregation="forecastbench_probability_summary",
+        params={},
+    )
+
+    instance = MetricRegistry().build_metric(spec)
+
+    assert instance.spec.aggregation == "forecastbench_probability_summary"
+    assert instance.aggregator.__class__.__name__ == "ForecastBenchProbabilitySummaryAggregator"
 
 
 def test_build_metric_lazy_loads_mme_optional_aggregator() -> None:

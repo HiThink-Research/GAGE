@@ -1,0 +1,36 @@
+api_version: gage/v1alpha1
+kind: PipelineConfig
+scene: static
+metadata:
+  name: forecastbench_polymarket_static_full
+  description: ForecastBench Polymarket static full run (set paths via env; optional sample cap).
+
+datasets:
+  - dataset_id: forecastbench_polymarket_static_full
+    hub: inline
+    loader: forecastbench
+    params:
+      question_set_path: ${FORECASTBENCH_QUESTION_SET_PATH:-tests/fixtures/forecastbench/smoke_question_set.json}
+      resolution_set_path: ${FORECASTBENCH_RESOLUTION_SET_PATH:-tests/fixtures/forecastbench/smoke_resolution_set.json}
+      preprocess: forecastbench_static
+      preprocess_kwargs: {}
+      source_filter:
+        - polymarket
+      resolved_only: true
+
+backends:
+  - backend_id: ${FORECASTBENCH_BACKEND_ID:-forecastbench_litellm}
+    type: litellm
+    config:
+      provider: openai
+      api_base: ${FORECASTBENCH_API_BASE:-http://127.0.0.1:1234/v1}
+      model: ${FORECASTBENCH_MODEL:-qwen/qwen3.5-9b}
+      api_key: ${FORECASTBENCH_API_KEY:-local}
+      generation_parameters:
+        max_new_tokens: 512
+        temperature: 0.0
+
+metrics:
+  - metric_id: forecastbench_probability
+    implementation: forecastbench_probability
+    aggregation: forecastbench_probability_summary

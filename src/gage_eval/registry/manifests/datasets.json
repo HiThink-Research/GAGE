@@ -111,6 +111,15 @@
     },
     {
       "kind": "dataset_loaders",
+      "name": "forecastbench",
+      "module": "gage_eval.assets.datasets.loaders.forecastbench_loader",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/loaders/forecastbench_loader.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_loaders",
       "name": "harbor_local_path",
       "module": "gage_eval.assets.datasets.loaders.harbor",
       "load_phase": "prepare_only",
@@ -310,6 +319,15 @@
     {
       "kind": "dataset_preprocessors",
       "name": "docvqa_image_standardizer",
+      "module": "gage_eval.assets.datasets.preprocessors.builtin",
+      "load_phase": "prepare_only",
+      "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "dataset_preprocessors",
+      "name": "forecastbench_static",
       "module": "gage_eval.assets.datasets.preprocessors.builtin",
       "load_phase": "prepare_only",
       "declared_in": "src/gage_eval/assets/datasets/preprocessors/builtin.py",

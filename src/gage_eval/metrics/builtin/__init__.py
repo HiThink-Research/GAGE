@@ -28,6 +28,10 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "EpisodeLengthStepsMetric": ("gage_eval.metrics.builtin.arena", "EpisodeLengthStepsMetric"),
     "ExactMatchMetric": ("gage_eval.metrics.builtin.text", "ExactMatchMetric"),
     "FinalScorePerPlayerMetric": ("gage_eval.metrics.builtin.arena", "FinalScorePerPlayerMetric"),
+    "ForecastBenchProbabilityMetric": (
+        "gage_eval.metrics.builtin.forecastbench",
+        "ForecastBenchProbabilityMetric",
+    ),
     "GomokuAverageTurnsMetric": ("gage_eval.metrics.builtin.gomoku", "GomokuAverageTurnsMetric"),
     "GomokuIllegalRateMetric": ("gage_eval.metrics.builtin.gomoku", "GomokuIllegalRateMetric"),
     "GomokuWinRateMetric": ("gage_eval.metrics.builtin.gomoku", "GomokuWinRateMetric"),
