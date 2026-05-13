@@ -103,12 +103,13 @@ E:\fb_runs
 
 ```mermaid
 flowchart TD
-    A["第一层<br/>数据 join 正确性"] --> B["第二层<br/>官方 forecast_set 回放"]
+    A["第一层<br/>数据 join + summary 对账"] --> B["第二层<br/>Metric / TDD 正确性"]
     B --> C["第三层<br/>官方框架同模型对照"]
     C --> D["产物可信度检查<br/>summary / samples / trace"]
 
     A1["检查样本数<br/>question + resolution"] --> A
-    B1["跳过模型调用<br/>直接回放官方预测"] --> B
+    B1["单测覆盖<br/>parser / Brier / aggregator"] --> B
+    B2["增强校验<br/>官方 forecast_set 回放"] --> B
     C1["同模型同题集<br/>比较 forecast 分布"] --> C
     D1["确认 run 完整<br/>可追溯到单 case"] --> D
 ```
@@ -169,11 +170,57 @@ TOTAL 964
 
 注意：`freeze_datetime_value` 不是每条样本都有。例如 `2024-07-21` 有 119 条 resolved Polymarket 样本，但只有 59 条有可用的 freeze market value。因此 `average_market_baseline_brier` 只覆盖这 59 条，不能直接代表 119 条全量市场基线。
 
+GAGE 正式 run 结束后会生成 `summary.json`，这也是第一层数据正确性的主要产物。重点看这些字段：
+
+```text
+summary.sample_count
+summary.samples_total
+summary.samples_valid
+summary.tasks[0].sample_count
+summary.tasks[0].dataset_metadata.question_set_path
+summary.tasks[0].dataset_metadata.resolution_set_path
+summary.tasks[0].execution.status
+summary.run.metadata.validation_summary
+```
+
+第一层的判断方式是：
+
+```text
+1. 独立脚本统计 question_set + resolution_set join 后的 Polymarket resolved 数量
+2. GAGE run 生成 summary.json
+3. 对比 summary.sample_count / samples_total / tasks[0].sample_count 是否一致
+4. 确认 execution.status == "completed"
+5. 确认 validation_summary 没有异常 drop
+```
+
+这层能证明：
+
+```text
+GAGE loader 产出的样本集合数量和过滤口径可信
+```
+
+这层还不能证明：
+
+```text
+metric 公式完全正确
+模型输出可信
+官方 leaderboard 口径已经复刻
+```
+
 ## 第二层：评分器正确性
 
 这一层是最关键的框架校验。
 
-目标是验证：
+它分成两个层次：
+
+```text
+1. TDD 单元测试：验证 metric 公式、输出解析和聚合逻辑
+2. 官方 forecast_set replay：验证同一份官方预测答案下，GAGE 与官方结果是否一致
+```
+
+第 1 步验证 GAGE 自己的 metric 实现没有明显公式错误。第 2 步才是和官方框架做 parity check。
+
+官方 forecast_set replay 的目标是验证：
 
 ```text
 同一个 question_set
@@ -183,7 +230,48 @@ TOTAL 964
 
 GAGE 和官方框架算出来的分数是否一致。
 
-这一步不调用模型。它验证的是 GAGE 的 loader、join、parser、metric、aggregator 是否对齐官方口径。
+Replay 不调用模型。它验证的是 GAGE 的 loader、join、parser、metric、aggregator 是否对齐官方口径。
+
+### 当前已有的 TDD 覆盖
+
+当前代码里已经有 ForecastBench 相关单元测试，但它们是 TDD 风格的合成样例，不是官方 forecast_set 回放。
+
+已有测试覆盖：
+
+| 测试文件 | 覆盖内容 |
+|---|---|
+| `tests/unit/assets/datasets/loaders/test_forecastbench_loader.py` | question / resolution 双文件读取、官方 `questions` / `resolutions` envelope、按 id join、`source_filter`、`resolved_only`、`max_samples` |
+| `tests/unit/assets/metrics/test_forecastbench_metric.py` | JSON / `*0.xxx*` / 纯数字解析、Brier、abs error、0.5 阈值命中率、parse fallback、clamp、market baseline |
+| `tests/unit/assets/metrics/test_forecastbench_aggregator.py` | `average_brier`、`brier_index_simple`、`average_market_baseline_brier` 的聚合逻辑 |
+| `tests/unit/assets/datasets/test_forecastbench_preprocessor.py` | Prompt 和 Sample 转换逻辑 |
+
+当前 fixture 里有：
+
+```text
+tests/fixtures/forecastbench/smoke_question_set.json
+tests/fixtures/forecastbench/smoke_resolution_set.json
+```
+
+当前 fixture 里没有：
+
+```text
+官方 forecast_set
+官方 processed forecast_set
+```
+
+因此，现有 TDD 能证明：
+
+```text
+metric 公式、解析逻辑、聚合逻辑在构造样例上正确
+```
+
+但还不能证明：
+
+```text
+GAGE 对官方 forecast_set 的 replay 结果与官方完全一致
+```
+
+这个缺口需要用官方公开的 `forecast sets` / `processed forecast sets` 再补一个 parity test。
 
 ### 什么是 forecast_set
 
@@ -443,10 +531,11 @@ model_minus_market_brier: 模型 Brier 减市场基线 Brier
 ## 推荐落地顺序
 
 1. 固化第一层数据统计脚本，作为 loader 回归测试。
-2. 实现 `forecast_set replay` 模式，跳过 inference 直接评分官方 forecast_set。
-3. 用官方 processed forecast set 做 parity test，确认 scorer 误差在 `1e-6` 内。
-4. 用官方框架和 GAGE 跑同一个模型、同一个 question_set，比较 forecast 分布和 parse_error_rate。
-5. 再决定是否补 difficulty-adjusted leaderboard、bootstrap CI、p-value 等官方高阶指标。
+2. 用当前 TDD 测试守住 metric 基础公式、解析和聚合逻辑。
+3. 实现 `forecast_set replay` 模式，跳过 inference 直接评分官方 forecast_set。
+4. 用官方 processed forecast set 做 parity test，确认 scorer 误差在 `1e-6` 内。
+5. 用官方框架和 GAGE 跑同一个模型、同一个 question_set，比较 forecast 分布和 parse_error_rate。
+6. 再决定是否补 difficulty-adjusted leaderboard、bootstrap CI、p-value 等官方高阶指标。
 
 ## 参考链接
 
