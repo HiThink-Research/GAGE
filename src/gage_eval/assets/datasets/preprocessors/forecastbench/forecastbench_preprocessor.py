@@ -27,6 +27,23 @@ def _as_float(value: Any) -> Optional[float]:
         return None
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _infer_today_date(*, forecast_due: str, question_set: str) -> str:
+    if forecast_due.strip():
+        return forecast_due.strip()
+    stem = Path(str(question_set)).stem
+    if len(stem) >= 10 and stem[4:5] == "-" and stem[7:8] == "-":
+        return stem[:10]
+    return ""
+
+
 class ForecastBenchPreprocessor(BasePreprocessor):
     """Convert ForecastBench joined records into probability-forecast Samples.
 
@@ -56,25 +73,34 @@ class ForecastBenchPreprocessor(BasePreprocessor):
         resolution_criteria = str(record.get("resolution_criteria", ""))
         background = str(record.get("background", ""))
         freeze_dt = str(record.get("freeze_datetime", ""))
+        resolution_date = str(
+            record.get("market_info_close_datetime")
+            or record.get("resolution_date")
+            or record.get("close_datetime")
+            or ""
+        )
+        today_date = _infer_today_date(forecast_due=forecast_due, question_set=question_set)
 
         lines = [
-            "You are forecasting a Polymarket-style binary market.",
-            "",
+            "You are an expert superforecaster, familiar with the work of Tetlock and others.",
+            "Make a prediction of the probability that the question will be resolved as true. "
+            "You MUST give a probability estimate between 0 and 1 UNDER ALL CIRCUMSTANCES. "
+            "If for some reason you can't answer, pick the base rate, but return a number between 0 and 1.",
             f"Question: {question_text}",
-            f"Resolution criteria: {resolution_criteria}",
-            f"Background: {background}",
-            f"Information freeze datetime (UTC): {freeze_dt}",
+            f"Question Background: {background}",
+            f"Resolution Criteria: {resolution_criteria}",
+            f"Question Resolution Date: {resolution_date}",
+            f"Today's Date: {today_date}",
         ]
         if freeze_val is not None:
-            lines.append(f"Market-implied probability at freeze (if available): {freeze_val}")
+            include_market_baseline = _coerce_bool(kwargs.get("include_market_baseline_in_prompt", True))
+            if include_market_baseline:
+                lines.append(f"Market value on {freeze_dt}: {freeze_val}")
         lines.extend(
             [
-                f"Forecast due date: {forecast_due}",
-                "",
-                "Do not use web search or browse the internet. Use only the information provided above.",
-                "",
-                'Return JSON only with exactly this shape: {"forecast": <number between 0 and 1>, "reasoning": "<short string>"}',
-                "Do not wrap the JSON in markdown fences.",
+                "Output your answer (a number between 0 and 1) with an asterisk at the beginning and end of the decimal.",
+                "Do not output anything else.",
+                "Answer: { Insert answer here }",
             ]
         )
         prompt = "\n".join(lines)

@@ -324,6 +324,10 @@ class LiteLLMBackendTests(unittest.TestCase):
         call = fake_litellm.calls[0]
         self.assertIn("enable_thinking", call)
         self.assertFalse(call["enable_thinking"])
+        self.assertEqual(
+            call.get("extra_body", {}).get("chat_template_kwargs", {}).get("enable_thinking"),
+            False,
+        )
 
     def test_thinking_mode_enabled_injects_enable_thinking_true(self):
         """Thinking mode 'enabled' should inject enable_thinking=True into litellm kwargs."""

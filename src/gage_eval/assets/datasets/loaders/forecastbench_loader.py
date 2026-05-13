@@ -25,7 +25,7 @@ def _load_json_records(path: Path) -> List[Dict[str, Any]]:
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
     if isinstance(data, dict):
-        for key in ("questions", "data", "items", "records"):
+        for key in ("questions", "resolutions", "data", "items", "records"):
             inner = data.get(key)
             if isinstance(inner, list):
                 return [x for x in inner if isinstance(x, dict)]

@@ -243,6 +243,13 @@ class LiteLLMBackend(EngineBackend):
 
         # STEP: Inject thinking-related parameters from base class config
         thinking_config = self.get_thinking_config()
+        chat_template_kwargs = {k: v for k, v in thinking_config.items() if k != "reasoning_effort"}
+        if chat_template_kwargs:
+            extra_body = dict(kwargs.get("extra_body") or {})
+            existing_chat_kwargs = dict(extra_body.get("chat_template_kwargs") or {})
+            existing_chat_kwargs.update(chat_template_kwargs)
+            extra_body["chat_template_kwargs"] = existing_chat_kwargs
+            kwargs["extra_body"] = extra_body
         if "enable_thinking" in thinking_config:
             kwargs["enable_thinking"] = thinking_config["enable_thinking"]
         # Support reasoning_effort from config or per-request sampling params

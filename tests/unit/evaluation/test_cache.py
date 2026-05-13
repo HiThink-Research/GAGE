@@ -61,3 +61,18 @@ def test_eval_cache_root_journal_handles_concurrent_writes(tmp_path: Path) -> No
 
     artifact_files = sorted((cache.samples_dir / "ns").glob("*.json"))
     assert len(artifact_files) == total_writes
+
+
+@pytest.mark.io
+def test_eval_cache_truncates_long_artifact_filenames(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="long-path")
+    long_sample_id = (
+        "forecastbench:2024-07-21-llm:polymarket:"
+        + ("_0x1234567890abcdef" * 12)
+    )
+
+    written = cache.write_sample(long_sample_id, {"value": 1}, namespace="task_forecastbench_polymarket_static_full")
+
+    assert written.exists()
+    assert written.name.endswith(".json")
+    assert len(written.name.encode("utf-8")) <= 160

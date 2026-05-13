@@ -13,6 +13,8 @@ from gage_eval.registry import registry
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+_STARRED_PROBABILITY = re.compile(r"\*\s*((?:0(?:\.\d+)?)|(?:1(?:\.0+)?)|(?:\.\d+))\s*\*")
+_PLAIN_PROBABILITY = re.compile(r"^\s*((?:0(?:\.\d+)?)|(?:1(?:\.0+)?)|(?:\.\d+))\s*$")
 
 
 def _strip_json_fences(text: str) -> str:
@@ -48,12 +50,38 @@ def _extract_last_json_object(text: str) -> Optional[dict[str, Any]]:
     return last_obj
 
 
+def _extract_starred_probability(text: str) -> Optional[float]:
+    matches = _STARRED_PROBABILITY.findall(text)
+    if not matches:
+        return None
+    try:
+        return float(matches[-1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_plain_probability(text: str) -> Optional[float]:
+    match = _PLAIN_PROBABILITY.match(text)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_forecast_blob(raw: str) -> tuple[Optional[float], bool]:
     """Return (forecast, ok). *ok* is False when forecast must fall back."""
 
     text = _strip_json_fences(raw)
     if not text:
         return None, False
+    starred = _extract_starred_probability(text)
+    if starred is not None:
+        return starred, True
+    plain = _extract_plain_probability(text)
+    if plain is not None:
+        return plain, True
     try:
         data = json.loads(text)
         if isinstance(data, dict) and "forecast" in data:

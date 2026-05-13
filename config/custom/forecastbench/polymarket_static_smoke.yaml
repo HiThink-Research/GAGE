@@ -30,6 +30,7 @@ backends:
       generation_parameters:
         max_new_tokens: 512
         temperature: 0.0
+        thinking_mode: disabled
 
 metrics:
   - metric_id: forecastbench_probability

@@ -36,6 +36,14 @@ def _write_pair(tmp_path: Path, questions: list, resolutions: list) -> tuple[Pat
     return qpath, rpath
 
 
+def _write_official_pair(tmp_path: Path, questions: list, resolutions: list) -> tuple[Path, Path]:
+    qpath = tmp_path / "official_question_set.json"
+    rpath = tmp_path / "official_resolution_set.json"
+    qpath.write_text(json.dumps({"questions": questions}), encoding="utf-8")
+    rpath.write_text(json.dumps({"resolutions": resolutions}), encoding="utf-8")
+    return qpath, rpath
+
+
 def test_forecastbench_loader_polymarket_resolved_only() -> None:
     spec = DatasetSpec(
         dataset_id="fb_loader_p0",
@@ -61,6 +69,42 @@ def test_forecastbench_loader_polymarket_resolved_only() -> None:
         assert "question_set" in row
     ids = {str(r["id"]) for r in records}
     assert ids == {"pm-join-1", "pm-a", "pm-b", "pm-c"}
+
+
+def test_forecastbench_loader_reads_official_question_and_resolution_envelopes(tmp_path: Path) -> None:
+    questions = [
+        {
+            "id": "pm-official",
+            "source": "polymarket",
+            "question": "Official envelope question?",
+            "resolution_criteria": "rc",
+            "background": "bg",
+            "freeze_datetime": "2025-02-20T00:00:00+00:00",
+            "forecast_due_date": "2025-03-02",
+        }
+    ]
+    resolutions = [
+        {"id": "pm-official", "resolved": True, "resolved_to": 1.0, "resolution_date": "2025-04-01"},
+    ]
+    qpath, rpath = _write_official_pair(tmp_path, questions, resolutions)
+    spec = DatasetSpec(
+        dataset_id="fb_official_envelope",
+        loader="forecastbench",
+        hub="inline",
+        params={
+            "question_set_path": str(qpath),
+            "resolution_set_path": str(rpath),
+            "source_filter": ["polymarket"],
+            "resolved_only": True,
+        },
+    )
+
+    rows = list(ForecastBenchDatasetLoader(spec=spec).load(hub_handle=None).records)
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "pm-official"
+    assert rows[0]["question_set"] == qpath.name
+    assert rows[0]["raw_resolution"]["resolved_to"] == 1.0
 
 
 def test_forecastbench_loader_join_by_id_ignores_resolution_date(tmp_path: Path) -> None:

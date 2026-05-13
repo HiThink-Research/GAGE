@@ -54,6 +54,26 @@ def test_forecastbench_metric_basic_brier() -> None:
     assert result.values["forecast"] == pytest.approx(0.3)
 
 
+def test_forecastbench_metric_parses_official_starred_probability() -> None:
+    spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
+    metric = ForecastBenchProbabilityMetric(spec)
+    ctx = _ctx(sample_id="s-star", references=[0], model_text="*0.075*")
+    result = metric.compute(ctx)
+    assert result.values["forecast"] == pytest.approx(0.075)
+    assert result.values["parse_error"] == 0.0
+    assert result.values["brier"] == pytest.approx(0.075**2)
+
+
+def test_forecastbench_metric_parses_plain_numeric_probability() -> None:
+    spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
+    metric = ForecastBenchProbabilityMetric(spec)
+    ctx = _ctx(sample_id="s-num", references=[0], model_text="0.42")
+    result = metric.compute(ctx)
+    assert result.values["forecast"] == pytest.approx(0.42)
+    assert result.values["parse_error"] == 0.0
+    assert result.values["brier"] == pytest.approx(0.42**2)
+
+
 def test_forecastbench_metric_parse_failure_fallback() -> None:
     spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
     metric = ForecastBenchProbabilityMetric(spec)
