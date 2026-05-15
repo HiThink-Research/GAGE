@@ -6,13 +6,14 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Condition, Lock
 from typing import Any, Deque, Dict, List, Optional
 
 from loguru import logger
+from gage_eval.observability.config import ObservabilityConfig
+from gage_eval.observability.event_schema import validate_event_payload
 from gage_eval.reporting.recorders import (
     HTTPRecorder,
     FileRecorder,
@@ -66,7 +67,8 @@ class ObservabilityTrace:
     def __init__(self, recorder: Optional[RecorderBase | ResilientRecorder] = None, run_id: Optional[str] = None) -> None:
         self.run_identity: RunIdentity = build_run_identity(run_id)
         self.run_id = self.run_identity.run_id
-        self._trace_buffer_max_events = max(0, _env_int("GAGE_EVAL_TRACE_BUFFER_MAX_EVENTS", 2048))
+        self._runtime_config = ObservabilityConfig.from_env()
+        self._trace_buffer_max_events = max(0, self._runtime_config.trace_buffer_max_events)
         self._events: Deque[Dict[str, Any]] = deque(maxlen=self._trace_buffer_max_events or None)
         self._events_emitted_total = 0
         self._events_dropped_by_ring_buffer = 0
@@ -161,12 +163,13 @@ class ObservabilityTrace:
                 return result
             self._lifecycle_state = "closing"
 
-        mode = (close_mode or os.environ.get("GAGE_EVAL_LOG_SINK_CLOSE_MODE", "drain")).strip().lower() or "drain"
+        runtime_config = ObservabilityConfig.from_env()
+        mode = (close_mode or runtime_config.log_sink_close_mode).strip().lower() or "drain"
         if mode not in {"drain", "best_effort"}:
             mode = "drain"
         timeout_s = drain_timeout_s
         if timeout_s is None:
-            timeout_s = _env_float("GAGE_EVAL_LOG_SINK_DRAIN_TIMEOUT_S", 2.0)
+            timeout_s = runtime_config.log_sink_drain_timeout_s
 
         warning = None
         if mode == "best_effort":
@@ -280,30 +283,23 @@ class ObservabilityTrace:
         save_dir = Path(os.environ.get("GAGE_EVAL_SAVE_DIR", "./runs")) / self.run_id
         file_recorder = FileRecorder(run_id=self.run_id, output_path=save_dir / "events.jsonl")
 
-        http_url = os.environ.get("GAGE_EVAL_REPORT_HTTP_URL")
+        runtime_config = ObservabilityConfig.from_env()
+        http_url = runtime_config.report_http_url
         if http_url:
-            batch = int(os.environ.get("GAGE_EVAL_REPORT_HTTP_BATCH", "50"))
-            fail_pct = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_FAIL_PCT", "5"))
-            timeout = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_TIMEOUT", "10"))
-            max_retries = int(os.environ.get("GAGE_EVAL_REPORT_HTTP_MAX_RETRIES", "2"))
-            base_retry_delay_ms = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_RETRY_BASE_MS", "50"))
-            max_retry_delay_ms = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_RETRY_MAX_MS", "500"))
-            backoff_multiplier = float(os.environ.get("GAGE_EVAL_REPORT_HTTP_RETRY_MULTIPLIER", "2.0"))
             primary = HTTPRecorder(
                 run_id=self.run_id,
                 url=http_url,
-                batch_size=batch,
-                timeout=timeout,
-                fail_threshold_pct=fail_pct,
-                max_retries=max_retries,
-                base_retry_delay_ms=base_retry_delay_ms,
-                max_retry_delay_ms=max_retry_delay_ms,
-                backoff_multiplier=backoff_multiplier,
+                batch_size=runtime_config.report_http_batch,
+                timeout=runtime_config.report_http_timeout,
+                fail_threshold_pct=runtime_config.report_http_fail_pct,
+                max_retries=runtime_config.report_http_max_retries,
+                base_retry_delay_ms=runtime_config.report_http_retry_base_ms,
+                max_retry_delay_ms=runtime_config.report_http_retry_max_ms,
+                backoff_multiplier=runtime_config.report_http_retry_multiplier,
                 fallback=file_recorder,
             )
             return ResilientRecorder(primary, fallback=file_recorder)
-        inmemory = os.environ.get("GAGE_EVAL_INMEMORY_TRACE")
-        if inmemory:
+        if runtime_config.inmemory_trace:
             return ResilientRecorder(InMemoryRecorder(run_id=self.run_id))
         return ResilientRecorder(file_recorder)
 
@@ -321,6 +317,7 @@ class ObservabilityTrace:
         sample_id: Optional[str] = None,
     ) -> TraceEvent:
         event_id = self._allocate_event_id()
+        payload = self._payload_with_schema_warnings(event, payload)
         return TraceEvent(
             run_id=self.run_id,
             event_id=event_id,
@@ -339,38 +336,14 @@ class ObservabilityTrace:
             self._next_event_id += 1
             return event_id
 
+    def _payload_with_schema_warnings(self, event: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        warnings = validate_event_payload(event, payload)
+        if not warnings:
+            return payload
+        validated = dict(payload)
+        validated["schema_warnings"] = [warning.to_dict() for warning in warnings]
+        return validated
+
     @staticmethod
     def _generate_run_id() -> str:
         return build_run_identity().run_id
-
-
-def _env_float(name: str, default: float) -> float:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        logger.bind(skip_observability=True).warning(
-            "Invalid float for {}={}; using default {}",
-            name,
-            value,
-            default,
-        )
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        logger.bind(skip_observability=True).warning(
-            "Invalid int for {}={}; using default {}",
-            name,
-            value,
-            default,
-        )
-        return default

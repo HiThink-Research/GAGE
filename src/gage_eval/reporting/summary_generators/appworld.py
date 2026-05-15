@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -17,14 +18,18 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
     default_enabled=True,
 )
 class AppWorldSummaryGenerator(SummaryGenerator):
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
-        summary = _build_appworld_summary(cache)
+    def generate(self, context: Any) -> SummaryGeneratorResult | None:
+        summary = _build_appworld_summary(records_from_context(context))
         if not summary:
             return None
-        return {"appworld_summary": summary}
+        return SummaryGeneratorResult(
+            generator_id="appworld_summary",
+            summary_sections=[section("overview", "AppWorld Summary", generator_id="appworld_summary")],
+            legacy_payload={"appworld_summary": summary},
+        )
 
 
-def _build_appworld_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
+def _build_appworld_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
     overall_total = 0
     overall_tgc_sum = 0.0
     overall_tgc_count = 0
@@ -32,7 +37,7 @@ def _build_appworld_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     overall_sgc_count = 0
     by_subset: Dict[str, Dict[str, float]] = {}
 
-    for record in cache.iter_samples():
+    for record in records:
         if not isinstance(record, dict):
             continue
         sample = record.get("sample") if isinstance(record.get("sample"), dict) else None

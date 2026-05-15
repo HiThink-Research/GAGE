@@ -75,3 +75,27 @@ def test_persist_appworld_artifacts_marks_empty_save_output(tmp_path: Path) -> N
     assert logs_payload["save_payload_has_output_key"] is True
     assert logs_payload["save_output_is_empty"] is True
     assert logs_payload["tool_trace_is_empty"] is True
+
+
+@pytest.mark.fast
+def test_persist_appworld_artifacts_redacts_tool_trace_secrets(tmp_path: Path) -> None:
+    session = _build_session(tmp_path)
+
+    persist_appworld_artifacts(
+        session=session,
+        scheduler_output={
+            "agent_trace": [
+                {
+                    "name": "spotify__login",
+                    "input": {"username": "user@example.com", "password": "password123"},
+                }
+            ]
+        },
+        saved_payload={"output": None},
+    )
+
+    text = (tmp_path / "sample" / "artifacts" / "appworld_tool_trace.json").read_text()
+    assert "user@example.com" not in text
+    assert "password123" not in text
+    assert "<redacted:email>" in text
+    assert "<redacted:secret>" in text

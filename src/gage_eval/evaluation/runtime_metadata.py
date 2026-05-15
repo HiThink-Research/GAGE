@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from gage_eval.config.pipeline_config import PipelineConfig
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.run_metadata import RunMetadata
 from gage_eval.utils.run_identity import RunIdentity, build_run_identity_metadata
 
 RUNTIME_METADATA_SCHEMA_VERSION = 1
@@ -107,8 +108,15 @@ def record_runtime_metadata(cache_store: EvalCache, snapshot: RuntimeMetadataSna
 def record_run_metadata(cache_store: EvalCache, snapshot: RunMetadataSnapshot) -> None:
     """Write run identity metadata using a single stable contract."""
 
-    cache_store.set_metadata("run_metadata_schema_version", snapshot.schema_version)
-    cache_store.set_metadata("run_identity", dict(snapshot.run_identity))
+    run_identity = dict(snapshot.run_identity)
+    cache_store.record_run_metadata(
+        RunMetadata(
+            run_id=str(run_identity.get("run_id") or cache_store.run_id),
+            run_dir=str(run_identity.get("run_dir") or cache_store.run_dir),
+            pipeline_id=run_identity.get("pipeline_id"),
+            created_at_iso=run_identity.get("created_at_iso"),
+        )
+    )
 
 
 def build_sample_runtime_metadata_snapshot(

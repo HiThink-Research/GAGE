@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -17,21 +18,46 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
     default_enabled=True,
 )
 class SwebenchSummaryGenerator(SummaryGenerator):
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
-        summary = _build_swebench_summary(cache)
+    def generate(self, context: Any) -> SummaryGeneratorResult | None:
+        records = records_from_context(context)
+        summary = _build_swebench_summary(records)
         if not summary:
             return None
-        return {"swebench_summary": summary}
+        attention_cases = []
+        if summary["overall"].get("resolve_rate", 1.0) < 1.0:
+            sample_id = _first_unresolved_sample_id(records)
+            attention_cases.append(
+                {
+                    "case_id": f"swebench/{sample_id or 'unresolved'}",
+                    "severity": "high",
+                    "reason_codes": ["score.low"],
+                    "summary": "SWE-bench sample is unresolved.",
+                    "evidence_ref_ids": [],
+                    "sample_id": sample_id,
+                    "scoring": {
+                        "frequency": 1.0 - summary["overall"].get("resolve_rate", 0.0),
+                        "impact": "high",
+                        "actionability": "medium",
+                        "priority_score": 0.78,
+                    },
+                }
+            )
+        return SummaryGeneratorResult(
+            generator_id="swebench_summary",
+            summary_sections=[section("overview", "SWE-bench Summary", generator_id="swebench_summary")],
+            attention_cases=attention_cases,
+            legacy_payload={"swebench_summary": summary},
+        )
 
 
-def _build_swebench_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
+def _build_swebench_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
     total = 0
     resolved_total = 0
     by_repo: Dict[str, Dict[str, int]] = {}
     by_language: Dict[str, Dict[str, int]] = {}
     failure_reasons: Dict[str, int] = {}
 
-    for record in cache.iter_samples():
+    for record in records:
         if not isinstance(record, dict):
             continue
         sample = record.get("sample") if isinstance(record.get("sample"), dict) else None
@@ -69,6 +95,15 @@ def _build_swebench_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         "by_language": _finalize_stats(by_language),
         "failure_reason": failure_reasons,
     }
+
+
+def _first_unresolved_sample_id(records: Iterable[dict[str, Any]]) -> str | None:
+    for record in records:
+        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
+        if not judge_output.get("resolved"):
+            sample = record.get("sample") if isinstance(record.get("sample"), dict) else {}
+            return str(sample.get("id") or record.get("sample_id") or "sample")
+    return None
 
 
 def _is_swebench_sample(sample: Dict[str, Any], metadata: Dict[str, Any]) -> bool:

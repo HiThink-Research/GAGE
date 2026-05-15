@@ -84,6 +84,37 @@ def test_harbor_summary_generator_is_registered_from_core_manifest() -> None:
     assert registry.get("summary_generators", "harbor_summary") is HarborSummaryGenerator
 
 
+@pytest.mark.fast
+def test_harbor_v2_context_uses_overview_section_id() -> None:
+    result = HarborSummaryGenerator().generate(
+        {
+            "samples": [
+                {
+                    "sample": {
+                        "task_type": "external_harness.harbor",
+                        "dataset_id": "terminal_bench_2_0",
+                        "eval_result": {
+                            "harbor_resolve_rate": 1.0,
+                            "harbor_score_mean": 0.75,
+                        },
+                    },
+                    "trial_results": [
+                        {
+                            "trial_id": "trial_0001",
+                            "status": "completed",
+                            "verifier_result": {"score": 0.75, "passed": True},
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert result.generator_id == "harbor_summary"
+    assert result.summary_sections[0]["generator_id"] == "harbor_summary"
+    assert result.summary_sections[0]["section_id"] == "overview"
+
+
 def _write_harbor_sample(cache: EvalCache) -> None:
     cache.write_sample(
         "gpt2-codegolf",

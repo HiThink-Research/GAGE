@@ -345,6 +345,15 @@
     },
     {
       "kind": "summary_generators",
+      "name": "external_harness_summary",
+      "module": "gage_eval.reporting.summary_generators.external_harness",
+      "load_phase": "baseline",
+      "declared_in": "src/gage_eval/reporting/summary_generators/external_harness.py",
+      "aliases": [],
+      "optional": false
+    },
+    {
+      "kind": "summary_generators",
       "name": "swebench_summary",
       "module": "gage_eval.reporting.summary_generators.swebench",
       "load_phase": "baseline",

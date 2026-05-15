@@ -169,7 +169,26 @@ def _resolve_tau2_runtime_settings(*, session: Any, payload: dict[str, Any]) -> 
             if isinstance(runtime_context, dict)
             else {}
         )
-    return dict(benchmark_config or {}) if isinstance(benchmark_config, dict) else {}
+    settings = dict(benchmark_config or {}) if isinstance(benchmark_config, dict) else {}
+    backend_config = _backend_config_from_payload_or_session(session=session, payload=payload)
+    if backend_config:
+        settings.setdefault("_backend_config", backend_config)
+    return settings
+
+
+def _backend_config_from_payload_or_session(*, session: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    backend = payload.get("backend")
+    if isinstance(backend, dict) and isinstance(backend.get("config"), dict):
+        return dict(backend["config"])
+    backend_config = payload.get("backend_config")
+    if isinstance(backend_config, dict):
+        return dict(backend_config)
+    runtime_context = getattr(session, "runtime_context", None)
+    if isinstance(runtime_context, dict):
+        value = runtime_context.get("backend_config")
+        if isinstance(value, dict):
+            return dict(value)
+    return {}
 
 
 def _is_tau2_runtime(runtime: Any) -> bool:

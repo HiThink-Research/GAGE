@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from gage_eval.role.arena.types import GameResult
+from gage_eval.reporting.privacy import SecretFilter
 
 
 class ReplaySchemaWriter:
@@ -92,8 +93,9 @@ class ReplaySchemaWriter:
         replay_dir.mkdir(parents=True, exist_ok=True)
         try:
             self._write_events(events_path, events)
+            safe_replay_payload = _report_safe_value(replay_payload)
             replay_path.write_text(
-                json.dumps(replay_payload, ensure_ascii=False, indent=2, default=str),
+                json.dumps(safe_replay_payload, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
         except Exception as exc:  # pragma: no cover - defensive filesystem guard
@@ -237,7 +239,7 @@ class ReplaySchemaWriter:
     def _write_events(path: Path, events: Sequence[dict[str, Any]]) -> None:
         with path.open("w", encoding="utf-8") as handle:
             for event in events:
-                handle.write(json.dumps(event, ensure_ascii=False, default=str))
+                handle.write(json.dumps(_report_safe_value(event), ensure_ascii=False, default=str))
                 handle.write(os.linesep)
 
 
@@ -275,13 +277,18 @@ def update_replay_manifest_visual_session_ref(*, replay_path: str | Path, visual
             artifacts = {}
             payload["artifacts"] = artifacts
         artifacts["visual_session_ref"] = str(visual_session_ref)
+        safe_payload = _report_safe_value(payload)
         path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            json.dumps(safe_payload, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
         )
         return True
     except Exception:
         return False
+
+
+def _report_safe_value(value: Any) -> Any:
+    return SecretFilter().redact(value).value
 
 
 def _resolve_timestamp_ms(entry: Mapping[str, Any]) -> int:

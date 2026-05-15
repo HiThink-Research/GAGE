@@ -1,0 +1,52 @@
+schema_version: gage.reason_codes.v1
+reason_codes:
+  scheduler.failed:
+    impact_default: high
+    actionability_default: high
+    human_readable_zh: 调度失败
+    human_readable_en: Scheduler failed
+  verifier.skipped:
+    impact_default: high
+    actionability_default: high
+    human_readable_zh: 评分器跳过
+    human_readable_en: Verifier skipped
+  runtime.error:
+    impact_default: high
+    actionability_default: medium
+    human_readable_zh: 运行时错误
+    human_readable_en: Runtime error
+  timeout:
+    impact_default: medium
+    actionability_default: medium
+    human_readable_zh: 执行超时
+    human_readable_en: Timeout
+  score.low:
+    impact_default: medium
+    actionability_default: medium
+    human_readable_zh: 分数偏低
+    human_readable_en: Low score
+  outlier.latency:
+    impact_default: low
+    actionability_default: medium
+    human_readable_zh: 耗时异常
+    human_readable_en: Latency outlier
+  outlier.token:
+    impact_default: medium
+    actionability_default: medium
+    human_readable_zh: Token 或成本异常
+    human_readable_en: Token or cost outlier
+  artifact.missing:
+    impact_default: medium
+    actionability_default: low
+    human_readable_zh: 证据文件缺失
+    human_readable_en: Artifact missing
+  observability.degraded:
+    impact_default: medium
+    actionability_default: medium
+    human_readable_zh: 观测链路降级
+    human_readable_en: Observability degraded
+  expected.failure:
+    impact_default: low
+    actionability_default: low
+    human_readable_zh: 预期失败
+    human_readable_en: Expected failure

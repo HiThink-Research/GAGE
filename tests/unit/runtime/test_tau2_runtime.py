@@ -9,6 +9,7 @@ import pytest
 from gage_eval.agent_eval_kits.tau2.local_runtime import (
     Tau2Runtime,
     _normalize_tau2_user_model_args,
+    _resolve_tau2_user_simulator_runtime_config,
     _resolve_agent_usage_cost,
     _termination_reason,
 )
@@ -118,6 +119,40 @@ def test_tau2_runtime_normalizes_ollama_chat_api_base() -> None:
         "api_base": "http://127.0.0.1:11434",
         "api_key": "dummy",
     }
+
+
+def test_tau2_runtime_injects_litellm_provider_for_unprefixed_local_qwen_model() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {
+            "_backend_config": {"provider": "openai"},
+            "user_simulator": {
+                "model": "qwen/qwen3.5-9b",
+                "model_args": {
+                    "api_base": "http://127.0.0.1:1234/v1",
+                    "api_key": "dummy",
+                },
+            },
+        }
+    )
+
+    assert resolved["model_args"]["custom_llm_provider"] == "openai"
+
+
+def test_tau2_runtime_does_not_override_existing_litellm_provider() -> None:
+    resolved = _resolve_tau2_user_simulator_runtime_config(
+        {
+            "_backend_config": {"provider": "openai"},
+            "user_simulator": {
+                "model": "qwen/qwen3.5-9b",
+                "model_args": {
+                    "custom_llm_provider": "lm_studio",
+                    "api_base": "http://127.0.0.1:1234/v1",
+                },
+            },
+        }
+    )
+
+    assert resolved["model_args"]["custom_llm_provider"] == "lm_studio"
 
 
 def test_tau2_runtime_records_agent_usage_cost_and_tokens_separately(

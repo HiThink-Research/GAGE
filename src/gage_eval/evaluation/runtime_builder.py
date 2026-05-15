@@ -18,6 +18,7 @@ from loguru import logger
 from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.assets.datasets.manager import DataManager, DataSource
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.run_metadata import ValidationSummary
 from gage_eval.evaluation.execution_controller import (
     SampleLoopExecutionError,
     TaskExecutionController,
@@ -336,11 +337,11 @@ def _ensure_validation_ledger(
 
     if ledger is None:
         ledger = ValidationLedger(
-            on_update=lambda summary: cache_store.set_metadata(
-                "validation_summary", summary
+            on_update=lambda summary: cache_store.record_validation_summary(
+                ValidationSummary.from_dict(summary)
             )
         )
-    cache_store.set_metadata("validation_summary", ledger.snapshot())
+    cache_store.record_validation_summary(ValidationSummary.from_dict(ledger.snapshot()))
     return ledger
 
 

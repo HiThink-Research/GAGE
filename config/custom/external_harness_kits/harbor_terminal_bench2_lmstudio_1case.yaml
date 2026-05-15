@@ -74,7 +74,7 @@ role_adapters:
             max_turns: ${HARBOR_TB2_MAX_TURNS:-200}
             suppress_max_turns_warning: true
             # Keep terminal session data so imported GAGE samples contain inspectable trajectories/tool calls.
-            record_terminal_session: true
+            record_terminal_session: ${HARBOR_TB2_RECORD_TERMINAL_SESSION:-true}
         job_options:
           # 1.0 means respect task.toml timeouts such as agent.timeout_sec and verifier.timeout_sec.
           timeout_multiplier: 1.0

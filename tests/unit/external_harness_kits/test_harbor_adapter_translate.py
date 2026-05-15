@@ -12,7 +12,7 @@ from gage_eval.external_harness_kits.errors import ExternalHarnessError
 from gage_eval.external_harness_kits.harbor import launcher as harbor_launcher
 from gage_eval.role.resource_profile import NodeResource, ResourceProfile
 from gage_eval.role.role_manager import RoleManager
-from gage_eval.role.adapters.harbor import HarborAdapter, HarborInvocation
+from gage_eval.role.adapters.harbor import HarborAdapter, HarborInvocation, _write_raw_input_artifacts
 from gage_eval.external_harness_kits.base import TaskBatchHarnessRequest
 
 
@@ -165,6 +165,7 @@ def test_translates_lmstudio_base_agent_tb2_local_task_to_valid_job_config_witho
     assert agent["name"] == "terminus-2"
     assert agent["model_name"] == "lm_studio/qwen/qwen3.5-9b"
     assert agent["kwargs"]["api_base"] == "http://127.0.0.1:1234/v1"
+    assert agent["kwargs"]["custom_llm_provider"] == "lm_studio"
     assert agent["kwargs"]["temperature"] == 0.0
     assert agent["kwargs"]["llm_call_kwargs"]["max_tokens"] == 4096
     assert agent["kwargs"]["model_info"]["max_input_tokens"] == 32768
@@ -172,6 +173,59 @@ def test_translates_lmstudio_base_agent_tb2_local_task_to_valid_job_config_witho
     assert isinstance(plan.payload["invocation"], HarborInvocation)
     assert "EMPTY" not in str(job_config)
     assert all("EMPTY" not in part for part in plan.payload["invocation"].launcher_argv)
+
+
+@pytest.mark.fast
+def test_base_agent_receives_backend_provider_for_openai_compatible_local_models(tmp_path: Path) -> None:
+    payload = _base_payload(tmp_path)
+    backend_config = payload["backend"]["config"]
+    backend_config.pop("custom_llm_provider")
+    backend_config["provider"] = "openai"
+    backend_config["model"] = "qwen/qwen3.5-9b"
+
+    plan = _translate(payload)
+
+    agent = plan.payload["job_config"]["agents"][0]
+    assert agent["model_name"] == "qwen/qwen3.5-9b"
+    assert agent["kwargs"]["api_base"] == "http://127.0.0.1:1234/v1"
+    assert agent["kwargs"]["custom_llm_provider"] == "openai"
+
+
+@pytest.mark.fast
+def test_harbor_raw_input_artifacts_redact_backend_secrets(tmp_path: Path) -> None:
+    invocation = HarborInvocation(
+        job_name="job",
+        jobs_dir=tmp_path / "jobs",
+        job_config_path=tmp_path / "input.json",
+        job_config={
+            "agents": [
+                {
+                    "name": "terminus-2",
+                    "kwargs": {
+                        "api_key": "sk-testsecret123456",
+                        "headers": {"Authorization": "Bearer abc123"},
+                    },
+                }
+            ]
+        },
+        launcher_mode="python_subprocess",
+        launcher_argv=["python", "-m", "harbor"],
+        environ={"OPENAI_API_KEY": "sk-envsecret123456"},
+        workdir=tmp_path / "work",
+        expected_total_trials=1,
+    )
+
+    _write_raw_input_artifacts(invocation)
+
+    serialized = "\n".join(
+        [
+            (invocation.workdir / "invocation.json").read_text(encoding="utf-8"),
+            (invocation.workdir / "job_config.json").read_text(encoding="utf-8"),
+        ]
+    )
+    assert "sk-testsecret123456" not in serialized
+    assert "Bearer abc123" not in serialized
+    assert "<redacted:" in serialized
 
 
 @pytest.mark.fast
