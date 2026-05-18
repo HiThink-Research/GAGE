@@ -167,6 +167,56 @@ def test_evidence_ref_requires_integrity_fields_and_relative_path() -> None:
     } in diagnostics
 
 
+def test_media_evidence_ref_accepts_external_digest_without_file_integrity_metadata() -> None:
+    evidence = EvidenceRef.from_dict(
+        {
+            "ref_id": "evidence://media/abcdef123456",
+            "kind": "media",
+            "path": "external://sha256/" + "0" * 64,
+            "mime_type": "image/png",
+            "sha256": "0" * 64,
+        }
+    )
+
+    assert evidence.validate() == []
+
+
+def test_media_evidence_ref_rejects_unsafe_external_url_path() -> None:
+    evidence = EvidenceRef.from_dict(
+        {
+            "ref_id": "evidence://media/abcdef123456",
+            "kind": "media",
+            "path": "https://host/image.png?token=secret",
+            "mime_type": "image/png",
+            "sha256": "0" * 64,
+        }
+    )
+
+    assert {
+        "code": "report_context.invalid_media_path",
+        "path": "evidence_refs[].path",
+        "message": "Media EvidenceRef.path must be external://sha256/<64 hex>",
+    } in evidence.validate()
+
+
+def test_media_evidence_ref_rejects_digest_mismatch() -> None:
+    evidence = EvidenceRef.from_dict(
+        {
+            "ref_id": "evidence://media/abcdef123456",
+            "kind": "media",
+            "path": "external://sha256/" + "0" * 64,
+            "mime_type": "image/png",
+            "sha256": "1" * 64,
+        }
+    )
+
+    assert {
+        "code": "report_context.media_sha256_mismatch",
+        "path": "evidence_refs[].sha256",
+        "message": "Media EvidenceRef.sha256 must match path digest",
+    } in evidence.validate()
+
+
 def test_metric_scope_requires_matching_owner_fields() -> None:
     assert MetricScope.validate({"metric_id": "reward", "scope": "task"}, "metrics[]") == [
         {"code": "report_context.required_missing", "path": "metrics[].task_id"}
@@ -200,3 +250,19 @@ def test_attention_case_serialization_keeps_scoring_contract() -> None:
         "priority_score": 0.8,
     }
     assert reloaded.validate() == []
+
+
+def test_report_context_object_validate_includes_cross_section_diagnostics() -> None:
+    payload = _minimal_context_dict()
+    payload["scenario_profiles"] = {
+        "agent": {"representative_ref_ids": ["evidence://artifact/missing"]}
+    }
+    context = ReportContext.from_dict(payload)
+
+    diagnostics = context.validate()
+
+    assert {
+        "code": "report_context.evidence_ref_missing",
+        "path": "scenario_profiles.agent.representative_ref_ids[0]",
+        "message": "Scenario profile evidence ref is missing: evidence://artifact/missing",
+    } in diagnostics

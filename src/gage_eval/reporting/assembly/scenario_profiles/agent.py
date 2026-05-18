@@ -4,11 +4,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from gage_eval.reporting.assembly.scenario_profiles import ProfileRefResolver
+
 
 class AgentScenarioProfile:
     profile_name = "agent"
 
-    def build(self, index: Any) -> dict[str, Any]:
+    def build(self, index: Any, *, ref_resolver: ProfileRefResolver | None = None) -> dict[str, Any]:
+        resolver = ref_resolver or ProfileRefResolver.from_index(index)
         trial_count = 0
         failed_trial_count = 0
         representative_ref_ids: list[str] = []
@@ -17,9 +20,9 @@ class AgentScenarioProfile:
             trials = list(record.get("trial_results") or _sample_trial_results(sample))
             trial_count += len(trials)
             failed_trial_count += sum(1 for trial in trials if trial.get("status") == "failed")
-            sample_ref_ids = _artifact_ref_ids(sample, "sample_record.json")
+            sample_ref_ids = _artifact_ref_ids(sample, "sample_record.json", resolver)
             if not sample_ref_ids:
-                sample_ref_ids = _nested_artifact_ref_ids(sample, "trial_result.json")
+                sample_ref_ids = _nested_artifact_ref_ids(sample, "trial_result.json", resolver)
             representative_ref_ids.extend(sample_ref_ids)
         return {
             "profile_version": "gage.scenario.agent.v1",
@@ -38,12 +41,15 @@ def _load_sample_record(index: Any, sample: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _artifact_ref_ids(sample: dict[str, Any], suffix: str) -> list[str]:
-    return [
-        f"evidence://{artifact.get('path')}"
-        for artifact in sample.get("artifact_refs", []) or []
-        if str(artifact.get("path", "")).endswith(suffix)
-    ]
+def _artifact_ref_ids(sample: dict[str, Any], suffix: str, resolver: ProfileRefResolver) -> list[str]:
+    ref_ids: list[str] = []
+    for artifact in sample.get("artifact_refs", []) or []:
+        path = artifact.get("path") if isinstance(artifact, dict) else None
+        if str(path or "").endswith(suffix):
+            ref_id = resolver.resolve(path, profile="agent", field="representative_ref_ids")
+            if ref_id:
+                ref_ids.append(ref_id)
+    return ref_ids
 
 
 def _sample_trial_results(sample: dict[str, Any]) -> list[dict[str, Any]]:
@@ -56,19 +62,22 @@ def _sample_trial_results(sample: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _nested_artifact_ref_ids(sample: dict[str, Any], suffix: str) -> list[str]:
+def _nested_artifact_ref_ids(sample: dict[str, Any], suffix: str, resolver: ProfileRefResolver) -> list[str]:
     ref_ids: list[str] = []
     for trial in _sample_trial_results(sample):
         refs = trial.get("artifact_refs")
         if isinstance(refs, list):
-            ref_ids.extend(
-                f"evidence://{artifact.get('path')}"
-                for artifact in refs
-                if isinstance(artifact, dict) and str(artifact.get("path", "")).endswith(suffix)
-            )
+            for artifact in refs:
+                path = artifact.get("path") if isinstance(artifact, dict) else None
+                if str(path or "").endswith(suffix):
+                    ref_id = resolver.resolve(path, profile="agent", field="representative_ref_ids")
+                    if ref_id:
+                        ref_ids.append(ref_id)
         trace_ref = trial.get("trace_ref")
         if isinstance(trace_ref, dict) and str(trace_ref.get("path", "")).endswith(suffix):
-            ref_ids.append(f"evidence://{trace_ref.get('path')}")
+            ref_id = resolver.resolve(trace_ref.get("path"), profile="agent", field="representative_ref_ids")
+            if ref_id:
+                ref_ids.append(ref_id)
     return ref_ids
 
 

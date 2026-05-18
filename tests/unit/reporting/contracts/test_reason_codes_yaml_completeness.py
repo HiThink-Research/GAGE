@@ -20,6 +20,10 @@ def test_builtin_reason_codes_are_registered() -> None:
         "artifact.missing",
         "observability.degraded",
         "expected.failure",
+        "appworld.missing_success_signal",
+        "verifier.run_verifier.appworld.verifier_failed",
+        "verifier.skipped_due_to_scheduler_failure",
+        "client_execution.tool_retry_budget_exhausted",
     ]:
         entry = registry.get(code)
         assert entry["impact_default"]

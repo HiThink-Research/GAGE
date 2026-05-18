@@ -15,7 +15,7 @@ class CaseDetailsBuilder:
         self.max_tool_calls = max_tool_calls
         self.max_preview_bytes = max_preview_bytes
 
-    def build(self, case_id: str, record: dict[str, Any]) -> CaseDetails:
+    def build(self, record: dict[str, Any]) -> CaseDetails:
         messages = list(record.get("messages") or [])[: self.max_messages]
         tool_calls = list(record.get("tool_calls") or [])[: self.max_tool_calls]
         details = CaseDetails(
@@ -28,7 +28,6 @@ class CaseDetailsBuilder:
             truncated=len(record.get("messages") or []) > self.max_messages
             or len(record.get("tool_calls") or []) > self.max_tool_calls
             or len(str(record)) > self.max_preview_bytes,
-            extra={"case_id": case_id},
         )
         return details
 

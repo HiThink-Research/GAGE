@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -227,6 +228,7 @@ class ReportContext:
             diagnostics.extend(item.validate())
         for item in self.evidence_refs:
             diagnostics.extend(item.validate())
+        diagnostics.extend(_cross_section_diagnostics(self))
         return diagnostics
 
 
@@ -236,37 +238,125 @@ def _validate_payload_for_renderer(payload: Any, *, renderer_major: int = 1) -> 
     context = ReportContext.from_dict(payload)
     diagnostics = context.validate()
     errors = [
-        str(item.get("path") or item.get("code") or item)
+        _format_diagnostic_error(item)
         for item in diagnostics
         if isinstance(item, dict)
     ]
     schema_major = context.schema.major
     if schema_major != renderer_major:
         errors.append(f"schema.major {schema_major} is not compatible with renderer major {renderer_major}")
-    errors.extend(_cross_section_errors(context))
     return errors
 
 
-def _cross_section_errors(context: ReportContext) -> list[str]:
-    errors: list[str] = []
+def _format_diagnostic_error(diagnostic: Diagnostic) -> str:
+    path = str(diagnostic.get("path") or diagnostic.get("code") or diagnostic)
+    message = diagnostic.get("message")
+    if message:
+        return f"{path}: {message}"
+    return path
+
+
+def _cross_section_diagnostics(context: ReportContext) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
     ref_ids = {ref.ref_id for ref in context.evidence_refs if ref.ref_id}
     for case in context.attention_cases:
         for ref_id in case.evidence_ref_ids:
             if ref_id not in ref_ids:
-                errors.append(f"evidence ref missing: {ref_id}")
+                diagnostics.append(
+                    {
+                        "code": "report_context.evidence_ref_missing",
+                        "path": f"attention_cases.{case.case_id}.evidence_ref_ids",
+                        "message": f"Evidence ref is missing: {ref_id}",
+                    }
+                )
         if _contains_secret_marker(case.to_dict()):
-            errors.append(f"secret leak in attention case: {case.case_id}")
-    return errors
+            diagnostics.append(
+                {
+                    "code": "report_context.secret_leak",
+                    "path": f"attention_cases.{case.case_id}",
+                    "message": f"secret leak in attention case: {case.case_id}",
+                }
+            )
+    for path, ref_id in _iter_scenario_profile_evidence_refs(context.scenario_profiles):
+        if ref_id not in ref_ids:
+            diagnostics.append(
+                {
+                    "code": "report_context.evidence_ref_missing",
+                    "path": path,
+                    "message": f"Scenario profile evidence ref is missing: {ref_id}",
+                }
+            )
+    return diagnostics
+
+
+def _iter_scenario_profile_evidence_refs(
+    value: Any, path: str = "scenario_profiles"
+) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            refs.extend(_explicit_profile_refs(str(key), child, child_path))
+            if isinstance(child, (dict, list)):
+                refs.extend(_iter_scenario_profile_evidence_refs(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            child_path = f"{path}[{index}]"
+            if isinstance(child, (dict, list)):
+                refs.extend(_iter_scenario_profile_evidence_refs(child, child_path))
+    return refs
+
+
+def _explicit_profile_refs(field_name: str, value: Any, path: str) -> list[tuple[str, str]]:
+    if field_name.endswith("_ref_id"):
+        return _string_refs(value, path, evidence_scheme_only=False)
+    if field_name.endswith("_ref_ids"):
+        return _list_refs(value, path, evidence_scheme_only=False)
+    if field_name.endswith("_refs"):
+        if isinstance(value, str):
+            return _string_refs(value, path, evidence_scheme_only=True)
+        return _list_refs(value, path, evidence_scheme_only=True)
+    return []
+
+
+def _string_refs(value: Any, path: str, *, evidence_scheme_only: bool) -> list[tuple[str, str]]:
+    if not isinstance(value, str):
+        return []
+    if evidence_scheme_only and not _looks_like_evidence_ref(value):
+        return []
+    return [(path, value)]
+
+
+def _list_refs(value: Any, path: str, *, evidence_scheme_only: bool) -> list[tuple[str, str]]:
+    if not isinstance(value, list):
+        return _string_refs(value, path, evidence_scheme_only=evidence_scheme_only)
+    refs: list[tuple[str, str]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            continue
+        if evidence_scheme_only and not _looks_like_evidence_ref(item):
+            continue
+        refs.append((f"{path}[{index}]", item))
+    return refs
+
+
+def _looks_like_evidence_ref(value: str) -> bool:
+    return value.startswith("evidence://")
 
 
 def _contains_secret_marker(value: Any) -> bool:
     if isinstance(value, str):
-        return "Bearer " in value or "sk-" in value or "Authorization:" in value
+        return bool(_SECRET_MARKER_RE.search(value))
     if isinstance(value, dict):
         return any(_contains_secret_marker(child) for child in value.values())
     if isinstance(value, list):
         return any(_contains_secret_marker(child) for child in value)
     return False
+
+
+_SECRET_MARKER_RE = re.compile(
+    r"(\bAuthorization\s*:\s*(?:Bearer|Basic)\s+[^\s,;]+|\bBearer\s+[^\s,;]+|\bsk-[A-Za-z0-9_\-]{8,}\b)"
+)
 
 
 def _validate_metrics(

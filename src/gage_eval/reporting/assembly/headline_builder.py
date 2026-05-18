@@ -41,9 +41,11 @@ class HeadlineBuilder:
         completed = int(runtime_health.get("completed_count") or 0)
         failed = int(runtime_health.get("failed_count") or 0)
         aborted = int(runtime_health.get("aborted_count") or 0)
-        if completed == 0 and (failed > 0 or aborted > 0):
+        task_failed = int(runtime_health.get("task_failed_count") or 0)
+        task_aborted = int(runtime_health.get("task_aborted_count") or 0)
+        if completed == 0 and (failed > 0 or aborted > 0 or task_failed > 0 or task_aborted > 0):
             return "failed"
-        if failed > 0 or aborted > 0:
+        if failed > 0 or aborted > 0 or task_failed > 0 or task_aborted > 0:
             return "passed_with_warnings"
         return "passed"
 
@@ -70,6 +72,8 @@ def _verdict_reason(runtime_health: dict[str, Any]) -> str:
     for key, label in (
         ("failed_count", "failed"),
         ("aborted_count", "aborted"),
+        ("task_failed_count", "task failed"),
+        ("task_aborted_count", "task aborted"),
         ("scheduler_failed_count", "scheduler failure"),
         ("verifier_skipped_count", "verifier skipped"),
     ):

@@ -4,11 +4,13 @@ from copy import deepcopy
 from typing import Any
 
 from gage_eval.reporting.assembly.attention_detector import SCORING_CONFIG
+from gage_eval.reporting.assembly.case_details_builder import CaseDetailsBuilder
 from gage_eval.reporting.assembly.failure_clusterer import FailureClusterer
 from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
 from gage_eval.reporting.assembly.methodology_builder import MethodologyBuilder
 from gage_eval.reporting.contracts import (
     AttentionCase,
+    CaseDetails,
     EvidenceRef,
     FailureCluster,
     OutlierGroup,
@@ -29,11 +31,19 @@ class ReportContextBuilder:
         observability_health: dict[str, Any],
         generator_result: Any = None,
     ) -> ReportContext:
-        diagnostics = {"warnings": [], "errors": [], "report_pack_status": "completed"}
+        diagnostics = {
+            "warnings": [],
+            "errors": [],
+            "report_pack_status": "completed",
+            "profile_ref_resolution_miss_count": 0,
+        }
         index_diagnostics = getattr(index, "diagnostics", None)
         if index_diagnostics is not None:
             diagnostics["warnings"].extend(list(getattr(index_diagnostics, "warnings", []) or []))
             diagnostics["errors"].extend(list(getattr(index_diagnostics, "errors", []) or []))
+            diagnostics["profile_ref_resolution_miss_count"] = int(
+                getattr(index_diagnostics, "profile_ref_resolution_miss_count", 0) or 0
+            )
         raw_evidence_refs = getattr(index, "evidence_refs", []) or []
         evidence_refs = _normalize_evidence_refs(raw_evidence_refs)
         summary_sections = list(getattr(generator_result, "summary_sections", []) or [])
@@ -42,6 +52,11 @@ class ReportContextBuilder:
             for item in (getattr(generator_result, "attention_cases", []) or [])
         ]
         _backfill_attention_case_evidence(attention_cases, evidence_refs)
+        case_details = _assemble_case_details(
+            attention_cases,
+            evidence_refs,
+            getattr(generator_result, "case_details", {}) or {},
+        )
         outliers = [
             OutlierGroup.from_dict(item) if isinstance(item, dict) else item
             for item in (getattr(generator_result, "outliers", []) or [])
@@ -82,7 +97,7 @@ class ReportContextBuilder:
             summary_sections=summary_sections,
             attention_cases=attention_cases,
             outliers=outliers,
-            case_details=dict(getattr(generator_result, "case_details", {}) or {}),
+            case_details=case_details,
             reason_code_counts=cluster_result.reason_code_counts,
             failure_clusters=failure_clusters,
             evidence_refs=evidence_refs,
@@ -129,6 +144,105 @@ def _backfill_attention_case_evidence(attention_cases: list[AttentionCase], evid
         case.evidence_ref_ids = _evidence_ref_ids_for_case(case, evidence_refs)
 
 
+def _assemble_case_details(
+    attention_cases: list[AttentionCase],
+    evidence_refs: list[EvidenceRef],
+    raw_case_details: Any,
+) -> dict[str, CaseDetails]:
+    case_details = _normalize_case_details(raw_case_details)
+    refs_by_id = {
+        str(getattr(ref, "ref_id", "") or ""): ref
+        for ref in evidence_refs
+        if str(getattr(ref, "ref_id", "") or "")
+    }
+    builder = CaseDetailsBuilder()
+    for case in attention_cases:
+        case_id = str(getattr(case, "case_id", "") or "").strip()
+        if not case_id:
+            continue
+        generated = _minimal_case_detail(case, refs_by_id, builder)
+        existing = case_details.get(case_id)
+        case_details[case_id] = generated if existing is None else _fill_missing_case_detail(existing, generated)
+    return case_details
+
+
+def _normalize_case_details(raw_case_details: Any) -> dict[str, CaseDetails]:
+    items = raw_case_details.items() if isinstance(raw_case_details, dict) else []
+    return {
+        str(case_id): CaseDetails.from_dict(detail.to_dict())
+        if isinstance(detail, CaseDetails)
+        else CaseDetails.from_dict(detail)
+        for case_id, detail in items
+    }
+
+
+def _minimal_case_detail(
+    case: AttentionCase,
+    refs_by_id: dict[str, EvidenceRef],
+    builder: CaseDetailsBuilder,
+) -> CaseDetails:
+    evidence_ref_ids = list(getattr(case, "evidence_ref_ids", []) or [])
+    return builder.build(
+        {
+            "evidence_ref_ids": evidence_ref_ids,
+            "artifact_preview_ref_ids": evidence_ref_ids[:3],
+            "scoring_breakdown": _attention_case_scoring(case),
+            "full_trace_ref_id": _select_full_trace_ref_id(evidence_ref_ids, refs_by_id),
+        }
+    )
+
+
+def _attention_case_scoring(case: AttentionCase) -> dict[str, Any]:
+    scoring = getattr(case, "scoring", None)
+    if scoring is None:
+        return {}
+    if hasattr(scoring, "to_dict"):
+        return scoring.to_dict()
+    if isinstance(scoring, dict):
+        return dict(scoring)
+    return {}
+
+
+def _select_full_trace_ref_id(evidence_ref_ids: list[str], refs_by_id: dict[str, EvidenceRef]) -> str | None:
+    fallback: str | None = None
+    for ref_id in evidence_ref_ids:
+        ref = refs_by_id.get(ref_id)
+        if ref is None:
+            continue
+        path = str(getattr(ref, "path", "") or "")
+        if "trace.jsonl" in path:
+            return ref_id
+        if fallback is None and _is_trace_adjacent_ref(path):
+            fallback = ref_id
+    return fallback
+
+
+def _is_trace_adjacent_ref(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    # These markers are report-owned artifact file names in current AgentKit
+    # outputs; they are only a fallback when a trace.jsonl ref is unavailable.
+    return any(
+        marker in normalized
+        for marker in (
+            "trial_result",
+            "sample_record",
+            "scheduler_result",
+        )
+    )
+
+
+def _fill_missing_case_detail(existing: CaseDetails, generated: CaseDetails) -> CaseDetails:
+    if not existing.evidence_ref_ids:
+        existing.evidence_ref_ids = list(generated.evidence_ref_ids)
+    if not existing.artifact_preview_ref_ids:
+        existing.artifact_preview_ref_ids = list(generated.artifact_preview_ref_ids)
+    if not existing.scoring_breakdown:
+        existing.scoring_breakdown = dict(generated.scoring_breakdown)
+    if existing.full_trace_ref_id is None:
+        existing.full_trace_ref_id = generated.full_trace_ref_id
+    return existing
+
+
 def _evidence_ref_ids_for_case(case: AttentionCase, evidence_refs: list[EvidenceRef], *, limit: int = 5) -> list[str]:
     sample_id = str(case.sample_id or "").strip()
     if not sample_id:
@@ -163,7 +277,16 @@ def _evidence_ref_matches_sample(ref: EvidenceRef, sample_id: str) -> bool:
     ):
         return True
     path = str(getattr(ref, "path", "") or "")
-    return sample_id in path
+    if _path_contains_segment(path, sample_id):
+        return True
+    return len(sample_id) >= 4 and sample_id in path
+
+
+def _path_contains_segment(path: str, sample_id: str) -> bool:
+    if not path or not sample_id:
+        return False
+    normalized_parts = [part for part in path.replace("\\", "/").split("/") if part]
+    return sample_id in normalized_parts
 
 
 def _run_payload(summary_payload: dict[str, Any]) -> dict[str, Any]:

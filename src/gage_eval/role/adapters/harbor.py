@@ -778,12 +778,7 @@ class HarborAdapter(RoleAdapter):
         kwargs["api_base"] = api_base
         provider = backend_config.get("custom_llm_provider") or backend_config.get("provider")
         if provider:
-            if "custom_llm_provider" in kwargs and kwargs["custom_llm_provider"] != provider:
-                raise ExternalHarnessError(
-                    "external_harness.translate.backend_agent_bridge_failed",
-                    "base_agent kwargs.custom_llm_provider conflicts with backend.config provider",
-                )
-            kwargs["custom_llm_provider"] = provider
+            kwargs = _inject_base_agent_provider(kwargs, provider)
         kwargs = _merge_generation_parameters(kwargs, _mapping(backend_config.get("generation_parameters")))
         kwargs["model_info"] = _merged_model_info(
             _mapping_or_error(
@@ -1136,6 +1131,38 @@ def _merge_generation_parameters(
             llm_call_kwargs[key] = value
     if llm_call_kwargs:
         kwargs["llm_call_kwargs"] = llm_call_kwargs
+    return kwargs
+
+
+def _inject_base_agent_provider(kwargs: dict[str, Any], provider: Any) -> dict[str, Any]:
+    """Bridge provider naming through both Harbor BaseAgent and its LiteLLM call kwargs.
+
+    Harbor's BaseAgent consumes the top-level value, while Terminus-2 forwards
+    ``llm_kwargs`` into LiteLLM. Both layers need the same provider to avoid
+    local OpenAI-compatible model names being interpreted as unknown providers.
+    """
+
+    if "custom_llm_provider" in kwargs and kwargs["custom_llm_provider"] != provider:
+        raise ExternalHarnessError(
+            "external_harness.translate.backend_agent_bridge_failed",
+            "base_agent kwargs.custom_llm_provider conflicts with backend.config provider",
+        )
+    kwargs["custom_llm_provider"] = provider
+
+    llm_kwargs = dict(
+        _mapping_or_error(
+            kwargs.get("llm_kwargs"),
+            code="external_harness.translate.backend_agent_bridge_failed",
+            label="base_agent kwargs.llm_kwargs",
+        )
+    )
+    if "custom_llm_provider" in llm_kwargs and llm_kwargs["custom_llm_provider"] != provider:
+        raise ExternalHarnessError(
+            "external_harness.translate.backend_agent_bridge_failed",
+            "base_agent kwargs.llm_kwargs.custom_llm_provider conflicts with backend.config provider",
+        )
+    llm_kwargs["custom_llm_provider"] = provider
+    kwargs["llm_kwargs"] = llm_kwargs
     return kwargs
 
 

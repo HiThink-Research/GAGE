@@ -166,6 +166,7 @@ def test_translates_lmstudio_base_agent_tb2_local_task_to_valid_job_config_witho
     assert agent["model_name"] == "lm_studio/qwen/qwen3.5-9b"
     assert agent["kwargs"]["api_base"] == "http://127.0.0.1:1234/v1"
     assert agent["kwargs"]["custom_llm_provider"] == "lm_studio"
+    assert agent["kwargs"]["llm_kwargs"]["custom_llm_provider"] == "lm_studio"
     assert agent["kwargs"]["temperature"] == 0.0
     assert agent["kwargs"]["llm_call_kwargs"]["max_tokens"] == 4096
     assert agent["kwargs"]["model_info"]["max_input_tokens"] == 32768
@@ -189,6 +190,7 @@ def test_base_agent_receives_backend_provider_for_openai_compatible_local_models
     assert agent["model_name"] == "qwen/qwen3.5-9b"
     assert agent["kwargs"]["api_base"] == "http://127.0.0.1:1234/v1"
     assert agent["kwargs"]["custom_llm_provider"] == "openai"
+    assert agent["kwargs"]["llm_kwargs"]["custom_llm_provider"] == "openai"
 
 
 @pytest.mark.fast

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 from gage_eval.reporting.assembly.context_builder import ReportContextBuilder
 from gage_eval.reporting.assembly.extension_runner import SummaryExtensionRunner
+from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
 from gage_eval.reporting.assembly.health_collector import RuntimeHealthCollector
 from gage_eval.reporting.assembly.metric_collector import MetricSummaryCollector
 from gage_eval.reporting.assembly.scenario_profiles import ScenarioProfileBuilder
@@ -225,7 +226,10 @@ class ReportStep(GlobalStep):
                 if task_metrics:
                     task_payload["metrics"] = _format_metric_entries(task_metrics)
                 formatted_tasks.append(task_payload)
-        runtime_health = RuntimeHealthCollector().collect(records)
+        runtime_health = _augment_runtime_health_from_tasks(
+            RuntimeHealthCollector().collect(records),
+            formatted_tasks or [],
+        )
         payload = {
             "run": self._cache.snapshot(),
             "metrics": formatted_metrics,
@@ -248,6 +252,9 @@ class ReportStep(GlobalStep):
         scenario_profiles, scenario_diagnostics = ScenarioProfileBuilder().build(index)
         index.diagnostics.warnings.extend(scenario_diagnostics.get("warnings", []))
         index.diagnostics.errors.extend(scenario_diagnostics.get("errors", []))
+        index.diagnostics.profile_ref_resolution_miss_count += int(
+            scenario_diagnostics.get("profile_ref_resolution_miss_count", 0) or 0
+        )
         summary_context = {
             "run": payload["run"],
             "samples": records,
@@ -289,6 +296,7 @@ class ReportStep(GlobalStep):
             generator_result=summary_result,
         )
         report_context.scenario_profiles = scenario_profiles
+        _apply_final_context_validation(report_context)
         redaction_result = SecretFilter().redact(records)
         if redaction_result.redacted:
             report_context.diagnostics = dict(report_context.diagnostics or {})
@@ -353,3 +361,44 @@ class ReportStep(GlobalStep):
         )
         trace.emit("report_finalize", payload)
         return payload
+
+
+def _apply_final_context_validation(report_context: Any) -> None:
+    validation = report_context.validate()
+    if not validation:
+        return
+    diagnostics = dict(report_context.diagnostics or {})
+    diagnostics["errors"] = validation
+    diagnostics["report_pack_status"] = "degraded"
+    report_context.diagnostics = diagnostics
+    report_context.headline = HeadlineBuilder().build(
+        metrics=report_context.metrics,
+        runtime_health=report_context.runtime_health or {},
+        attention_cases=report_context.attention_cases,
+        outliers=report_context.outliers,
+        failure_clusters=report_context.failure_clusters,
+        diagnostics=diagnostics,
+    )
+
+
+def _augment_runtime_health_from_tasks(
+    runtime_health: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    health = dict(runtime_health)
+    task_failed_count = 0
+    task_aborted_count = 0
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        execution = task.get("execution") if isinstance(task.get("execution"), dict) else {}
+        status = str(task.get("status") or execution.get("status") or "").lower()
+        if status in {"failed", "error", "errored"}:
+            task_failed_count += 1
+        elif status == "aborted":
+            task_aborted_count += 1
+    if task_failed_count:
+        health["task_failed_count"] = task_failed_count
+    if task_aborted_count:
+        health["task_aborted_count"] = task_aborted_count
+    return health

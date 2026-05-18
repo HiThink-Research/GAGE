@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional
+from collections import defaultdict
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 from gage_eval.registry import registry
+from gage_eval.reporting.assembly.attention_detector import AttentionCaseDetector
 from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators._reason_codes import (
+    extract_attention_reason_codes,
+    first_agentkit_trial_result,
+)
 from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
@@ -23,25 +29,7 @@ class SwebenchSummaryGenerator(SummaryGenerator):
         summary = _build_swebench_summary(records)
         if not summary:
             return None
-        attention_cases = []
-        if summary["overall"].get("resolve_rate", 1.0) < 1.0:
-            sample_id = _first_unresolved_sample_id(records)
-            attention_cases.append(
-                {
-                    "case_id": f"swebench/{sample_id or 'unresolved'}",
-                    "severity": "high",
-                    "reason_codes": ["score.low"],
-                    "summary": "SWE-bench sample is unresolved.",
-                    "evidence_ref_ids": [],
-                    "sample_id": sample_id,
-                    "scoring": {
-                        "frequency": 1.0 - summary["overall"].get("resolve_rate", 0.0),
-                        "impact": "high",
-                        "actionability": "medium",
-                        "priority_score": 0.78,
-                    },
-                }
-            )
+        attention_cases = _build_swebench_attention_cases(records)
         return SummaryGeneratorResult(
             generator_id="swebench_summary",
             summary_sections=[section("overview", "SWE-bench Summary", generator_id="swebench_summary")],
@@ -97,13 +85,76 @@ def _build_swebench_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[
     }
 
 
-def _first_unresolved_sample_id(records: Iterable[dict[str, Any]]) -> str | None:
-    for record in records:
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
-        if not judge_output.get("resolved"):
-            sample = record.get("sample") if isinstance(record.get("sample"), dict) else {}
-            return str(sample.get("id") or record.get("sample_id") or "sample")
-    return None
+def _build_swebench_attention_cases(records: list[dict[str, Any]]) -> list[Any]:
+    swebench_records = [record for record in records if _record_is_swebench(record)]
+    total_samples = max(len(swebench_records), 1)
+    candidates: list[dict[str, Any]] = []
+    reason_samples: dict[str, set[str]] = defaultdict(set)
+
+    for record in swebench_records:
+        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), Mapping) else {}
+        if bool(judge_output.get("resolved")):
+            continue
+        sample_id = _sample_id(record)
+        trial = _trial_payload(record)
+        reason_codes = extract_attention_reason_codes(record, trial=trial)
+        primary_reason = reason_codes[0]
+        reason_samples[primary_reason].add(sample_id)
+        candidates.append(
+            {
+                "case_id": f"swebench/{sample_id or 'unresolved'}",
+                "reason_codes": reason_codes,
+                "summary": f"SWE-bench sample is unresolved: {_humanize_reason_codes(reason_codes)}.",
+                "evidence_ref_ids": [],
+                "sample_id": sample_id,
+                "trial_id": _trial_id(record, trial),
+                "_primary_reason": primary_reason,
+            }
+        )
+
+    for candidate in candidates:
+        frequency = len(reason_samples[candidate.pop("_primary_reason")]) / total_samples
+        candidate["frequency"] = frequency
+    return AttentionCaseDetector().detect(candidates, total_samples=total_samples)
+
+
+def _record_is_swebench(record: Mapping[str, Any]) -> bool:
+    sample = record.get("sample") if isinstance(record.get("sample"), Mapping) else {}
+    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), Mapping) else {}
+    return _is_swebench_sample(dict(sample), dict(metadata))
+
+
+def _trial_payload(record: Mapping[str, Any]) -> Mapping[str, Any]:
+    for key in ("trial", "trial_result"):
+        trial = record.get(key)
+        if isinstance(trial, Mapping):
+            return trial
+    trial_results = record.get("trial_results")
+    if isinstance(trial_results, list):
+        for trial in trial_results:
+            if isinstance(trial, Mapping):
+                return trial
+    return first_agentkit_trial_result(record) or {}
+
+
+def _sample_id(record: Mapping[str, Any]) -> str:
+    sample = record.get("sample") if isinstance(record.get("sample"), Mapping) else {}
+    return str(sample.get("id") or record.get("sample_id") or "sample")
+
+
+def _trial_id(record: Mapping[str, Any], trial: Mapping[str, Any]) -> str | None:
+    value = trial.get("trial_id") or record.get("trial_id")
+    return str(value) if value not in (None, "") else None
+
+
+def _humanize_reason_codes(reason_codes: list[str]) -> str:
+    return ", ".join(_humanize_reason_code(code) for code in reason_codes)
+
+
+def _humanize_reason_code(code: str) -> str:
+    if code == "score.low":
+        return code
+    return code.replace("_", " ").replace(".", " ")
 
 
 def _is_swebench_sample(sample: Dict[str, Any], metadata: Dict[str, Any]) -> bool:

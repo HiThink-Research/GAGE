@@ -8,7 +8,6 @@ from gage_eval.reporting.assembly.case_details_builder import CaseDetailsBuilder
 @pytest.mark.fast
 def test_case_details_builder_truncates_and_redacts_preview() -> None:
     details = CaseDetailsBuilder(max_messages=1, max_tool_calls=1, max_preview_bytes=256).build(
-        "task/sample",
         {
             "messages": [
                 {
@@ -33,3 +32,16 @@ def test_case_details_builder_truncates_and_redacts_preview() -> None:
     assert "plain-token" not in str(payload)
     assert payload["truncated"] is True
     assert len(payload["message_history_preview"]) == 1
+
+
+@pytest.mark.fast
+def test_case_details_builder_does_not_embed_case_id() -> None:
+    details = CaseDetailsBuilder().build(
+        {
+            "evidence_ref_ids": ["evidence://sample/task/sample"],
+            "artifact_preview_ref_ids": ["evidence://sample/task/sample"],
+        },
+    )
+
+    payload = details.to_dict()
+    assert "case_id" not in payload
