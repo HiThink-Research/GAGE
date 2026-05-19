@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gage_eval.reporting.contracts import ReportContext
@@ -606,6 +608,36 @@ def test_static_renderer_uses_game_profile_as_hero_context_fallback() -> None:
 
 
 @pytest.mark.fast
+def test_static_renderer_prefers_profile_context_over_runtime_health_metric() -> None:
+    context = ReportContext.minimal("run").to_dict()
+    context["headline"]["primary_metric"] = {
+        "metric_id": "sample_completion_rate",
+        "name": "Sample completion rate",
+        "values": {"rate": "1.00000"},
+        "raw_values": {"rate": 1.0},
+        "unit": "ratio",
+        "source": "runtime_health",
+        "synthetic": True,
+    }
+    context["scenario_profiles"] = {
+        "game": {
+            "profile_version": "gage.scenario.game.v1",
+            "game_kits": ["tictactoe"],
+            "move_count": 9,
+            "illegal_actions": {"games": 0, "total": 0},
+            "replay_refs": ["evidence://artifact/replay"],
+        }
+    }
+
+    html = StaticReportRenderer().render(context)
+    hero_html = html.split("<nav", 1)[0]
+
+    assert "Run context" in hero_html
+    assert "Move count" in hero_html
+    assert "Primary metric" not in hero_html
+
+
+@pytest.mark.fast
 def test_static_renderer_hides_empty_primary_metric() -> None:
     context = ReportContext.minimal("run").to_dict()
     context["headline"]["primary_metric"] = {"metric_id": "multi_choice_acc", "values": {}}
@@ -809,6 +841,47 @@ def test_static_renderer_relativizes_local_paths_inside_previews() -> None:
 
     assert "runs/live/run-1/external_harness/jobs/result.json" in visible_html
     assert "/Users/panke/project" not in html
+
+
+@pytest.mark.fast
+def test_static_renderer_does_not_rewrite_unrelated_home_paths() -> None:
+    context = ReportContext.minimal("run").to_dict()
+    context["evidence_refs"] = [
+        {
+            "ref_id": "evidence://artifact/preview",
+            "kind": "artifact",
+            "path": "artifacts/log.json",
+            "mime_type": "application/json",
+            "preview": {"text": "/home/agent/work/repo/setup.log"},
+        }
+    ]
+
+    html = StaticReportRenderer().render(context)
+    visible_html = html.split('<script type="application/json" id="gage-report-context">', 1)[0]
+
+    assert "/home/agent/work/repo/setup.log" in visible_html
+    assert "~/work/repo/setup.log" not in html
+
+
+@pytest.mark.fast
+def test_static_renderer_redacts_current_home_paths_without_tilde_alias() -> None:
+    context = ReportContext.minimal("run").to_dict()
+    home_path = Path.home() / "miniconda3/envs/new-gage/lib/python3.12/site-packages/pkg.py"
+    context["evidence_refs"] = [
+        {
+            "ref_id": "evidence://artifact/traceback",
+            "kind": "artifact",
+            "path": "artifacts/log.json",
+            "mime_type": "application/json",
+            "preview": {"text": str(home_path)},
+        }
+    ]
+
+    html = StaticReportRenderer().render(context)
+
+    assert str(Path.home()) not in html
+    assert "&lt;redacted:home&gt;/miniconda3/envs/new-gage" in html
+    assert "~/miniconda3" not in html
 
 
 def _rich_context() -> dict:

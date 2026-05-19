@@ -173,6 +173,7 @@ def test_context_builder_adds_completion_rate_metric_when_domain_metrics_are_mis
     payload = context.to_dict()
     assert payload["metrics"][0]["metric_id"] == "sample_completion_rate"
     assert payload["metrics"][0]["values"]["rate"] == "0.00000"
+    assert payload["metrics"][0]["synthetic"] is True
     assert payload["headline"]["primary_metric"]["metric_id"] == "sample_completion_rate"
     assert payload["headline"]["score"] == 0.0
 
@@ -196,6 +197,7 @@ def test_context_builder_adds_task_success_rate_metric_for_pre_sample_task_failu
     payload = context.to_dict()
     assert payload["metrics"][0]["metric_id"] == "task_success_rate"
     assert payload["metrics"][0]["values"]["rate"] == "0.00000"
+    assert payload["metrics"][0]["synthetic"] is True
     assert payload["headline"]["primary_metric"]["metric_id"] == "task_success_rate"
 
 

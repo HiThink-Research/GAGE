@@ -38,7 +38,6 @@ _DATA_IMAGE_URL_RE = re.compile(
 _LOCAL_RUN_PATH_RE = re.compile(
     r"/(?:Users|home|private|tmp|var)/[^\s\"'<>]*?/runs/",
 )
-_LOCAL_USER_HOME_RE = re.compile(r"/(?:Users|home)/[^/\s\"'<>]+/")
 
 
 class StaticReportRenderer:
@@ -100,8 +99,9 @@ def _render_hero(payload: dict[str, Any]) -> str:
     summary = _text(headline.get("one_line_summary"), "Run report generated.")
     reason = _text(headline.get("verdict_reason"), "")
     metric = _primary_metric(headline, _list(payload.get("metrics")))
+    scenario_context_html = _scenario_context_panel(payload)
     metric_html = ""
-    if metric:
+    if metric and not (_is_runtime_health_synthetic_metric(metric) and scenario_context_html):
         bar = _metric_bar(metric.get("value_raw"), metric.get("unit"))
         metric_html = f"""
         <div class="primary-metric">
@@ -111,7 +111,7 @@ def _render_hero(payload: dict[str, Any]) -> str:
           {bar}
         </div>"""
     else:
-        metric_html = _hero_context_panel(payload)
+        metric_html = scenario_context_html or _task_context_panel(payload)
     return f"""<header class="report-shell hero" data-filter-target="overview">
     <div class="hero-topline">
       <span>Run report</span>
@@ -941,10 +941,13 @@ def _primary_metric(headline: dict[str, Any], metrics: list[Any]) -> dict[str, A
         if not value:
             return None
         return {
+            "metric_id": metric.get("metric_id") or metric.get("id"),
             "label": _metric_label(metric),
             "value": value,
             "value_raw": _metric_raw_value(metric),
             "unit": metric.get("unit"),
+            "source": metric.get("source"),
+            "synthetic": metric.get("synthetic"),
         }
     if isinstance(primary, str):
         for item in metrics:
@@ -954,13 +957,27 @@ def _primary_metric(headline: dict[str, Any], metrics: list[Any]) -> dict[str, A
                 if not value:
                     return None
                 return {
+                    "metric_id": metric.get("metric_id") or metric.get("id"),
                     "label": _metric_label(metric),
                     "value": value,
                     "value_raw": _metric_raw_value(metric),
                     "unit": metric.get("unit"),
+                    "source": metric.get("source"),
+                    "synthetic": metric.get("synthetic"),
                 }
         return None
     return None
+
+
+def _is_runtime_health_synthetic_metric(metric: dict[str, Any] | None) -> bool:
+    if not metric:
+        return False
+    metric_id = _text(metric.get("metric_id"), "")
+    return (
+        metric.get("synthetic") is True
+        or metric.get("source") == "runtime_health"
+        or metric_id in {"sample_completion_rate", "task_success_rate"}
+    )
 
 
 def _metric_value(metric: dict[str, Any]) -> str:
@@ -1100,6 +1117,10 @@ def _definition(label: str, value: Any, default: str = "-") -> str:
 
 
 def _hero_context_panel(payload: dict[str, Any]) -> str:
+    return _scenario_context_panel(payload) or _task_context_panel(payload)
+
+
+def _scenario_context_panel(payload: dict[str, Any]) -> str:
     profiles = _mapping(payload.get("scenario_profiles"))
     external = _mapping(profiles.get("external_harness"))
     harnesses = _list(external.get("harnesses"))
@@ -1120,6 +1141,10 @@ def _hero_context_panel(payload: dict[str, Any]) -> str:
           <span class="label">Run context</span>
           {_kv_table(rows)}
         </div>"""
+    return ""
+
+
+def _task_context_panel(payload: dict[str, Any]) -> str:
     tasks = _list(payload.get("tasks"))
     if tasks:
         first = _mapping(tasks[0])
@@ -1437,7 +1462,11 @@ def _relativize_run_paths(value: str) -> str:
     if cwd and cwd in value:
         value = value.replace(f"{cwd}/", f"{Path(cwd).name}/")
         value = value.replace(cwd, Path(cwd).name)
-    return _LOCAL_USER_HOME_RE.sub("~/", value)
+    home = Path.home().resolve().as_posix()
+    if home and home in value:
+        value = value.replace(f"{home}/", "<redacted:home>/")
+        value = value.replace(home, "<redacted:home>")
+    return value
 
 
 def _safe_preview_source(value: str) -> str:

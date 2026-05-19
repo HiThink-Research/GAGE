@@ -358,6 +358,7 @@ def _runtime_health_metric_entries(
                 "source": "runtime_health",
                 "unit": "ratio",
                 "primary": True,
+                "synthetic": True,
             }
         ]
 
@@ -373,6 +374,7 @@ def _runtime_health_metric_entries(
                 "source": "runtime_health",
                 "unit": "ratio",
                 "primary": True,
+                "synthetic": True,
             }
         ]
     return []
