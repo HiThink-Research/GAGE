@@ -27,27 +27,21 @@ def _strip_json_fences(text: str) -> str:
 def _extract_last_json_object(text: str) -> Optional[dict[str, Any]]:
     """Return the last top-level JSON object in *text* if it parses as an object."""
 
-    last_obj: Optional[dict[str, Any]] = None
-    depth = 0
-    start: Optional[int] = None
-    for index, char in enumerate(text):
-        if char == "{":
-            if depth == 0:
-                start = index
-            depth += 1
-        elif char == "}" and depth > 0:
-            depth -= 1
-            if depth == 0 and start is not None:
-                chunk = text[start : index + 1]
-                try:
-                    parsed = json.loads(chunk)
-                except json.JSONDecodeError:
-                    start = None
-                    continue
-                if isinstance(parsed, dict):
-                    last_obj = parsed
-                start = None
-    return last_obj
+    decoder = json.JSONDecoder()
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
+    for start, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            candidates.append((end, start, parsed))
+    if not candidates:
+        return None
+    _, _, parsed = max(candidates, key=lambda item: (item[0], item[1]))
+    return parsed
 
 
 def _extract_starred_probability(text: str) -> Optional[float]:

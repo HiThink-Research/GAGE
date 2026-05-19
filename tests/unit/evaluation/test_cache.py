@@ -13,12 +13,44 @@ from gage_eval.evaluation.cache import EvalCache
 def test_eval_cache_root_journal_uses_json_default(tmp_path: Path) -> None:
     cache = EvalCache(base_dir=str(tmp_path), run_id="json-default")
 
-    cache.write_sample("sample-1", {"path": tmp_path, "value": 1})
+    artifact = cache.write_sample("sample-1", {"path": tmp_path, "value": 1})
 
     records = list(cache.iter_samples())
     assert len(records) == 1
     assert records[0]["sample_id"] == "sample-1"
     assert records[0]["path"] == str(tmp_path)
+    assert artifact.name == "sample-1.json"
+
+
+@pytest.mark.io
+def test_eval_cache_preserves_short_sample_id_filename(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="short-id")
+
+    artifact = cache.write_sample("readable-sample_1", {"value": 1}, namespace="ns")
+
+    assert artifact.name == "readable-sample_1.json"
+    assert artifact.exists()
+
+
+@pytest.mark.io
+def test_eval_cache_keeps_245_byte_sample_id_untruncated(tmp_path: Path) -> None:
+    sample_id = "a" * 245
+
+    sanitized = EvalCache._sanitize_sample_id(sample_id)
+
+    assert sanitized == sample_id
+    assert len(f"{sanitized}.json".encode("utf-8")) <= 255
+
+
+@pytest.mark.io
+def test_eval_cache_truncates_over_245_byte_sample_id_with_hash(tmp_path: Path) -> None:
+    sample_id = "b" * 260
+
+    sanitized = EvalCache._sanitize_sample_id(sample_id)
+
+    assert sanitized.startswith("b" * 237)
+    assert len(sanitized.rsplit("_", 1)[-1]) == 8
+    assert len(f"{sanitized}.json".encode("utf-8")) <= 255
 
 
 @pytest.mark.io
@@ -61,18 +93,3 @@ def test_eval_cache_root_journal_handles_concurrent_writes(tmp_path: Path) -> No
 
     artifact_files = sorted((cache.samples_dir / "ns").glob("*.json"))
     assert len(artifact_files) == total_writes
-
-
-@pytest.mark.io
-def test_eval_cache_truncates_long_artifact_filenames(tmp_path: Path) -> None:
-    cache = EvalCache(base_dir=str(tmp_path), run_id="long-path")
-    long_sample_id = (
-        "forecastbench:2024-07-21-llm:polymarket:"
-        + ("_0x1234567890abcdef" * 12)
-    )
-
-    written = cache.write_sample(long_sample_id, {"value": 1}, namespace="task_forecastbench_polymarket_static_full")
-
-    assert written.exists()
-    assert written.name.endswith(".json")
-    assert len(written.name.encode("utf-8")) <= 160

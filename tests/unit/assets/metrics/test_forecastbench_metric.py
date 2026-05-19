@@ -117,6 +117,26 @@ def test_forecastbench_metric_last_json_object_fallback() -> None:
     assert result.values["forecast"] == pytest.approx(0.2)
 
 
+def test_forecastbench_metric_json_fallback_handles_braces_inside_strings() -> None:
+    spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
+    metric = ForecastBenchProbabilityMetric(spec)
+    text = 'noise then {"reasoning": "see prompt }} above", "forecast": 0.7} trailing'
+    ctx = _ctx(sample_id="s-json-braces", references=[1], model_text=text)
+    result = metric.compute(ctx)
+    assert result.values["parse_error"] == 0.0
+    assert result.values["forecast"] == pytest.approx(0.7)
+
+
+def test_forecastbench_metric_json_fallback_prefers_outer_object_over_nested() -> None:
+    spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
+    metric = ForecastBenchProbabilityMetric(spec)
+    text = 'noise {"analysis": {"forecast": "bad"}, "forecast": 0.7} trailing'
+    ctx = _ctx(sample_id="s-json-nested", references=[1], model_text=text)
+    result = metric.compute(ctx)
+    assert result.values["parse_error"] == 0.0
+    assert result.values["forecast"] == pytest.approx(0.7)
+
+
 def test_forecastbench_metric_missing_reference_raises() -> None:
     spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
     metric = ForecastBenchProbabilityMetric(spec)

@@ -283,6 +283,17 @@ metric 解析时支持：
 
 最终概率会被 clamp 到 `[0, 1]`。无法解析的输出会计入 `parse_error`。
 
+默认情况下，如果样本包含 `freeze_datetime_value`，preprocessor 会把冻结时市场价格写进 prompt。若要做“不看市场价格”的 ablation，可以在 YAML 中关闭：
+
+```yaml
+params:
+  preprocess: forecastbench_static
+  preprocess_kwargs:
+    include_market_baseline_in_prompt: false
+```
+
+这个开关只影响 prompt 是否包含 market baseline，不影响 `metadata.freeze_datetime_value`，因此 metric 仍可计算 `average_market_baseline_brier` 作为对照。
+
 ## 11. 指标口径
 
 GAGE 当前输出的是静态 simple scoring，不等价于 ForecastBench 官方 leaderboard。

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import threading
@@ -17,8 +16,6 @@ from gage_eval.utils.run_identity import RunIdentity, build_run_identity
 
 class EvalCache:
     """File-based cache aligned with the configured save directory and run id."""
-
-    _MAX_SAMPLE_FILENAME_BYTES = 96
 
     def __init__(self, base_dir: Optional[str] = None, run_id: Optional[str] = None) -> None:
         env_base = os.environ.get("GAGE_EVAL_SAVE_DIR") or None
@@ -224,12 +221,13 @@ class EvalCache:
     @staticmethod
     def _sanitize_sample_id(sample_id: str) -> str:
         sanitized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(sample_id))
-        max_bytes = EvalCache._MAX_SAMPLE_FILENAME_BYTES - len(".json".encode("utf-8"))
-        if len(sanitized.encode("utf-8")) > max_bytes:
-            digest = hashlib.md5(sanitized.encode("utf-8")).hexdigest()[:12]
-            prefix_budget = max_bytes - len(f"_{digest}".encode("utf-8"))
-            sanitized = _truncate_utf8_bytes(sanitized, prefix_budget).rstrip("_")
-            sanitized = f"{sanitized}_{digest}" if sanitized else digest
+        # Truncate if filename exceeds 245 bytes (leave room for .json suffix)
+        if len(sanitized.encode("utf-8")) > 245:
+            import hashlib
+            digest = hashlib.md5(sanitized.encode("utf-8")).hexdigest()[:8]
+            while len(sanitized.encode("utf-8")) > 237:
+                sanitized = sanitized[:-1]
+            sanitized = sanitized + "_" + digest
         return sanitized
 
     def _get_writer(self, namespace: str) -> BufferedResultWriter:
@@ -372,12 +370,3 @@ def _resolve_buffer_durability_policy(value: str) -> str:
     if normalized in {"always", "interval", "never"}:
         return normalized
     return "interval"
-
-
-def _truncate_utf8_bytes(value: str, max_bytes: int) -> str:
-    if max_bytes <= 0:
-        return ""
-    encoded = value.encode("utf-8")
-    if len(encoded) <= max_bytes:
-        return value
-    return encoded[:max_bytes].decode("utf-8", errors="ignore")
