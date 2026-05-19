@@ -7,10 +7,17 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 from gage_eval.reporting.assembly.context_builder import ReportContextBuilder
+from gage_eval.reporting.assembly.external_harness_metrics import (
+    external_harness_metric_entries as _external_harness_metric_entries,
+    external_harness_task_metric_entries as _external_harness_task_metric_entries,
+    merge_metric_entries as _merge_metric_entries,
+    record_task_id as _record_task_id,
+)
 from gage_eval.reporting.assembly.extension_runner import SummaryExtensionRunner
 from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
 from gage_eval.reporting.assembly.health_collector import RuntimeHealthCollector
 from gage_eval.reporting.assembly.metric_collector import MetricSummaryCollector
+from gage_eval.reporting.assembly.runtime_health import augment_runtime_health_from_tasks as _augment_runtime_health_from_tasks
 from gage_eval.reporting.assembly.scenario_profiles import ScenarioProfileBuilder
 from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.evidence.consistency_checker import RunLayoutConsistencyChecker
@@ -136,11 +143,40 @@ def _build_runtime_health(cache: EvalCache) -> Dict[str, Any]:
     return RuntimeHealthCollector().collect(records)
 
 
-def _report_pack_enabled() -> bool:
+def _report_pack_enabled(cache: EvalCache | None = None) -> bool:
+    """Return whether the report pack should be written for this run.
+
+    Priority is invocation override (CLI/env), then config metadata, then the
+    product default. The CLI currently materializes its flags as the env var.
+    """
+
     raw = os.environ.get("GAGE_EVAL_REPORT_PACK")
-    if raw is None:
-        return False
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if raw is not None:
+        if os.environ.get("GAGE_EVAL_REPORT_PACK_SOURCE") != "cli":
+            _LOGGER.warning(
+                "report",
+                "GAGE_EVAL_REPORT_PACK is deprecated; use reporting.report_pack.enabled or --report-pack/--no-report-pack.",
+            )
+        return _coerce_bool(raw, default=True)
+    if cache is not None:
+        configured = cache.get_metadata("report_pack_enabled")
+        if configured is not None:
+            return _coerce_bool(configured, default=True)
+    return True
+
+
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled"}:
+            return False
+    return default
 
 
 def _to_summary_payload(result: SummaryGeneratorResult) -> Dict[str, Any]:
@@ -214,8 +250,12 @@ class ReportStep(GlobalStep):
             metrics = self._auto_eval_step.aggregated_metrics() if self._auto_eval_step else []
         if pre_write_hook:
             pre_write_hook()
-        formatted_metrics = _format_metric_entries(metrics)
         records = list(self._cache.iter_samples())
+        formatted_metrics = _merge_metric_entries(
+            _format_metric_entries(metrics),
+            _format_metric_entries(_external_harness_metric_entries(records)),
+        )
+        external_task_metrics = _external_harness_task_metric_entries(records)
         collected_metrics = MetricSummaryCollector().collect(formatted_metrics)
         formatted_tasks: Optional[List[Dict[str, Any]]] = None
         if tasks:
@@ -223,8 +263,11 @@ class ReportStep(GlobalStep):
             for task in tasks:
                 task_payload = dict(task)
                 task_metrics = task_payload.get("metrics")
-                if task_metrics:
-                    task_payload["metrics"] = _format_metric_entries(task_metrics)
+                task_id = str(task_payload.get("task_id") or task_payload.get("id") or "")
+                task_payload["metrics"] = _merge_metric_entries(
+                    _format_metric_entries(task_metrics),
+                    _format_metric_entries(external_task_metrics.get(task_id, [])),
+                )
                 formatted_tasks.append(task_payload)
         runtime_health = _augment_runtime_health_from_tasks(
             RuntimeHealthCollector().collect(records),
@@ -293,6 +336,7 @@ class ReportStep(GlobalStep):
             tasks=formatted_tasks or [],
             runtime_health=runtime_health,
             observability_health=observability_health,
+            samples=records,
             generator_result=summary_result,
         )
         report_context.scenario_profiles = scenario_profiles
@@ -310,7 +354,7 @@ class ReportStep(GlobalStep):
             )
             report_context.diagnostics["warnings"] = warnings
         report_pack_diagnostics: Dict[str, Any] | None = None
-        if _report_pack_enabled():
+        if _report_pack_enabled(self._cache):
             try:
                 report_pack_diagnostics = ReportPackBuilder().write(
                     self._cache.run_dir,
@@ -379,26 +423,3 @@ def _apply_final_context_validation(report_context: Any) -> None:
         failure_clusters=report_context.failure_clusters,
         diagnostics=diagnostics,
     )
-
-
-def _augment_runtime_health_from_tasks(
-    runtime_health: dict[str, Any],
-    tasks: list[dict[str, Any]],
-) -> dict[str, Any]:
-    health = dict(runtime_health)
-    task_failed_count = 0
-    task_aborted_count = 0
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        execution = task.get("execution") if isinstance(task.get("execution"), dict) else {}
-        status = str(task.get("status") or execution.get("status") or "").lower()
-        if status in {"failed", "error", "errored"}:
-            task_failed_count += 1
-        elif status == "aborted":
-            task_aborted_count += 1
-    if task_failed_count:
-        health["task_failed_count"] = task_failed_count
-    if task_aborted_count:
-        health["task_aborted_count"] = task_aborted_count
-    return health

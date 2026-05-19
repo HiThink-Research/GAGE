@@ -138,6 +138,32 @@ def test_report_step_writes_summary_through_summary_writer(tmp_path, monkeypatch
 
 
 @pytest.mark.fast
+def test_report_pack_enablement_defaults_on(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GAGE_EVAL_REPORT_PACK", raising=False)
+    cache = EvalCache(base_dir=tmp_path, run_id="report-pack-default")
+
+    assert report_module._report_pack_enabled(cache) is True
+
+
+@pytest.mark.fast
+def test_report_pack_enablement_honors_config_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GAGE_EVAL_REPORT_PACK", raising=False)
+    cache = EvalCache(base_dir=tmp_path, run_id="report-pack-config-off")
+    cache.set_metadata("report_pack_enabled", False)
+
+    assert report_module._report_pack_enabled(cache) is False
+
+
+@pytest.mark.fast
+def test_report_pack_enablement_env_overrides_config_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("GAGE_EVAL_REPORT_PACK", "on")
+    cache = EvalCache(base_dir=tmp_path, run_id="report-pack-env-on")
+    cache.set_metadata("report_pack_enabled", False)
+
+    assert report_module._report_pack_enabled(cache) is True
+
+
+@pytest.mark.fast
 def test_pipeline_runtime_resolves_sample_count_via_report_public_api() -> None:
     runtime = PipelineRuntime(
         sample_loop=SimpleNamespace(processed_count=2, shutdown=lambda: None),

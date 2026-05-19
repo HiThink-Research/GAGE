@@ -1364,8 +1364,10 @@ def main() -> None:
         os.environ["VLLM_NATIVE_MODEL_PATH"] = args.model_path
     if args.report_pack:
         os.environ["GAGE_EVAL_REPORT_PACK"] = "1"
+        os.environ["GAGE_EVAL_REPORT_PACK_SOURCE"] = "cli"
     elif args.no_report_pack:
         os.environ["GAGE_EVAL_REPORT_PACK"] = "0"
+        os.environ["GAGE_EVAL_REPORT_PACK_SOURCE"] = "cli"
     _install_signal_handlers()
     config_source_desc = args.config
     try:

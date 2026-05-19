@@ -28,7 +28,21 @@ class MethodologyBuilder:
         return {
             "methodology_version": "gage.methodology.v1",
             "run_metadata": _SECRET_FILTER.redact(run_metadata or {}).value,
-            "metric_ids": [metric.get("metric_id") for metric in metrics or []],
+            "metric_ids": _unique_metric_ids(metrics or []),
             "sample_count": runtime_health.get("sample_count", 0),
             "caveats": caveats,
         }
+
+
+def _unique_metric_ids(metrics: list[dict[str, Any]]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            continue
+        metric_id = str(metric.get("metric_id") or "").strip()
+        if not metric_id or metric_id in seen:
+            continue
+        values.append(metric_id)
+        seen.add(metric_id)
+    return values

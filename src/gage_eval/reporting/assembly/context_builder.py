@@ -5,9 +5,16 @@ from typing import Any
 
 from gage_eval.reporting.assembly.attention_detector import SCORING_CONFIG
 from gage_eval.reporting.assembly.case_details_builder import CaseDetailsBuilder
+from gage_eval.reporting.assembly.external_harness_metrics import (
+    external_harness_metric_entries,
+    external_harness_task_metric_entries,
+    merge_metric_entries,
+)
 from gage_eval.reporting.assembly.failure_clusterer import FailureClusterer
 from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
 from gage_eval.reporting.assembly.methodology_builder import MethodologyBuilder
+from gage_eval.reporting.assembly.metric_collector import MetricSummaryCollector
+from gage_eval.reporting.assembly.runtime_health import augment_runtime_health_from_tasks
 from gage_eval.reporting.contracts import (
     AttentionCase,
     CaseDetails,
@@ -29,6 +36,7 @@ class ReportContextBuilder:
         tasks: list[dict[str, Any]],
         runtime_health: dict[str, Any],
         observability_health: dict[str, Any],
+        samples: list[dict[str, Any]] | None = None,
         generator_result: Any = None,
     ) -> ReportContext:
         diagnostics = {
@@ -66,10 +74,23 @@ class ReportContextBuilder:
             FailureCluster.from_dict(item) if isinstance(item, dict) else item
             for item in (getattr(generator_result, "failure_clusters", []) or cluster_result.failure_clusters)
         ]
-        normalized_metrics = _normalize_metrics(metrics, scope="run")
+        sample_records = samples or _list_from_summary(summary_payload.get("samples"))
+        runtime_health = augment_runtime_health_from_tasks(runtime_health, tasks or [])
+        external_metrics = MetricSummaryCollector().collect(external_harness_metric_entries(sample_records))
+        run_metric_entries = merge_metric_entries(list(metrics or []), external_metrics)
+        run_metric_entries = merge_metric_entries(
+            run_metric_entries,
+            MetricSummaryCollector().collect(_runtime_health_metric_entries(run_metric_entries, runtime_health)),
+        )
+        normalized_metrics = _normalize_metrics(run_metric_entries, scope="run")
+        external_task_metrics = {
+            task_id: MetricSummaryCollector().collect(task_metrics)
+            for task_id, task_metrics in external_harness_task_metric_entries(sample_records).items()
+        }
         normalized_tasks = _normalize_tasks(
             tasks,
             runtime_health=runtime_health,
+            external_task_metrics=external_task_metrics,
             attention_cases=attention_cases,
             failure_clusters=failure_clusters,
         )
@@ -302,6 +323,9 @@ def _normalize_metrics(
     scope: str,
     task_id: Any = None,
 ) -> list[dict[str, Any]]:
+    if scope == "run":
+        return _normalize_run_metrics(metrics)
+
     normalized: list[dict[str, Any]] = []
     for metric in metrics or []:
         if not isinstance(metric, dict):
@@ -314,13 +338,160 @@ def _normalize_metrics(
     return normalized
 
 
+def _runtime_health_metric_entries(
+    metrics: list[dict[str, Any]],
+    runtime_health: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if _has_non_operational_metric(metrics):
+        return []
+
+    sample_count = int(runtime_health.get("sample_count") or 0)
+    completed = int(runtime_health.get("completed_count") or 0)
+    if sample_count > 0:
+        rate = completed / max(1, sample_count)
+        return [
+            {
+                "metric_id": "sample_completion_rate",
+                "name": "Sample completion rate",
+                "values": {"rate": rate},
+                "scope": "run",
+                "source": "runtime_health",
+                "unit": "ratio",
+                "primary": True,
+            }
+        ]
+
+    task_failed = int(runtime_health.get("task_failed_count") or 0)
+    task_aborted = int(runtime_health.get("task_aborted_count") or 0)
+    if task_failed or task_aborted:
+        return [
+            {
+                "metric_id": "task_success_rate",
+                "name": "Task success rate",
+                "values": {"rate": 0.0},
+                "scope": "run",
+                "source": "runtime_health",
+                "unit": "ratio",
+                "primary": True,
+            }
+        ]
+    return []
+
+
+def _has_non_operational_metric(metrics: list[dict[str, Any]]) -> bool:
+    for metric in metrics or []:
+        if not isinstance(metric, dict) or not _metric_has_value(metric):
+            continue
+        metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name") or "").lower()
+        if any(keyword in metric_id for keyword in ("latency", "cost", "token", "duration", "reason")):
+            continue
+        return True
+    return False
+
+
+def _metric_has_value(metric: dict[str, Any]) -> bool:
+    if "value" in metric:
+        return metric.get("value") not in (None, "")
+    values = metric.get("raw_values") if isinstance(metric.get("raw_values"), dict) else metric.get("values")
+    if not isinstance(values, dict) or not values:
+        return False
+    return any(value not in (None, "") for value in values.values())
+
+
+def _normalize_run_metrics(metrics: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    task_groups: dict[str, dict[str, Any]] = {}
+    for metric in metrics or []:
+        if not isinstance(metric, dict):
+            continue
+        item = dict(metric)
+        if item.get("task_id"):
+            _collect_task_metric_for_run(task_groups, item)
+            continue
+        item.setdefault("scope", "run")
+        item.pop("task_id", None)
+        normalized.append(item)
+    normalized.extend(_aggregated_run_metrics(task_groups))
+    return normalized
+
+
+def _collect_task_metric_for_run(groups: dict[str, dict[str, Any]], metric: dict[str, Any]) -> None:
+    metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name") or "").strip()
+    if not metric_id:
+        return
+    group = groups.setdefault(
+        metric_id,
+        {
+            "metric_id": metric_id,
+            "name": metric.get("name"),
+            "unit": metric.get("unit"),
+            "source": metric.get("source", "summary"),
+            "values": {},
+            "count": 0,
+        },
+    )
+    values = metric.get("raw_values") if isinstance(metric.get("raw_values"), dict) else metric.get("values")
+    if not isinstance(values, dict):
+        return
+    collected = False
+    for key, value in values.items():
+        number = _float_metric_value(value)
+        if number is None:
+            continue
+        group["values"].setdefault(str(key), []).append(number)
+        collected = True
+    if collected:
+        group["count"] += 1
+
+
+def _aggregated_run_metrics(groups: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    aggregated: list[dict[str, Any]] = []
+    for group in groups.values():
+        value_lists = group.get("values") if isinstance(group.get("values"), dict) else {}
+        if not value_lists:
+            continue
+        raw_values = {
+            key: sum(values) / len(values)
+            for key, values in value_lists.items()
+            if values
+        }
+        if not raw_values:
+            continue
+        item = {
+            "metric_id": group["metric_id"],
+            "values": {key: f"{value:.5f}" for key, value in raw_values.items()},
+            "raw_values": raw_values,
+            "scope": "run",
+            "source": group.get("source") or "summary",
+            "aggregation": "mean",
+            "count": group.get("count") or max((len(values) for values in value_lists.values()), default=0),
+        }
+        if group.get("name"):
+            item["name"] = group["name"]
+        if group.get("unit"):
+            item["unit"] = group["unit"]
+        aggregated.append(item)
+    return aggregated
+
+
+def _float_metric_value(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_tasks(
     tasks: list[dict[str, Any]] | None,
     *,
     runtime_health: dict[str, Any],
+    external_task_metrics: dict[str, list[dict[str, Any]]] | None = None,
     attention_cases: list[AttentionCase],
     failure_clusters: list[FailureCluster],
 ) -> list[dict[str, Any]]:
+    external_task_metrics = external_task_metrics or {}
     normalized: list[dict[str, Any]] = []
     for task in tasks or []:
         if not isinstance(task, dict):
@@ -337,7 +508,14 @@ def _normalize_tasks(
         item.setdefault("runtime_health", _task_runtime_health(item, runtime_health))
         item.setdefault("attention_case_count", _count_for_task(attention_cases, task_id))
         item.setdefault("failure_cluster_count", _count_for_task(failure_clusters, task_id))
-        item["metrics"] = _normalize_metrics(item.get("metrics", []), scope="task", task_id=task_id)
+        item["metrics"] = _normalize_metrics(
+            merge_metric_entries(
+                list(item.get("metrics") or []),
+                external_task_metrics.get(str(task_id), []),
+            ),
+            scope="task",
+            task_id=task_id,
+        )
         normalized.append(item)
     return normalized
 
@@ -368,3 +546,7 @@ def _count_for_task(items: list[Any], task_id: Any) -> int:
         if value == task_id:
             count += 1
     return count
+
+
+def _list_from_summary(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []

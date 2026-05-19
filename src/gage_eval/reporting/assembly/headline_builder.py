@@ -3,6 +3,31 @@ from __future__ import annotations
 from typing import Any
 
 
+_QUALITY_KEYWORDS = (
+    "acc",
+    "accuracy",
+    "reward",
+    "score",
+    "resolve_rate",
+    "pass_rate",
+    "pass_hat",
+    "success_rate",
+    "f1",
+    "win_rate",
+)
+_OPERATIONAL_KEYWORDS = (
+    "latency",
+    "cost",
+    "token",
+    "tokens",
+    "duration",
+    "wall_runtime",
+    "reason",
+    "failure_reason",
+)
+_PREFERRED_VALUE_KEYS = ("score", "mean", "accuracy", "acc", "reward", "rate", "pass_rate", "resolve_rate")
+
+
 class HeadlineBuilder:
     def build(
         self,
@@ -16,7 +41,7 @@ class HeadlineBuilder:
     ) -> dict[str, Any]:
         diagnostics = diagnostics or {}
         verdict = self._verdict(runtime_health, diagnostics)
-        primary_metric = metrics[0] if metrics else None
+        primary_metric = _pick_primary_metric(metrics)
         score = _primary_score(primary_metric)
         return {
             "verdict": verdict,
@@ -29,7 +54,7 @@ class HeadlineBuilder:
             "top_outlier_metric_ids": _top_ids(outliers, "metric_id"),
             "warnings": list(diagnostics.get("warnings", [])),
             "errors": list(diagnostics.get("errors", [])),
-            "one_line_summary": f"Run {verdict.replace('_', ' ')} with {runtime_health.get('completed_count', 0)} completed samples.",
+            "one_line_summary": _one_line_summary(verdict, runtime_health),
             "attention_case_count": len(attention_cases),
             "outlier_count": len(outliers),
             "failure_cluster_count": len(failure_clusters),
@@ -53,11 +78,60 @@ class HeadlineBuilder:
 def _primary_score(metric: dict[str, Any] | None) -> Any:
     if not metric:
         return None
+    if "value" in metric:
+        return metric.get("value")
     values = metric.get("raw_values") or metric.get("values") or {}
-    for key in ("score", "mean", "accuracy", "reward"):
+    for key in _PREFERRED_VALUE_KEYS:
         if key in values:
             return values[key]
     return None
+
+
+def _one_line_summary(verdict: str, runtime_health: dict[str, Any]) -> str:
+    completed = runtime_health.get("completed_count", 0)
+    if verdict == "passed":
+        return f"Run completed with {completed} completed samples."
+    if verdict in {"passed_with_warnings", "passed-with-warnings"}:
+        return f"Run completed with warnings and {completed} completed samples."
+    return f"Run {verdict.replace('_', ' ')} with {completed} completed samples."
+
+
+def _pick_primary_metric(metrics: list[dict[str, Any]]) -> dict[str, Any] | None:
+    usable = [metric for metric in metrics if isinstance(metric, dict) and _has_metric_value(metric)]
+    for metric in usable:
+        if metric.get("primary") is True:
+            return metric
+
+    quality = [
+        metric
+        for metric in usable
+        if _is_quality_metric(metric) and not _is_operational_metric(metric)
+    ]
+    if quality:
+        return quality[0]
+
+    fallback = [metric for metric in usable if not _is_operational_metric(metric)]
+    return fallback[0] if fallback else None
+
+
+def _has_metric_value(metric: dict[str, Any]) -> bool:
+    if "value" in metric:
+        value = metric.get("value")
+        return value not in (None, "")
+    values = metric.get("raw_values") if isinstance(metric.get("raw_values"), dict) else metric.get("values")
+    if not isinstance(values, dict) or not values:
+        return False
+    return any(value not in (None, "") for value in values.values())
+
+
+def _is_quality_metric(metric: dict[str, Any]) -> bool:
+    metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name") or "").lower()
+    return any(keyword in metric_id for keyword in _QUALITY_KEYWORDS)
+
+
+def _is_operational_metric(metric: dict[str, Any]) -> bool:
+    metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name") or "").lower()
+    return any(keyword in metric_id for keyword in _OPERATIONAL_KEYWORDS)
 
 
 def _verdict_reason(runtime_health: dict[str, Any]) -> str:

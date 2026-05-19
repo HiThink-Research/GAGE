@@ -1,6 +1,8 @@
 import threading
 
+from gage_eval.assets.prompts.catalog.general import register_general_prompts
 from gage_eval.assets.prompts.renderers import JinjaChatPromptRenderer, JinjaDelimitedChatPromptRenderer, PromptContext
+from gage_eval.registry import registry
 
 
 def test_jinja_chat_renderer_prepends_system_message() -> None:
@@ -72,3 +74,14 @@ def test_delimited_chat_renderer_uses_custom_delimiters() -> None:
     assert [msg["role"] for msg in result.messages] == ["system", "user", "assistant", "user"]
     assert "diff --git a/hello.txt b/hello.txt" in result.messages[2]["content"]
     assert result.messages[3]["content"] == "Real task"
+
+
+def test_general_prompt_uses_standardized_prompt_when_question_is_missing() -> None:
+    register_general_prompts()
+    renderer = registry.get("prompts", "dut/general@v1").instantiate({})
+    context = PromptContext(sample={"inputs": {"prompt": "Standardized prompt text."}})
+
+    result = renderer.render(context)
+
+    assert result.prompt is not None
+    assert "Standardized prompt text." in result.prompt

@@ -6,11 +6,17 @@ import pytest
 
 from gage_eval.reporting.contracts import ReportContext
 from gage_eval.reporting.persistence.pack_builder import ReportPackBuilder
+from gage_eval.reporting.rendering.static_renderer import StaticReportRenderer
 
 
 class _LeakyRenderer:
     def render(self, payload: dict) -> str:
         return "Authorization: Bearer abc123 alice@example.com"
+
+
+class _LeakyStaticRenderer:
+    def render(self, payload: dict) -> str:
+        return StaticReportRenderer().render(payload) + "\nAuthorization: Bearer abc123"
 
 
 @pytest.mark.io
@@ -34,7 +40,7 @@ def test_report_pack_builder_redacts_renderer_output_before_write(tmp_path) -> N
     context = ReportContext.minimal(run_id="run")
     builder = ReportPackBuilder(
         markdown_renderer=_LeakyRenderer(),
-        html_renderer=_LeakyRenderer(),
+        html_renderer=_LeakyStaticRenderer(),
         prompt_renderer=_LeakyRenderer(),
     )
 
@@ -52,6 +58,27 @@ def test_report_pack_builder_redacts_renderer_output_before_write(tmp_path) -> N
         warning.get("code") == "report_pack.secret_redacted"
         for warning in diagnostics["warnings"]
     )
+
+
+@pytest.mark.io
+def test_report_pack_builder_rerenders_html_with_final_diagnostics(tmp_path) -> None:
+    context = ReportContext.minimal(run_id="run")
+    builder = ReportPackBuilder(
+        markdown_renderer=_LeakyRenderer(),
+        html_renderer=_LeakyStaticRenderer(),
+        prompt_renderer=_LeakyRenderer(),
+    )
+
+    builder.write(tmp_path, context)
+
+    pack = tmp_path / "report_pack"
+    diagnostics = json.loads((pack / "diagnostics.json").read_text(encoding="utf-8"))
+    html = (pack / "report.html").read_text(encoding="utf-8")
+    expected_warning_count = len(diagnostics["warnings"])
+
+    assert expected_warning_count == 3
+    assert f"<td>{expected_warning_count}</td>" in html
+    assert "report.html" in html
 
 
 @pytest.mark.io

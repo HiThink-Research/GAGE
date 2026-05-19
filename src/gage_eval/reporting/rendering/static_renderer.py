@@ -4,15 +4,28 @@ import html
 import json
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
+from gage_eval.reporting.contracts.reason_codes import ReasonCodeRegistry
 from gage_eval.reporting.rendering._context import normalize_context
 
 
 _PREVIEW_LIMIT = 1800
 _DEBUG_LIMIT = 1200
 _ROW_LIMIT = 8
+_EVIDENCE_INITIAL_LIMIT = 5
+_PREFERRED_METRIC_VALUE_KEYS = (
+    "score",
+    "mean",
+    "accuracy",
+    "acc",
+    "reward",
+    "rate",
+    "pass_rate",
+    "resolve_rate",
+)
 _SVG_DATA_IMAGE_URL_RE = re.compile(
     r"data:image/svg\+xml(?:;[a-z0-9.+-]+(?:=[^\s\"'<>;,)\]}]+)?)*,"
     r"(?:.*?</svg>|[^\s\"')}\]]+)",
@@ -22,6 +35,10 @@ _DATA_IMAGE_URL_RE = re.compile(
     r"data:image/[a-z0-9.+-]+(?:;[a-z0-9.+-]+(?:=[^\s\"'<>;,)\]}]+)?)*,[^\s\"')}\]]+",
     re.IGNORECASE,
 )
+_LOCAL_RUN_PATH_RE = re.compile(
+    r"/(?:Users|home|private|tmp|var)/[^\s\"'<>]*?/runs/",
+)
+_LOCAL_USER_HOME_RE = re.compile(r"/(?:Users|home)/[^/\s\"'<>]+/")
 
 
 class StaticReportRenderer:
@@ -32,14 +49,7 @@ class StaticReportRenderer:
         context_json = _safe_script_json(payload)
         run = _mapping(payload.get("run"))
         title = f"GAGE Run Report - {_text(run.get('run_id'), 'unknown')}"
-        main_sections = [
-            _render_quick_stats(payload),
-            _render_key_findings(payload),
-            _render_metrics_dashboard(payload),
-            _render_scenario_profile(payload),
-            _render_evidence_explorer(payload),
-        ]
-        main_body = "\n".join(section for section in main_sections if section)
+        main_body = "\n".join(_main_sections(payload))
         footer = _render_footer(payload)
         return f"""<!doctype html>
 <html lang="en">
@@ -51,6 +61,7 @@ class StaticReportRenderer:
 </head>
 <body>
   {_render_hero(payload)}
+  {_render_nav(payload)}
   <main>
   {main_body}
   </main>
@@ -64,6 +75,22 @@ class StaticReportRenderer:
 </body>
 </html>
 """
+
+
+def _main_sections(payload: dict[str, Any]) -> list[str]:
+    quick_stats = _render_quick_stats(payload)
+    findings = _render_key_findings(payload)
+    metrics = _render_metrics_dashboard(payload)
+    scenario_profile = _render_scenario_profile(payload)
+    evidence = _render_evidence_explorer(payload)
+    verdict = _text(_mapping(payload.get("headline")).get("verdict"), "").replace("-", "_")
+    ordered = (
+        [findings, quick_stats]
+        if findings and verdict in {"failed", "aborted", "degraded"}
+        else [quick_stats, findings]
+    )
+    ordered.extend([metrics, scenario_profile, evidence])
+    return [section for section in ordered if section]
 
 
 def _render_hero(payload: dict[str, Any]) -> str:
@@ -80,9 +107,11 @@ def _render_hero(payload: dict[str, Any]) -> str:
         <div class="primary-metric">
           <span class="label">Primary metric</span>
           <strong>{_escape(metric["value"])}</strong>
-          <span>{_escape(metric["label"])}</span>
+          <span>{_escape(_metric_caption(metric))}</span>
           {bar}
         </div>"""
+    else:
+        metric_html = _hero_context_panel(payload)
     return f"""<header class="report-shell hero" data-filter-target="overview">
     <div class="hero-topline">
       <span>Run report</span>
@@ -95,9 +124,11 @@ def _render_hero(payload: dict[str, Any]) -> str:
       </div>
       <dl class="meta-list">
         {_definition("Run", run.get("run_id"), "unknown")}
-        {_definition("Run dir", run.get("run_dir"), "")}
+        {_definition("Run dir", _display_run_dir(run.get("run_dir")), "")}
+        {_definition("Game", _game_kits_label(payload), "")}
         {_definition("Started", run.get("started_at") or run.get("started_at_iso"), "")}
         {_definition("Finished", run.get("finished_at") or run.get("finished_at_iso"), "")}
+        {_definition("Duration", _format_duration(_run_duration(run, {})) or "-", "-")}
       </dl>
       {metric_html}
     </div>
@@ -106,26 +137,46 @@ def _render_hero(payload: dict[str, Any]) -> str:
 
 def _render_quick_stats(payload: dict[str, Any]) -> str:
     run = _mapping(payload.get("run"))
+    headline = _mapping(payload.get("headline"))
     runtime = _mapping(payload.get("runtime_health"))
     observability = _mapping(payload.get("observability_health"))
+    metrics = _list(payload.get("metrics"))
+    verdict = _text(headline.get("verdict"), "")
+    failed = runtime.get("failed_count")
+    aborted = runtime.get("aborted_count")
     stats = [
         ("Samples", runtime.get("sample_count")),
         ("Completed", runtime.get("completed_count")),
-        ("Failed", runtime.get("failed_count")),
-        ("Aborted", runtime.get("aborted_count")),
-        ("Duration", runtime.get("duration_s") or run.get("duration_s")),
+        ("Duration", _run_duration(run, runtime)),
     ]
+    if _positive(failed) or verdict not in {"passed", "completed"}:
+        stats.append(("Failed", failed))
+    if _positive(aborted) or verdict in {"aborted", "failed", "passed_with_warnings", "passed-with-warnings"}:
+        stats.append(("Aborted", aborted))
     optional = [
-        ("Events", observability.get("events_emitted_total")),
-        ("Cost", _first_present(runtime, observability, "total_cost", "cost", "agent_cost")),
-        ("Tokens", _first_present(runtime, observability, "total_tokens", "tokens", "token_count")),
+        (
+            "Cost",
+            _first_present(runtime, observability, "total_cost", "cost", "agent_cost")
+            or _metric_display_by_ids(metrics, {"total_cost", "cost_usd", "agent_cost"}),
+        ),
+        (
+            "Tokens",
+            _first_present(runtime, observability, "total_tokens", "tokens", "token_count")
+            or _metric_display_by_ids(metrics, {"total_tokens", "tokens", "token_count"}),
+        ),
+        (
+            "Latency",
+            _first_present(runtime, observability, "latency_s", "duration_s", "elapsed_s")
+            or _metric_display_by_ids(metrics, {"latency_s", "duration_s", "elapsed_s"}),
+        ),
     ]
-    cards = "".join(
-        _stat_card(label, value, duration=label == "Duration")
-        for label, value in [*stats, *optional]
+    cards = "".join(_stat_card(label, value, duration=label == "Duration") for label, value in stats)
+    cards += "".join(
+        _stat_card(label, value, duration=False)
+        for label, value in optional
         if value is not None and value != ""
     )
-    return f"""<section class="report-shell section" data-filter-target="quick-stats">
+    return f"""<section id="quick-stats" class="report-shell section" data-filter-target="quick-stats">
     <div class="section-heading">
       <h2>Quick stats</h2>
     </div>
@@ -137,17 +188,20 @@ def _render_key_findings(payload: dict[str, Any]) -> str:
     attention_cases = _list(payload.get("attention_cases"))
     failure_clusters = _list(payload.get("failure_clusters"))
     outliers = _list(payload.get("outliers"))
-    if not attention_cases and not failure_clusters and not outliers:
+    task_failures = _task_failure_rows(_list(payload.get("tasks")))
+    if not attention_cases and not failure_clusters and not outliers and not task_failures:
         return ""
 
     blocks = []
+    if task_failures:
+        blocks.append(_task_failures_table(task_failures))
     if attention_cases:
         blocks.append(_attention_cases_table(attention_cases, _mapping(payload.get("case_details"))))
     if failure_clusters:
         blocks.append(_failure_clusters_table(failure_clusters))
     if outliers:
         blocks.append(_outliers_table(outliers))
-    return f"""<section class="report-shell section" data-filter-target="key-findings">
+    return f"""<section id="key-findings" class="report-shell section" data-filter-target="key-findings">
     <div class="section-heading">
       <h2>Key findings</h2>
     </div>
@@ -166,7 +220,7 @@ def _render_metrics_dashboard(payload: dict[str, Any]) -> str:
       <div class="metric-focus">
         <span class="label">Primary metric</span>
         <strong>{_escape(primary["value"])}</strong>
-        <span>{_escape(primary["label"])}</span>
+        <span>{_escape(_metric_caption(primary))}</span>
         {bar}
       </div>"""
 
@@ -176,11 +230,11 @@ def _render_metrics_dashboard(payload: dict[str, Any]) -> str:
         rows.append(
             "<tr>"
             f"<td>{_escape(item.get('metric_id') or item.get('id') or '')}</td>"
-            f"<td>{_escape(item.get('name') or item.get('label') or '')}</td>"
+            f"<td>{_escape(_metric_label(item))}</td>"
             f"<td>{_escape(item.get('scope') or '')}</td>"
-            f"<td class=\"numeric\">{_escape(_format_scalar(item.get('value')))}</td>"
+            f"<td class=\"metric-value\">{_escape(_metric_table_value(item))}</td>"
             f"<td>{_escape(item.get('unit') or '')}</td>"
-            f"<td>{_escape(item.get('task_id') or item.get('section_id') or '')}</td>"
+            f"{_owner_cell(item.get('task_id') or item.get('section_id') or '')}"
             "</tr>"
         )
     table = _table(
@@ -188,7 +242,7 @@ def _render_metrics_dashboard(payload: dict[str, Any]) -> str:
         rows,
         empty_message="No metrics recorded.",
     )
-    return f"""<section class="report-shell section" data-filter-target="metrics">
+    return f"""<section id="metrics" class="report-shell section" data-filter-target="metrics">
     <div class="section-heading">
       <h2>Metrics</h2>
     </div>
@@ -215,7 +269,7 @@ def _render_scenario_profile(payload: dict[str, Any]) -> str:
         if kind in {"agent", "external_harness", "game"}:
             continue
         blocks.append(_fallback_profile(kind, _mapping(profile)))
-    return f"""<section class="report-shell section" data-filter-target="scenario-profile">
+    return f"""<section id="scenario-profile" class="report-shell section" data-filter-target="scenario-profile">
     <div class="section-heading">
       <h2>Scenario profile</h2>
     </div>
@@ -231,30 +285,29 @@ def _render_evidence_explorer(payload: dict[str, Any]) -> str:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for ref in refs:
         item = _mapping(ref)
-        groups[_text(item.get("kind"), "unknown")].append(item)
+        kind = _text(item.get("kind"), "unknown")
+        role = _text(item.get("artifact_role") or item.get("owner"), "")
+        group_name = f"{kind} / {role}" if kind == "artifact" and role else kind
+        groups[group_name].append(item)
 
     blocks = []
     for kind in sorted(groups):
-        rows = []
-        for ref in groups[kind][:_ROW_LIMIT]:
-            preview = _preview_block(ref.get("preview"), ref.get("mime_type"))
-            rows.append(
-                "<tr>"
-                f"<td class=\"mono\">{_escape(ref.get('ref_id') or '')}</td>"
-                f"<td>{_escape(ref.get('path') or '')}{preview}</td>"
-                f"<td>{_escape(_format_bytes(ref.get('size_bytes')))}</td>"
-                f"<td class=\"mono\">{_escape(_short_sha(ref.get('sha256')))}</td>"
-                f"<td>{_escape(ref.get('sample_id') or '')}</td>"
-                f"<td>{_escape(ref.get('task_id') or '')}</td>"
-                "</tr>"
-            )
+        group_refs = groups[kind]
+        visible = group_refs[:_EVIDENCE_INITIAL_LIMIT]
+        extra = group_refs[_EVIDENCE_INITIAL_LIMIT:]
+        table = _evidence_table(visible)
+        if extra:
+            table += f"""<details class="more-evidence">
+          <summary>+ {len(extra)} more</summary>
+          {_evidence_table(extra)}
+        </details>"""
         blocks.append(
             f"""<details class="panel" open>
-        <summary>{_escape(kind)} evidence ({len(groups[kind])})</summary>
-        {_table(["Ref", "Path / preview", "Size", "SHA", "Sample", "Task"], rows)}
+        <summary>{_escape(kind)} evidence ({len(group_refs)})</summary>
+        {table}
       </details>"""
         )
-    return f"""<section class="report-shell section" data-filter-target="evidence-explorer">
+    return f"""<section id="evidence-explorer" class="report-shell section" data-filter-target="evidence-explorer">
     <div class="section-heading">
       <h2>Evidence explorer</h2>
     </div>
@@ -270,6 +323,7 @@ def _render_footer(payload: dict[str, Any]) -> str:
     generated_by = _mapping(schema.get("generated_by"))
     methodology_summary = _methodology_summary(methodology)
     diagnostics_summary = _diagnostics_summary(diagnostics)
+    reason_glossary = _render_reason_glossary(payload)
     metadata_rows = [
         ("Schema", f"{schema.get('name', '')} v{schema.get('major', '')}.{schema.get('minor', '')}"),
         ("Renderer compat", schema.get("renderer_compat")),
@@ -278,16 +332,17 @@ def _render_footer(payload: dict[str, Any]) -> str:
         ("Run", run.get("run_id")),
         ("Report status", diagnostics.get("report_pack_status")),
     ]
-    return f"""<footer class="report-shell footer" data-filter-target="methodology">
-    <details open>
+    return f"""<footer id="methodology" class="report-shell footer" data-filter-target="methodology">
+    <details>
       <summary>Methodology</summary>
       {methodology_summary}
     </details>
-    <details>
+    <details open>
       <summary>Diagnostics</summary>
       {diagnostics_summary}
     </details>
-    <details>
+    {reason_glossary}
+    <details open>
       <summary>Schema and run metadata</summary>
       {_kv_table(metadata_rows)}
     </details>
@@ -304,8 +359,8 @@ def _attention_cases_table(cases: list[Any], case_details: dict[str, Any]) -> st
         summary = _text(item.get("summary"), "")
         detail_bits = [
             _detail_text(summary),
-            _ids_line("Case details", details.get("artifact_preview_ref_ids")),
-            _ids_line("Evidence refs", item.get("evidence_ref_ids") or details.get("evidence_ref_ids")),
+            _ids_line("Preview artifact refs", details.get("artifact_preview_ref_ids"), evidence=True),
+            _ids_line("Evidence refs", item.get("evidence_ref_ids") or details.get("evidence_ref_ids"), evidence=True),
             _ids_line("Sample/trial", [item.get("sample_id"), item.get("trial_id")]),
         ]
         if details.get("message_history_preview") or details.get("tool_call_summary"):
@@ -314,14 +369,65 @@ def _attention_cases_table(cases: list[Any], case_details: dict[str, Any]) -> st
             "<tr>"
             f"<td>{_escape(case_id)}</td>"
             f"<td>{_badge(_text(item.get('severity'), 'unknown'), 'severity')}</td>"
-            f"<td>{_chips(item.get('reason_codes'))}</td>"
+            f"<td>{_chips(item.get('reason_codes'), reason_codes=True)}</td>"
             f"<td>{_escape(_format_scalar(scoring.get('priority_score')))}</td>"
             f"<td>{''.join(bit for bit in detail_bits if bit)}</td>"
             "</tr>"
         )
     return f"""<div class="subsection">
       <h3>Attention cases</h3>
-      {_table(["Case", "Severity", "Reason codes", "Priority", "Details"], rows)}
+      {_table(
+          ["Case", "Severity", "Reason codes", "Priority", "Details"],
+          rows,
+          table_class="findings-table attention-cases-table",
+      )}
+    </div>"""
+
+
+def _task_failure_rows(tasks: list[Any]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for task in tasks:
+        item = _mapping(task)
+        execution = _mapping(item.get("execution"))
+        status = _text(item.get("status") or execution.get("status"), "").lower()
+        failure = _mapping(execution.get("failure"))
+        message = _text(
+            failure.get("message") or execution.get("error_message") or item.get("error_message"),
+            "",
+        )
+        failed_step = _text(execution.get("failed_step"), "")
+        if status not in {"failed", "aborted", "error"} and not message and not failed_step:
+            continue
+        rows.append(
+            {
+                "task_id": _text(item.get("task_id") or item.get("id"), ""),
+                "status": status or "failed",
+                "failed_step": failed_step,
+                "error_type": _text(failure.get("error_type") or execution.get("error_type"), ""),
+                "message": message,
+            }
+        )
+    return rows
+
+
+def _task_failures_table(failures: list[dict[str, str]]) -> str:
+    rows = []
+    for item in failures[:_ROW_LIMIT]:
+        details = [
+            _detail_text(item.get("message", "")),
+            _detail_text(f"Error type: {item['error_type']}" if item.get("error_type") else ""),
+        ]
+        rows.append(
+            "<tr>"
+            f"<td>{_escape(item.get('task_id') or '')}</td>"
+            f"<td>{_badge(_text(item.get('status'), 'failed'), 'severity')}</td>"
+            f"<td>{_escape(item.get('failed_step') or '')}</td>"
+            f"<td>{''.join(bit for bit in details if bit)}</td>"
+            "</tr>"
+        )
+    return f"""<div class="subsection">
+      <h3>Task failures</h3>
+      {_table(["Task", "Status", "Failed step", "Details"], rows, table_class="findings-table")}
     </div>"""
 
 
@@ -333,20 +439,20 @@ def _failure_clusters_table(clusters: list[Any]) -> str:
             _detail_text(_text(item.get("hypothesis"), "")),
             _detail_text(_text(item.get("recommended_action"), "")),
             _ids_line("Samples", item.get("sample_ids")),
-            _ids_line("Evidence refs", item.get("representative_ref_ids")),
+            _ids_line("Evidence refs", item.get("representative_ref_ids"), evidence=True),
         ]
         rows.append(
             "<tr>"
             f"<td>{_escape(item.get('label') or item.get('cluster_id') or '')}</td>"
             f"<td>{_badge(_text(item.get('severity'), 'unknown'), 'severity')}</td>"
-            f"<td>{_chips(item.get('cluster_key'))}</td>"
+            f"<td>{_chips(item.get('cluster_key'), reason_codes=True)}</td>"
             f"<td class=\"numeric\">{_escape(_format_scalar(item.get('count')))}</td>"
             f"<td>{''.join(bit for bit in details if bit)}</td>"
             "</tr>"
         )
     return f"""<div class="subsection">
       <h3>Failure clusters</h3>
-      {_table(["Cluster", "Severity", "Reason codes", "Count", "Details"], rows)}
+      {_table(["Cluster", "Severity", "Reason codes", "Count", "Details"], rows, table_class="findings-table")}
     </div>"""
 
 
@@ -362,9 +468,9 @@ def _outliers_table(outliers: list[Any]) -> str:
                 " / ".join(
                     part
                     for part in (
-                        _text(value.get("sample_id"), ""),
-                        _format_scalar(value.get("value")),
-                        _ids_line("refs", value.get("evidence_ref_ids"), inline=True),
+                        _escape(_text(value.get("sample_id"), "")),
+                        _escape(_format_scalar(value.get("value"))),
+                        _ids_line("refs", value.get("evidence_ref_ids"), inline=True, evidence=True),
                     )
                     if part
                 )
@@ -374,7 +480,7 @@ def _outliers_table(outliers: list[Any]) -> str:
             f"<td>{_escape(item.get('metric_id') or '')}</td>"
             f"<td>{_escape(item.get('scope') or '')}</td>"
             f"<td>{_escape(item.get('ranking') or '')}</td>"
-            f"<td>{_escape('; '.join(entries))}</td>"
+            f"<td>{'; '.join(entries)}</td>"
             "</tr>"
         )
     return f"""<div class="subsection">
@@ -389,37 +495,49 @@ def _known_profile(kind: str, profile: dict[str, Any]) -> str:
         "external_harness": "External harness profile",
         "game": "Game profile",
     }
-    field_sets = {
-        "agent": [
-            "sample_count",
-            "trial_count",
-            "completed_trial_count",
-            "failed_trial_count",
-            "tool_call_count",
-            "representative_ref_ids",
-        ],
-        "external_harness": [
-            "harness_name",
-            "suite_count",
-            "sample_count",
-            "completed_count",
-            "failed_count",
-            "representative_ref_ids",
-        ],
-        "game": [
-            "game_name",
-            "match_count",
-            "move_count",
-            "illegal_move_count",
-            "winner_count",
-            "replay_refs",
-        ],
-    }
-    rows = [(key.replace("_", " ").title(), profile.get(key)) for key in field_sets[kind]]
+    rows = {
+        "agent": _agent_profile_rows,
+        "external_harness": _external_harness_profile_rows,
+        "game": _game_profile_rows,
+    }[kind](profile)
     return f"""<article class="profile-panel">
       <h3>{titles[kind]}</h3>
       {_kv_table(rows)}
     </article>"""
+
+
+def _agent_profile_rows(profile: dict[str, Any]) -> list[tuple[str, Any]]:
+    return [
+        ("Trial count", profile.get("trial_count")),
+        ("Failed trial count", profile.get("failed_trial_count")),
+        ("Representative refs", profile.get("representative_ref_ids")),
+    ]
+
+
+def _external_harness_profile_rows(profile: dict[str, Any]) -> list[tuple[str, Any]]:
+    harnesses = _list(profile.get("harnesses"))
+    sample_count = sum(_int_value(_mapping(item).get("sample_count")) for item in harnesses)
+    harness_ids = [
+        _text(_mapping(item).get("harness_id"), "")
+        for item in harnesses
+        if _text(_mapping(item).get("harness_id"), "")
+    ]
+    return [
+        ("Harnesses", harness_ids),
+        ("Sample count", sample_count if sample_count else None),
+        ("Trial count", profile.get("trial_count")),
+        ("Status rollup", profile.get("trial_rollup")),
+        ("Representative refs", profile.get("representative_ref_ids")),
+    ]
+
+
+def _game_profile_rows(profile: dict[str, Any]) -> list[tuple[str, Any]]:
+    return [
+        ("Game kits", profile.get("game_kits")),
+        ("Move count", profile.get("move_count")),
+        ("Illegal actions", profile.get("illegal_actions")),
+        ("Replay refs", profile.get("replay_refs")),
+    ]
 
 
 def _fallback_profile(kind: str, profile: dict[str, Any]) -> str:
@@ -485,6 +603,77 @@ def _generic_profile_has_signal(value: Any) -> bool:
     return value not in (None, "")
 
 
+def _evidence_table(refs: list[dict[str, Any]]) -> str:
+    include_sample = any(ref.get("sample_id") for ref in refs)
+    include_task = any(ref.get("task_id") for ref in refs)
+    headers = ["Ref", "Path / preview", "Size", "SHA"]
+    if include_sample:
+        headers.append("Sample")
+    if include_task:
+        headers.append("Task")
+    rows = []
+    for ref in refs:
+        preview = _preview_block(ref.get("preview"), ref.get("mime_type"))
+        path = _text(ref.get("path"), "")
+        media = _media_preview(ref)
+        cells = [
+            f"<td class=\"mono evidence-ref\">{_escape(ref.get('ref_id') or '')}</td>",
+            f"<td class=\"evidence-path\">{_path_link(path)}{media}{preview}</td>",
+            f"<td>{_escape(_format_bytes(ref.get('size_bytes')))}</td>",
+            f"<td class=\"mono\" title=\"{_escape(ref.get('sha256') or '')}\">{_escape(_short_sha(ref.get('sha256')))}</td>",
+        ]
+        if include_sample:
+            sample = _text(ref.get("sample_id"), "")
+            cells.append(f"<td class=\"evidence-sample\" title=\"{_escape(sample)}\">{_escape(sample)}</td>")
+        if include_task:
+            task = _text(ref.get("task_id"), "")
+            cells.append(f"<td class=\"evidence-task\" title=\"{_escape(task)}\">{_escape(task)}</td>")
+        row_id = _evidence_anchor(ref.get("ref_id"))
+        rows.append(f"<tr id=\"{_escape(row_id)}\">{''.join(cells)}</tr>")
+    return _table(headers, rows)
+
+
+def _media_preview(ref: dict[str, Any]) -> str:
+    if _text(ref.get("kind"), "") != "media" or not _text(ref.get("mime_type"), "").startswith("image/"):
+        return ""
+    url = _safe_media_url(_mapping(ref.get("preview")))
+    note = ""
+    path = _text(ref.get("path"), "")
+    if path.startswith("external://sha256/"):
+        note = '<p class="muted media-note">External media URL digest; image source is not stored as base64 in the report.</p>'
+    if not url:
+        return note
+    return (
+        '<figure class="media-preview">'
+        f'<img class="media-thumb" src="{_escape(url)}" alt="Media evidence preview" loading="lazy" referrerpolicy="no-referrer">'
+        f"{note}</figure>"
+    )
+
+
+def _safe_media_url(preview: dict[str, Any]) -> str:
+    for key in ("source", "url", "image_url"):
+        value = preview.get(key)
+        if not isinstance(value, str):
+            continue
+        sanitized = _safe_preview_source(value)
+        parts = urlsplit(sanitized)
+        if parts.scheme in {"http", "https"} and parts.netloc:
+            return sanitized
+        host_only = _host_only_media_url(sanitized)
+        if host_only:
+            return host_only
+    return ""
+
+
+def _host_only_media_url(value: str) -> str:
+    if not value or value.startswith(("/", ".", "~")) or "://" in value:
+        return ""
+    head, _, tail = value.partition("/")
+    if not tail or "." not in head or any(char.isspace() for char in head):
+        return ""
+    return f"https://{value}"
+
+
 def _preview_block(preview: Any, mime_type: Any) -> str:
     if preview in (None, {}, []):
         return ""
@@ -493,32 +682,69 @@ def _preview_block(preview: Any, mime_type: Any) -> str:
         return ""
     clipped, was_truncated = _truncate(text, _PREVIEW_LIMIT)
     note = " <span class=\"muted\">truncated</span>" if was_truncated else ""
+    preview_html = _preview_html(clipped, _text(mime_type, ""))
     return f"""<details class="preview">
         <summary>Preview{note}</summary>
-        <pre>{_escape(clipped)}</pre>
+        <pre>{preview_html}</pre>
       </details>"""
 
 
 def _preview_text(preview: Any, mime_type: str) -> str:
     if isinstance(preview, str):
-        return _redact_data_urls(preview)
+        return _safe_visible_text(preview)
     if isinstance(preview, dict):
         for key in ("text", "content", "json", "sample", "preview"):
             value = preview.get(key)
             if isinstance(value, str):
-                return _redact_data_urls(value)
+                return _safe_visible_text(value)
             if isinstance(value, (dict, list)):
-                return json.dumps(_sanitize_payload(value), ensure_ascii=False, indent=2, sort_keys=True)
+                return _safe_visible_text(json.dumps(_sanitize_payload(value), ensure_ascii=False, indent=2, sort_keys=True))
         if mime_type.startswith("image/"):
             for key in ("source", "url", "image_url"):
                 value = preview.get(key)
                 if isinstance(value, str):
                     return _safe_preview_source(value)
         if "json" in mime_type or "text" in mime_type:
-            return json.dumps(_sanitize_payload(preview), ensure_ascii=False, indent=2, sort_keys=True)
+            return _safe_visible_text(json.dumps(_sanitize_payload(preview), ensure_ascii=False, indent=2, sort_keys=True))
     if isinstance(preview, list) and ("json" in mime_type or "text" in mime_type):
-        return json.dumps(_sanitize_payload(preview), ensure_ascii=False, indent=2, sort_keys=True)
+        return _safe_visible_text(json.dumps(_sanitize_payload(preview), ensure_ascii=False, indent=2, sort_keys=True))
     return ""
+
+
+def _preview_html(text: str, mime_type: str) -> str:
+    escaped = _escape(text)
+    if _looks_json_preview(text, mime_type):
+        return _highlight_json_escaped(escaped)
+    return escaped
+
+
+def _looks_json_preview(text: str, mime_type: str) -> bool:
+    stripped = text.lstrip()
+    return "json" in mime_type.lower() or stripped.startswith("{") or stripped.startswith("[")
+
+
+def _highlight_json_escaped(escaped: str) -> str:
+    highlighted = re.sub(
+        r"(&quot;[^&<>]*?&quot;)(\s*:)",
+        r'<span class="json-key">\1</span>\2',
+        escaped,
+    )
+    highlighted = re.sub(
+        r"(:\s*)(&quot;[^&<>]*?&quot;)",
+        r'\1<span class="json-string">\2</span>',
+        highlighted,
+    )
+    highlighted = re.sub(
+        r"(:\s*)(-?\d+(?:\.\d+)?)",
+        r'\1<span class="json-number">\2</span>',
+        highlighted,
+    )
+    highlighted = re.sub(
+        r"(:\s*)(true|false|null)\b",
+        r'\1<span class="json-bool">\2</span>',
+        highlighted,
+    )
+    return highlighted
 
 
 def _methodology_summary(methodology: dict[str, Any]) -> str:
@@ -526,60 +752,314 @@ def _methodology_summary(methodology: dict[str, Any]) -> str:
         return "<p class=\"muted\">Methodology metadata was not provided.</p>"
     rows = []
     for key, value in sorted(methodology.items()):
+        if key == "run_metadata" and isinstance(value, dict):
+            rows.append(("Run Metadata", f"{len(value)} fields; see report_context.json"))
+            continue
         if isinstance(value, (str, int, float, bool)) or value is None:
             rows.append((key.replace("_", " ").title(), value))
         elif isinstance(value, list):
-            rows.append((key.replace("_", " ").title(), ", ".join(_text(item, "") for item in value[:6])))
+            list_value = _unique_list(value) if key == "metric_ids" else value
+            rows.append((key.replace("_", " ").title(), ", ".join(_text(item, "") for item in list_value[:6])))
         elif isinstance(value, dict):
             rows.append((key.replace("_", " ").title(), ", ".join(sorted(map(str, value.keys()))[:6])))
     return _kv_table(rows)
 
 
+def _unique_list(values: list[Any]) -> list[Any]:
+    result: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        key = _text(value, "")
+        if key in seen:
+            continue
+        result.append(value)
+        seen.add(key)
+    return result
+
+
 def _diagnostics_summary(diagnostics: dict[str, Any]) -> str:
     if not diagnostics:
         return "<p class=\"muted\">No diagnostics metadata was provided.</p>"
+    warnings_raw = _list(diagnostics.get("warnings"))
+    routine_redactions, visible_warnings = _partition_routine_redaction_warnings(warnings_raw)
+    rows = [
+        ("Report Pack Status", diagnostics.get("report_pack_status")),
+        ("Warnings", len(visible_warnings)),
+        ("Privacy Redactions", _routine_redaction_summary(routine_redactions) if routine_redactions else None),
+        ("Errors", len(_list(diagnostics.get("errors")))),
+    ]
+    html = [_kv_table(rows)]
+    warnings = _diagnostic_rows(visible_warnings, severity="warning")
+    errors = _diagnostic_rows(_list(diagnostics.get("errors")), severity="error")
+    if warnings:
+        html.append("<h3>Warnings</h3>" + _diagnostic_table(warnings))
+    if errors:
+        html.append("<h3>Errors</h3>" + _diagnostic_table(errors))
+    return "".join(html)
+
+
+_ROUTINE_REDACTION_PATHS = {
+    "report_context.md",
+    "report.html",
+    "prompt.txt",
+}
+
+
+def _partition_routine_redaction_warnings(items: list[Any]) -> tuple[list[dict[str, Any]], list[Any]]:
+    routine: list[dict[str, Any]] = []
+    visible: list[Any] = []
+    for item in items:
+        value = _mapping(item)
+        if (
+            value.get("code") == "report_pack.secret_redacted"
+            and _text(value.get("path"), "") in _ROUTINE_REDACTION_PATHS
+        ):
+            routine.append(value)
+            continue
+        visible.append(item)
+    return routine, visible
+
+
+def _routine_redaction_summary(items: list[dict[str, Any]]) -> str:
+    asset_count = len(items)
+    finding_count = sum(_int(item.get("finding_count")) for item in items)
+    asset_label = "asset" if asset_count == 1 else "assets"
+    if finding_count:
+        return f"{asset_count} rendered {asset_label}; {finding_count} findings redacted"
+    return f"{asset_count} rendered {asset_label}"
+
+
+def _int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _diagnostic_rows(items: list[Any], *, severity: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in items:
+        value = _mapping(item)
+        code = _text(value.get("code"), "")
+        rows.append(
+            {
+                "severity": severity,
+                "code": code,
+                "path": _text(value.get("path"), ""),
+                "finding_count": _text(value.get("finding_count"), ""),
+                "message": _text(value.get("message") or _diagnostic_explanation(code), ""),
+            }
+        )
+    return rows
+
+
+def _diagnostic_table(items: list[dict[str, str]]) -> str:
     rows = []
-    for key in ("report_pack_status", "warnings", "errors", "source_files"):
-        value = diagnostics.get(key)
-        if isinstance(value, list):
-            rows.append((key.replace("_", " ").title(), len(value)))
-            if value:
-                rows.append((f"{key} preview", json.dumps(value[:3], ensure_ascii=False, sort_keys=True)))
-        elif isinstance(value, dict):
-            rows.append((key.replace("_", " ").title(), len(value)))
+    for item in items:
+        rows.append(
+            "<tr>"
+            f"<td>{_badge(item['severity'], 'severity')}</td>"
+            f"<td class=\"mono\">{_escape(item.get('code') or '')}</td>"
+            f"<td>{_diagnostic_path_link(item.get('path') or '')}</td>"
+            f"<td class=\"numeric\">{_escape(item.get('finding_count') or '')}</td>"
+            f"<td>{_escape(item.get('message') or '')}</td>"
+            "</tr>"
+        )
+    return _table(["Level", "Code", "Path", "Findings", "Meaning"], rows, table_class="diagnostics-table")
+
+
+def _diagnostic_explanation(code: str) -> str:
+    explanations = {
+        "report_pack.secret_redacted": "Report-visible output contained sensitive-looking content and was redacted before writing.",
+        "report_pack.file_missing": "An optional source file was missing; the report was generated with available evidence.",
+    }
+    return explanations.get(code, "")
+
+
+def _diagnostic_path_link(path: str) -> str:
+    if not path:
+        return ""
+    if path in {"report.html", "report_context.md", "report_context.json", "diagnostics.json", "assets_manifest.json", "prompt.txt"}:
+        return f'<a href="{_escape(quote(path, safe="/._-~:@"))}">{_escape(path)}</a>'
+    return _path_link(path)
+
+
+def _render_reason_glossary(payload: dict[str, Any]) -> str:
+    codes = _collect_reason_codes(payload)
+    if not codes:
+        return ""
+    try:
+        registry = ReasonCodeRegistry.load_builtin()
+    except Exception:
+        registry = None
+
+    rows = []
+    for code in codes:
+        try:
+            entry = registry.get(code) if registry is not None else None
+        except KeyError:
+            entry = None
+        if entry is None:
+            english = "Unregistered reason code"
+            chinese = ""
+            impact = ""
+            actionability = ""
         else:
-            rows.append((key.replace("_", " ").title(), value))
-    return _kv_table(rows)
+            english = entry.human_readable_en
+            chinese = entry.human_readable_zh
+            impact = entry.impact_default
+            actionability = entry.actionability_default
+        rows.append(
+            f"<tr id=\"reason-{_class_token(code)}\">"
+            f"<td class=\"mono\">{_escape(code)}</td>"
+            f"<td>{_escape(english)}</td>"
+            f"<td>{_escape(chinese)}</td>"
+            f"<td>{_escape(impact)}</td>"
+            f"<td>{_escape(actionability)}</td>"
+            "</tr>"
+        )
+    return f"""<details id="reason-codes-glossary" open>
+      <summary>Reason codes glossary</summary>
+      {_table(["Code", "English", "中文", "Impact", "Actionability"], rows)}
+    </details>"""
+
+
+def _collect_reason_codes(payload: dict[str, Any]) -> list[str]:
+    codes: set[str] = set()
+    for case in _list(payload.get("attention_cases")):
+        codes.update(_text(code, "") for code in _list(_mapping(case).get("reason_codes")))
+    for cluster in _list(payload.get("failure_clusters")):
+        codes.update(_text(code, "") for code in _list(_mapping(cluster).get("cluster_key")))
+    return sorted(code for code in codes if code)
 
 
 def _primary_metric(headline: dict[str, Any], metrics: list[Any]) -> dict[str, Any] | None:
     primary = headline.get("primary_metric")
     metric = _mapping(primary)
     if metric:
+        value = _metric_value(metric)
+        if not value:
+            return None
         return {
-            "label": _text(metric.get("name") or metric.get("label") or metric.get("metric_id"), "primary_metric"),
-            "value": _metric_value(metric),
-            "value_raw": metric.get("value"),
+            "label": _metric_label(metric),
+            "value": value,
+            "value_raw": _metric_raw_value(metric),
             "unit": metric.get("unit"),
         }
     if isinstance(primary, str):
         for item in metrics:
             metric = _mapping(item)
             if primary in {metric.get("metric_id"), metric.get("id"), metric.get("name")}:
+                value = _metric_value(metric)
+                if not value:
+                    return None
                 return {
-                    "label": _text(metric.get("name") or metric.get("metric_id"), primary),
-                    "value": _metric_value(metric),
-                    "value_raw": metric.get("value"),
+                    "label": _metric_label(metric),
+                    "value": value,
+                    "value_raw": _metric_raw_value(metric),
                     "unit": metric.get("unit"),
                 }
-        return {"label": primary, "value": "", "value_raw": None, "unit": ""}
+        return None
     return None
 
 
 def _metric_value(metric: dict[str, Any]) -> str:
-    value = _format_scalar(metric.get("value"))
-    unit = _text(metric.get("unit"), "")
-    return f"{value} {unit}".strip()
+    return _metric_table_value(metric)
+
+
+def _metric_caption(metric: dict[str, Any]) -> str:
+    label = _text(metric.get("label"), "")
+    unit = _text(metric.get("unit"), "").strip()
+    if unit and label:
+        return f"{unit} · {label}"
+    return label or unit
+
+
+def _metric_label(metric: dict[str, Any]) -> str:
+    label = _text(metric.get("name") or metric.get("label"), "")
+    if label:
+        return label
+    metric_id = _text(metric.get("metric_id") or metric.get("id"), "")
+    return _titleize_identifier(metric_id) if metric_id else ""
+
+
+def _owner_cell(value: Any) -> str:
+    text = _text(value, "")
+    return f"<td class=\"metric-owner\" title=\"{_escape(text)}\">{_escape(text)}</td>"
+
+
+def _path_link(path: str) -> str:
+    if not path:
+        return ""
+    href = _local_artifact_href(path)
+    text = _escape(path)
+    if not href:
+        return text
+    return f"<a href=\"{_escape(href)}\" title=\"{text}\">{text}</a>"
+
+
+def _local_artifact_href(path: str) -> str:
+    if not path or path.startswith("/") or path.startswith("#"):
+        return ""
+    parts = urlsplit(path)
+    if parts.scheme or parts.netloc:
+        return ""
+    if not path.startswith(
+        (
+            "artifacts/",
+            "replays/",
+            "external_harness/",
+            "samples/",
+            "samples.jsonl",
+            "events.jsonl",
+            "summary.json",
+        )
+    ):
+        return ""
+    return "../" + quote(path, safe="/._-~:@")
+
+
+def _metric_table_value(metric: dict[str, Any]) -> str:
+    if "value" in metric:
+        return _format_metric_scalar(metric.get("value"))
+    values = _mapping(metric.get("values"))
+    if not values:
+        return ""
+    raw_values = _mapping(metric.get("raw_values"))
+    for key in _PREFERRED_METRIC_VALUE_KEYS:
+        if key in values:
+            raw_value = raw_values.get(key)
+            return _format_metric_scalar(raw_value) if isinstance(raw_value, (int, float)) else _format_metric_scalar(values[key])
+    key, value = next(iter(values.items()))
+    return f"{key}={_format_metric_scalar(value)}"
+
+
+def _metric_display_by_ids(metrics: list[Any], metric_ids: set[str]) -> str | None:
+    for metric in metrics:
+        item = _mapping(metric)
+        metric_id = _text(item.get("metric_id") or item.get("id") or item.get("name"), "")
+        if metric_id in metric_ids:
+            value = _metric_table_value(item)
+            return value if value else None
+    return None
+
+
+def _metric_raw_value(metric: dict[str, Any]) -> Any:
+    if "value" in metric:
+        return metric.get("value")
+    raw_values = _mapping(metric.get("raw_values"))
+    for key in _PREFERRED_METRIC_VALUE_KEYS:
+        if key in raw_values:
+            return raw_values[key]
+    if raw_values:
+        return next(iter(raw_values.values()))
+    values = _mapping(metric.get("values"))
+    for key in _PREFERRED_METRIC_VALUE_KEYS:
+        if key in values:
+            return values[key]
+    if values:
+        return next(iter(values.values()))
+    return None
 
 
 def _metric_bar(value: Any, unit: Any) -> str:
@@ -601,7 +1081,7 @@ def _metric_percent(value: Any, unit: Any) -> float | None:
         return None
 
     unit_text = _text(unit, "").strip().lower()
-    if unit_text in {"ratio", "rate", "fraction"} and 0 <= numeric <= 1:
+    if unit_text in {"ratio", "rate", "fraction", "score"} and 0 <= numeric <= 1:
         percent = numeric * 100
     elif unit_text in {"%", "pct", "percent", "percentage"}:
         percent = numeric * 100 if 0 <= numeric <= 1 else numeric
@@ -619,19 +1099,85 @@ def _definition(label: str, value: Any, default: str = "-") -> str:
     return f"<div><dt>{_escape(label)}</dt><dd>{_escape(text)}</dd></div>"
 
 
+def _hero_context_panel(payload: dict[str, Any]) -> str:
+    profiles = _mapping(payload.get("scenario_profiles"))
+    external = _mapping(profiles.get("external_harness"))
+    harnesses = _list(external.get("harnesses"))
+    if harnesses:
+        rows = _external_harness_profile_rows(external)[:3]
+        return f"""<div class="primary-metric context-panel">
+          <span class="label">Run context</span>
+          {_kv_table(rows)}
+        </div>"""
+    game = _mapping(profiles.get("game"))
+    if _profile_has_signal("game", game):
+        rows = [
+            ("Move count", game.get("move_count")),
+            ("Replay refs", game.get("replay_refs")),
+            ("Illegal actions", game.get("illegal_actions")),
+        ]
+        return f"""<div class="primary-metric context-panel">
+          <span class="label">Run context</span>
+          {_kv_table(rows)}
+        </div>"""
+    tasks = _list(payload.get("tasks"))
+    if tasks:
+        first = _mapping(tasks[0])
+        rows = [
+            ("Task", first.get("task_id") or first.get("id")),
+            ("Status", first.get("status")),
+        ]
+        return f"""<div class="primary-metric context-panel">
+          <span class="label">Run context</span>
+          {_kv_table(rows)}
+        </div>"""
+    return ""
+
+
+def _game_kits_label(payload: dict[str, Any]) -> str:
+    game = _mapping(_mapping(payload.get("scenario_profiles")).get("game"))
+    kits = [_text(item, "") for item in _list(game.get("game_kits")) if _text(item, "")]
+    return ", ".join(kits)
+
+
+def _render_nav(payload: dict[str, Any]) -> str:
+    links = [("Quick stats", "quick-stats"), ("Metrics", "metrics")]
+    if payload.get("attention_cases") or payload.get("failure_clusters") or payload.get("outliers"):
+        links.append(("Findings", "key-findings"))
+    if _has_scenario_profile_signal(payload):
+        links.append(("Profiles", "scenario-profile"))
+    if payload.get("evidence_refs"):
+        links.append(("Evidence", "evidence-explorer"))
+    links.append(("Diagnostics", "methodology"))
+    return "<nav class=\"report-shell report-nav\" aria-label=\"Report sections\">" + "".join(
+        f"<a href=\"#{_escape(target)}\">{_escape(label)}</a>" for label, target in links
+    ) + "</nav>"
+
+
+def _has_scenario_profile_signal(payload: dict[str, Any]) -> bool:
+    profiles = _mapping(payload.get("scenario_profiles"))
+    return any(
+        _profile_has_signal(str(kind), _mapping(profile))
+        for kind, profile in profiles.items()
+    )
+
+
 def _stat_card(label: str, value: Any, *, duration: bool = False) -> str:
     display = _format_duration(value) if duration else _format_scalar(value)
+    if not display:
+        display = "-"
     return f"""<article class="stat-card">
       <span>{_escape(label)}</span>
       <strong>{_escape(display)}</strong>
     </article>"""
 
 
-def _table(headers: list[str], rows: list[str], *, empty_message: str = "") -> str:
+def _table(headers: list[str], rows: list[str], *, empty_message: str = "", table_class: str = "") -> str:
     if not rows:
         return f"<p class=\"muted\">{_escape(empty_message)}</p>" if empty_message else ""
     head = "".join(f"<th>{_escape(header)}</th>" for header in headers)
-    return f"""<div class="table-wrap"><table>
+    class_attr = f' class="{_escape(table_class)}"' if table_class else ""
+    return f"""<div class="table-wrap"><table{class_attr}>
       <thead><tr>{head}</tr></thead>
       <tbody>{"".join(rows)}</tbody>
     </table></div>"""
@@ -652,24 +1198,53 @@ def _kv_table(rows: list[tuple[str, Any]]) -> str:
 
 def _badge(value: str, kind: str) -> str:
     normalized = _class_token(value)
-    return f"<span class=\"badge {kind} {kind}-{normalized}\">{_escape(value)}</span>"
+    label = _badge_label(value, kind)
+    return f"<span class=\"badge {kind} {kind}-{normalized}\">{_escape(label)}</span>"
 
 
-def _chips(values: Any) -> str:
+def _badge_label(value: str, kind: str) -> str:
+    if kind == "verdict":
+        labels = {
+            "passed": "completed",
+            "passed_with_warnings": "completed with warnings",
+            "passed-with-warnings": "completed with warnings",
+        }
+        return labels.get(value, value)
+    return value
+
+
+def _chips(values: Any, *, reason_codes: bool = False) -> str:
     items = [_text(value, "") for value in _list(values) if _text(value, "")]
+    if reason_codes:
+        return "".join(
+            f"<a class=\"chip mono\" href=\"#reason-{_class_token(item)}\">{_escape(item)}</a>"
+            for item in items
+        )
     return "".join(f"<span class=\"chip mono\">{_escape(item)}</span>" for item in items)
 
 
-def _ids_line(label: str, values: Any, *, inline: bool = False) -> str:
+def _ids_line(label: str, values: Any, *, inline: bool = False, evidence: bool = False) -> str:
     items = [_text(value, "") for value in _list(values) if _text(value, "")]
     if not items:
         return ""
-    text = ", ".join(items[:5])
+    if evidence:
+        text = ", ".join(_evidence_link(item) for item in items[:5])
+    else:
+        text = _escape(", ".join(items[:5]))
     if len(items) > 5:
-        text += f" (+{len(items) - 5})"
+        text += _escape(f" (+{len(items) - 5})")
     if inline:
         return f"{label}: {text}"
-    return f"<p class=\"detail-line\"><strong>{_escape(label)}:</strong> {_escape(text)}</p>"
+    return f"<p class=\"detail-line\"><strong>{_escape(label)}:</strong> {text}</p>"
+
+
+def _evidence_link(ref_id: str) -> str:
+    text = _escape(ref_id)
+    return f"<a class=\"evidence-ref-link\" href=\"#{_escape(_evidence_anchor(ref_id))}\">{text}</a>"
+
+
+def _evidence_anchor(ref_id: Any) -> str:
+    return "evidence-" + _class_token(_text(ref_id, "unknown"))
 
 
 def _detail_text(value: str) -> str:
@@ -703,7 +1278,7 @@ def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize_payload(child) for child in value]
     if isinstance(value, str):
-        return _redact_data_urls(value)
+        return _safe_visible_text(value)
     return value
 
 
@@ -746,6 +1321,16 @@ def _format_scalar(value: Any) -> str:
     return str(value)
 
 
+def _format_metric_scalar(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return f"{float(value):.5f}"
+    return str(value)
+
+
 def _format_compact(value: Any) -> str:
     if isinstance(value, list):
         return ", ".join(_text(item, "") for item in value[:6])
@@ -776,6 +1361,36 @@ def _format_duration(value: Any) -> str:
     return f"{int(hours)}h {int(minutes)}m"
 
 
+def _run_duration(run: dict[str, Any], runtime: dict[str, Any]) -> Any:
+    timings = _mapping(run.get("timings"))
+    return (
+        runtime.get("duration_s")
+        or run.get("duration_s")
+        or timings.get("wall_runtime_s")
+        or timings.get("runtime_s")
+        or timings.get("total_s")
+    )
+
+
+def _titleize_identifier(value: str) -> str:
+    if not value:
+        return ""
+    return " ".join(part.capitalize() for part in value.replace("-", "_").split("_") if part)
+
+
+def _display_run_dir(value: Any) -> str:
+    text = _text(value, "")
+    if not text:
+        return ""
+    marker = "/runs/"
+    normalized = text.replace("\\", "/")
+    if marker in normalized:
+        return "runs/" + normalized.split(marker, 1)[1]
+    if normalized.startswith("runs/"):
+        return normalized
+    return normalized
+
+
 def _format_bytes(value: Any) -> str:
     if value in (None, ""):
         return ""
@@ -803,13 +1418,26 @@ def _truncate(value: str, limit: int) -> tuple[str, bool]:
 
 
 def _class_token(value: str) -> str:
-    token = "".join(char if char.isalnum() else "-" for char in value.lower()).strip("-")
+    token = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return token or "unknown"
 
 
 def _redact_data_urls(value: str) -> str:
     value = _SVG_DATA_IMAGE_URL_RE.sub("<redacted:data-url>", value)
     return _DATA_IMAGE_URL_RE.sub("<redacted:data-url>", value)
+
+
+def _safe_visible_text(value: str) -> str:
+    return _relativize_run_paths(_redact_data_urls(value))
+
+
+def _relativize_run_paths(value: str) -> str:
+    value = _LOCAL_RUN_PATH_RE.sub("runs/", value)
+    cwd = Path.cwd().resolve().as_posix()
+    if cwd and cwd in value:
+        value = value.replace(f"{cwd}/", f"{Path(cwd).name}/")
+        value = value.replace(cwd, Path(cwd).name)
+    return _LOCAL_USER_HOME_RE.sub("~/", value)
 
 
 def _safe_preview_source(value: str) -> str:
@@ -829,6 +1457,15 @@ def _positive(value: Any) -> bool:
         return False
 
 
+def _int_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _escape(value: Any) -> str:
     return html.escape(_text(value, ""))
 
@@ -846,7 +1483,7 @@ def _first_present(*args: Any) -> Any:
 
 _CSS = """
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --ink: #20242a;
   --muted: #65717f;
   --line: #d8dee6;
@@ -857,7 +1494,7 @@ _CSS = """
   --danger: #a33a33;
   --warn: #8a5b10;
   --ok: #276749;
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
 }
 * { box-sizing: border-box; }
 body {
@@ -876,6 +1513,7 @@ body {
   padding: 18px 20px;
   background: var(--surface);
   border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
   border-radius: 8px;
 }
 .hero-topline,
@@ -945,10 +1583,35 @@ dd { margin: 2px 0 0; font-weight: 650; word-break: break-word; }
 .metric-focus strong {
   display: block;
   margin-top: 4px;
-  font-size: 24px;
+  font-size: 32px;
   line-height: 1.1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .metric-focus { margin: 12px 0; max-width: 260px; }
+.context-panel .kv-table th { width: 110px; }
+.report-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 0;
+  background: var(--page);
+  border-bottom: 1px solid var(--line-soft);
+}
+.report-nav a {
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid #c8d8ec;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #f4f8fd;
+}
 .metric-bar {
   width: 100%;
   height: 6px;
@@ -965,12 +1628,12 @@ dd { margin: 2px 0 0; font-weight: 650; word-break: break-word; }
 }
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   margin-top: 12px;
 }
 .stat-card { padding: 10px 12px; }
-.stat-card strong { display: block; margin-top: 3px; font-size: 18px; }
+.stat-card strong { display: block; margin-top: 3px; font-size: 26px; }
 .badge,
 .chip {
   display: inline-flex;
@@ -987,6 +1650,7 @@ dd { margin: 2px 0 0; font-weight: 650; word-break: break-word; }
   color: #334155;
   background: #edf2f7;
   border: 1px solid #d9e2ec;
+  text-decoration: none;
   line-height: 1.25;
   overflow-wrap: anywhere;
   white-space: normal;
@@ -996,20 +1660,22 @@ dd { margin: 2px 0 0; font-weight: 650; word-break: break-word; }
 .verdict-completed,
 .verdict-passed-with-warnings,
 .severity-low {
-  color: var(--ok);
-  background: #e6f4ea;
-  border: 1px solid #b7dec5;
+  color: #14532d;
+  background: #d9f2df;
+  border: 1px solid #7fba8e;
 }
 .verdict-failed,
 .severity-critical,
-.severity-high {
+.severity-high,
+.severity-error {
   color: var(--danger);
   background: #fae9e7;
   border: 1px solid #efc4bf;
 }
 .verdict-aborted,
 .verdict-degraded,
-.severity-medium {
+.severity-medium,
+.severity-warning {
   color: var(--warn);
   background: #fff3d6;
   border: 1px solid #edd393;
@@ -1025,13 +1691,14 @@ dd { margin: 2px 0 0; font-weight: 650; word-break: break-word; }
 table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
 }
 th, td {
   border-top: 1px solid var(--line-soft);
   padding: 8px;
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 thead th {
@@ -1041,15 +1708,62 @@ thead th {
   background: #f8fafc;
 }
 .kv-table th { width: 190px; color: var(--muted); font-weight: 650; }
+.findings-table th { white-space: nowrap; }
+.attention-cases-table th:nth-child(4),
+.attention-cases-table td:nth-child(4) {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+  text-align: right;
+  white-space: nowrap;
+}
+.attention-cases-table td:nth-child(4) {
+  font-variant-numeric: tabular-nums;
+}
 .numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.metric-value { text-align: left; font-variant-numeric: tabular-nums; }
+.metric-owner { max-width: 220px; overflow-wrap: anywhere; }
+.evidence-path,
+.evidence-sample,
+.evidence-task {
+  max-width: 200px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.evidence-path a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.evidence-path a:hover {
+  text-decoration: underline;
+}
+.evidence-ref-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.evidence-ref-link:hover { text-decoration: underline; }
+.media-preview {
+  margin: 8px 0;
+}
+.media-thumb {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: 280px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  object-fit: contain;
+  background: #fff;
+}
+.media-note { margin: 6px 0 0; font-size: 12px; }
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 .detail-line { margin: 0 0 4px; }
 .profile-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
   margin-top: 12px;
 }
@@ -1063,7 +1777,7 @@ summary {
 .panel { padding: 10px 12px; }
 .preview pre,
 pre {
-  max-height: 340px;
+  max-height: 240px;
   overflow: auto;
   margin: 8px 0 0;
   padding: 10px;
@@ -1074,7 +1788,85 @@ pre {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.json-key { color: #1d4f91; font-weight: 700; }
+.json-string { color: #8a4f18; }
+.json-number { color: #6d3bbd; }
+.json-bool { color: #276749; font-weight: 700; }
+.more-evidence { margin-top: 8px; }
+.evidence-ref { min-width: 160px; word-break: break-all; }
 .footer { margin-bottom: 20px; }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8edf3;
+    --muted: #9aa8b6;
+    --line: #384453;
+    --line-soft: #2c3642;
+    --surface: #111820;
+    --page: #0b1117;
+    --accent: #7db4ff;
+    --danger: #ff9c92;
+    --warn: #f4c36a;
+    --ok: #8bd49c;
+  }
+  .primary-metric,
+  .metric-focus,
+  .stat-card,
+  .profile-panel,
+  .panel {
+    background: #141d26;
+  }
+  .report-nav a {
+    color: #d6e8ff;
+    background: #17283b;
+    border-color: #315276;
+  }
+  thead th,
+  .preview pre,
+  pre {
+    color: var(--ink);
+    background: #0f1620;
+  }
+  .chip {
+    color: #dbeafe;
+    background: #17283b;
+    border-color: #315276;
+  }
+  .verdict-passed,
+  .verdict-completed,
+  .verdict-passed-with-warnings,
+  .severity-low {
+    color: #d7ffe0;
+    background: #12371f;
+    border-color: #2e7742;
+  }
+  .verdict-failed,
+  .severity-critical,
+  .severity-high {
+    color: #ffe2de;
+    background: #3b1515;
+    border-color: #7f3430;
+  }
+  .verdict-aborted,
+  .verdict-degraded,
+  .severity-medium {
+    color: #fff1c2;
+    background: #3b2a0f;
+    border-color: #80601e;
+  }
+  .json-key { color: #9dccff; }
+  .json-string { color: #f4b782; }
+  .json-number { color: #d9b8ff; }
+  .json-bool { color: #8bd49c; }
+}
+@media print {
+  body { background: #fff; }
+  .report-nav, script { display: none !important; }
+  .report-shell { width: 100%; }
+  .hero, .section, .footer { break-inside: avoid; box-shadow: none; }
+  details { display: block; }
+  details > summary { display: block; }
+  .preview pre { max-height: none; overflow: visible; }
+}
 @media (max-width: 900px) {
   .hero-grid,
   .profile-grid { grid-template-columns: 1fr; }

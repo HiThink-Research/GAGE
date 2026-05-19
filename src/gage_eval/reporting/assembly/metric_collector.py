@@ -17,7 +17,8 @@ class MetricSummaryCollector:
     def _collect_one(self, metric: dict[str, Any]) -> dict[str, Any]:
         item = dict(metric)
         values = dict(item.get("values") or {})
-        item["raw_values"] = deepcopy(values)
+        raw_values = dict(item.get("raw_values") or values)
+        item["raw_values"] = deepcopy(raw_values)
         item["values"] = {key: _format_value(value) for key, value in values.items()}
         item.setdefault("scope", "run")
         item.setdefault("source", "summary")
@@ -27,7 +28,6 @@ class MetricSummaryCollector:
 def _format_value(value: Any) -> Any:
     if isinstance(value, bool):
         return value
-    if isinstance(value, float):
-        return f"{value:.5g}"
+    if isinstance(value, (int, float)):
+        return f"{float(value):.5f}"
     return value
-

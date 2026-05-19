@@ -64,22 +64,10 @@ class ReportPackBuilder:
 
         payload = _safe_value(payload, diagnostics, path="report_context.json")
         payload["diagnostics"] = diagnostics
-        markdown = _safe_text(
-            self._markdown_renderer.render(payload),
-            diagnostics,
-            path="report_context.md",
-        )
-        html = _safe_text(
-            self._html_renderer.render(payload),
-            diagnostics,
-            path="report.html",
-        )
-        prompt = _safe_text(
-            self._prompt_renderer.render(payload),
-            diagnostics,
-            path="prompt.txt",
-        )
-        payload["diagnostics"] = diagnostics
+        # Pass 1 collects redaction warnings from every rendered asset.
+        self._render_safe_assets(payload, diagnostics)
+        # Pass 2 renders the files users see with the complete diagnostics snapshot.
+        markdown, html, prompt = self._render_safe_assets(payload, diagnostics)
 
         context_path = atomic_write_text(
             pack / "report_context.json",
@@ -111,6 +99,28 @@ class ReportPackBuilder:
         )
         return diagnostics
 
+    def _render_safe_assets(
+        self,
+        payload: dict[str, Any],
+        diagnostics: dict[str, Any],
+    ) -> tuple[str, str, str]:
+        markdown = _safe_text(
+            self._markdown_renderer.render(payload),
+            diagnostics,
+            path="report_context.md",
+        )
+        html = _safe_text(
+            self._html_renderer.render(payload),
+            diagnostics,
+            path="report.html",
+        )
+        prompt = _safe_text(
+            self._prompt_renderer.render(payload),
+            diagnostics,
+            path="prompt.txt",
+        )
+        return markdown, html, prompt
+
 
 def _safe_value(value: Any, diagnostics: dict[str, Any], *, path: str) -> Any:
     result = _SECRET_FILTER.redact(value)
@@ -128,6 +138,14 @@ def _safe_text(text: str, diagnostics: dict[str, Any], *, path: str) -> str:
 
 def _append_redaction_warning(diagnostics: dict[str, Any], *, path: str, finding_count: int) -> None:
     warnings = diagnostics.setdefault("warnings", [])
+    for warning in warnings:
+        if (
+            isinstance(warning, dict)
+            and warning.get("code") == "report_pack.secret_redacted"
+            and warning.get("path") == path
+        ):
+            warning["finding_count"] = max(int(warning.get("finding_count") or 0), finding_count)
+            return
     warnings.append(
         {
             "code": "report_pack.secret_redacted",

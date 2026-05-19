@@ -204,6 +204,25 @@ def test_materialized_payload_preserves_token_usage_fields_while_redacting_secre
 
 
 @pytest.mark.fast
+def test_materialized_payload_preserves_cost_per_token_fields() -> None:
+    payload = _minimal_payload()
+    payload["backends"][0]["config"].update(
+        {
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "access_token": "access-real",
+        }
+    )
+
+    materialized = materialize_agentkit_v2_config_payload(payload, source_path=None)
+
+    backend_config = materialized["backends"][0]["config"]
+    assert backend_config["input_cost_per_token"] == 0.0
+    assert backend_config["output_cost_per_token"] == 0.0
+    assert backend_config["access_token"] == "<redacted:keyname:access_token>"
+
+
+@pytest.mark.fast
 @pytest.mark.parametrize(
     ("placeholder", "redacted"),
     [

@@ -34,6 +34,20 @@ def test_builtin_reason_codes_include_required_defaults() -> None:
         assert entry.human_readable_en
 
 
+def test_builtin_reason_codes_support_legacy_aliases_and_harbor_failures() -> None:
+    registry = ReasonCodeRegistry.load_builtin()
+
+    alias_entry = registry.get("missing_appworld_success_signal")
+    harbor_entry = registry.get("harbor.trial_exception")
+
+    assert alias_entry.code == "appworld.missing_success_signal"
+    assert alias_entry.human_readable_en == "Missing AppWorld success signal"
+    assert harbor_entry.human_readable_en == "Harbor trial exception"
+    assert registry.validate_completeness(
+        {"missing_appworld_success_signal", "harbor.trial_exception"}
+    ) == []
+
+
 def test_reason_code_registry_detects_declared_codes_missing_from_yaml() -> None:
     registry = ReasonCodeRegistry.from_dict(
         {

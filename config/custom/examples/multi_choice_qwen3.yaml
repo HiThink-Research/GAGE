@@ -20,7 +20,7 @@ prompts:
     template: |
       {{ system_prompt }}
 
-      {{ sample.prompt or sample.inputs.prompt }}
+      {{ sample.get("prompt") or sample.get("inputs", {}).get("prompt") }}
 
 datasets:
   - dataset_id: mmlu_business_ethics

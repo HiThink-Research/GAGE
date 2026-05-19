@@ -1,4 +1,6 @@
 schema_version: gage.reason_codes.v1
+aliases:
+  missing_appworld_success_signal: appworld.missing_success_signal
 reason_codes:
   scheduler.failed:
     impact_default: high
@@ -70,3 +72,8 @@ reason_codes:
     actionability_default: medium
     human_readable_zh: 工具重试预算耗尽
     human_readable_en: Tool retry budget exhausted
+  harbor.trial_exception:
+    impact_default: high
+    actionability_default: medium
+    human_readable_zh: Harbor trial 异常
+    human_readable_en: Harbor trial exception

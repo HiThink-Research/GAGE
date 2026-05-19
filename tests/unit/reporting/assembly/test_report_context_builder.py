@@ -90,6 +90,163 @@ def test_context_builder_normalizes_task_contract_fields(tmp_path) -> None:
 
 
 @pytest.mark.fast
+def test_context_builder_injects_external_harness_metrics_from_samples() -> None:
+    class Index:
+        evidence_refs = []
+        diagnostics = None
+
+    context = ReportContextBuilder().build(
+        index=Index(),
+        summary_payload={"sample_count": 1, "metrics": []},
+        metrics=[],
+        tasks=[{"task_id": "tb2_one_case", "sample_count": 1, "metrics": []}],
+        runtime_health={"sample_count": 1, "completed_count": 1, "failed_count": 0, "aborted_count": 0},
+        observability_health={"events_emitted_total": 0},
+        samples=[
+            {
+                "namespace": "task_tb2_one_case",
+                "sample": {
+                    "task_type": "external_harness.harbor",
+                    "eval_result": {
+                        "score": {"value": 0.0, "source_trial_id": "trial_0001"},
+                        "resolved": {"value": False, "source_trial_id": "trial_0001"},
+                    },
+                },
+            }
+        ],
+        generator_result=None,
+    )
+
+    payload = context.to_dict()
+    assert [metric["metric_id"] for metric in payload["metrics"]] == [
+        "harbor_score_mean",
+        "harbor_resolve_rate",
+    ]
+    assert payload["headline"]["primary_metric"]["metric_id"] == "harbor_score_mean"
+    assert payload["headline"]["score"] == 0.0
+    task_metrics = payload["tasks"][0]["metrics"]
+    assert [metric["metric_id"] for metric in task_metrics] == [
+        "harbor_score_mean",
+        "harbor_resolve_rate",
+    ]
+    assert task_metrics[0]["scope"] == "task"
+
+
+@pytest.mark.fast
+def test_context_builder_augments_runtime_health_from_task_status() -> None:
+    class Index:
+        evidence_refs = []
+        diagnostics = None
+
+    context = ReportContextBuilder().build(
+        index=Index(),
+        summary_payload={"sample_count": 0, "metrics": []},
+        metrics=[],
+        tasks=[{"task_id": "harbor", "execution": {"status": "failed"}, "sample_count": 0}],
+        runtime_health={"sample_count": 0, "completed_count": 0, "failed_count": 0, "aborted_count": 0},
+        observability_health={"events_emitted_total": 0},
+        generator_result=None,
+    )
+
+    payload = context.to_dict()
+    assert payload["runtime_health"]["task_failed_count"] == 1
+    assert payload["headline"]["verdict"] == "failed"
+    assert "1 task failed" in payload["headline"]["verdict_reason"]
+
+
+@pytest.mark.fast
+def test_context_builder_adds_completion_rate_metric_when_domain_metrics_are_missing() -> None:
+    class Index:
+        evidence_refs = []
+        diagnostics = None
+
+    context = ReportContextBuilder().build(
+        index=Index(),
+        summary_payload={"sample_count": 1, "metrics": []},
+        metrics=[],
+        tasks=[],
+        runtime_health={"sample_count": 1, "completed_count": 0, "failed_count": 1, "aborted_count": 0},
+        observability_health={"events_emitted_total": 0},
+        generator_result=None,
+    )
+
+    payload = context.to_dict()
+    assert payload["metrics"][0]["metric_id"] == "sample_completion_rate"
+    assert payload["metrics"][0]["values"]["rate"] == "0.00000"
+    assert payload["headline"]["primary_metric"]["metric_id"] == "sample_completion_rate"
+    assert payload["headline"]["score"] == 0.0
+
+
+@pytest.mark.fast
+def test_context_builder_adds_task_success_rate_metric_for_pre_sample_task_failures() -> None:
+    class Index:
+        evidence_refs = []
+        diagnostics = None
+
+    context = ReportContextBuilder().build(
+        index=Index(),
+        summary_payload={"sample_count": 0, "metrics": []},
+        metrics=[],
+        tasks=[{"task_id": "harbor", "execution": {"status": "failed"}, "sample_count": 0}],
+        runtime_health={"sample_count": 0, "completed_count": 0, "failed_count": 0, "aborted_count": 0},
+        observability_health={"events_emitted_total": 0},
+        generator_result=None,
+    )
+
+    payload = context.to_dict()
+    assert payload["metrics"][0]["metric_id"] == "task_success_rate"
+    assert payload["metrics"][0]["values"]["rate"] == "0.00000"
+    assert payload["headline"]["primary_metric"]["metric_id"] == "task_success_rate"
+
+
+@pytest.mark.fast
+def test_context_builder_aggregates_task_scoped_metrics_for_run_headline() -> None:
+    class Index:
+        evidence_refs = []
+        diagnostics = None
+
+    context = ReportContextBuilder().build(
+        index=Index(),
+        summary_payload={"sample_count": 2, "metrics": []},
+        metrics=[
+            {
+                "metric_id": "model_multi_choice_acc",
+                "task_id": "task-a",
+                "values": {"acc": "1.00000"},
+                "raw_values": {"acc": 1.0},
+            },
+            {
+                "metric_id": "model_multi_choice_acc",
+                "task_id": "task-b",
+                "values": {"acc": "0.00000"},
+                "raw_values": {"acc": 0.0},
+            },
+        ],
+        tasks=[],
+        runtime_health={"sample_count": 2, "completed_count": 2, "failed_count": 0, "aborted_count": 0},
+        observability_health={"events_emitted_total": 0},
+        generator_result=None,
+    )
+
+    payload = context.to_dict()
+    assert payload["metrics"] == [
+        {
+            "aggregation": "mean",
+            "count": 2,
+            "metric_id": "model_multi_choice_acc",
+            "raw_values": {"acc": 0.5},
+            "scope": "run",
+            "source": "summary",
+            "values": {"acc": "0.50000"},
+        }
+    ]
+    assert payload["headline"]["primary_metric"]["metric_id"] == "model_multi_choice_acc"
+    assert payload["headline"]["score"] == 0.5
+    assert payload["methodology"]["metric_ids"] == ["model_multi_choice_acc"]
+    assert payload["diagnostics"]["errors"] == []
+
+
+@pytest.mark.fast
 def test_context_builder_backfills_attention_case_evidence_from_index() -> None:
     evidence_ref = EvidenceRef(
         ref_id="evidence://artifact/scheduler",

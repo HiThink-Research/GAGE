@@ -67,6 +67,29 @@ def _record_config_metadata(
             cache_store,
             build_run_metadata_snapshot(trace.run_identity),
         )
+    reporting = dict(config.reporting or {})
+    if reporting:
+        cache_store.set_metadata("reporting", reporting)
+    report_pack = reporting.get("report_pack") if isinstance(reporting, dict) else None
+    if isinstance(report_pack, dict) and "enabled" in report_pack:
+        cache_store.set_metadata(
+            "report_pack_enabled",
+            _coerce_config_bool(report_pack.get("enabled"), default=True),
+        )
+
+
+def _coerce_config_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled"}:
+            return False
+    return default
 
 
 def build_runtime(

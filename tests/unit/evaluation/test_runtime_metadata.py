@@ -88,6 +88,19 @@ def test_record_config_metadata_uses_shared_runtime_snapshot(tmp_path) -> None:
     assert cache.get_metadata("role_adapters")[0]["adapter_id"] == "dut"
 
 
+def test_record_config_metadata_writes_report_pack_flag(tmp_path) -> None:
+    cache = EvalCache(base_dir=tmp_path, run_id="runtime-report-pack-config")
+    config = PipelineConfig(
+        metadata={"name": "demo"},
+        reporting={"report_pack": {"enabled": False}},
+    )
+
+    _record_config_metadata(config, cache)
+
+    assert cache.get_metadata("reporting") == {"report_pack": {"enabled": False}}
+    assert cache.get_metadata("report_pack_enabled") is False
+
+
 def test_record_run_metadata_writes_identity_payload(tmp_path) -> None:
     cache = EvalCache(base_dir=tmp_path, run_id="runtime-run-metadata")
     identity = build_run_identity("run-20260319010101-ab12cd34")

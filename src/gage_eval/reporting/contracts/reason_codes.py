@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import resources
 from typing import Any
 
@@ -47,6 +47,7 @@ class ReasonCodeRegistry:
 
     schema_version: str
     reason_codes: dict[str, ReasonCodeEntry]
+    aliases: dict[str, str] = field(default_factory=dict)
 
     @property
     def codes(self) -> tuple[str, ...]:
@@ -78,16 +79,21 @@ class ReasonCodeRegistry:
         return cls(
             schema_version=str(data.get("schema_version", "gage.reason_codes.v1")),
             reason_codes=entries,
+            aliases={
+                str(alias): str(target)
+                for alias, target in (data.get("aliases") or {}).items()
+            },
         )
 
     def get(self, code: str) -> ReasonCodeEntry:
         """Returns a registered reason code entry."""
-        return self.reason_codes[code]
+        return self.reason_codes[self._canonical_code(code)]
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes the registry."""
         return {
             "schema_version": self.schema_version,
+            "aliases": dict(sorted(self.aliases.items())),
             "reason_codes": {
                 code: entry.to_dict() for code, entry in sorted(self.reason_codes.items())
             },
@@ -97,7 +103,7 @@ class ReasonCodeRegistry:
         """Returns diagnostics for declared codes absent from the registry."""
         diagnostics: ReasonCodeDiagnostics = ReasonCodeDiagnostics()
         for code in sorted(set(declared_codes)):
-            if code not in self.reason_codes:
+            if code not in self.reason_codes and code not in self.aliases:
                 diagnostics.append(
                     {
                         "code": "reason_code.unregistered",
@@ -106,6 +112,16 @@ class ReasonCodeRegistry:
                     }
                 )
         return diagnostics
+
+    def _canonical_code(self, code: str) -> str:
+        seen: set[str] = set()
+        current = code
+        while current in self.aliases:
+            if current in seen:
+                raise KeyError(code)
+            seen.add(current)
+            current = self.aliases[current]
+        return current
 
 
 class ReasonCodeDiagnostics(list[dict[str, Any]]):

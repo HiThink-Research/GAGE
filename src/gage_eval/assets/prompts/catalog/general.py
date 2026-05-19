@@ -31,13 +31,13 @@ def register_general_prompts() -> None:
 
     dut_template = """\
 {% if instructions %}{{ instructions }}{% endif %}
-任务：{{ sample.question | default(sample.prompt) }}
+任务：{{ sample.get("question") or sample.get("prompt") or sample.get("inputs", {}).get("prompt") or "" }}
 请直接给出答案。"""
     judge_template = """\
 你是一名严谨的中文评审员，请根据事实给出判定。
-【问题】{{ sample.question | default(sample.prompt) }}
-【参考答案】{{ sample.answer | default(sample.reference) }}
-【模型回答】{{ model_output.answer | default(model_output.response) }}
+【问题】{{ sample.get("question") or sample.get("prompt") or sample.get("inputs", {}).get("prompt") or "" }}
+【参考答案】{{ sample.get("answer") or sample.get("reference") or sample.get("expected_answer") or "" }}
+【模型回答】{{ model_output.get("answer") or model_output.get("response") or model_output.get("text") or "" }}
 请输出 JSON，包含 verdict(yes/no) 与 rationale 字段。"""
 
     _register_prompt(
