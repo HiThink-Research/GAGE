@@ -16,6 +16,9 @@ _PREVIEW_LIMIT = 1800
 _DEBUG_LIMIT = 1200
 _ROW_LIMIT = 8
 _EVIDENCE_INITIAL_LIMIT = 5
+_EVIDENCE_GROUP_RENDER_LIMIT = 50
+_METRIC_ROW_LIMIT = 100
+_DIAGNOSTIC_PATH_LIMIT = 3
 _PREFERRED_METRIC_VALUE_KEYS = (
     "score",
     "mean",
@@ -45,7 +48,7 @@ class StaticReportRenderer:
 
     def render(self, context: dict[str, Any]) -> str:
         payload = _sanitize_payload(normalize_context(context))
-        context_json = _safe_script_json(payload)
+        context_json = _safe_script_json(_embedded_context_payload(payload))
         run = _mapping(payload.get("run"))
         title = f"GAGE Run Report - {_text(run.get('run_id'), 'unknown')}"
         main_body = "\n".join(_main_sections(payload))
@@ -225,7 +228,7 @@ def _render_metrics_dashboard(payload: dict[str, Any]) -> str:
       </div>"""
 
     rows = []
-    for metric in metrics:
+    for metric in metrics[:_METRIC_ROW_LIMIT]:
         item = _mapping(metric)
         rows.append(
             "<tr>"
@@ -242,6 +245,12 @@ def _render_metrics_dashboard(payload: dict[str, Any]) -> str:
         rows,
         empty_message="No metrics recorded.",
     )
+    if len(metrics) > _METRIC_ROW_LIMIT:
+        omitted = len(metrics) - _METRIC_ROW_LIMIT
+        table += (
+            f'<p class="muted">{omitted} more metrics omitted from HTML; '
+            'see <a href="report_context.json">report_context.json</a>.</p>'
+        )
     return f"""<section id="metrics" class="report-shell section" data-filter-target="metrics">
     <div class="section-heading">
       <h2>Metrics</h2>
@@ -294,13 +303,19 @@ def _render_evidence_explorer(payload: dict[str, Any]) -> str:
     for kind in sorted(groups):
         group_refs = groups[kind]
         visible = group_refs[:_EVIDENCE_INITIAL_LIMIT]
-        extra = group_refs[_EVIDENCE_INITIAL_LIMIT:]
+        rendered = group_refs[:_EVIDENCE_GROUP_RENDER_LIMIT]
+        extra = rendered[_EVIDENCE_INITIAL_LIMIT:]
+        omitted = max(0, len(group_refs) - len(rendered))
         table = _evidence_table(visible)
         if extra:
+            remaining = len(group_refs) - _EVIDENCE_INITIAL_LIMIT
             table += f"""<details class="more-evidence">
-          <summary>+ {len(extra)} more</summary>
+          <summary>+ {remaining} more</summary>
           {_evidence_table(extra)}
+          {_omitted_rows_note(omitted, "evidence refs") if omitted else ""}
         </details>"""
+        elif omitted:
+            table += _omitted_rows_note(omitted, "evidence refs")
         blocks.append(
             f"""<details class="panel" open>
         <summary>{_escape(kind)} evidence ({len(group_refs)})</summary>
@@ -313,6 +328,15 @@ def _render_evidence_explorer(payload: dict[str, Any]) -> str:
     </div>
     {"".join(blocks)}
   </section>"""
+
+
+def _omitted_rows_note(count: int, label: str) -> str:
+    if count <= 0:
+        return ""
+    return (
+        f'<p class="muted">{count} more {label} omitted from HTML; '
+        'see <a href="report_context.json">report_context.json</a>.</p>'
+    )
 
 
 def _render_footer(payload: dict[str, Any]) -> str:
@@ -535,7 +559,7 @@ def _game_profile_rows(profile: dict[str, Any]) -> list[tuple[str, Any]]:
     return [
         ("Game kits", profile.get("game_kits")),
         ("Move count", profile.get("move_count")),
-        ("Illegal actions", profile.get("illegal_actions")),
+        ("Illegal actions", _illegal_actions_summary(profile.get("illegal_actions"), include_zero=True)),
         ("Replay refs", profile.get("replay_refs")),
     ]
 
@@ -782,15 +806,15 @@ def _diagnostics_summary(diagnostics: dict[str, Any]) -> str:
         return "<p class=\"muted\">No diagnostics metadata was provided.</p>"
     warnings_raw = _list(diagnostics.get("warnings"))
     routine_redactions, visible_warnings = _partition_routine_redaction_warnings(warnings_raw)
-    rows = [
-        ("Report Pack Status", diagnostics.get("report_pack_status")),
-        ("Warnings", len(visible_warnings)),
-        ("Privacy Redactions", _routine_redaction_summary(routine_redactions) if routine_redactions else None),
-        ("Errors", len(_list(diagnostics.get("errors")))),
-    ]
-    html = [_kv_table(rows)]
     warnings = _diagnostic_rows(visible_warnings, severity="warning")
     errors = _diagnostic_rows(_list(diagnostics.get("errors")), severity="error")
+    rows = [
+        ("Report Pack Status", diagnostics.get("report_pack_status")),
+        ("Warnings", len(warnings)),
+        ("Privacy Redactions", _routine_redaction_summary(routine_redactions) if routine_redactions else None),
+        ("Errors", len(errors)),
+    ]
+    html = [_kv_table(rows)]
     if warnings:
         html.append("<h3>Warnings</h3>" + _diagnostic_table(warnings))
     if errors:
@@ -837,17 +861,38 @@ def _int(value: Any) -> int:
 
 
 def _diagnostic_rows(items: list[Any], *, severity: str) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for item in items:
         value = _mapping(item)
         code = _text(value.get("code"), "")
-        rows.append(
+        message = _text(value.get("message") or _diagnostic_explanation(code), "")
+        key = (code, message)
+        row = grouped.setdefault(
+            key,
             {
                 "severity": severity,
                 "code": code,
-                "path": _text(value.get("path"), ""),
-                "finding_count": _text(value.get("finding_count"), ""),
-                "message": _text(value.get("message") or _diagnostic_explanation(code), ""),
+                "paths": [],
+                "finding_count": 0,
+                "occurrences": 0,
+                "message": message,
+            },
+        )
+        row["occurrences"] += 1
+        path = _text(value.get("path"), "")
+        if path:
+            row["paths"].append(path)
+        row["finding_count"] += _int(value.get("finding_count"))
+    rows: list[dict[str, str]] = []
+    for row in grouped.values():
+        rows.append(
+            {
+                "severity": row["severity"],
+                "code": row["code"],
+                "path_html": _diagnostic_paths_summary(row["paths"]),
+                "finding_count": _text(row["finding_count"], "") if row["finding_count"] else "",
+                "occurrences": _text(row["occurrences"], ""),
+                "message": row["message"],
             }
         )
     return rows
@@ -860,20 +905,32 @@ def _diagnostic_table(items: list[dict[str, str]]) -> str:
             "<tr>"
             f"<td>{_badge(item['severity'], 'severity')}</td>"
             f"<td class=\"mono\">{_escape(item.get('code') or '')}</td>"
-            f"<td>{_diagnostic_path_link(item.get('path') or '')}</td>"
+            f"<td class=\"numeric\">{_escape(item.get('occurrences') or '')}</td>"
+            f"<td>{item.get('path_html') or ''}</td>"
             f"<td class=\"numeric\">{_escape(item.get('finding_count') or '')}</td>"
             f"<td>{_escape(item.get('message') or '')}</td>"
             "</tr>"
         )
-    return _table(["Level", "Code", "Path", "Findings", "Meaning"], rows, table_class="diagnostics-table")
+    return _table(["Level", "Code", "Occurrences", "Paths", "Findings", "Meaning"], rows, table_class="diagnostics-table")
 
 
 def _diagnostic_explanation(code: str) -> str:
     explanations = {
         "report_pack.secret_redacted": "Report-visible output contained sensitive-looking content and was redacted before writing.",
         "report_pack.file_missing": "An optional source file was missing; the report was generated with available evidence.",
+        "report_pack.derived_sample_detail_without_journal_record": "Derived sample detail files were present without matching journal records; the report uses available sample evidence.",
     }
     return explanations.get(code, "")
+
+
+def _diagnostic_paths_summary(paths: list[str]) -> str:
+    unique = _unique_list(paths)
+    if not unique:
+        return ""
+    links = [_diagnostic_path_link(path) for path in unique[:_DIAGNOSTIC_PATH_LIMIT]]
+    if len(unique) > _DIAGNOSTIC_PATH_LIMIT:
+        links.append(_escape(f"+{len(unique) - _DIAGNOSTIC_PATH_LIMIT} more"))
+    return ", ".join(links)
 
 
 def _diagnostic_path_link(path: str) -> str:
@@ -1132,10 +1189,10 @@ def _scenario_context_panel(payload: dict[str, Any]) -> str:
         </div>"""
     game = _mapping(profiles.get("game"))
     if _profile_has_signal("game", game):
+        illegal_actions = _illegal_actions_summary(game.get("illegal_actions"), include_zero=False)
         rows = [
             ("Move count", game.get("move_count")),
-            ("Replay refs", game.get("replay_refs")),
-            ("Illegal actions", game.get("illegal_actions")),
+            ("Illegal actions", illegal_actions),
         ]
         return f"""<div class="primary-metric context-panel">
           <span class="label">Run context</span>
@@ -1163,6 +1220,17 @@ def _game_kits_label(payload: dict[str, Any]) -> str:
     game = _mapping(_mapping(payload.get("scenario_profiles")).get("game"))
     kits = [_text(item, "") for item in _list(game.get("game_kits")) if _text(item, "")]
     return ", ".join(kits)
+
+
+def _illegal_actions_summary(value: Any, *, include_zero: bool) -> str:
+    illegal = _mapping(value)
+    total = _int_value(illegal.get("total"))
+    games = _int_value(illegal.get("games"))
+    if total <= 0 and games <= 0:
+        return "0" if include_zero else ""
+    if games > 0:
+        return f"{total} total / {games} games"
+    return f"{total} total"
 
 
 def _render_nav(payload: dict[str, Any]) -> str:
@@ -1214,11 +1282,24 @@ def _kv_table(rows: list[tuple[str, Any]]) -> str:
         if value in (None, "", [], {}):
             continue
         rendered.append(
-            f"<tr><th>{_escape(label)}</th><td>{_escape(_format_compact(value))}</td></tr>"
+            f"<tr><th>{_escape(label)}</th><td>{_kv_value(label, value)}</td></tr>"
         )
     if not rendered:
         return "<p class=\"muted\">No metadata.</p>"
     return f"<table class=\"kv-table\"><tbody>{''.join(rendered)}</tbody></table>"
+
+
+def _kv_value(label: str, value: Any) -> str:
+    if _is_evidence_refs_label(label):
+        refs = [_text(item, "") for item in _list(value) if _text(item, "")]
+        if refs:
+            return ", ".join(_evidence_link(ref) for ref in refs[:5])
+    return _escape(_format_compact(value))
+
+
+def _is_evidence_refs_label(label: str) -> bool:
+    normalized = label.strip().lower()
+    return normalized.endswith("refs") or normalized.endswith("ref ids")
 
 
 def _badge(value: str, kind: str) -> str:
@@ -1305,6 +1386,35 @@ def _sanitize_payload(value: Any) -> Any:
     if isinstance(value, str):
         return _safe_visible_text(value)
     return value
+
+
+def _embedded_context_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the inline JSON useful for scripts without duplicating full evidence payloads."""
+    return {
+        "schema": payload.get("schema"),
+        "run": {
+            "run_id": _mapping(payload.get("run")).get("run_id"),
+            "run_dir": _display_run_dir(_mapping(payload.get("run")).get("run_dir")),
+        },
+        "headline": payload.get("headline"),
+        "diagnostics": {
+            "report_pack_status": _mapping(payload.get("diagnostics")).get("report_pack_status"),
+            "profile_ref_resolution_miss_count": _mapping(payload.get("diagnostics")).get(
+                "profile_ref_resolution_miss_count"
+            ),
+            "warning_count": len(_list(_mapping(payload.get("diagnostics")).get("warnings"))),
+            "error_count": len(_list(_mapping(payload.get("diagnostics")).get("errors"))),
+        },
+        "counts": {
+            "metrics": len(_list(payload.get("metrics"))),
+            "evidence_refs": len(_list(payload.get("evidence_refs"))),
+            "attention_cases": len(_list(payload.get("attention_cases"))),
+            "failure_clusters": len(_list(payload.get("failure_clusters"))),
+            "outliers": len(_list(payload.get("outliers"))),
+        },
+        "full_context_ref": "report_context.json",
+        "embedded_context_truncated": True,
+    }
 
 
 def _safe_script_json(value: Any) -> str:

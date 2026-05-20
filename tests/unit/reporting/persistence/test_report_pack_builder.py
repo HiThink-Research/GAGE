@@ -77,8 +77,9 @@ def test_report_pack_builder_rerenders_html_with_final_diagnostics(tmp_path) -> 
     expected_warning_count = len(diagnostics["warnings"])
 
     assert expected_warning_count == 3
-    assert f"<td>{expected_warning_count}</td>" in html
-    assert "report.html" in html
+    assert "<th>Warnings</th><td>0</td>" in html
+    assert "<th>Privacy Redactions</th>" in html
+    assert "3 rendered assets" in html
 
 
 @pytest.mark.io

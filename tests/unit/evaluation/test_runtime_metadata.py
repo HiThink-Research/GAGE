@@ -111,7 +111,6 @@ def test_record_run_metadata_writes_identity_payload(tmp_path) -> None:
     assert cache.get_metadata("run_metadata_schema_version") == RUN_METADATA_SCHEMA_VERSION
     assert cache.get_metadata("run_identity") == {
         "run_id": "run-20260319010101-ab12cd34",
-        "source": "provided",
-        "schema_version": 1,
+        "run_dir": str(cache.run_dir),
         "created_at_iso": identity.created_at_iso,
     }

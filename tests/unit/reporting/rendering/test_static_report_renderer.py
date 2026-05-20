@@ -210,12 +210,13 @@ def test_static_renderer_summarizes_scenario_profiles_by_kind() -> None:
     visible_html = html.split('<script type="application/json" id="gage-report-context">', 1)[0]
 
     assert "Agent profile" in visible_html
+    assert 'href="#evidence-evidence-artifact-abc"' in visible_html
     assert "External harness profile" in visible_html
     assert "Game profile" in visible_html
     assert "harbor" in visible_html
     assert "completed=1" in visible_html
     assert "gomoku" in visible_html
-    assert "games=1, total=2" in visible_html
+    assert "2 total / 1 games" in visible_html
     assert "No metadata." not in visible_html
     assert "custom" in visible_html
     assert "Alpha" in visible_html
@@ -374,7 +375,7 @@ def test_static_renderer_redacts_embedded_data_urls_in_preview_and_context() -> 
     assert "data:image" not in html
     assert "SECRET" not in html
     assert "&lt;redacted:data-url&gt;" in visible_html
-    assert "\\u003credacted:data-url\\u003e" in html
+    assert "embedded_context_truncated" in html
     assert "caption" in visible_html
     assert "keep" in visible_html
 
@@ -605,6 +606,9 @@ def test_static_renderer_uses_game_profile_as_hero_context_fallback() -> None:
     assert "tictactoe" in visible_html
     assert "Move count" in visible_html
     assert ">9<" in visible_html
+    hero_html = visible_html.split("<nav", 1)[0]
+    assert "Replay refs" not in hero_html
+    assert "evidence://artifact/replay" not in hero_html
 
 
 @pytest.mark.fast
@@ -634,6 +638,9 @@ def test_static_renderer_prefers_profile_context_over_runtime_health_metric() ->
 
     assert "Run context" in hero_html
     assert "Move count" in hero_html
+    assert "Game kits" not in hero_html
+    assert "Illegal actions" not in hero_html
+    assert "Replay refs" not in hero_html
     assert "Primary metric" not in hero_html
 
 
@@ -795,6 +802,61 @@ def test_static_renderer_aggregates_routine_redaction_warnings() -> None:
     assert "<h3>Warnings</h3>" not in visible_html
     assert "report_context.md" not in visible_html
     assert "report.html" not in visible_html
+
+
+@pytest.mark.fast
+def test_static_renderer_groups_repeated_diagnostic_warnings() -> None:
+    context = ReportContext.minimal("run").to_dict()
+    context["diagnostics"] = {
+        "report_pack_status": "completed",
+        "warnings": [
+            {
+                "code": "report_pack.derived_sample_detail_without_journal_record",
+                "path": f"samples/task/sample_{index}.json",
+            }
+            for index in range(6)
+        ],
+        "errors": [],
+    }
+
+    html = StaticReportRenderer().render(context)
+    visible_html = html.split('<script type="application/json" id="gage-report-context">', 1)[0]
+
+    assert "Warnings</th><td>1</td>" in visible_html
+    assert "Occurrences" in visible_html
+    assert ">6</td>" in visible_html
+    assert "+3 more" in visible_html
+    assert "Derived sample detail files" in visible_html
+
+
+@pytest.mark.fast
+def test_static_renderer_caps_evidence_rows_and_inline_context_payload() -> None:
+    context = ReportContext.minimal("run").to_dict()
+    context["evidence_refs"] = [
+        {
+            "ref_id": f"evidence://artifact/{index}",
+            "kind": "artifact",
+            "artifact_role": "sample_record",
+            "path": f"samples/task/sample_{index}.json",
+            "mime_type": "application/json",
+            "preview": {"text": f"preview-{index}"},
+        }
+        for index in range(60)
+    ]
+
+    html = StaticReportRenderer().render(context)
+    visible_html, embedded_json = html.split(
+        '<script type="application/json" id="gage-report-context">',
+        1,
+    )
+    embedded_json = embedded_json.split("</script>", 1)[0]
+
+    assert "10 more evidence refs omitted from HTML" in visible_html
+    assert "preview-49" in visible_html
+    assert "preview-50" not in visible_html
+    assert '"evidence_refs": 60' in embedded_json
+    assert "preview-0" not in embedded_json
+    assert '"embedded_context_truncated": true' in embedded_json
 
 
 @pytest.mark.fast

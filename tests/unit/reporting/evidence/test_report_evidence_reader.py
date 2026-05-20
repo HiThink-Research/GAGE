@@ -23,6 +23,34 @@ def test_reader_builds_index_from_minimal_run(tmp_path) -> None:
 
 
 @pytest.mark.io
+def test_reader_indexes_static_sample_records_as_evidence(tmp_path) -> None:
+    run_dir = tmp_path / "run"
+    sample_record = run_dir / "samples" / "task_static" / "task_static_sample-1.json"
+    sample_record.parent.mkdir(parents=True)
+    record = {
+        "sample_id": "task_static:sample-1",
+        "task_id": "task_static",
+        "namespace": "task_static",
+        "model_output": {"answer": "A"},
+        "judge_output": {"score": 1.0},
+        "metrics": {"acc": {"values": {"acc": 1.0}}},
+    }
+    sample_record.write_text(json.dumps(record), encoding="utf-8")
+    (run_dir / "samples.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    index = ReportEvidenceReader().build_index(run_dir)
+
+    refs = list(index.evidence_refs.values())
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref.kind == "artifact"
+    assert ref.artifact_role == "sample_record"
+    assert ref.path == "samples/task_static/task_static_sample-1.json"
+    assert ref.sample_id == "task_static:sample-1"
+    assert ref.task_id == "task_static"
+
+
+@pytest.mark.io
 def test_reader_redacts_secret_preview_and_records_diagnostic(tmp_path) -> None:
     run_dir = tmp_path / "run"
     artifact = run_dir / "artifacts" / "task" / "sample" / "infra" / "raw_error.json"

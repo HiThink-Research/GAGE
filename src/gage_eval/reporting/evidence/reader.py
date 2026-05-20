@@ -87,10 +87,12 @@ class ReportEvidenceReader:
         diagnostics: EvidenceDiagnostics,
     ) -> dict[str, EvidenceRef]:
         refs: dict[str, EvidenceRef] = {}
+        sample_record_counts: dict[str, int] = {}
         for sample in samples:
             task_id = _coerce_str(sample.get("task_id") or _nested(sample, "sample", "task_id"))
             sample_id = _coerce_str(sample.get("sample_id") or _nested(sample, "sample", "id"))
-            for raw_ref in _iter_artifact_refs(sample):
+            raw_refs = list(_iter_artifact_refs(sample))
+            for raw_ref in raw_refs:
                 ref = self._artifact_ref(root, raw_ref, task_id=task_id, sample_id=sample_id, diagnostics=diagnostics)
                 if ref is not None and ref.ref_id:
                     refs[ref.ref_id] = ref
@@ -98,7 +100,45 @@ class ReportEvidenceReader:
                 ref = self._media_ref(media_url, task_id=task_id, sample_id=sample_id, diagnostics=diagnostics)
                 if ref is not None and ref.ref_id:
                     refs[ref.ref_id] = ref
+            if not raw_refs and _should_index_sample_record(sample):
+                count_key = task_id or "__run__"
+                if sample_record_counts.get(count_key, 0) < 5:
+                    ref = self._sample_record_ref(
+                        root,
+                        sample,
+                        task_id=task_id,
+                        sample_id=sample_id,
+                        diagnostics=diagnostics,
+                    )
+                    if ref is not None and ref.ref_id:
+                        refs[ref.ref_id] = ref
+                        sample_record_counts[count_key] = sample_record_counts.get(count_key, 0) + 1
         return dict(sorted(refs.items(), key=lambda item: item[0]))
+
+    def _sample_record_ref(
+        self,
+        root: Path,
+        sample: dict[str, Any],
+        *,
+        task_id: str | None,
+        sample_id: str | None,
+        diagnostics: EvidenceDiagnostics,
+    ) -> EvidenceRef | None:
+        path = _sample_record_path(root, sample)
+        if path is None:
+            return None
+        return self._artifact_ref(
+            root,
+            {
+                "owner": "sample_record",
+                "name": Path(path).name,
+                "path": path,
+                "mime_type": "application/json",
+            },
+            task_id=task_id,
+            sample_id=sample_id,
+            diagnostics=diagnostics,
+        )
 
     def _artifact_ref(
         self,
@@ -253,6 +293,41 @@ def _iter_artifact_refs(sample: dict[str, Any]) -> Iterable[dict[str, Any]]:
                 if isinstance(ref, dict):
                     yield ref
     yield from _iter_game_artifact_refs(sample)
+
+
+def _should_index_sample_record(sample: dict[str, Any]) -> bool:
+    return any(
+        sample.get(key) not in (None, {}, [])
+        for key in (
+            "model_output",
+            "judge_output",
+            "metrics",
+            "metric_results",
+            "eval_result",
+        )
+    )
+
+
+def _sample_record_path(root: Path, sample: dict[str, Any]) -> str | None:
+    sample_id = _coerce_str(sample.get("sample_id") or _nested(sample, "sample", "id"))
+    if not sample_id:
+        return None
+    namespace = _sanitize_path_component(_coerce_str(sample.get("namespace")) or "default")
+    safe_sample_id = _sanitize_path_component(sample_id)
+    candidate = root / "samples" / namespace / f"{safe_sample_id}.json"
+    if candidate.exists() and _path_is_under_root(candidate, root):
+        return candidate.relative_to(root).as_posix()
+    return None
+
+
+def _sanitize_path_component(value: str) -> str:
+    sanitized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value))
+    if len(sanitized.encode("utf-8")) > 245:
+        digest = hashlib.md5(sanitized.encode("utf-8")).hexdigest()[:8]
+        while len(sanitized.encode("utf-8")) > 237:
+            sanitized = sanitized[:-1]
+        sanitized = sanitized + "_" + digest
+    return sanitized
 
 
 def _iter_media_urls(sample: dict[str, Any]) -> Iterable[str]:
