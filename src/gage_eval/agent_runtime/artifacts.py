@@ -15,6 +15,7 @@ from gage_eval.agent_runtime.session import AgentRuntimeSession
 from gage_eval.agent_runtime.trace_schema import ArtifactRef, SampleRecord, TraceEvent, TrialResult
 from gage_eval.agent_runtime.verifier.contracts import RuntimeJudgeOutcome
 from gage_eval.observability.trace import ObservabilityTrace
+from gage_eval.reporting.privacy import SecretFilter
 
 
 _SAMPLE_LEVEL_INFRA_ARTIFACTS = {
@@ -38,8 +39,10 @@ _USAGE_KEYNAME_ALLOWLIST = {
     "cached_tokens",
     "completion_tokens",
     "completion_tokens_details",
+    "input_cost_per_token",
     "input_tokens",
     "input_tokens_details",
+    "output_cost_per_token",
     "output_tokens",
     "output_tokens_details",
     "prompt_tokens",
@@ -126,6 +129,7 @@ class RuntimeArtifactSink:
             "scheduler_result": scheduler_result.to_dict() if scheduler_result is not None else None,
             "failure": failure.to_dict() if failure is not None else None,
         }
+        payload = _report_safe_value(payload)
         target.write_text(
             json.dumps(to_json_compatible(payload), ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -137,8 +141,9 @@ class RuntimeArtifactSink:
 
         target = Path(outcome.persisted_path)
         target.parent.mkdir(parents=True, exist_ok=True)
+        payload = _report_safe_value(outcome.to_dict())
         target.write_text(
-            json.dumps(to_json_compatible(outcome.to_dict()), ensure_ascii=False, indent=2),
+            json.dumps(to_json_compatible(payload), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         return str(target)
@@ -147,7 +152,7 @@ class RuntimeArtifactSink:
         """Write the raw error payload."""
 
         target = Path(session.artifact_layout["raw_error"])
-        payload = _raw_error_payload(error)
+        payload = _report_safe_value(_raw_error_payload(error))
         target.write_text(
             json.dumps(to_json_compatible(payload), ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -287,7 +292,9 @@ class RuntimeArtifactSink:
             / "trace.jsonl"
         )
         target = self._base_dir / _safe_segment(run_id) / relative_path
-        normalized_payload = _redact_secrets(to_json_compatible(payload), secret_replacements)
+        normalized_payload = _report_safe_value(
+            _redact_secrets(to_json_compatible(payload), secret_replacements)
+        )
         event_payload = {
             "run_id": run_id,
             "task_id": task_id,
@@ -512,8 +519,9 @@ def _serialize_content(
             data = _redact_text(content.decode("utf-8", errors="ignore"), secret_replacements).encode("utf-8")
         return data, detected_mime_type
     if isinstance(content, str):
-        return _redact_text(content, secret_replacements).encode("utf-8"), detected_mime_type
+        return _report_safe_text(_redact_text(content, secret_replacements)).encode("utf-8"), detected_mime_type
     payload = _redact_secrets(to_json_compatible(content), secret_replacements)
+    payload = _report_safe_value(payload)
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     return text.encode("utf-8"), detected_mime_type
 
@@ -625,6 +633,27 @@ def _redact_text(value: str, secret_replacements: dict[str, str]) -> str:
         if secret:
             redacted = redacted.replace(secret, replacement)
     return redacted
+
+
+_REPORT_SECRET_FILTER = SecretFilter()
+
+
+def _report_safe_value(value: Any) -> Any:
+    return _neutralize_report_placeholders(_REPORT_SECRET_FILTER.redact(value).value)
+
+
+def _report_safe_text(value: str) -> str:
+    return str(_neutralize_report_placeholders(_REPORT_SECRET_FILTER.redact(value).value))
+
+
+def _neutralize_report_placeholders(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("<redacted:secret>", "<redacted:credential>")
+    if isinstance(value, dict):
+        return {key: _neutralize_report_placeholders(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_neutralize_report_placeholders(child) for child in value]
+    return value
 
 
 def _normalize_secret_replacements(

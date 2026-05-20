@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import random
 import time
@@ -98,13 +99,22 @@ class BasePreprocessor(DatasetPreprocessor):
             if isinstance(structured_sample, dict):
                 structured_sample = sample_from_dict(structured_sample)
 
+            dataset_id = sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown"
+            dataset_meta = sample.get("_dataset_metadata") or kwargs.get("dataset_metadata") or {}
+            if not getattr(structured_sample, "id", None):
+                structured_sample.id = _fallback_sample_id(sample, dataset_id=str(dataset_id))
+                logger.warning(
+                    "Preprocessor {} generated fallback sample id {} for dataset {} because the structured sample had no id",
+                    self.__class__.__name__,
+                    structured_sample.id,
+                    dataset_id,
+                )
+
             # STEP 3: Validate the sample schema early to fail fast.
             validate_sample_schema(structured_sample)
             # STEP 4: Merge multimodal inputs and de-duplicate referenced assets.
             # merge_multimodal_inputs(sample)
 
-            dataset_id = sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown"
-            dataset_meta = sample.get("_dataset_metadata") or kwargs.get("dataset_metadata") or {}
             if emit_trace:
                 msgs = structured_sample.messages or []
                 trace.emit(
@@ -155,6 +165,13 @@ class BasePreprocessor(DatasetPreprocessor):
                 )
             if is_debug or self.on_error == "raise":
                 raise
+            logger.warning(
+                "Preprocess skipped sample id={} dataset_id={} preprocessor={} error={}",
+                sample_id_hint,
+                sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown",
+                self.__class__.__name__,
+                repr(exc),
+            )
             meta = sample.get("metadata") or {}
             meta["preprocess_error"] = str(exc)
             sample["metadata"] = meta
@@ -228,6 +245,18 @@ def _snapshot(obj: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(json.dumps(obj, default=str))
     except Exception:
         return {}
+
+
+def _fallback_sample_id(record: Dict[str, Any], *, dataset_id: str) -> str:
+    payload = {
+        key: value
+        for key, value in record.items()
+        if key not in {"_dataset_metadata"}
+    }
+    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+    prefix = str(dataset_id or "unknown").strip() or "unknown"
+    return f"{prefix}:{digest}"
 
 
 def _append_debug_record(path: str, payload: Dict[str, Any]) -> None:

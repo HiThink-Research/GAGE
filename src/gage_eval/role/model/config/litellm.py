@@ -18,6 +18,11 @@ class LiteLLMBackendConfig(BackendConfigBase):
     api_base: Optional[str] = None
     extra_headers: Dict[str, str] = Field(default_factory=dict)
     streaming: bool = False
+    embed_remote_images: bool = Field(
+        default=False,
+        description="Convert remote image_url entries to data URLs lazily before sending a request",
+    )
+    remote_image_timeout_s: float = Field(default=60.0, ge=0.0)
     drop_params: bool = True
     timeout: Optional[float] = Field(default=None, ge=0.0)
     max_retries: int = Field(default=6, ge=1)

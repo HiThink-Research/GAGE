@@ -96,6 +96,28 @@ def test_persist_tau2_artifacts_falls_back_to_agent_trace_without_runtime_messag
 
 
 @pytest.mark.fast
+def test_persist_tau2_artifacts_redacts_secret_text_in_fallback_artifacts(tmp_path: Path) -> None:
+    session = _build_session(tmp_path)
+
+    persist_tau2_artifacts(
+        session=session,
+        scheduler_output={
+            "agent_trace": [
+                {
+                    "tool_name": "respond",
+                    "content": "Authorization: Bearer abc123",
+                }
+            ]
+        },
+        sandbox_provider=None,
+    )
+
+    serialized = (tmp_path / "sample" / "artifacts" / "tau2_trajectory.json").read_text(encoding="utf-8")
+    assert "Bearer abc123" not in serialized
+    assert "<redacted:" in serialized
+
+
+@pytest.mark.fast
 def test_persist_tau2_artifacts_fills_missing_terminal_diagnostics(tmp_path: Path) -> None:
     session = _build_session(tmp_path)
 

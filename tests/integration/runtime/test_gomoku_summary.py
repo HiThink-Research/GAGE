@@ -58,5 +58,5 @@ def test_gomoku_summary_detects_explicit_gomoku_records(tmp_path: Path) -> None:
     summary = GomokuSummaryGenerator().generate(cache)
 
     assert summary is not None
-    assert summary["gomoku_summary"]["overall"]["total"] == 1
-    assert summary["gomoku_summary"]["wins"] == {"Black": 1, "White": 0}
+    assert summary.legacy_payload["gomoku_summary"]["overall"]["total"] == 1
+    assert summary.legacy_payload["gomoku_summary"]["wins"] == {"Black": 1, "White": 0}

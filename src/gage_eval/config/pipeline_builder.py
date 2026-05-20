@@ -361,6 +361,7 @@ class PipelineConfigBuilder:
             metrics=self._state.get("metrics", ()),
             tasks=self._state.get("tasks", ()),
             summary_generators=self._state.get("summary_generators", ()),
+            reporting=normalized.get("reporting") or {},
             observability=normalized.get("observability") or {},
         )
 

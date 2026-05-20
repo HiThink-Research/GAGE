@@ -59,6 +59,27 @@ def test_max_samples_override_updates_materialized_tasks_and_dataset_limits() ->
 
 
 @pytest.mark.fast
+def test_max_samples_override_skips_dataset_limits_when_preprocess_filters_records() -> None:
+    payload = {
+        "datasets": [
+            {
+                "dataset_id": "ds",
+                "loader": "hf_hub",
+                "params": {"preprocess": "swebench_pro_standardizer"},
+                "hub_params": {},
+            }
+        ],
+        "tasks": [{"task_id": "t1", "dataset_id": "ds"}],
+    }
+
+    apply_cli_final_overrides(payload, CLIIntent(max_samples=1))
+
+    assert payload["tasks"][0]["max_samples"] == 1
+    assert "limit" not in payload["datasets"][0]["params"]
+    assert "limit" not in payload["datasets"][0]["hub_params"]
+
+
+@pytest.mark.fast
 def test_skip_judge_removes_judge_steps_from_custom_and_tasks() -> None:
     payload = {
         "custom": {"steps": [{"step": "inference"}, {"step": "judge"}, {"step": "auto_eval"}]},

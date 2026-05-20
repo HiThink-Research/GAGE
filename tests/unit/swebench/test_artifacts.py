@@ -104,6 +104,36 @@ def test_persist_swebench_artifacts_materializes_diff_from_answer_field(tmp_path
     assert diagnostics["submission_patch_present"] is True
 
 
+def test_persist_swebench_artifacts_redacts_secret_text(tmp_path: Path) -> None:
+    session = _build_session(tmp_path)
+
+    persist_swebench_artifacts(
+        session=session,
+        scheduler_output={
+            "answer": "api_key=abc123",
+            "agent_trace": [
+                {
+                    "name": "run_shell",
+                    "output": {"stderr": "Authorization: Bearer abc123"},
+                }
+            ],
+        },
+        sandbox_provider=None,
+    )
+
+    artifact_dir = tmp_path / "sample" / "artifacts"
+    serialized = "\n".join(
+        [
+            (artifact_dir / "agent_trace.json").read_text(encoding="utf-8"),
+            (artifact_dir / "final_response.txt").read_text(encoding="utf-8"),
+            (artifact_dir / "swebench_diagnostics.json").read_text(encoding="utf-8"),
+        ]
+    )
+    assert "Bearer abc123" not in serialized
+    assert "api_key=abc123" not in serialized
+    assert "<redacted:" in serialized
+
+
 def test_persist_swebench_artifacts_surfaces_missing_commands(tmp_path: Path) -> None:
     session = _build_session(tmp_path)
 

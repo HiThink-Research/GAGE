@@ -31,6 +31,6 @@ def test_tau2_summary_pass_hat(tmp_path: Path) -> None:
     summary = Tau2SummaryGenerator().generate(cache)
 
     assert summary is not None
-    pass_hat = summary["tau2_summary"]["pass_hat_k"]
+    pass_hat = summary.legacy_payload["tau2_summary"]["pass_hat_k"]
     assert pass_hat[1] == 0.75
     assert pass_hat[2] == 0.5

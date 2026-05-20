@@ -9,6 +9,7 @@ from gage_eval.agent_runtime.artifacts import RuntimeArtifactSink
 from gage_eval.agent_runtime.serialization import to_json_compatible
 from gage_eval.agent_runtime.trace_schema import ArtifactRef, SampleRecord
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.reporting.privacy import SecretFilter
 
 
 @dataclass
@@ -52,10 +53,10 @@ class SampleArtifactWriter:
         run_id = str(payload.get("run_id") or self.cache_store.run_id)
         task_id = str(payload["task_id"])
         sample_id = str(payload["sample_id"])
-        sample = dict(payload["sample"])
-        trial_results = list(payload["trial_results"])
-        aggregate = payload["aggregate"]
-        environment_descriptor = dict(payload.get("environment_descriptor") or {})
+        sample = _report_safe_value(dict(payload["sample"]))
+        trial_results = _report_safe_value(list(payload["trial_results"]))
+        aggregate = _report_safe_value(payload["aggregate"])
+        environment_descriptor = _report_safe_value(dict(payload.get("environment_descriptor") or {}))
         if handle is not None and not environment_descriptor:
             environment_descriptor = dict(getattr(handle, "environment", {}) or {})
         artifacts: list[ArtifactRef] = list(payload.get("artifacts") or [])
@@ -96,13 +97,17 @@ class SampleArtifactWriter:
                 for result in trial_results
             ],
             "aggregate_result": _aggregate_payload(aggregate),
-            "scheduler_result": dict(payload.get("scheduler_result") or _primary_attr(trial_results, "scheduler_result")),
-            "verifier_result": dict(payload.get("verifier_result") or _primary_attr(trial_results, "verifier_result")),
+            "scheduler_result": _report_safe_value(
+                dict(payload.get("scheduler_result") or _primary_attr(trial_results, "scheduler_result"))
+            ),
+            "verifier_result": _report_safe_value(
+                dict(payload.get("verifier_result") or _primary_attr(trial_results, "verifier_result"))
+            ),
             "environment_descriptor": environment_descriptor,
             "effective_config_ref": effective_config_ref.model_dump(mode="python"),
             "artifacts": [ref.model_dump(mode="python") for ref in artifacts],
             "status": str(payload.get("status") or _status_from_trials(trial_results)),
-            "failure": payload.get("failure"),
+            "failure": _report_safe_value(payload.get("failure")),
         }
         sample_record = SampleRecord.model_validate(sample_record_payload)
         sample_record_ref = self.artifact_sink.write_artifact(
@@ -121,8 +126,8 @@ class SampleArtifactWriter:
             sample_id,
             {
                 "sample": sample,
-                "model_output": payload.get("model_output") or _primary_predict_result(sample),
-                "judge_output": payload.get("judge_output") or sample.get("eval_result") or {},
+                "model_output": _report_safe_value(payload.get("model_output") or _primary_predict_result(sample)),
+                "judge_output": _report_safe_value(payload.get("judge_output") or sample.get("eval_result") or {}),
                 "trial_results": sample_record_payload["trial_results"],
                 "aggregate_result": sample_record_payload["aggregate_result"],
                 "artifact_refs": [ref.model_dump(mode="python") for ref in artifacts],
@@ -238,6 +243,13 @@ def _status_from_trials(trial_results: Sequence[Any]) -> str:
     if any(status == "aborted" for status in statuses):
         return "aborted"
     return "failed"
+
+
+_REPORT_SECRET_FILTER = SecretFilter()
+
+
+def _report_safe_value(value: Any) -> Any:
+    return _REPORT_SECRET_FILTER.redact(value).value
 
 
 __all__ = ["SampleArtifactWriter", "WrittenSampleArtifacts"]

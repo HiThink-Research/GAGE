@@ -15,6 +15,7 @@ from gage_eval.registry import registry
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.game_kits.real_time_game.vizdoom.observation import ViZDoomPromptBuilder
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
+from gage_eval.reporting.privacy import SecretFilter
 
 try:
     from PIL import Image
@@ -797,7 +798,7 @@ class _ReplayWriter:
             "frames": self._frames,
             "result": self._result,
         }
-        path.write_text(_json_dump(payload), encoding="utf-8")
+        path.write_text(_json_dump(SecretFilter().redact(payload).value), encoding="utf-8")
         return str(path)
 
 

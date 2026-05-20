@@ -49,6 +49,7 @@ from gage_eval.game_kits.phase_card_game.doudizhu.types import (
 )
 from gage_eval.registry import registry
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
+from gage_eval.reporting.privacy import SecretFilter
 
 
 class _CardArenaPlayerResolutionMixin:
@@ -835,7 +836,8 @@ class DoudizhuArenaEnvironment(_CardArenaPlayerResolutionMixin):
 
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(replay, ensure_ascii=False, indent=2), encoding="utf-8")
+            safe_replay = SecretFilter().redact(replay).value
+            output_path.write_text(json.dumps(safe_replay, ensure_ascii=False, indent=2), encoding="utf-8")
             self._replay_path = str(output_path)
             return self._replay_path
         except Exception as exc:

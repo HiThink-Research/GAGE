@@ -20,6 +20,7 @@ from gage_eval.role.arena.replay_paths import (
 )
 from gage_eval.role.arena.resources.runtime_bridge import attach_runtime_resources
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
+from gage_eval.reporting.privacy import SecretFilter
 
 _ACTION_ID_TO_TEXT = {
     0: "pass",
@@ -276,7 +277,8 @@ class Classic3pEnvironment:
             payload = json.loads(serialized_replay)
         except json.JSONDecodeError:
             payload = {"raw_replay": serialized_replay}
-        output_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        safe_payload = SecretFilter().redact(payload).value
+        output_path.write_text(json.dumps(safe_payload, ensure_ascii=True, indent=2), encoding="utf-8")
         return str(output_path)
 
 
