@@ -112,7 +112,7 @@ def test_arena_contract_fields_bridge_to_metrics_and_reporting(tmp_path) -> None
     summary = ArenaSummaryGenerator().generate(cache)
 
     assert summary is not None
-    payload = summary["arena_summary"]
+    payload = summary.legacy_payload["arena_summary"]
     assert payload["overall"]["samples"] == 1
     assert payload["winner_player_id"] == {"p0": 1}
     assert payload["termination_reason"] == {"finished": 1}

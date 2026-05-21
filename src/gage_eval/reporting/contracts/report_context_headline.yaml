@@ -1,0 +1,29 @@
+schema_version: gage.report_context_headline.v1
+description: Headline fields emitted in report_context.json.
+required_fields:
+  - verdict
+  - verdict_reason
+  - one_line_summary
+  - primary_metric
+  - key_metric_ids
+  - top_attention_case_ids
+  - top_failure_cluster_ids
+  - top_outlier_metric_ids
+diagnostic_fields:
+  - warnings
+  - errors
+implementation_extension_fields:
+  score:
+    description: Shortcut for the primary metric's most reportable scalar value.
+    source: HeadlineBuilder primary metric extraction.
+  attention_case_count:
+    description: Count used by compact title and overview renderers.
+    source: Length of report_context.attention_cases.
+  outlier_count:
+    description: Count used by compact title and overview renderers.
+    source: Length of report_context.outliers.
+  failure_cluster_count:
+    description: Count used by compact title and overview renderers.
+    source: Length of report_context.failure_clusters.
+compatibility:
+  note: Extension fields are additive and consumers must ignore unknown headline keys.

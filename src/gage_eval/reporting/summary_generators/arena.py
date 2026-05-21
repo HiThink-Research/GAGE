@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.sample_envelope import resolve_selected_predict_result
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -20,14 +21,31 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
 class ArenaSummaryGenerator(SummaryGenerator):
     """Builds arena aggregate summaries from cached samples."""
 
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
-        summary = _build_arena_summary(cache)
+    def generate(self, context: Any) -> SummaryGeneratorResult | None:
+        summary = _build_arena_summary(records_from_context(context))
         if not summary:
             return None
-        return {"arena_summary": summary}
+        outliers = []
+        avg_steps = summary.get("overall", {}).get("avg_episode_length_steps")
+        if avg_steps:
+            outliers.append(
+                {
+                    "metric_id": "arena.avg_episode_length_steps",
+                    "scope": "section",
+                    "section_id": "overview",
+                    "ranking": "high",
+                    "top_k": [{"sample_id": "overall", "value": avg_steps}],
+                }
+            )
+        return SummaryGeneratorResult(
+            generator_id="arena_summary",
+            summary_sections=[section("overview", "Arena Summary", generator_id="arena_summary")],
+            outliers=outliers,
+            legacy_payload={"arena_summary": summary},
+        )
 
 
-def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
+def _build_arena_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
     sample_count = 0
     duration_sum = 0.0
     duration_count = 0
@@ -40,7 +58,7 @@ def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     illegal_reason_counts: Dict[str, int] = {}
     top1_counts: Dict[str, int] = {}
 
-    for record in cache.iter_samples():
+    for record in records:
         sample = record.get("sample") if isinstance(record, Mapping) else None
         if not isinstance(sample, Mapping):
             continue

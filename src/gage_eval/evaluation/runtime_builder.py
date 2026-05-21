@@ -18,6 +18,7 @@ from loguru import logger
 from gage_eval.config.pipeline_config import PipelineConfig, RoleAdapterSpec
 from gage_eval.assets.datasets.manager import DataManager, DataSource
 from gage_eval.evaluation.cache import EvalCache
+from gage_eval.evaluation.run_metadata import ValidationSummary
 from gage_eval.evaluation.execution_controller import (
     SampleLoopExecutionError,
     TaskExecutionController,
@@ -66,6 +67,29 @@ def _record_config_metadata(
             cache_store,
             build_run_metadata_snapshot(trace.run_identity),
         )
+    reporting = dict(config.reporting or {})
+    if reporting:
+        cache_store.set_metadata("reporting", reporting)
+    report_pack = reporting.get("report_pack") if isinstance(reporting, dict) else None
+    if isinstance(report_pack, dict) and "enabled" in report_pack:
+        cache_store.set_metadata(
+            "report_pack_enabled",
+            _coerce_config_bool(report_pack.get("enabled"), default=True),
+        )
+
+
+def _coerce_config_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled"}:
+            return False
+    return default
 
 
 def build_runtime(
@@ -336,11 +360,11 @@ def _ensure_validation_ledger(
 
     if ledger is None:
         ledger = ValidationLedger(
-            on_update=lambda summary: cache_store.set_metadata(
-                "validation_summary", summary
+            on_update=lambda summary: cache_store.record_validation_summary(
+                ValidationSummary.from_dict(summary)
             )
         )
-    cache_store.set_metadata("validation_summary", ledger.snapshot())
+    cache_store.record_validation_summary(ValidationSummary.from_dict(ledger.snapshot()))
     return ledger
 
 

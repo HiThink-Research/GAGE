@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import importlib
+import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, TYPE_CHECKING
 
@@ -205,6 +206,7 @@ def _resolve_registered_preprocessor(
             preprocessor_cls = lookup.get("dataset_preprocessors", name)
         except KeyError:
             return None
+    _warn_if_deprecated_preprocessor(lookup, name)
     preprocessor = preprocessor_cls(**kwargs)
     return _PreprocessorAdapter(preprocessor)
 
@@ -218,6 +220,30 @@ def _resolve_preprocessor_fallback(name: str):
     module_name, class_name = target
     module = importlib.import_module(module_name)
     return getattr(module, class_name, None)
+
+
+def _warn_if_deprecated_preprocessor(lookup: "RegistryLookup", name: str) -> None:
+    entry_getter = getattr(lookup, "entry", None)
+    if not callable(entry_getter):
+        return
+    try:
+        entry = entry_getter("dataset_preprocessors", name)
+    except Exception:
+        return
+    extra = getattr(entry, "extra", None)
+    if not isinstance(extra, dict) or not extra.get("deprecated"):
+        return
+    replacement = extra.get("replacement") or "a non-deprecated replacement"
+    replacement_config = extra.get("replacement_config")
+    suffix = f" via {replacement_config}" if replacement_config else ""
+    warnings.warn(
+        (
+            f"Dataset preprocessor '{name}' is deprecated; "
+            f"use '{replacement}'{suffix} instead."
+        ),
+        FutureWarning,
+        stacklevel=3,
+    )
 
 
 def inject_default_params(record: Dict[str, Any], default_params: Optional[Dict[str, Any]]) -> Dict[str, Any]:

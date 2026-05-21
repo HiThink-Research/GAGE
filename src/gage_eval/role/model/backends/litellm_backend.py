@@ -14,6 +14,7 @@ from loguru import logger
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 from gage_eval.registry import registry
+from gage_eval.assets.datasets.utils.multimodal import embed_remote_image_as_data_url
 from gage_eval.utils.messages import normalize_messages_for_template, stringify_message_content
 
 
@@ -56,6 +57,10 @@ class LiteLLMBackend(EngineBackend):
         self._retry_multiplier = max(1.0, float(self._cfg.retry_multiplier))
         self._max_context_length = self._cfg.max_model_length
         self._base_sampling = self._cfg.generation_parameters.to_dict()
+        self._embed_remote_images = bool(self._cfg.embed_remote_images)
+        self._remote_image_timeout_s = float(self._cfg.remote_image_timeout_s)
+        if self._embed_remote_images:
+            logger.info("LiteLLM remote image embedding enabled (timeout_s={})", self._remote_image_timeout_s)
         self._is_kimi_target = self._looks_like_kimi(self.provider, self.model_name, self.api_base)
         self._is_grok_target = self._looks_like_grok(self.provider, self.model_name, self.api_base)
         self._is_azure_target = self._looks_like_azure(self.provider, self.model_name, self.api_base)
@@ -349,6 +354,7 @@ class LiteLLMBackend(EngineBackend):
                             if not url:
                                 url = item.get("url") or item.get("image")
                             if url:
+                                url = self._maybe_embed_remote_image_url(url)
                                 new_content.append({"type": "image_url", "image_url": {"url": url}})
                         else:
                             text = item.get("text")
@@ -363,6 +369,20 @@ class LiteLLMBackend(EngineBackend):
                     new_msg["content"] = new_content
             sanitized.append(new_msg)
         return sanitized
+
+    def _maybe_embed_remote_image_url(self, url: str) -> str:
+        if not self._embed_remote_images:
+            return url
+        if not url.startswith(("http://", "https://")):
+            return url
+        embedded = embed_remote_image_as_data_url(
+            url,
+            strict=False,
+            timeout_s=self._remote_image_timeout_s,
+        )
+        if embedded is None:
+            logger.debug("Remote image embedding failed or was skipped for an http(s) image URL")
+        return embedded or url
 
     def _format_tools(self, tools: Any) -> List[Dict[str, Any]]:
         if not tools:

@@ -76,7 +76,7 @@ def test_arena_summary_generator(tmp_path: Path) -> None:
     summary = ArenaSummaryGenerator().generate(cache)
 
     assert summary is not None
-    payload = summary["arena_summary"]
+    payload = summary.legacy_payload["arena_summary"]
     assert payload["overall"]["samples"] == 2
     assert payload["overall"]["avg_episode_duration_ms"] == 1000.0
     assert payload["winner_player_id"]["p0"] == 1
@@ -92,7 +92,7 @@ def test_arena_summary_handles_empty_and_invalid_records(tmp_path: Path) -> None
     cache.write_sample("bad2", {"sample": {"predict_result": [{"index": 0, "arena_trace": []}]}})
 
     assert ArenaSummaryGenerator().generate(cache) is None
-    assert _build_arena_summary(cache) is None
+    assert _build_arena_summary(cache.iter_samples()) is None
 
 
 def test_arena_summary_helper_paths(tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ def test_arena_summary_helper_paths(tmp_path: Path) -> None:
     sample["selected_predict_result_index"] = 1
     cache.write_sample("s3", {"sample": sample})
 
-    payload = _build_arena_summary(cache)
+    payload = _build_arena_summary(cache.iter_samples())
     assert payload is not None
     assert payload["rank_top1"] == {"p0": 1}
 

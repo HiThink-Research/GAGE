@@ -11,6 +11,7 @@ import numpy as np
 
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.types import ArenaAction, GameResult
+from gage_eval.reporting.privacy import SecretFilter
 
 
 @dataclass
@@ -128,7 +129,8 @@ class ReplaySchemaWriter:
         }
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(replay_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            safe_payload = SecretFilter().redact(replay_payload).value
+            output_path.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             return None
         self._replay_path = str(output_path)

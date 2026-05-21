@@ -47,12 +47,21 @@ def _apply_max_samples(payload: dict[str, Any], max_samples: int) -> None:
     for dataset in payload.get("datasets") or []:
         if not isinstance(dataset, dict):
             continue
+        if _dataset_has_record_filter_stage(dataset):
+            continue
         params = dataset.get("params")
         if isinstance(params, dict):
             params["limit"] = max_samples
         hub_params = dataset.get("hub_params")
         if isinstance(hub_params, dict):
             hub_params["limit"] = max_samples
+
+
+def _dataset_has_record_filter_stage(dataset: dict[str, Any]) -> bool:
+    params = dataset.get("params")
+    if not isinstance(params, dict):
+        return False
+    return bool(params.get("preprocess") or params.get("bundle"))
 
 
 def _apply_metric_filter(payload: dict[str, Any], wanted: set[str]) -> None:

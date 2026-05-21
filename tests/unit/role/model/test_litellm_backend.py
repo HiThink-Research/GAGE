@@ -256,6 +256,7 @@ class LiteLLMBackendTests(unittest.TestCase):
             backend = LiteLLMBackend(
                 {
                     "model": "gpt-4o-mini",
+                    "provider": "openai",
                     "api_key": "openai-key",
                     "generation_parameters": {"max_new_tokens": 16},
                 }
@@ -279,6 +280,108 @@ class LiteLLMBackendTests(unittest.TestCase):
         call = fake_litellm.calls[0]
         self.assertIsInstance(call["messages"][0]["content"], list)
         self.assertEqual(call["messages"][0]["content"][1]["type"], "image_url")
+        self.assertEqual(call["messages"][0]["content"][1]["image_url"]["url"], "https://example.com/image.png")
+
+    def test_openai_multimodal_messages_can_embed_remote_images_lazily(self):
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}), mock.patch(
+            "gage_eval.role.model.backends.litellm_backend.embed_remote_image_as_data_url",
+            return_value="data:image/png;base64,abc123",
+        ) as embed:
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "provider": "openai",
+                    "api_key": "openai-key",
+                    "embed_remote_images": True,
+                    "remote_image_timeout_s": 12.0,
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            prepared = backend.prepare_inputs(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "What is shown?"},
+                                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+                            ],
+                        }
+                    ]
+                }
+            )
+            backend.generate(prepared)
+
+        embed.assert_called_once_with("https://example.com/image.png", strict=False, timeout_s=12.0)
+        call = fake_litellm.calls[0]
+        self.assertEqual(call["messages"][0]["content"][1]["image_url"]["url"], "data:image/png;base64,abc123")
+
+    def test_openai_multimodal_remote_embedding_defaults_to_disabled(self):
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}), mock.patch(
+            "gage_eval.role.model.backends.litellm_backend.embed_remote_image_as_data_url",
+            return_value="data:image/png;base64,abc123",
+        ) as embed:
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "provider": "openai",
+                    "api_key": "openai-key",
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            prepared = backend.prepare_inputs(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "What is shown?"},
+                                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+                            ],
+                        }
+                    ]
+                }
+            )
+            backend.generate(prepared)
+
+        embed.assert_not_called()
+        call = fake_litellm.calls[0]
+        self.assertEqual(call["messages"][0]["content"][1]["image_url"]["url"], "https://example.com/image.png")
+
+    def test_openai_multimodal_remote_embedding_falls_back_to_url_on_failure(self):
+        fake_litellm = _FakeLitellm()
+        with mock.patch.dict(sys.modules, {"litellm": fake_litellm}), mock.patch(
+            "gage_eval.role.model.backends.litellm_backend.embed_remote_image_as_data_url",
+            return_value=None,
+        ) as embed:
+            backend = LiteLLMBackend(
+                {
+                    "model": "gpt-4o-mini",
+                    "provider": "openai",
+                    "api_key": "openai-key",
+                    "embed_remote_images": True,
+                    "generation_parameters": {"max_new_tokens": 16},
+                }
+            )
+            prepared = backend.prepare_inputs(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "What is shown?"},
+                                {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+                            ],
+                        }
+                    ]
+                }
+            )
+            backend.generate(prepared)
+
+        embed.assert_called_once_with("https://example.com/image.png", strict=False, timeout_s=60.0)
+        call = fake_litellm.calls[0]
         self.assertEqual(call["messages"][0]["content"][1]["image_url"]["url"], "https://example.com/image.png")
 
     def test_non_deepseek_target_does_not_use_deepseek_api_key(self):

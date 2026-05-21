@@ -94,6 +94,17 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         help="Optional directory for run artifacts; defaults to ./runs/<run_id>.",
     )
+    report_pack_group = parser.add_mutually_exclusive_group()
+    report_pack_group.add_argument(
+        "--report-pack",
+        action="store_true",
+        help="Write the static report pack under <run_dir>/report_pack.",
+    )
+    report_pack_group.add_argument(
+        "--no-report-pack",
+        action="store_true",
+        help="Disable static report pack generation for this run.",
+    )
     parser.add_argument(
         "--max-samples",
         type=int,
@@ -1351,6 +1362,12 @@ def main() -> None:
         os.environ["GAGE_EVAL_MAX_SAMPLES"] = str(args.max_samples)
     if args.model_path:
         os.environ["VLLM_NATIVE_MODEL_PATH"] = args.model_path
+    if args.report_pack:
+        os.environ["GAGE_EVAL_REPORT_PACK"] = "1"
+        os.environ["GAGE_EVAL_REPORT_PACK_SOURCE"] = "cli"
+    elif args.no_report_pack:
+        os.environ["GAGE_EVAL_REPORT_PACK"] = "0"
+        os.environ["GAGE_EVAL_REPORT_PACK_SOURCE"] = "cli"
     _install_signal_handlers()
     config_source_desc = args.config
     try:

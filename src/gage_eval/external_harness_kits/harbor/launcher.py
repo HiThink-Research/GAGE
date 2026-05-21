@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -37,6 +39,8 @@ LIVE_LOG_JOB_PREFIX = "[harbor-job] "
 SUBPROCESS_HEARTBEAT_INTERVAL_S = 15.0
 GRACEFUL_TERMINATE_TIMEOUT_S = 30.0
 FORCE_KILL_TIMEOUT_S = 5.0
+DOCKER_CLEANUP_TIMEOUT_S = 10.0
+DOCKER_COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 
 
 @dataclass(frozen=True)
@@ -196,6 +200,7 @@ def run_launcher_subprocess(
         )
         timed_out = False
         elapsed_s = 0.0
+        cleanup_reason: str | None = None
         try:
             exit_code_or_none, elapsed_s = _wait_for_subprocess_with_heartbeats(
                 process,
@@ -204,6 +209,7 @@ def run_launcher_subprocess(
             )
             if exit_code_or_none is None:
                 timed_out = True
+                cleanup_reason = "timeout"
                 _kill_process_group(process.pid)
                 exit_code = process.wait()
                 _write_timeout_result(
@@ -219,11 +225,18 @@ def run_launcher_subprocess(
                 exit_code = exit_code_or_none
         finally:
             if process.poll() is None:
+                cleanup_reason = cleanup_reason or "interrupted"
                 _terminate_process_group_gracefully(
                     process,
                     stderr_fh=stderr_fh,
                     graceful_timeout_s=GRACEFUL_TERMINATE_TIMEOUT_S,
                     force_timeout_s=FORCE_KILL_TIMEOUT_S,
+                )
+            if cleanup_reason is not None:
+                _cleanup_harbor_docker_resources_for_config(
+                    config_path,
+                    stderr_fh=stderr_fh,
+                    reason=cleanup_reason,
                 )
             _join_threads(tee_threads)
             job_log_stop_event.set()
@@ -250,6 +263,11 @@ def run_launcher_subprocess(
             pid=process.pid,
             python=argv[0],
             exit_code=exit_code,
+        )
+        _cleanup_harbor_docker_resources_for_config(
+            config_path,
+            stderr_fh=None,
+            reason="missing_result",
         )
     return LauncherSubprocessResult(
         argv=argv,
@@ -795,6 +813,137 @@ def _kill_process_group(pid: int) -> None:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
         return
+
+
+def _cleanup_harbor_docker_resources_for_config(
+    config_path: Path,
+    *,
+    stderr_fh: BinaryIO | None,
+    reason: str,
+) -> None:
+    projects = _harbor_compose_projects_from_config(config_path)
+    if not projects:
+        return
+    if shutil.which("docker") is None:
+        _write_cleanup_notice(
+            stderr_fh,
+            f"Skipping Harbor Docker cleanup after {reason}: docker is not on PATH",
+        )
+        return
+
+    cleaned: list[str] = []
+    for project in projects:
+        try:
+            container_ids = _docker_cli_lines(
+                [
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"label={DOCKER_COMPOSE_PROJECT_LABEL}={project}",
+                    "--format",
+                    "{{.ID}}",
+                ]
+            )
+            if container_ids:
+                _run_docker_cli(
+                    ["docker", "rm", "-f", *container_ids],
+                    timeout_s=DOCKER_CLEANUP_TIMEOUT_S,
+                )
+            network_names = _docker_cli_lines(
+                [
+                    "docker",
+                    "network",
+                    "ls",
+                    "--filter",
+                    f"label={DOCKER_COMPOSE_PROJECT_LABEL}={project}",
+                    "--format",
+                    "{{.Name}}",
+                ]
+            )
+            if network_names:
+                _run_docker_cli(
+                    ["docker", "network", "rm", *network_names],
+                    timeout_s=DOCKER_CLEANUP_TIMEOUT_S,
+                )
+            if container_ids or network_names:
+                cleaned.append(project)
+        except Exception as exc:
+            _write_cleanup_notice(
+                stderr_fh,
+                f"Harbor Docker cleanup failed for compose project {project!r} after {reason}: {exc}",
+            )
+    if cleaned:
+        _write_cleanup_notice(
+            stderr_fh,
+            f"Harbor Docker cleanup after {reason}: removed compose resources for {', '.join(cleaned)}",
+        )
+
+
+def _harbor_compose_projects_from_config(config_path: Path) -> list[str]:
+    launcher_input = _safe_read_launcher_input(config_path)
+    if not launcher_input:
+        return []
+    job_config_payload = _job_config_payload(launcher_input)
+    job_name = str(
+        job_config_payload.get("job_name") or launcher_input.get("job_name") or ""
+    )
+    jobs_dir_raw = job_config_payload.get("jobs_dir") or launcher_input.get("jobs_dir")
+    if not job_name or jobs_dir_raw is None:
+        return []
+    jobs_dir = Path(str(jobs_dir_raw))
+    if not jobs_dir.is_absolute():
+        jobs_dir = config_path.parent / jobs_dir
+    return _harbor_compose_projects_from_job_dir(jobs_dir.resolve() / job_name)
+
+
+def _harbor_compose_projects_from_job_dir(job_dir: Path) -> list[str]:
+    try:
+        children = list(job_dir.iterdir())
+    except OSError:
+        return []
+    seen: set[str] = set()
+    projects: list[str] = []
+    for child in children:
+        if not child.is_dir():
+            continue
+        project = _sanitize_harbor_docker_compose_project_name(child.name)
+        if project and project not in seen:
+            seen.add(project)
+            projects.append(project)
+    return projects
+
+
+def _sanitize_harbor_docker_compose_project_name(name: str) -> str:
+    lowered = name.lower()
+    if not re.match(r"^[a-z0-9]", lowered):
+        lowered = "0" + lowered
+    return re.sub(r"[^a-z0-9_-]", "-", lowered)
+
+
+def _docker_cli_lines(args: list[str]) -> list[str]:
+    output = _run_docker_cli(args, timeout_s=DOCKER_CLEANUP_TIMEOUT_S)
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _run_docker_cli(args: list[str], *, timeout_s: float) -> str:
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=max(0.1, float(timeout_s)),
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(detail or f"docker command exited {result.returncode}")
+    return result.stdout or ""
+
+
+def _write_cleanup_notice(stderr_fh: BinaryIO | None, message: str) -> None:
+    logger.warning(message)
+    if stderr_fh is not None:
+        _write_stderr_notice(stderr_fh, message)
 
 
 def _utc_now() -> str:

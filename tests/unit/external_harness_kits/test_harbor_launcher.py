@@ -215,6 +215,66 @@ def test_timeout_path_terminates_subprocess_and_writes_structured_error(tmp_path
 
 
 @pytest.mark.fast
+def test_timeout_path_cleans_harbor_compose_resources_from_job_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_package = tmp_path / "fake_harbor"
+    _write_fake_slow_harbor(fake_package)
+    payload = _launcher_input(tmp_path)
+    job_dir = Path(payload["job_config"]["jobs_dir"]) / payload["job_config"]["job_name"]
+    (job_dir / "instance_ansible__ansible-11c177__h6ikEsB").mkdir(parents=True)
+    config_path = _write_launcher_input(tmp_path, payload)
+    result_path = tmp_path / "launcher_result.json"
+    repo_src = Path(__file__).resolve().parents[3] / "src"
+    env = {
+        "PYTHONPATH": f"{fake_package}{os.pathsep}{repo_src}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+    }
+    docker_calls: list[list[str]] = []
+
+    def fake_docker_cli(args: list[str], *, timeout_s: float) -> str:
+        del timeout_s
+        docker_calls.append(args)
+        if args[:3] == ["docker", "ps", "-a"]:
+            return "container-1\n"
+        if args[:3] == ["docker", "network", "ls"]:
+            return "network-1\n"
+        return ""
+
+    monkeypatch.setattr(harbor_launcher, "_run_docker_cli", fake_docker_cli, raising=False)
+
+    result = run_launcher_subprocess(
+        config_path=config_path,
+        result_file=result_path,
+        timeout_s=0.2,
+        environ=env,
+        python=sys.executable,
+        workdir=tmp_path,
+    )
+
+    project_label = (
+        "label=com.docker.compose.project=instance_ansible__ansible-11c177__h6ikesb"
+    )
+    assert result.timed_out is True
+    assert any(
+        args[:3] == ["docker", "ps", "-a"] and project_label in args
+        for args in docker_calls
+    )
+    assert any(
+        args[:3] == ["docker", "rm", "-f"] and "container-1" in args
+        for args in docker_calls
+    )
+    assert any(
+        args[:3] == ["docker", "network", "ls"] and project_label in args
+        for args in docker_calls
+    )
+    assert any(
+        args[:3] == ["docker", "network", "rm"] and "network-1" in args
+        for args in docker_calls
+    )
+
+
+@pytest.mark.fast
 def test_subprocess_is_terminated_when_parent_wait_is_interrupted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
