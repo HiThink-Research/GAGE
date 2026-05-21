@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -121,8 +122,11 @@ class ForecastBenchPreprocessor(BasePreprocessor):
         source = str(record.get("source", ""))
         question_set = str(record.get("question_set", "unknown.json"))
         resolved_to = record.get("resolved_to")
-        if resolved_to is None:
-            raise ValueError("ForecastBench record missing resolved_to")
+        ref_float = _as_float(resolved_to)
+        if ref_float is None or not math.isfinite(ref_float):
+            raise ValueError(
+                f"ForecastBench record {question_id!r} has missing or non-numeric resolved_to: {resolved_to!r}"
+            )
 
         freeze_val = _as_float(record.get("freeze_datetime_value"))
         forecast_due = str(record.get("forecast_due_date", ""))
@@ -162,7 +166,6 @@ class ForecastBenchPreprocessor(BasePreprocessor):
         )
         prompt = "\n".join(lines)
 
-        ref_float = float(resolved_to)
         # NOTE: ``question_set`` (full original filename) and ``question_id`` (full
         # original identifier) are kept in metadata so the legacy
         # ``forecastbench:<stem>:<source>:<id>`` sample id can be reconstructed

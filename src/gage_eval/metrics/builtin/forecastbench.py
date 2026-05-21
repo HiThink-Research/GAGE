@@ -13,8 +13,9 @@ from gage_eval.registry import registry
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
-_STARRED_PROBABILITY = re.compile(r"\*\s*((?:0(?:\.\d+)?)|(?:1(?:\.0+)?)|(?:\.\d+))\s*\*")
-_PLAIN_PROBABILITY = re.compile(r"^\s*((?:0(?:\.\d+)?)|(?:1(?:\.0+)?)|(?:\.\d+))\s*$")
+_NUMBER_PATTERN = r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))"
+_STARRED_PROBABILITY = re.compile(rf"\*\s*({_NUMBER_PATTERN})\s*\*")
+_PLAIN_PROBABILITY = re.compile(rf"^\s*({_NUMBER_PATTERN})\s*$")
 
 
 def _strip_json_fences(text: str) -> str:
@@ -44,24 +45,37 @@ def _extract_last_json_object(text: str) -> Optional[dict[str, Any]]:
     return parsed
 
 
+def _finite_float(value: Any) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _forecast_from_json_object(data: Any) -> tuple[Optional[float], Optional[bool]]:
+    """Return (forecast, ok) for dicts with a forecast key; ok is None when absent."""
+
+    if not isinstance(data, dict) or "forecast" not in data:
+        return None, None
+    parsed = _finite_float(data.get("forecast"))
+    if parsed is None:
+        return None, False
+    return parsed, True
+
+
 def _extract_starred_probability(text: str) -> Optional[float]:
     matches = _STARRED_PROBABILITY.findall(text)
     if not matches:
         return None
-    try:
-        return float(matches[-1])
-    except (TypeError, ValueError):
-        return None
+    return _finite_float(matches[-1])
 
 
 def _extract_plain_probability(text: str) -> Optional[float]:
     match = _PLAIN_PROBABILITY.match(text)
     if not match:
         return None
-    try:
-        return float(match.group(1))
-    except (TypeError, ValueError):
-        return None
+    return _finite_float(match.group(1))
 
 
 def _parse_forecast_blob(raw: str) -> tuple[Optional[float], bool]:
@@ -70,24 +84,26 @@ def _parse_forecast_blob(raw: str) -> tuple[Optional[float], bool]:
     text = _strip_json_fences(raw)
     if not text:
         return None, False
+
+    try:
+        data = json.loads(text)
+        forecast, ok = _forecast_from_json_object(data)
+        if ok is not None:
+            return forecast, ok
+    except json.JSONDecodeError:
+        pass
+
     starred = _extract_starred_probability(text)
     if starred is not None:
         return starred, True
     plain = _extract_plain_probability(text)
     if plain is not None:
         return plain, True
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict) and "forecast" in data:
-            return float(data["forecast"]), True
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+
     fallback_obj = _extract_last_json_object(text)
-    if isinstance(fallback_obj, dict) and "forecast" in fallback_obj:
-        try:
-            return float(fallback_obj["forecast"]), True
-        except (TypeError, ValueError):
-            return None, False
+    forecast, ok = _forecast_from_json_object(fallback_obj)
+    if ok is not None:
+        return forecast, ok
     return None, False
 
 

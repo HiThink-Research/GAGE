@@ -304,3 +304,67 @@ def test_forecastbench_loader_accepts_string_resolved_on(tmp_path: Path) -> None
     rows = list(ForecastBenchDatasetLoader(spec=spec).load(hub_handle=None).records)
     assert len(rows) == 1
     assert rows[0]["id"] == "pm-on"
+
+
+def test_forecastbench_loader_resolved_only_false_still_requires_numeric_reference(tmp_path: Path) -> None:
+    questions = [
+        {
+            "id": "pm-open",
+            "source": "polymarket",
+            "question": "Open question?",
+            "resolution_criteria": "r",
+            "background": "b",
+            "freeze_datetime": "2025-02-20T00:00:00+00:00",
+            "forecast_due_date": "2025-03-02",
+        },
+        {
+            "id": "pm-numeric",
+            "source": "polymarket",
+            "question": "Resolved value exists despite resolved flag?",
+            "resolution_criteria": "r",
+            "background": "b",
+            "freeze_datetime": "2025-02-20T00:00:00+00:00",
+            "forecast_due_date": "2025-03-02",
+        },
+        {
+            "id": "pm-bad",
+            "source": "polymarket",
+            "question": "Bad resolved value?",
+            "resolution_criteria": "r",
+            "background": "b",
+            "freeze_datetime": "2025-02-20T00:00:00+00:00",
+            "forecast_due_date": "2025-03-02",
+        },
+    ]
+    resolutions = [
+        {"id": "pm-open", "resolved": False, "resolved_to": None},
+        {"id": "pm-numeric", "resolved": False, "resolved_to": "0.0"},
+        {"id": "pm-bad", "resolved": True, "resolved_to": "yes"},
+    ]
+    qpath, rpath = _write_pair(tmp_path, questions, resolutions)
+    spec = DatasetSpec(
+        dataset_id="fb_resolved_false_reference_contract",
+        loader="forecastbench",
+        hub="inline",
+        params={
+            "question_set_path": str(qpath),
+            "resolution_set_path": str(rpath),
+            "source_filter": ["polymarket"],
+            "resolved_only": False,
+        },
+    )
+
+    ds = ForecastBenchDatasetLoader(spec=spec).load(hub_handle=None)
+    rows = list(ds.records)
+
+    assert [r["id"] for r in rows] == ["pm-numeric"]
+    counts = ds.metadata["forecastbench_counts"]
+    assert counts["questions_count"] == 3
+    assert counts["resolutions_count"] == 3
+    assert counts["joined_count"] == 3
+    assert counts["after_source_filter_count"] == 3
+    assert counts["after_resolved_filter_count"] == 3
+    assert counts["after_reference_filter_count"] == 1
+    assert counts["dropped_missing_reference_count"] == 1
+    assert counts["dropped_non_numeric_reference_count"] == 1
+    assert counts["final_count"] == 1

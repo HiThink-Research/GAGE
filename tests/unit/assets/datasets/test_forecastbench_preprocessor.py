@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 from gage_eval.assets.datasets.preprocessors.forecastbench.forecastbench_preprocessor import (
     ForecastBenchPreprocessor,
 )
@@ -131,3 +133,11 @@ def test_forecastbench_preprocessor_metadata_without_freeze_value() -> None:
     sample = pre.transform(rec)
     assert sample is not None
     assert "freeze_datetime_value" not in (sample.metadata or {})
+
+
+def test_forecastbench_preprocessor_non_numeric_resolved_to_has_clear_error() -> None:
+    pre = ForecastBenchPreprocessor(on_error="raise")
+    rec = _minimal_record()
+    rec["resolved_to"] = "yes"
+    with pytest.raises(ValueError, match="0xabc.*resolved_to.*yes"):
+        pre.transform(rec)

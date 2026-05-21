@@ -29,6 +29,7 @@ class ForecastBenchProbabilitySummaryAggregator(MetricAggregator):
         self._sum_abs_error = 0.0
         self._sum_clamp = 0.0
         self._sum_market_baseline = 0.0
+        self._sum_model_brier_market_subset = 0.0
         self._count_market_baseline = 0
 
     def add(self, result: MetricResult) -> None:
@@ -42,6 +43,7 @@ class ForecastBenchProbabilitySummaryAggregator(MetricAggregator):
         mb = values.get("market_baseline_brier")
         if mb is not None:
             self._sum_market_baseline += float(mb)
+            self._sum_model_brier_market_subset += float(values.get("brier", 0.0))
             self._count_market_baseline += 1
 
     def finalize(self) -> AggregatedMetric:
@@ -80,8 +82,21 @@ class ForecastBenchProbabilitySummaryAggregator(MetricAggregator):
         meta: dict = {"samples": count}
         if self._count_market_baseline > 0:
             avg_mb = self._sum_market_baseline / self._count_market_baseline
+            avg_model_subset = self._sum_model_brier_market_subset / self._count_market_baseline
             values_out["average_market_baseline_brier"] = float(avg_mb)
+            values_out["average_model_brier_market_subset"] = float(avg_model_subset)
+            values_out["average_model_minus_market_brier"] = float(avg_model_subset - avg_mb)
+            coverage = self._count_market_baseline / count
             meta["market_baseline_samples"] = self._count_market_baseline
+            meta["market_baseline_coverage"] = float(coverage)
+            meta["market_baseline_partial_coverage"] = self._count_market_baseline != count
+            if self._count_market_baseline != count:
+                logger.warning(
+                    "ForecastBench market baseline partial coverage: {}/{} samples; "
+                    "compare market baseline against average_model_brier_market_subset, not average_brier",
+                    self._count_market_baseline,
+                    count,
+                )
 
         logger.debug(
             "ForecastBenchProbabilitySummaryAggregator finalized metric={} samples={} average_brier={:.6f}",

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
+
+from loguru import logger
 
 from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.assets.datasets.hubs.base import DatasetHubHandle
@@ -46,6 +49,15 @@ def _coerce_bool(value: Any) -> bool:
     return False
 
 
+def _is_finite_number(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def _join_records(
     questions: Sequence[Mapping[str, Any]],
     resolutions: Sequence[Mapping[str, Any]],
@@ -81,19 +93,45 @@ def _filter_joined(
     *,
     source_filter: Sequence[str],
     resolved_only: bool,
-) -> List[Dict[str, Any]]:
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     allowed = {_norm_source(s) for s in source_filter if s}
+    source_passed: List[Dict[str, Any]] = []
+    resolved_passed: List[Dict[str, Any]] = []
     out: List[Dict[str, Any]] = []
+    dropped_missing_reference = 0
+    dropped_non_numeric_reference = 0
+
     for row in rows:
         if allowed and _norm_source(row.get("source")) not in allowed:
             continue
+        source_passed.append(row)
+
         if resolved_only:
             if not _coerce_bool(row.get("resolved")):
                 continue
-            if row.get("resolved_to") is None:
-                continue
+        resolved_passed.append(row)
+
+        resolved_to = row.get("resolved_to")
+        if resolved_to is None:
+            dropped_missing_reference += 1
+            continue
+        if not _is_finite_number(resolved_to):
+            dropped_non_numeric_reference += 1
+            continue
         out.append(row)
-    return out
+
+    counts: Dict[str, Any] = {
+        "source_filter": list(source_filter),
+        "resolved_only": resolved_only,
+        "after_source_filter_count": len(source_passed),
+        "after_resolved_filter_count": len(resolved_passed),
+        "after_reference_filter_count": len(out),
+        "dropped_source_filter_count": len(rows) - len(source_passed),
+        "dropped_unresolved_count": len(source_passed) - len(resolved_passed),
+        "dropped_missing_reference_count": dropped_missing_reference,
+        "dropped_non_numeric_reference_count": dropped_non_numeric_reference,
+    }
+    return out, counts
 
 
 def _stable_sort_ids(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -151,6 +189,11 @@ class ForecastBenchDatasetLoader(DatasetLoader):
         question_set_name = qpath.name
 
         joined = _join_records(questions, resolutions, question_set_name=question_set_name)
+        counts: Dict[str, Any] = {
+            "questions_count": len(questions),
+            "resolutions_count": len(resolutions),
+            "joined_count": len(joined),
+        }
         raw_source_filter = params.get("source_filter")
         if raw_source_filter is None:
             source_filter: Sequence[str] = ("polymarket",)
@@ -159,13 +202,15 @@ class ForecastBenchDatasetLoader(DatasetLoader):
         else:
             source_filter = tuple(str(x) for x in raw_source_filter)
         resolved_only = bool(params.get("resolved_only", True))
-        filtered = _filter_joined(
+        filtered, filter_counts = _filter_joined(
             joined,
             source_filter=source_filter,
             resolved_only=resolved_only,
         )
+        counts.update(filter_counts)
         ordered = _stable_sort_ids(filtered)
         max_samples = params.get("max_samples")
+        cap: Optional[int] = None
         if max_samples is not None:
             try:
                 cap = int(max_samples)
@@ -173,6 +218,9 @@ class ForecastBenchDatasetLoader(DatasetLoader):
                 cap = 0
             if cap > 0:
                 ordered = ordered[:cap]
+        counts["max_samples"] = cap
+        counts["cap_applied"] = bool(cap and cap > 0 and len(filtered) > cap)
+        counts["after_cap_count"] = len(ordered)
 
         doc_to_text = resolve_doc_to_callable(self.spec, "doc_to_text")
         doc_to_visual = resolve_doc_to_callable(self.spec, "doc_to_visual")
@@ -202,14 +250,48 @@ class ForecastBenchDatasetLoader(DatasetLoader):
 
         records = apply_default_params(records, self.spec)
         records = list(records)
+        counts["final_count"] = len(records)
 
         metadata = {
             "loader": "forecastbench",
             "question_set_path": str(qpath),
             "resolution_set_path": str(rpath),
             "question_set": question_set_name,
+            "forecastbench_counts": counts,
             "streaming": False,
         }
+
+        logger.info(
+            "ForecastBench load dataset={} questions={} resolutions={} joined={} "
+            "after_source={} after_resolved={} after_reference={} cap={} final={}",
+            self.spec.dataset_id,
+            counts["questions_count"],
+            counts["resolutions_count"],
+            counts["joined_count"],
+            counts["after_source_filter_count"],
+            counts["after_resolved_filter_count"],
+            counts["after_reference_filter_count"],
+            counts["max_samples"],
+            counts["final_count"],
+        )
+        if counts["questions_count"] > 0 and counts["joined_count"] == 0:
+            logger.warning(
+                "ForecastBench load dataset={} joined zero rows from non-empty question set; "
+                "check question/resolution id pairing",
+                self.spec.dataset_id,
+            )
+        if counts["joined_count"] > 0 and counts["final_count"] == 0:
+            logger.warning(
+                "ForecastBench load dataset={} produced zero final rows after filtering/preprocess",
+                self.spec.dataset_id,
+            )
+        if counts["questions_count"] > 0 and 0 < counts["joined_count"] < counts["questions_count"] * 0.5:
+            logger.warning(
+                "ForecastBench load dataset={} joined only {} of {} questions; check file pair compatibility",
+                self.spec.dataset_id,
+                counts["joined_count"],
+                counts["questions_count"],
+            )
 
         return DataSource(
             dataset_id=self.spec.dataset_id,

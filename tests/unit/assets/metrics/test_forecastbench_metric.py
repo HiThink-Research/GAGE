@@ -137,6 +137,27 @@ def test_forecastbench_metric_json_fallback_prefers_outer_object_over_nested() -
     assert result.values["forecast"] == pytest.approx(0.7)
 
 
+def test_forecastbench_metric_prefers_structured_json_forecast_over_starred_reasoning() -> None:
+    spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
+    metric = ForecastBenchProbabilityMetric(spec)
+    text = '{"reasoning": "market was *0.9* before news changed", "forecast": 0.30}'
+    ctx = _ctx(sample_id="s-json-priority", references=[0], model_text=text)
+    result = metric.compute(ctx)
+    assert result.values["parse_error"] == 0.0
+    assert result.values["forecast"] == pytest.approx(0.30)
+    assert result.values["brier"] == pytest.approx(0.09)
+
+
+def test_forecastbench_metric_starred_out_of_range_is_clamped_not_parse_error() -> None:
+    spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
+    metric = ForecastBenchProbabilityMetric(spec)
+    ctx = _ctx(sample_id="s-star-clamp", references=[1], model_text="*1.5*")
+    result = metric.compute(ctx)
+    assert result.values["parse_error"] == 0.0
+    assert result.values["clamp_applied"] == 1.0
+    assert result.values["forecast"] == pytest.approx(1.0)
+
+
 def test_forecastbench_metric_missing_reference_raises() -> None:
     spec = MetricSpec(metric_id="fb", implementation="forecastbench_probability", params={})
     metric = ForecastBenchProbabilityMetric(spec)

@@ -509,13 +509,13 @@ python GAGE/run.py \
 
 ForecastBench 可以走 **GAGE 静态评测闭环**：`forecastbench` loader 按 `id` 连接 `question_set` 与 `resolution_set` JSON，`forecastbench_static` preprocessor 产出标准 `Sample`，`forecastbench_probability` 规则 metric 评分，`forecastbench_probability_summary` 聚合。P0 默认只保留 **已结算的 Polymarket** 行（`source_filter`、`resolved_only`）。数据路径在数据集 `params` 的 `question_set_path` / `resolution_set_path`；`hub: inline` 仅占位，不用于传入核心 JSON 路径。
 
-#### 执行命令（smoke）
+#### 执行命令（full）
 
 ```bash
 python run.py \
-  --config config/custom/forecastbench/polymarket_static_smoke.yaml \
-  --output-dir ./gage_runs/forecastbench_smoke \
-  --run-id forecastbench_smoke
+  --config config/custom/forecastbench/polymarket_static_full.yaml \
+  --output-dir ./gage_runs/forecastbench_full \
+  --run-id forecastbench_full
 ```
 
-使用真实 ForecastBench 导出时，请通过环境变量 `FORECASTBENCH_QUESTION_SET_PATH`、`FORECASTBENCH_RESOLUTION_SET_PATH` 指向你的题目集与结算集；仓库内 smoke 样例见 `tests/fixtures/forecastbench/`。
+全量运行时，请通过环境变量 `FORECASTBENCH_QUESTION_SET_PATH`、`FORECASTBENCH_RESOLUTION_SET_PATH` 指向真实 ForecastBench 题目集与结算集；仓库内 `tests/fixtures/forecastbench/` 仅用于单测和快速链路验证。完整接入说明、可信度验证和 case study 见 `docs/forecastbench/casestudy.md`。
