@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Dict, Optional
 
@@ -64,9 +65,19 @@ def build_backend_error_result(
     return {
         "error": str(exc),
         "status": resolved_status,
-        "error_type": type(exc).__name__,
+        "error_type": _resolve_backend_error_type(exc),
         "backend": backend_name,
     }
+
+
+def _resolve_backend_error_type(exc: Exception) -> str:
+    explicit_type = getattr(exc, "error_type", None)
+    if explicit_type:
+        return str(explicit_type)
+    match = re.search(r"error_type=([A-Za-z0-9_.:-]+)", str(exc))
+    if match:
+        return match.group(1)
+    return type(exc).__name__
 
 
 class EngineBackend(Backend):
