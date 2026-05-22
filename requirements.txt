@@ -15,7 +15,7 @@ modelscope>=1.13.0
 
 # Remote model backends
 openai>=1.6.0
-litellm>=1.36.0
+litellm>=1.63.8
 anthropic>=0.26.0
 google-generativeai>=0.5.0
 mcp>=1.19.0
@@ -24,7 +24,7 @@ mcp>=1.19.0
 torch>=2.0.0
 transformers>=4.36.0
 accelerate>=0.29.0
-vllm>=0.4.0
+vllm>=0.20.1
 FlagEmbedding>=1.2.7
 faiss-cpu>=1.7.4
 faster-whisper>=0.10.0
