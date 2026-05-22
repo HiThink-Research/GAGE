@@ -274,6 +274,7 @@ class PipelineConfig:
     metrics: Sequence[MetricSpec] = field(default_factory=tuple)
     tasks: Sequence[TaskSpec] = field(default_factory=tuple)
     summary_generators: Sequence[str] = field(default_factory=tuple)
+    reporting: Dict[str, Any] = field(default_factory=dict)
     observability: Dict[str, Any] = field(default_factory=dict)
 
     @property

@@ -11,7 +11,7 @@
 
 📧 **Contact:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
 
-[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Smart Defaults](docs/guide/smart_defaults.md) · [Game Arena](docs/guide/game_arena.md) · [Arena Visual Control](docs/guide/game_arena_topics/game_arena_visual_control.md) · [AgentKitV2](docs/guide/agent_evaluation.md) · [External Harness](docs/guide/external_harness.md) · [Benchmark](docs/guide/benchmark.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
+[Overview](docs/guide/framework_overview.md) · [Sample Schema](docs/guide/sample.md) · [Smart Defaults](docs/guide/smart_defaults.md) · [Run Reports](docs/guide/run_report_perception.md) · [Game Arena](docs/guide/game_arena.md) · [Arena Visual Control](docs/guide/game_arena_topics/game_arena_visual_control.md) · [AgentKitV2](docs/guide/agent_evaluation.md) · [External Harness](docs/guide/external_harness.md) · [Benchmark](docs/guide/benchmark.md) · [Contributing](CONTRIBUTING.md) · [Standards](AGENTS.md)
 
 </div>
 
@@ -38,7 +38,7 @@
 - **Game and agent sandboxing**: Game Arena, AgentKitV2, AppWorld, SWE-bench-style agent tasks, GUI interaction, and tool-augmented workflows share the same run/output model.
 - **External harness integration**: Delegate task-batch benchmarks to Harbor, then import trial evidence back into standard GAGE samples, metrics, reports, and raw artifacts.
 - **Replayable GameKit runtime**: Gomoku, Tic-Tac-Toe, Doudizhu, Mahjong, PettingZoo Space Invaders, Retro Mario, and ViZDoom now emit structured arena traces plus `arena_visual` sessions.
-- **Operational visibility**: Runs write `summary.json`, sample outputs, logs, and visual artifacts so failures can be inspected after the fact.
+- **Operational visibility**: Runs write `summary.json`, sample outputs, logs, visual artifacts, and a static [report pack](docs/guide/run_report_perception.md) so failures can be inspected after the fact.
 
 ## Design Overview
 
@@ -99,9 +99,18 @@ runs/<run_id>/
   samples.jsonl
   summary.json
   samples/
-    <task_id>/
+    <namespace>/
       <sample_id>.json
+  report_pack/
+    report.html
+    report_context.json
+    report_context.md
+    prompt.txt
+    diagnostics.json
+    assets_manifest.json
 ```
+
+Open `runs/<run_id>/report_pack/report.html` for the execution-aware report: primary metrics, key findings, scenario profiles, evidence links, media previews, diagnostics, and reason-code explanations. See [Run Reports](docs/guide/run_report_perception.md).
 
 ## Advanced Configurations
 

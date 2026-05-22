@@ -1,0 +1,40 @@
+schema_version: gage.summary_v1_compat_fields.v1
+description: Legacy summary.json fields preserved by ReportStep and SummaryWriter.
+required_fields:
+  - run
+  - metrics
+  - sample_count
+  - runtime_health
+optional_fields:
+  - execution
+  - validation_summary
+  - observability_degraded
+  - observability_mode
+  - backlog_events
+  - events_emitted_total
+  - events_retained_in_memory
+  - events_dropped_by_ring_buffer
+  - events_flushed_total
+  - observability_close_mode
+  - observability_close_warning
+  - observability_closed_cleanly
+  - observability_close_error_type
+  - buffered_writer_flush_count
+  - buffered_writer_fsync_count
+  - buffered_writer_durability_policy
+  - buffered_writer_active_namespaces
+  - report_pack
+generator_payload_fields:
+  - tau2_summary
+  - appworld_summary
+  - swebench_summary
+  - arena_summary
+  - gomoku_summary
+  - external_harness
+report_pack:
+  status_values:
+    - completed
+    - degraded
+    - disabled
+    - failed
+  diagnostics_field: report_pack.diagnostics

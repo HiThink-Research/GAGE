@@ -26,6 +26,7 @@ from gage_eval.external_harness_kits.secret_redaction import (
     SecretRedactionContext,
     to_invocation_artifact,
 )
+from gage_eval.reporting.privacy import SecretFilter
 from gage_eval.role.adapters.base import RoleAdapter, RoleAdapterState
 from gage_eval.external_harness_kits.base import (
     TaskBatchHarnessHandle,
@@ -775,6 +776,9 @@ class HarborAdapter(RoleAdapter):
                 "base_agent kwargs.api_base conflicts with backend.config.api_base",
             )
         kwargs["api_base"] = api_base
+        provider = backend_config.get("custom_llm_provider") or backend_config.get("provider")
+        if provider:
+            kwargs = _inject_base_agent_provider(kwargs, provider)
         kwargs = _merge_generation_parameters(kwargs, _mapping(backend_config.get("generation_parameters")))
         kwargs["model_info"] = _merged_model_info(
             _mapping_or_error(
@@ -1130,6 +1134,38 @@ def _merge_generation_parameters(
     return kwargs
 
 
+def _inject_base_agent_provider(kwargs: dict[str, Any], provider: Any) -> dict[str, Any]:
+    """Bridge provider naming through both Harbor BaseAgent and its LiteLLM call kwargs.
+
+    Harbor's BaseAgent consumes the top-level value, while Terminus-2 forwards
+    ``llm_kwargs`` into LiteLLM. Both layers need the same provider to avoid
+    local OpenAI-compatible model names being interpreted as unknown providers.
+    """
+
+    if "custom_llm_provider" in kwargs and kwargs["custom_llm_provider"] != provider:
+        raise ExternalHarnessError(
+            "external_harness.translate.backend_agent_bridge_failed",
+            "base_agent kwargs.custom_llm_provider conflicts with backend.config provider",
+        )
+    kwargs["custom_llm_provider"] = provider
+
+    llm_kwargs = dict(
+        _mapping_or_error(
+            kwargs.get("llm_kwargs"),
+            code="external_harness.translate.backend_agent_bridge_failed",
+            label="base_agent kwargs.llm_kwargs",
+        )
+    )
+    if "custom_llm_provider" in llm_kwargs and llm_kwargs["custom_llm_provider"] != provider:
+        raise ExternalHarnessError(
+            "external_harness.translate.backend_agent_bridge_failed",
+            "base_agent kwargs.llm_kwargs.custom_llm_provider conflicts with backend.config provider",
+        )
+    llm_kwargs["custom_llm_provider"] = provider
+    kwargs["llm_kwargs"] = llm_kwargs
+    return kwargs
+
+
 def _mapping_or_error(value: Any, *, code: str, label: str) -> Mapping[str, Any]:
     if value is None:
         return {}
@@ -1315,11 +1351,11 @@ def _resolve_local_registry_task_path(raw_path: str, *, registry_path: Path) -> 
 def _write_raw_input_artifacts(invocation: HarborInvocation) -> None:
     invocation.workdir.mkdir(parents=True, exist_ok=True)
     (invocation.workdir / "invocation.json").write_text(
-        json.dumps(invocation.to_artifact_dict(), ensure_ascii=False, indent=2, default=str),
+        json.dumps(_report_safe_value(invocation.to_artifact_dict()), ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
     (invocation.workdir / "job_config.json").write_text(
-        json.dumps(invocation.job_config, ensure_ascii=False, indent=2, default=str),
+        json.dumps(_report_safe_value(invocation.job_config), ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
 
@@ -1342,6 +1378,10 @@ def _write_cancelled_marker(invocation: HarborInvocation, *, reason: str) -> Non
     ):
         marker_path.parent.mkdir(parents=True, exist_ok=True)
         marker_path.write_text(json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _report_safe_value(value: Any) -> Any:
+    return SecretFilter().redact(value).value
 
 
 def _launcher_timeout_s(params: Mapping[str, Any]) -> float | None:

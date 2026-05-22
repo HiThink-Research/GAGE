@@ -7,6 +7,7 @@ import mimetypes
 import hashlib
 import os
 import re
+import urllib.request
 from io import BytesIO
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import lru_cache
@@ -155,6 +156,86 @@ def embed_local_image_as_data_url(
     if isinstance(metadata, dict):
         metadata["image_url"] = data_url
     return {"type": "image_url", "image_url": {"url": data_url}}
+
+
+def embed_remote_image_as_data_url(
+    url: str,
+    *,
+    strict: bool = False,
+    cache_dir: Optional[str] = None,
+    timeout_s: float = 60.0,
+    max_bytes: Optional[int] = None,
+    retries: int = 2,
+) -> Optional[str]:
+    """Download a remote image URL and return its original bytes as a data URL."""
+
+    if not isinstance(url, str) or not url:
+        return None
+    if url.startswith("data:"):
+        return url
+    if not url.startswith(("http://", "https://")):
+        return None
+
+    cache_root = Path(cache_dir or os.environ.get("GAGE_VISUAL_CACHE_DIR", ".gage_cache/visual")).expanduser().resolve()
+    cache_path = cache_root / f"remote-{hashlib.sha256(url.encode('utf-8')).hexdigest()}.b64"
+    if cache_path.exists():
+        try:
+            return cache_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    max_bytes = max_bytes or _env_int("GAGE_EVAL_REMOTE_IMAGE_MAX_BYTES") or 64 * 1024 * 1024
+    attempts = max(1, int(retries))
+    last_error: Exception | None = None
+    try:
+        for _ in range(attempts):
+            try:
+                request = urllib.request.Request(url, headers={"User-Agent": "gage-eval/1.0"})
+                with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                    length = response.headers.get("Content-Length")
+                    if length and int(length) > max_bytes:
+                        raise ValueError(f"remote image exceeds max bytes: {length} > {max_bytes}")
+                    content = response.read(max_bytes + 1)
+                    if len(content) > max_bytes:
+                        raise ValueError(f"remote image exceeds max bytes: > {max_bytes}")
+                    mime_type = response.headers.get_content_type() or mimetypes.guess_type(url)[0] or "image/png"
+                break
+            except Exception as exc:
+                last_error = exc
+        else:
+            if last_error is not None:
+                raise last_error
+    except Exception:
+        if strict:
+            raise
+        return None
+
+    data_url = f"data:{mime_type};base64,{_encode_base64(content, use_process_pool=_should_use_process_pool(Path('.'), content))}"
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(data_url, encoding="utf-8")
+        _prune_cache_dir(cache_root)
+    except Exception:
+        pass
+    return data_url
+
+
+def _prune_cache_dir(cache_root: Path) -> None:
+    max_cache_bytes = _env_int("GAGE_VISUAL_CACHE_MAX_BYTES") or 2 * 1024 * 1024 * 1024
+    if max_cache_bytes <= 0 or not cache_root.exists():
+        return
+    files = [path for path in cache_root.glob("remote-*.b64") if path.is_file()]
+    total = sum(path.stat().st_size for path in files)
+    if total <= max_cache_bytes:
+        return
+    for path in sorted(files, key=lambda item: item.stat().st_mtime):
+        try:
+            size = path.stat().st_size
+            path.unlink()
+            total -= size
+        except Exception:
+            continue
+        if total <= max_cache_bytes:
+            break
 
 
 def encode_pil_to_data_url(pil_image, format: str = "PNG", **save_kwargs: Any) -> str:
@@ -847,6 +928,7 @@ __all__ = [
     "encode_pil_to_data_url",
     "pil_to_image_fragment",
     "embed_local_image_as_data_url",
+    "embed_remote_image_as_data_url",
     "embed_local_message_images",
     "ensure_image_fragments",
     "merge_multimodal_inputs",

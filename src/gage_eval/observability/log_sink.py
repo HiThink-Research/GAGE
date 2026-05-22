@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import atexit
-import os
 import threading
 import time
 import weakref
@@ -58,17 +57,21 @@ class ObservabilityLogSink:
         zombie_route_ttl_s: Optional[float] = None,
         route_sweep_interval_s: Optional[float] = None,
     ) -> None:
+        cfg = get_observability_config()
         self._queue: Deque[_QueuedLogRecord] = deque()
-        self._max_queue = max(1, max_queue_size or _env_int("GAGE_EVAL_LOG_SINK_MAX_QUEUE", 1024))
-        self._flush_interval = max(0.05, flush_interval_s or _env_float("GAGE_EVAL_LOG_SINK_FLUSH_INTERVAL_S", 0.25))
-        self._batch_size = max(1, batch_size or _env_int("GAGE_EVAL_LOG_SINK_BATCH_SIZE", 64))
+        self._max_queue = max(1, max_queue_size if max_queue_size is not None else cfg.log_sink_max_queue)
+        self._flush_interval = max(
+            0.05,
+            flush_interval_s if flush_interval_s is not None else cfg.log_sink_flush_interval_s,
+        )
+        self._batch_size = max(1, batch_size if batch_size is not None else cfg.log_sink_batch_size)
         self._zombie_route_ttl_s = max(
             1.0,
-            zombie_route_ttl_s or _env_float("GAGE_EVAL_LOG_SINK_ZOMBIE_ROUTE_TTL_S", 300.0),
+            zombie_route_ttl_s if zombie_route_ttl_s is not None else cfg.log_sink_zombie_route_ttl_s,
         )
         self._route_sweep_interval_s = max(
             1.0,
-            route_sweep_interval_s or _env_float("GAGE_EVAL_LOG_SINK_ROUTE_SWEEP_INTERVAL_S", 30.0),
+            route_sweep_interval_s if route_sweep_interval_s is not None else cfg.log_sink_route_sweep_interval_s,
         )
         self._routes: Dict[str, _TraceBinding] = {}
         self._pending_by_run: Dict[str, int] = {}
@@ -386,8 +389,9 @@ def configure_observable_log_sink() -> Optional[ObservabilityLogSink]:
     global _GLOBAL_SINK, _GLOBAL_SINK_ID
     with _SINK_LOCK:
         if _GLOBAL_SINK is None or _GLOBAL_SINK.closed:
+            cfg = get_observability_config()
             sink = ObservabilityLogSink()
-            sink_id = logger.add(sink, level=os.environ.get("GAGE_EVAL_LOG_SINK_LEVEL", "INFO"))
+            sink_id = logger.add(sink, level=cfg.log_sink_level)
             _GLOBAL_SINK = sink
             _GLOBAL_SINK_ID = sink_id
         return _GLOBAL_SINK
@@ -407,10 +411,7 @@ def get_observable_log_sink() -> Optional[ObservabilityLogSink]:
 
 
 def _log_sink_enabled() -> bool:
-    value = os.environ.get("GAGE_EVAL_ENABLE_LOG_SINK")
-    if value is None:
-        return True
-    return value.lower() in {"1", "true", "yes", "on"}
+    return get_observability_config().log_sink_enabled
 
 
 def is_log_sink_active() -> bool:
@@ -421,35 +422,3 @@ def is_log_sink_active() -> bool:
 def _should_skip_observability(record: Dict[str, Any]) -> bool:
     extra = record.get("extra", {})
     return bool(extra.get("skip_observability"))
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        logger.bind(skip_observability=True).warning(
-            "Invalid integer for {}={}; using default {}",
-            name,
-            value,
-            default,
-        )
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        logger.bind(skip_observability=True).warning(
-            "Invalid float for {}={}; using default {}",
-            name,
-            value,
-            default,
-        )
-        return default

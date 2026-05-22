@@ -6,7 +6,8 @@ import pytest
 
 from gage_eval.role.adapters.dut_model import DUTModelAdapter
 from gage_eval.role.model.backends import wrap_backend
-from gage_eval.role.model.backends.base_backend import Backend
+from gage_eval.role.model.backends.base_backend import Backend, build_backend_error_result
+from gage_eval.role.model.backends.litellm.errors import LiteLLMBackendError
 
 
 class _ExplodingBackend(Backend):
@@ -49,6 +50,34 @@ def test_wrap_backend_normalizes_exceptions_into_error_payload() -> None:
         "error_type": "RuntimeError",
         "backend": "_ExplodingBackend",
     }
+
+
+@pytest.mark.fast
+def test_backend_error_result_prefers_machine_readable_error_type_attribute() -> None:
+    exc = RuntimeError("endpoint failed")
+    exc.error_type = "dependency_unavailable"  # type: ignore[attr-defined]
+
+    result = build_backend_error_result(exc, backend_name="LiteLLMBackend")
+
+    assert result["error_type"] == "dependency_unavailable"
+
+
+@pytest.mark.fast
+def test_backend_error_result_extracts_machine_readable_error_type_from_message() -> None:
+    exc = ValueError("tool_calling_not_supported (error_type=unsupported_capability)")
+
+    result = build_backend_error_result(exc, backend_name="LiteLLMBackend")
+
+    assert result["error_type"] == "unsupported_capability"
+
+
+@pytest.mark.fast
+def test_litellm_backend_error_preserves_exception_args_and_error_type() -> None:
+    exc = LiteLLMBackendError("endpoint failed", "dependency_unavailable")
+
+    assert exc.args == ("endpoint failed",)
+    assert exc.error_type == "dependency_unavailable"
+    assert "error_type=dependency_unavailable" in str(exc)
 
 
 @pytest.mark.fast

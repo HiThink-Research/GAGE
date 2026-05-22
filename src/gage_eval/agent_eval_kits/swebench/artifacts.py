@@ -10,6 +10,7 @@ from gage_eval.agent_eval_kits.swebench.judge.failure_categories import (
     resolve_swebench_failure_category,
 )
 from gage_eval.agent_eval_kits.swebench.judge.patch_extraction import clean_patch_content
+from gage_eval.reporting.privacy import SecretFilter
 
 
 def persist_swebench_artifacts(
@@ -185,8 +186,9 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 
 def _write_json_path(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    safe_payload = _report_safe_value(payload)
     path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
+        json.dumps(safe_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -405,8 +407,9 @@ def _build_trace_diagnostics(agent_trace: Any) -> dict[str, list[str]]:
 
 def _write_json_artifact(session: Any, filename: str, payload: Any) -> str:
     target, relative_path = resolve_sample_artifact_target(session, filename)
+    safe_payload = _report_safe_value(payload)
     target.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        json.dumps(safe_payload, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
     return relative_path
@@ -414,5 +417,9 @@ def _write_json_artifact(session: Any, filename: str, payload: Any) -> str:
 
 def _write_text_artifact(session: Any, filename: str, content: str) -> str:
     target, relative_path = resolve_sample_artifact_target(session, filename)
-    target.write_text(content, encoding="utf-8")
+    target.write_text(str(_report_safe_value(content)), encoding="utf-8")
     return relative_path
+
+
+def _report_safe_value(value: Any) -> Any:
+    return SecretFilter().redact(value).value

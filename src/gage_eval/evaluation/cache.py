@@ -10,7 +10,9 @@ from typing import Any, Dict, Iterator, Mapping, Optional
 
 from loguru import logger
 from gage_eval.evaluation.buffered_writer import BufferedResultWriter
+from gage_eval.evaluation.run_metadata import RunMetadata, RuntimeStats, ValidationSummary
 from gage_eval.evaluation.sample_journal import LockedJsonlJournal, RunSampleJournal
+from gage_eval.evaluation.summary_patch import SummaryPatchBuffer
 from gage_eval.utils.run_identity import RunIdentity, build_run_identity
 
 
@@ -31,6 +33,7 @@ class EvalCache:
         self._namespace_counts: Dict[str, int] = {}
         self._timings: Dict[str, float] = {}
         self._metadata: Dict[str, Any] = {}
+        self._summary_patch_buffer = SummaryPatchBuffer()
         self._ensure_dirs()
         disable_buffer = _env_flag("GAGE_EVAL_DISABLE_BUFFERED_WRITER", default=False)
         force_buffer = _env_flag("GAGE_EVAL_ENABLE_BUFFERED_WRITER", default=False)
@@ -92,10 +95,22 @@ class EvalCache:
 
     def set_metadata(self, key: str, value: Any) -> None:
         with self._lock:
+            if key == "validation_summary" and isinstance(value, dict):
+                value = ValidationSummary.from_dict(value).to_metadata_value()
             self._metadata[key] = value
 
     def get_metadata(self, key: str) -> Any:
         return self._metadata.get(key)
+
+    def record_run_metadata(self, metadata: RunMetadata) -> None:
+        for key, value in metadata.to_metadata_fields().items():
+            self.set_metadata(key, value)
+
+    def record_runtime_stats(self, stats: RuntimeStats) -> None:
+        self.set_metadata("runtime_stats", stats.to_summary_payload())
+
+    def record_validation_summary(self, summary: ValidationSummary) -> None:
+        self.set_metadata("validation_summary", summary.to_metadata_value())
 
     def write_sample(self, sample_id: str, payload: Dict, *, namespace: Optional[str] = None) -> Path:
         """Persist the per-sample payload to disk."""
@@ -111,6 +126,7 @@ class EvalCache:
                 "namespace": namespace,
                 **payload,
             }
+            payload_with_meta = _redact_report_visible(payload_with_meta)
             if self._buffer_auto_mode and not self._use_buffered_writes and self._sample_count >= self._buffer_threshold:
                 logger.info(
                     "EvalCache enabling buffered writer (samples={} threshold={})",
@@ -136,10 +152,11 @@ class EvalCache:
         self.flush_writers()
         writer_summary = self.buffered_writer_summary()
         with self._lock:
-            pending_summary_fields = self._metadata.pop("_pending_summary_fields", None)
-            if isinstance(pending_summary_fields, dict):
+            pending_summary_fields = self._summary_patch_buffer.drain()
+            if pending_summary_fields:
                 payload = {**payload, **pending_summary_fields}
             payload = {**payload, **writer_summary}
+            payload = _redact_report_visible(payload)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default))
         logger.info("Wrote summary for run_id={} to {}", self._run_id, target)
@@ -153,15 +170,12 @@ class EvalCache:
         self.flush_writers()
         with self._lock:
             if not target.exists():
-                pending = self._metadata.get("_pending_summary_fields")
-                merged = dict(pending) if isinstance(pending, dict) else {}
-                merged.update(payload)
-                self._metadata["_pending_summary_fields"] = merged
+                self._summary_patch_buffer.add(payload)
                 return None
             existing = json.loads(target.read_text(encoding="utf-8"))
             if not isinstance(existing, dict):
                 raise ValueError("summary.json must contain a JSON object")
-            existing.update(payload)
+            existing.update(_redact_report_visible(payload))
             target.write_text(json.dumps(existing, ensure_ascii=False, indent=2, default=_json_default))
         logger.info("Patched summary for run_id={} at {}", self._run_id, target)
         return target
@@ -309,6 +323,12 @@ def _json_default(obj: Any) -> Any:
         except Exception:  # pragma: no cover
             return str(obj)
     return str(obj)
+
+
+def _redact_report_visible(value: Any) -> Any:
+    from gage_eval.reporting.privacy import SecretFilter
+
+    return SecretFilter().redact(value).value
 
 
 def _iter_json_objects(path: Path) -> Iterator[Dict[str, Any]]:

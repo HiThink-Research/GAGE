@@ -43,6 +43,7 @@ from gage_eval.game_kits.phase_card_game.mahjong.types import (
 from gage_eval.registry import registry
 from gage_eval.role.arena.replay_paths import resolve_replay_manifest_path
 from gage_eval.role.arena.types import ArenaAction, ArenaObservation, GameResult
+from gage_eval.reporting.privacy import SecretFilter
 
 
 @registry.asset(
@@ -537,8 +538,9 @@ class MahjongArena:
             return None
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            safe_payload = SecretFilter().redact(payload).value
             output_path.write_text(
-                json.dumps(payload, ensure_ascii=True, indent=2),
+                json.dumps(safe_payload, ensure_ascii=True, indent=2),
                 encoding="utf-8",
             )
             self._replay_path = str(output_path)

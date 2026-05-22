@@ -4,6 +4,10 @@ import json
 from typing import Any
 
 from gage_eval.agent_eval_kits.common import resolve_sample_artifact_target
+from gage_eval.reporting.privacy import SecretFilter
+
+
+_SECRET_FILTER = SecretFilter()
 
 
 def persist_appworld_artifacts(
@@ -96,5 +100,6 @@ def _build_log_payload(
 
 def _persist_json_artifact(session: Any, filename: str, payload: Any) -> str:
     target, relative_path = resolve_sample_artifact_target(session, filename)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    safe_payload = _SECRET_FILTER.redact(payload).value
+    target.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return relative_path

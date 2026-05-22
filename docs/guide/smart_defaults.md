@@ -270,6 +270,11 @@ backends:
       api_key: local
 ```
 
+LiteLLM model naming has two supported forms:
+
+- Use a provider-prefixed model, such as `openai/gpt-4.1` or `lm_studio/qwen/qwen3.5-9b`, when the provider prefix is part of the model string sent to LiteLLM.
+- Use an unprefixed served model, such as `qwen/qwen3.5-9b`, only when `provider` or `custom_llm_provider` is explicit. For local OpenAI-compatible endpoints, set `provider: openai` and put the endpoint in `api_base`; do not use `provider: openai_compatible`.
+
 Backend smart defaults stay conservative. They do not infer capacity, token budget, sampling, or model-specific generation settings. Keep these fields explicit when the run depends on them:
 
 | Field family | Examples that are not inferred |
