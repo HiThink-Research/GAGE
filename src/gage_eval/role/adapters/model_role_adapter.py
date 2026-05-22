@@ -180,3 +180,12 @@ class ModelRoleAdapter(RoleAdapter):
         else:
             response = await ensure_async(self.backend)(request)
         return self.handle_backend_response(payload, response)
+
+    def invoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
+        request = self.prepare_backend_request(payload)
+        backend_call = getattr(self.backend, "invoke", None)
+        if backend_call:
+            response = backend_call(request)
+        else:
+            response = run_sync(ensure_async(self.backend)(request))
+        return self.handle_backend_response(payload, response)
