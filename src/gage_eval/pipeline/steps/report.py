@@ -6,6 +6,25 @@ import inspect
 import os
 from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
+from gage_eval.reporting.assembly.context_builder import ReportContextBuilder
+from gage_eval.reporting.assembly.external_harness_metrics import (
+    external_harness_metric_entries as _external_harness_metric_entries,
+    external_harness_task_metric_entries as _external_harness_task_metric_entries,
+    merge_metric_entries as _merge_metric_entries,
+    record_task_id as _record_task_id,
+)
+from gage_eval.reporting.assembly.extension_runner import SummaryExtensionRunner
+from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
+from gage_eval.reporting.assembly.health_collector import RuntimeHealthCollector
+from gage_eval.reporting.assembly.metric_collector import MetricSummaryCollector
+from gage_eval.reporting.assembly.runtime_health import augment_runtime_health_from_tasks as _augment_runtime_health_from_tasks
+from gage_eval.reporting.assembly.scenario_profiles import ScenarioProfileBuilder
+from gage_eval.reporting.contracts import SummaryGeneratorResult
+from gage_eval.reporting.evidence.consistency_checker import RunLayoutConsistencyChecker
+from gage_eval.reporting.evidence.reader import ReportEvidenceReader
+from gage_eval.reporting.persistence.pack_builder import ReportPackBuilder
+from gage_eval.reporting.persistence.summary_writer import SummaryWriter
+from gage_eval.reporting.privacy import SecretFilter
 from gage_eval.observability.decorators import observable_stage
 from gage_eval.observability.logger import ObservableLogger
 from gage_eval.observability.trace import ObservabilityTrace
@@ -121,83 +140,47 @@ def _select_summary_entries(cache: EvalCache, *, registry_view=None) -> List[Any
 
 def _build_runtime_health(cache: EvalCache) -> Dict[str, Any]:
     records = list(cache.iter_samples())
-    health = {
-        "sample_count": len(records),
-        "completed_count": 0,
-        "failed_count": 0,
-        "aborted_count": 0,
-        "verifier_skipped_count": 0,
-        "scheduler_failed_count": 0,
-    }
-    for record in records:
-        judge_output = _record_judge_output(record)
-        scheduler_result = _record_scheduler_result(record)
-        runtime_failure = _record_runtime_failure(record)
-        scheduler_failed = _scheduler_failed(scheduler_result, runtime_failure)
-        verifier_skipped = _verifier_skipped(judge_output)
-        status = str(record.get("status") or judge_output.get("status") or "")
-
-        if scheduler_failed:
-            health["scheduler_failed_count"] += 1
-        if verifier_skipped:
-            health["verifier_skipped_count"] += 1
-        if status == "aborted":
-            health["aborted_count"] += 1
-        elif scheduler_failed or status == "failed":
-            health["failed_count"] += 1
-        elif status == "completed":
-            health["completed_count"] += 1
-    return health
+    return RuntimeHealthCollector().collect(records)
 
 
-def _record_judge_output(record: Dict[str, Any]) -> Dict[str, Any]:
-    judge_output = record.get("judge_output")
-    if isinstance(judge_output, dict):
-        return dict(judge_output)
-    model_output = record.get("model_output")
-    if not isinstance(model_output, dict):
-        return {}
-    runtime_outcome = model_output.get("runtime_judge_outcome")
-    if isinstance(runtime_outcome, dict) and isinstance(runtime_outcome.get("judge_output"), dict):
-        return dict(runtime_outcome["judge_output"])
-    return {}
+def _report_pack_enabled(cache: EvalCache | None = None) -> bool:
+    """Return whether the report pack should be written for this run.
+
+    Priority is invocation override (CLI/env), then config metadata, then the
+    product default. The CLI currently materializes its flags as the env var.
+    """
+
+    raw = os.environ.get("GAGE_EVAL_REPORT_PACK")
+    if raw is not None:
+        if os.environ.get("GAGE_EVAL_REPORT_PACK_SOURCE") != "cli":
+            _LOGGER.warning(
+                "report",
+                "GAGE_EVAL_REPORT_PACK is deprecated; use reporting.report_pack.enabled or --report-pack/--no-report-pack.",
+            )
+        return _coerce_bool(raw, default=True)
+    if cache is not None:
+        configured = cache.get_metadata("report_pack_enabled")
+        if configured is not None:
+            return _coerce_bool(configured, default=True)
+    return True
 
 
-def _record_scheduler_result(record: Dict[str, Any]) -> Dict[str, Any]:
-    model_output = record.get("model_output")
-    if not isinstance(model_output, dict):
-        return {}
-    runtime_outcome = model_output.get("runtime_judge_outcome")
-    if not isinstance(runtime_outcome, dict):
-        return {}
-    verifier_input = runtime_outcome.get("verifier_input")
-    if isinstance(verifier_input, dict) and isinstance(verifier_input.get("scheduler_result"), dict):
-        return dict(verifier_input["scheduler_result"])
-    return {}
+def _coerce_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if lowered in {"0", "false", "no", "off", "disabled"}:
+            return False
+    return default
 
 
-def _record_runtime_failure(record: Dict[str, Any]) -> Dict[str, Any]:
-    model_output = record.get("model_output")
-    if isinstance(model_output, dict) and isinstance(model_output.get("runtime_failure"), dict):
-        return dict(model_output["runtime_failure"])
-    return {}
-
-
-def _scheduler_failed(scheduler_result: Dict[str, Any], runtime_failure: Dict[str, Any]) -> bool:
-    if scheduler_result.get("status") in {"failed", "aborted"}:
-        return True
-    failure_code = str(
-        runtime_failure.get("failure_code")
-        or scheduler_result.get("failure_code")
-        or ""
-    )
-    return failure_code.startswith("client_execution.")
-
-
-def _verifier_skipped(judge_output: Dict[str, Any]) -> bool:
-    if judge_output.get("status") == "skipped":
-        return True
-    return judge_output.get("failure_code") == "verifier.skipped_due_to_scheduler_failure"
+def _to_summary_payload(result: SummaryGeneratorResult) -> Dict[str, Any]:
+    return dict(result.legacy_payload)
 
 
 @registry.asset(
@@ -240,43 +223,16 @@ class ReportStep(GlobalStep):
 
         self._cache.set_metadata("execution_summary", dict(payload))
 
-    def _collect_summary_payload(self) -> Dict[str, Any]:
+    def _collect_summary_result(self, context: Dict[str, Any]) -> SummaryGeneratorResult:
         entries = _select_summary_entries(self._cache, registry_view=self._registry_view)
-        payload: Dict[str, Any] = {}
+        generators: list[Any] = []
         for entry in entries:
             generator = _instantiate_summary_generator(entry.name, registry_view=self._registry_view)
             if generator is None:
                 _LOGGER.warning("report", "Summary generator '{}' could not be instantiated", entry.name)
                 continue
-            try:
-                summary = generator.generate(self._cache)
-            except Exception as exc:
-                _LOGGER.warning(
-                    "report",
-                    "Summary generator '{}' failed: {}",
-                    entry.name,
-                    exc,
-                )
-                continue
-            if not summary:
-                continue
-            if not isinstance(summary, dict):
-                _LOGGER.warning(
-                    "report",
-                    "Summary generator '{}' returned non-dict payload",
-                    entry.name,
-                )
-                continue
-            for key, value in summary.items():
-                if key in payload:
-                    _LOGGER.warning(
-                        "report",
-                        "Summary key '{}' duplicated; keeping first payload",
-                        key,
-                    )
-                    continue
-                payload[key] = value
-        return payload
+            generators.append(generator)
+        return SummaryExtensionRunner().run(generators, context)
 
     @observable_stage(
         "report",
@@ -292,24 +248,36 @@ class ReportStep(GlobalStep):
     ) -> Dict:
         if metrics is None:
             metrics = self._auto_eval_step.aggregated_metrics() if self._auto_eval_step else []
-        summary_payload = self._collect_summary_payload()
         if pre_write_hook:
             pre_write_hook()
-        formatted_metrics = _format_metric_entries(metrics)
+        records = list(self._cache.iter_samples())
+        formatted_metrics = _merge_metric_entries(
+            _format_metric_entries(metrics),
+            _format_metric_entries(_external_harness_metric_entries(records)),
+        )
+        external_task_metrics = _external_harness_task_metric_entries(records)
+        collected_metrics = MetricSummaryCollector().collect(formatted_metrics)
         formatted_tasks: Optional[List[Dict[str, Any]]] = None
         if tasks:
             formatted_tasks = []
             for task in tasks:
                 task_payload = dict(task)
                 task_metrics = task_payload.get("metrics")
-                if task_metrics:
-                    task_payload["metrics"] = _format_metric_entries(task_metrics)
+                task_id = str(task_payload.get("task_id") or task_payload.get("id") or "")
+                task_payload["metrics"] = _merge_metric_entries(
+                    _format_metric_entries(task_metrics),
+                    _format_metric_entries(external_task_metrics.get(task_id, [])),
+                )
                 formatted_tasks.append(task_payload)
+        runtime_health = _augment_runtime_health_from_tasks(
+            RuntimeHealthCollector().collect(records),
+            formatted_tasks or [],
+        )
         payload = {
             "run": self._cache.snapshot(),
             "metrics": formatted_metrics,
             "sample_count": self.get_sample_count(),
-            "runtime_health": _build_runtime_health(self._cache),
+            "runtime_health": runtime_health,
         }
         execution_summary = self._cache.get_metadata("execution_summary")
         if isinstance(execution_summary, dict):
@@ -317,12 +285,116 @@ class ReportStep(GlobalStep):
         validation_summary = self._cache.get_metadata("validation_summary")
         if isinstance(validation_summary, dict):
             payload.update(validation_summary)
-        if summary_payload:
-            payload.update(summary_payload)
         if formatted_tasks:
             payload["tasks"] = formatted_tasks
         payload.update(trace.health_snapshot())
-        self._cache.write_summary(payload)
+        index = ReportEvidenceReader().build_index(self._cache.run_dir)
+        if (self._cache.run_dir / "summary.json").exists():
+            layout_diagnostics = RunLayoutConsistencyChecker().check(self._cache.run_dir)
+            index.diagnostics.extend(layout_diagnostics)
+        scenario_profiles, scenario_diagnostics = ScenarioProfileBuilder().build(index)
+        index.diagnostics.warnings.extend(scenario_diagnostics.get("warnings", []))
+        index.diagnostics.errors.extend(scenario_diagnostics.get("errors", []))
+        index.diagnostics.profile_ref_resolution_miss_count += int(
+            scenario_diagnostics.get("profile_ref_resolution_miss_count", 0) or 0
+        )
+        summary_context = {
+            "run": payload["run"],
+            "samples": records,
+            "summary": payload,
+            "metrics": collected_metrics,
+            "tasks": formatted_tasks or [],
+            "evidence_refs": [
+                ref.to_dict() if hasattr(ref, "to_dict") else dict(ref)
+                for ref in (
+                    index.evidence_refs.values()
+                    if isinstance(index.evidence_refs, dict)
+                    else index.evidence_refs
+                )
+            ],
+        }
+        summary_result = self._collect_summary_result(summary_context)
+        if summary_result.legacy_payload:
+            payload.update(_to_summary_payload(summary_result))
+        observability_health = {
+            key: payload[key]
+            for key in (
+                "observability_degraded",
+                "observability_mode",
+                "backlog_events",
+                "events_emitted_total",
+                "events_retained_in_memory",
+                "events_dropped_by_ring_buffer",
+                "events_flushed_total",
+            )
+            if key in payload
+        }
+        report_context = ReportContextBuilder().build(
+            index=index,
+            summary_payload=payload,
+            metrics=collected_metrics,
+            tasks=formatted_tasks or [],
+            runtime_health=runtime_health,
+            observability_health=observability_health,
+            samples=records,
+            generator_result=summary_result,
+        )
+        report_context.scenario_profiles = scenario_profiles
+        _apply_final_context_validation(report_context)
+        redaction_result = SecretFilter().redact(records)
+        if redaction_result.redacted:
+            report_context.diagnostics = dict(report_context.diagnostics or {})
+            warnings = list(report_context.diagnostics.get("warnings", []))
+            warnings.append(
+                {
+                    "code": "report_pack.sample_payload_redacted",
+                    "redaction_marker": "<redacted:auth>",
+                    "finding_count": len(redaction_result.findings),
+                }
+            )
+            report_context.diagnostics["warnings"] = warnings
+        report_pack_diagnostics: Dict[str, Any] | None = None
+        if _report_pack_enabled(self._cache):
+            try:
+                report_pack_diagnostics = ReportPackBuilder().write(
+                    self._cache.run_dir,
+                    report_context,
+                    enabled=True,
+                )
+                payload["report_pack"] = {
+                    "status": report_pack_diagnostics.get("report_pack_status", "completed"),
+                    "diagnostics": dict(report_pack_diagnostics),
+                }
+                trace.emit(
+                    "report_pack_generated",
+                    {
+                        "report_pack_path": report_pack_diagnostics.get("report_pack_path"),
+                        "report_pack_status": report_pack_diagnostics.get("report_pack_status", "completed"),
+                    },
+                )
+            except Exception as exc:
+                report_pack_diagnostics = {
+                    "report_pack_status": "failed",
+                    "failure_code": "report_pack.write_failed",
+                    "error_type": exc.__class__.__name__,
+                    "message": str(exc),
+                }
+                payload["report_pack"] = {
+                    "status": "failed",
+                    "diagnostics": dict(report_pack_diagnostics),
+                }
+                trace.emit(
+                    "report_pack_failed",
+                    {
+                        "failure_code": "report_pack.write_failed",
+                        "report_pack_status": "failed",
+                    },
+                )
+        SummaryWriter().write(
+            self._cache,
+            payload,
+            report_pack_diagnostics=report_pack_diagnostics,
+        )
         _LOGGER.info(
             "report",
             "ReportStep finalized summary (samples={}, metrics={}, tasks={})",
@@ -333,3 +405,21 @@ class ReportStep(GlobalStep):
         )
         trace.emit("report_finalize", payload)
         return payload
+
+
+def _apply_final_context_validation(report_context: Any) -> None:
+    validation = report_context.validate()
+    if not validation:
+        return
+    diagnostics = dict(report_context.diagnostics or {})
+    diagnostics["errors"] = validation
+    diagnostics["report_pack_status"] = "degraded"
+    report_context.diagnostics = diagnostics
+    report_context.headline = HeadlineBuilder().build(
+        metrics=report_context.metrics,
+        runtime_health=report_context.runtime_health or {},
+        attention_cases=report_context.attention_cases,
+        outliers=report_context.outliers,
+        failure_clusters=report_context.failure_clusters,
+        diagnostics=diagnostics,
+    )

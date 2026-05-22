@@ -354,6 +354,29 @@ def test_secret_redaction_does_not_redact_token_usage_fields(tmp_path: Path) -> 
     assert payload["token"] == "<redacted:keyname:token>"
 
 
+def test_secret_redaction_does_not_redact_cost_per_token_fields(tmp_path: Path) -> None:
+    sink = RuntimeArtifactSink(base_dir=str(tmp_path))
+
+    ref = sink.write_artifact(
+        run_id="run-costs",
+        task_id="task-1",
+        sample_id="sample-1",
+        owner="infra",
+        name="model_info.json",
+        sample_level=True,
+        content={
+            "input_cost_per_token": 0.0,
+            "output_cost_per_token": 0.0,
+            "access_token": "access-real",
+        },
+    )
+
+    payload = json.loads((tmp_path / "run-costs" / ref.path).read_text(encoding="utf-8"))
+    assert payload["input_cost_per_token"] == 0.0
+    assert payload["output_cost_per_token"] == 0.0
+    assert payload["access_token"] == "<redacted:keyname:access_token>"
+
+
 def test_overlapping_secret_values_redact_longest_match_without_suffix_leakage(tmp_path: Path) -> None:
     sink = RuntimeArtifactSink(base_dir=str(tmp_path))
 

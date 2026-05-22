@@ -22,6 +22,31 @@ def test_eval_cache_root_journal_uses_json_default(tmp_path: Path) -> None:
 
 
 @pytest.mark.io
+def test_eval_cache_redacts_samples_jsonl_and_sample_artifact(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="redacted-sample")
+
+    cache.write_sample(
+        "sample-1",
+        {
+            "model_output": {
+                "tool_call": {
+                    "arguments": '{"username":"user@example.com","password":"password123"}'
+                }
+            }
+        },
+        namespace="ns",
+    )
+
+    samples_text = cache.samples_jsonl.read_text(encoding="utf-8")
+    artifact_text = next((cache.samples_dir / "ns").glob("*.json")).read_text(encoding="utf-8")
+    combined = samples_text + artifact_text
+    assert "user@example.com" not in combined
+    assert "password123" not in combined
+    assert "<redacted:email>" in combined
+    assert "<redacted:secret>" in combined
+
+
+@pytest.mark.io
 def test_eval_cache_root_journal_handles_concurrent_writes(tmp_path: Path) -> None:
     cache = EvalCache(base_dir=str(tmp_path), run_id="concurrent")
     total_writes = 32

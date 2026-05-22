@@ -38,6 +38,7 @@ from gage_eval.role.model.backends.litellm.router_factory import LiteLLMRouterFa
 from gage_eval.role.model.backends.litellm.service_profile import VLLMServiceProfile
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig, assert_litellm_capabilities
 from gage_eval.registry import registry
+from gage_eval.assets.datasets.utils.multimodal import embed_remote_image_as_data_url
 from gage_eval.utils.messages import normalize_messages_for_template
 
 
@@ -102,6 +103,10 @@ class LiteLLMBackend(EngineBackend):
         self._retry_multiplier = max(1.0, float(self._cfg.retry_multiplier))
         self._max_context_length = self._cfg.max_model_length
         self._base_sampling = self._cfg.generation_parameters.to_dict()
+        self._embed_remote_images = bool(self._cfg.embed_remote_images)
+        self._remote_image_timeout_s = float(self._cfg.remote_image_timeout_s)
+        if self._embed_remote_images:
+            logger.info("LiteLLM remote image embedding enabled (timeout_s={})", self._remote_image_timeout_s)
         self._is_kimi_target = looks_like_kimi(self.provider, self.model_name, self.api_base)
         self._is_grok_target = looks_like_grok(self.provider, self.model_name, self.api_base)
         self._is_azure_target = looks_like_azure(self.provider, self.model_name, self.api_base)
@@ -479,7 +484,54 @@ class LiteLLMBackend(EngineBackend):
         if self._should_flatten_multimodal_messages():
             return normalize_messages_for_template(messages, image_placeholder="<image>")
         normalizer = self._message_normalizer or MultimodalMessageNormalizer(self._cfg.multimodal)
-        return normalizer.normalize(messages, service_profile=self._service_profile)
+        normalized = normalizer.normalize(messages, service_profile=self._service_profile)
+        if self._embed_remote_images:
+            return self._embed_remote_image_urls_in_messages(normalized)
+        return normalized
+
+    def _embed_remote_image_urls_in_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        embedded_messages: List[Dict[str, Any]] = []
+        for message in messages or []:
+            new_message = dict(message)
+            content = message.get("content")
+            if isinstance(content, list):
+                new_message["content"] = [self._embed_remote_image_url_in_block(block) for block in content]
+            embedded_messages.append(new_message)
+        return embedded_messages
+
+    def _embed_remote_image_url_in_block(self, block: Any) -> Any:
+        if not isinstance(block, Mapping):
+            return block
+        if block.get("type") != "image_url":
+            return dict(block)
+
+        new_block = dict(block)
+        image_url = block.get("image_url")
+        if isinstance(image_url, Mapping):
+            payload = dict(image_url)
+            url = payload.get("url")
+            if isinstance(url, str):
+                payload["url"] = self._maybe_embed_remote_image_url(url)
+            new_block["image_url"] = payload
+            return new_block
+        if isinstance(image_url, str):
+            new_block["image_url"] = {"url": self._maybe_embed_remote_image_url(image_url)}
+            return new_block
+        return new_block
+
+    def _maybe_embed_remote_image_url(self, url: str) -> str:
+        if not self._embed_remote_images:
+            return url
+        if not url.startswith(("http://", "https://")):
+            return url
+        embedded = embed_remote_image_as_data_url(
+            url,
+            strict=False,
+            timeout_s=self._remote_image_timeout_s,
+        )
+        if embedded is None:
+            logger.debug("Remote image embedding failed or was skipped for an http(s) image URL")
+        return embedded or url
 
     def _should_flatten_multimodal_messages(self) -> bool:
         provider = (self._custom_llm_provider or self.provider or "").lower()

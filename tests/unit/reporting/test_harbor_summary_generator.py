@@ -6,7 +6,7 @@ import pytest
 
 from gage_eval.evaluation.cache import EvalCache
 from gage_eval.observability.trace import ObservabilityTrace
-from gage_eval.pipeline.steps.report import ReportStep
+from gage_eval.pipeline.steps.report import ReportStep, _record_task_id
 from gage_eval.registry import import_asset_from_manifest, registry
 from gage_eval.reporting.summary_generators.harbor import HarborSummaryGenerator
 
@@ -44,6 +44,42 @@ def test_report_output_includes_external_harness_harbor_section(tmp_path: Path) 
     assert payload["sample_count"] == 1
     assert payload["external_harness"]["harbor"]["sample_count"] == 1
     assert payload["external_harness"]["harbor"]["harbor_score_mean"] == 0.75
+    assert [metric["metric_id"] for metric in payload["metrics"]] == [
+        "harbor_score_mean",
+        "harbor_resolve_rate",
+    ]
+    assert payload["metrics"][0]["values"]["mean"] == "0.75000"
+    assert payload["metrics"][0]["raw_values"]["mean"] == 0.75
+    assert payload["metrics"][1]["values"]["rate"] == "1.00000"
+    assert payload["metrics"][1]["raw_values"]["rate"] == 1.0
+
+
+@pytest.mark.fast
+def test_report_output_includes_external_harness_harbor_task_metrics(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=tmp_path, run_id="harbor-report-task-metrics")
+    cache.set_metadata("summary_generators", ["harbor_summary"])
+    _write_harbor_sample(cache)
+    report = ReportStep(auto_eval_step=None, cache_store=cache)
+
+    payload = report.finalize(
+        ObservabilityTrace(run_id="harbor-report-task-metrics"),
+        tasks=[{"task_id": "tb2_one_case"}],
+    )
+
+    task_metrics = payload["tasks"][0]["metrics"]
+    assert [metric["metric_id"] for metric in task_metrics] == [
+        "harbor_score_mean",
+        "harbor_resolve_rate",
+    ]
+    assert task_metrics[0]["scope"] == "task"
+    assert task_metrics[0]["task_id"] == "tb2_one_case"
+
+
+@pytest.mark.fast
+def test_external_harness_task_metric_task_id_ignores_global_namespace() -> None:
+    assert _record_task_id({"namespace": "task_global"}) is None
+    assert _record_task_id({"namespace": "task/tb2_one_case"}) == "tb2_one_case"
+    assert _record_task_id({"namespace": "task_tb2_one_case"}) == "tb2_one_case"
 
 
 @pytest.mark.fast
@@ -82,6 +118,37 @@ def test_harbor_summary_generator_is_registered_from_core_manifest() -> None:
     import_asset_from_manifest("summary_generators", "harbor_summary", registry=registry)
 
     assert registry.get("summary_generators", "harbor_summary") is HarborSummaryGenerator
+
+
+@pytest.mark.fast
+def test_harbor_v2_context_uses_overview_section_id() -> None:
+    result = HarborSummaryGenerator().generate(
+        {
+            "samples": [
+                {
+                    "sample": {
+                        "task_type": "external_harness.harbor",
+                        "dataset_id": "terminal_bench_2_0",
+                        "eval_result": {
+                            "harbor_resolve_rate": 1.0,
+                            "harbor_score_mean": 0.75,
+                        },
+                    },
+                    "trial_results": [
+                        {
+                            "trial_id": "trial_0001",
+                            "status": "completed",
+                            "verifier_result": {"score": 0.75, "passed": True},
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert result.generator_id == "harbor_summary"
+    assert result.summary_sections[0]["generator_id"] == "harbor_summary"
+    assert result.summary_sections[0]["section_id"] == "overview"
 
 
 def _write_harbor_sample(cache: EvalCache) -> None:

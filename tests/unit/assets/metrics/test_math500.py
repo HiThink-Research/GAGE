@@ -103,6 +103,42 @@ class Math500AccuracyMetricTests(unittest.TestCase):
         result = self.metric.compute(context)
         self.assertEqual(result.values["acc"], 0.0)
 
+    def test_extracts_final_answer_instead_of_problem_coordinate(self):
+        """Prefer the final answer sentence over earlier coordinates quoted from the prompt."""
+        answer = """To convert the point from rectangular coordinates $(x, y) = (0, 3)$ to polar coordinates $(r, \\theta)$:
+
+1. Calculate $r = \\sqrt{0^2 + 3^2} = 3$.
+2. Since $\\cos \\theta = 0$ and $\\sin \\theta = 1$, we get $\\theta = \\frac{\\pi}{2}$.
+
+**Conclusion:**
+The polar coordinates are $(3, \\frac{\\pi}{2})$.
+
+$(3, \\frac{\\pi}{2})$"""
+        context = MetricContext(
+            sample_id="demo",
+            sample={
+                "predict_result": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": answer}],
+                        }
+                    }
+                ],
+                "references": ["\\left( 3, \\frac{\\pi}{2} \\right)"],
+                "metadata": {},
+            },
+            model_output={"answer": answer},
+            judge_output={},
+            args={},
+            trace=None,
+        )
+
+        result = self.metric.compute(context)
+
+        self.assertEqual(result.values["acc"], 1.0)
+        self.assertNotEqual(result.metadata["prediction"], "(0, 3)")
+
     def test_empty_prediction(self):
         """Test empty prediction."""
         context = MetricContext(
@@ -135,4 +171,3 @@ class Math500AccuracyMetricTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

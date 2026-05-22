@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -18,14 +19,29 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
     default_enabled=True,
 )
 class Tau2SummaryGenerator(SummaryGenerator):
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
-        summary = _build_tau2_summary(cache)
+    def generate(self, context: Any) -> SummaryGeneratorResult | None:
+        summary = _build_tau2_summary(records_from_context(context))
         if not summary:
             return None
-        return {"tau2_summary": summary}
+        return SummaryGeneratorResult(
+            generator_id="tau2_summary",
+            summary_sections=[
+                section(
+                    "overview",
+                    "Tau2 Summary",
+                    generator_id="tau2_summary",
+                    metrics={
+                        "scope": "section",
+                        "section_id": "overview",
+                        "avg_reward": summary["overall"].get("avg_reward"),
+                    },
+                )
+            ],
+            legacy_payload={"tau2_summary": summary},
+        )
 
 
-def _build_tau2_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
+def _build_tau2_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
     reward_sum = 0.0
     reward_count = 0
     agent_cost_sum = 0.0
@@ -36,7 +52,7 @@ def _build_tau2_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     task_stats: Dict[str, Dict[str, int]] = {}
     by_domain: Dict[str, Dict[str, float]] = {}
 
-    for record in cache.iter_samples():
+    for record in records:
         sample = record.get("sample") if isinstance(record, dict) else None
         if not isinstance(sample, dict):
             continue

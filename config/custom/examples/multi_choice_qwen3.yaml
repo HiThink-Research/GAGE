@@ -20,19 +20,7 @@ prompts:
     template: |
       {{ system_prompt }}
 
-      {% if subject %}
-      你正在回答 {{ subject }} 相关的问题。
-      {% endif %}
-
-      问题：
-      {{ sample.question }}
-
-      选项：
-      {% for label, text in (sample.metadata.option_map or {}).items() %}
-      {{ label }}. {{ text }}
-      {% endfor %}
-
-      {{ instruction }}
+      {{ sample.get("prompt") or sample.get("inputs", {}).get("prompt") }}
 
 datasets:
   - dataset_id: mmlu_business_ethics

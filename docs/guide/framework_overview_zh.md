@@ -13,6 +13,7 @@ gage-eval 是一个可扩展的大模型评测框架。它以 **Step 链路** �
 - 测试体系：[`TESTING.md`](../../TESTING.md)
 - 示例配置：[`config/custom/`](../../config/custom/)、[`config/builtin_templates/`](../../config/builtin_templates/)、[`config/run_configs/`](../../config/run_configs/)
 - Sample 契约：[`sample_zh.md`](sample_zh.md)（标准化 Sample 设计）
+- 执行感知报告：[`run_report_perception_zh.md`](run_report_perception_zh.md)
 - LiteLLM Backend：[`litellm_backend_enhancements_zh.md`](litellm_backend_enhancements_zh.md)（vLLM/LiteLLM 增强能力与配置指南）
 - Agent 评测：[`agent_evaluation_zh.md`](agent_evaluation_zh.md)（AgentKitV2 原生评测指南）
 - External Harness：[`external_harness_zh.md`](external_harness_zh.md)（Harbor 委托运行指南）

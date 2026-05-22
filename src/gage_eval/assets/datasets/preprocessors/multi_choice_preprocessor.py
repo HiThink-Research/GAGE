@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Dict, List, Sequence, Tuple
 
 from gage_eval.assets.datasets.preprocessors.default_preprocessor import DefaultPreprocessor
@@ -68,6 +70,14 @@ class MultiChoicePreprocessor(DefaultPreprocessor):
         )
 
         sample["messages"] = messages
+        sample_id = _resolve_sample_id(
+            sample,
+            dataset_id=kwargs.get("dataset_id") or sample.get("_dataset_id"),
+            question=question,
+            option_pairs=option_pairs,
+            answer_value=answer_value,
+        )
+        sample["id"] = sample_id
         sample["prompt"] = user_prompt
         sample["chat_template_mode"] = "preprocess"
         sample["rendered_by"] = "preprocess"
@@ -81,6 +91,9 @@ class MultiChoicePreprocessor(DefaultPreprocessor):
             }
             for idx, (label, option_text) in enumerate(option_pairs)
         ]
+        sample["references"] = [correct_choice]
+        sample["label"] = correct_choice
+        sample["expected_answer"] = correct_choice
         metadata = dict(sample.get("metadata") or {})
         metadata.update(
             {
@@ -103,6 +116,28 @@ def _compose_prompt(question: Any, option_pairs: Sequence[Tuple[str, str]], inst
     if instruction:
         prompt_parts.extend(["", instruction.strip()])
     return "\n".join(part for part in prompt_parts if part is not None).strip()
+
+
+def _resolve_sample_id(
+    sample: Dict[str, Any],
+    *,
+    dataset_id: Any,
+    question: Any,
+    option_pairs: Sequence[Tuple[str, str]],
+    answer_value: Any,
+) -> str:
+    explicit = sample.get("id") or sample.get("sample_id") or sample.get("question_id")
+    if explicit:
+        return str(explicit)
+    prefix = str(dataset_id or "multi_choice").strip() or "multi_choice"
+    payload = {
+        "question": question,
+        "options": list(option_pairs),
+        "answer": answer_value,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}:{digest}"
 
 
 __all__ = ["MultiChoicePreprocessor"]
