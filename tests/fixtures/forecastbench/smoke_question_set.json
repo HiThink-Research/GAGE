@@ -1,0 +1,61 @@
+[
+  {
+    "id": "pm-join-1",
+    "source": "polymarket",
+    "question": "Will the test market resolve yes?",
+    "resolution_criteria": "Criteria text.",
+    "background": "Background text.",
+    "freeze_datetime": "2025-02-20T00:00:00+00:00",
+    "freeze_datetime_value": 0.001,
+    "forecast_due_date": "2025-03-02"
+  },
+  {
+    "id": "pm-unresolved-1",
+    "source": "polymarket",
+    "question": "Unresolved polymarket question.",
+    "resolution_criteria": "rc",
+    "background": "bg",
+    "freeze_datetime": "2025-02-21T00:00:00+00:00",
+    "freeze_datetime_value": 0.5,
+    "forecast_due_date": "2025-03-03"
+  },
+  {
+    "id": "non-pm-1",
+    "source": "metaculus",
+    "question": "Non-polymarket question.",
+    "resolution_criteria": "rc2",
+    "background": "bg2",
+    "freeze_datetime": "2025-02-22T00:00:00+00:00",
+    "forecast_due_date": "2025-03-04"
+  },
+  {
+    "id": "pm-b",
+    "source": "polymarket",
+    "question": "Second resolved market.",
+    "resolution_criteria": "rc-b",
+    "background": "bg-b",
+    "freeze_datetime": "2025-02-23T00:00:00+00:00",
+    "freeze_datetime_value": 0.2,
+    "forecast_due_date": "2025-03-05"
+  },
+  {
+    "id": "pm-a",
+    "source": "polymarket",
+    "question": "First resolved market for ordering.",
+    "resolution_criteria": "rc-a",
+    "background": "bg-a",
+    "freeze_datetime": "2025-02-24T00:00:00+00:00",
+    "freeze_datetime_value": 0.3,
+    "forecast_due_date": "2025-03-06"
+  },
+  {
+    "id": "pm-c",
+    "source": "polymarket",
+    "question": "Third resolved market.",
+    "resolution_criteria": "rc-c",
+    "background": "bg-c",
+    "freeze_datetime": "2025-02-25T00:00:00+00:00",
+    "freeze_datetime_value": 0.4,
+    "forecast_due_date": "2025-03-07"
+  }
+]

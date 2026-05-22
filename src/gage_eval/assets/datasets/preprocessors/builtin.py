@@ -155,6 +155,11 @@ from gage_eval.assets.datasets.preprocessors.gsm8k.converter import GSM8KPreproc
 # benchmark Video-MME
 from gage_eval.assets.datasets.preprocessors.video_mme import VideoMMEChatPreprocessor
 
+# benchmark ForecastBench (static)
+from gage_eval.assets.datasets.preprocessors.forecastbench.forecastbench_preprocessor import (
+    ForecastBenchPreprocessor as NewForecastBenchPreprocessor,
+)
+
 @registry.asset(
     "dataset_preprocessors",
     "multi_choice_standardizer",
@@ -630,5 +635,17 @@ class GSM8KPreprocessorProvider(GSM8KPreprocessor):
     tags=("prompt", "video", "video_mme"),
 )
 class VideoMMEChatPreprocessorProvider(VideoMMEChatPreprocessor):
+    pass
+
+
+@registry.asset(
+    "dataset_preprocessors",
+    "forecastbench_static",
+    desc="ForecastBench static preprocessor (probability forecast prompt + Sample envelope)",
+    tags=("forecastbench", "probability", "forecast"),
+)
+class ForecastBenchStaticPreprocessor(NewForecastBenchPreprocessor):
+    """Joined ForecastBench records -> standardized Sample schema."""
+
     pass
 

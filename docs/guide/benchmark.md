@@ -438,3 +438,18 @@ python GAGE/run.py \
   --output-dir ./gage_runs/final_test \
   --run-id inverse_ifeval
 ```
+
+### ForecastBench (static)
+
+ForecastBench can run as a **fully static** GAGE evaluation: paired `question_set` + `resolution_set` JSON files are joined by `id` in the `forecastbench` loader, converted to `Sample` objects by the `forecastbench_static` preprocessor, scored with the rule metric `forecastbench_probability`, and aggregated with `forecastbench_probability_summary`. P0 keeps **resolved Polymarket market** rows only (`source_filter`, `resolved_only`). Paths are read from dataset `params` (`question_set_path`, `resolution_set_path`); `hub: inline` is only a placeholder and does not supply the JSON paths.
+
+#### Execution command (smoke)
+
+```bash
+python run.py \
+  --config config/custom/forecastbench/polymarket_static_smoke.yaml \
+  --output-dir ./gage_runs/forecastbench_smoke \
+  --run-id forecastbench_smoke
+```
+
+Point `FORECASTBENCH_QUESTION_SET_PATH` / `FORECASTBENCH_RESOLUTION_SET_PATH` at your ForecastBench exports when moving beyond the bundled smoke fixtures under `tests/fixtures/forecastbench/`.

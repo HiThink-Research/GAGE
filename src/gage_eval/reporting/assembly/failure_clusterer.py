@@ -39,4 +39,3 @@ class FailureClusterer:
         ]
         clusters.sort(key=lambda item: (-(item.count or 0), item.cluster_key))
         return FailureClusterResult(reason_code_counts=counts, failure_clusters=clusters)
-

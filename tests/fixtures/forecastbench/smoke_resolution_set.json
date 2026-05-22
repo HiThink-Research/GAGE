@@ -1,0 +1,38 @@
+[
+  {
+    "id": "pm-join-1",
+    "resolved": true,
+    "resolved_to": 0.0,
+    "resolution_date": null
+  },
+  {
+    "id": "pm-unresolved-1",
+    "resolved": false,
+    "resolved_to": null,
+    "resolution_date": "2025-04-01"
+  },
+  {
+    "id": "non-pm-1",
+    "resolved": true,
+    "resolved_to": 1.0,
+    "resolution_date": "2025-04-02"
+  },
+  {
+    "id": "pm-a",
+    "resolved": true,
+    "resolved_to": 1.0,
+    "resolution_date": null
+  },
+  {
+    "id": "pm-b",
+    "resolved": true,
+    "resolved_to": 0.0,
+    "resolution_date": null
+  },
+  {
+    "id": "pm-c",
+    "resolved": true,
+    "resolved_to": 0.0,
+    "resolution_date": null
+  }
+]

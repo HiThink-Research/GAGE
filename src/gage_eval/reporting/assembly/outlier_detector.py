@@ -31,4 +31,3 @@ class OutlierDetector:
                 item.p_rank = rank / len(entries)
             groups.append(OutlierGroup(metric_id=metric_id, scope="run", ranking="descending", top_k=top))
         return groups
-

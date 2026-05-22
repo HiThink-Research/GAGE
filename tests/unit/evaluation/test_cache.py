@@ -13,12 +13,44 @@ from gage_eval.evaluation.cache import EvalCache
 def test_eval_cache_root_journal_uses_json_default(tmp_path: Path) -> None:
     cache = EvalCache(base_dir=str(tmp_path), run_id="json-default")
 
-    cache.write_sample("sample-1", {"path": tmp_path, "value": 1})
+    artifact = cache.write_sample("sample-1", {"path": tmp_path, "value": 1})
 
     records = list(cache.iter_samples())
     assert len(records) == 1
     assert records[0]["sample_id"] == "sample-1"
     assert records[0]["path"] == str(tmp_path)
+    assert artifact.name == "sample-1.json"
+
+
+@pytest.mark.io
+def test_eval_cache_preserves_short_sample_id_filename(tmp_path: Path) -> None:
+    cache = EvalCache(base_dir=str(tmp_path), run_id="short-id")
+
+    artifact = cache.write_sample("readable-sample_1", {"value": 1}, namespace="ns")
+
+    assert artifact.name == "readable-sample_1.json"
+    assert artifact.exists()
+
+
+@pytest.mark.io
+def test_eval_cache_keeps_245_byte_sample_id_untruncated(tmp_path: Path) -> None:
+    sample_id = "a" * 245
+
+    sanitized = EvalCache._sanitize_sample_id(sample_id)
+
+    assert sanitized == sample_id
+    assert len(f"{sanitized}.json".encode("utf-8")) <= 255
+
+
+@pytest.mark.io
+def test_eval_cache_truncates_over_245_byte_sample_id_with_hash(tmp_path: Path) -> None:
+    sample_id = "b" * 260
+
+    sanitized = EvalCache._sanitize_sample_id(sample_id)
+
+    assert sanitized.startswith("b" * 237)
+    assert len(sanitized.rsplit("_", 1)[-1]) == 8
+    assert len(f"{sanitized}.json".encode("utf-8")) <= 255
 
 
 @pytest.mark.io
