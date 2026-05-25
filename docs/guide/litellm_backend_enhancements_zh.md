@@ -1,6 +1,6 @@
 # LiteLLM Backend 增强指南
 
-中文 | English: 暂无
+中文 | [English](litellm_backend_enhancements.md)
 
 本文说明 GAGE `litellm` backend 的增强能力、推荐配置方式、常见 vLLM 部署形态，以及排错和实机验证要点。文档中的命令默认在 `gage-eval-main/` 仓库根目录执行。
 
