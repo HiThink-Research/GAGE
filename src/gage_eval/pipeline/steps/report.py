@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import inspect
 import os
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, TYPE_CHECKING
 
 from gage_eval.reporting.assembly.context_builder import ReportContextBuilder
 from gage_eval.reporting.assembly.external_harness_metrics import (
     external_harness_metric_entries as _external_harness_metric_entries,
     external_harness_task_metric_entries as _external_harness_task_metric_entries,
     merge_metric_entries as _merge_metric_entries,
-    record_task_id as _record_task_id,
+    record_task_id as _record_task_id_impl,
 )
 from gage_eval.reporting.assembly.extension_runner import SummaryExtensionRunner
 from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
@@ -37,6 +37,18 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only
 
 
 _LOGGER = ObservableLogger()
+
+
+def _evidence_ref_payload(ref: Any) -> Dict[str, Any]:
+    to_dict = getattr(ref, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        return dict(payload) if isinstance(payload, Mapping) else {}
+    return dict(ref) if isinstance(ref, Mapping) else {}
+
+
+def _record_task_id(record: Dict[str, Any]) -> str | None:
+    return _record_task_id_impl(record)
 
 
 def _format_metric_entries(metrics: Optional[list], decimals: int = 5) -> List[Dict[str, Any]]:
@@ -305,7 +317,7 @@ class ReportStep(GlobalStep):
             "metrics": collected_metrics,
             "tasks": formatted_tasks or [],
             "evidence_refs": [
-                ref.to_dict() if hasattr(ref, "to_dict") else dict(ref)
+                _evidence_ref_payload(ref)
                 for ref in (
                     index.evidence_refs.values()
                     if isinstance(index.evidence_refs, dict)

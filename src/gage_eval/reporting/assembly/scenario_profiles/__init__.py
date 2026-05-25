@@ -16,7 +16,11 @@ class ScenarioProfileBuilder:
 
     def build(self, index: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         outputs: dict[str, Any] = {}
-        diagnostics = {"warnings": [], "errors": [], "profile_ref_resolution_miss_count": 0}
+        diagnostics: dict[str, Any] = {
+            "warnings": [],
+            "errors": [],
+            "profile_ref_resolution_miss_count": 0,
+        }
         ref_resolver = ProfileRefResolver.from_index(index, diagnostics=diagnostics)
         for profile in self.profiles:
             name = str(getattr(profile, "profile_name", profile.__class__.__name__))

@@ -40,7 +40,11 @@ def test_litellm_capability_guard_reports_missing_function_probe(monkeypatch: py
 def test_litellm_and_vllm_requirements_match_design_baseline() -> None:
     requirements = (Path(__file__).resolve().parents[4] / "requirements.txt").read_text(encoding="utf-8")
 
+    assert litellm_config.MIN_LITELLM_VERSION == "1.85.1"
+    assert litellm_config.MIN_VLLM_VERSION == "0.21.0"
     assert f"litellm>={litellm_config.MIN_LITELLM_VERSION}" in requirements
     assert f"vllm>={litellm_config.MIN_VLLM_VERSION}" in requirements
+    assert "openai>=2.20.0" in requirements
+    assert "pydantic>=2.12.0" in requirements
     assert "litellm>=1.36.0" not in requirements
     assert "vllm>=0.4.0" not in requirements

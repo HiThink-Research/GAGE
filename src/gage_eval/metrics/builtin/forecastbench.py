@@ -142,8 +142,9 @@ class ForecastBenchProbabilityMetric(BaseMetric):
         parse_error = 0.0 if parsed_ok else 1.0
 
         clamp_applied = 0.0
-        if not parsed_ok:
+        if not parsed_ok or raw_forecast is None:
             forecast = 0.5
+            parse_error = 1.0
         else:
             forecast = float(raw_forecast)
             if forecast < 0.0 or forecast > 1.0:

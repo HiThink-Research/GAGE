@@ -181,11 +181,13 @@ class LiteLLMResponseNormalizer:
 
         context = dict(request_context or {})
         result = response_or_result if isinstance(response_or_result, dict) else self.normalize(response_or_result, context)
-        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        metadata_raw = result.get("metadata")
+        metadata: Dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
         api_base = context.get("api_base") or request_kwargs.get("api_base") or request_kwargs.get("base_url")
         usage = result.get("usage")
         latency_ms = context.get("latency_ms", result.get("latency_ms"))
-        tool_calls = result.get("tool_calls") if isinstance(result.get("tool_calls"), list) else []
+        tool_calls_raw = result.get("tool_calls")
+        tool_calls = tool_calls_raw if isinstance(tool_calls_raw, list) else []
         answer = result.get("answer") or ""
 
         summary: Dict[str, Any] = {

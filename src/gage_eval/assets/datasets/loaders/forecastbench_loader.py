@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, cast
 
 from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.assets.datasets.hubs.base import DatasetHubHandle
@@ -16,6 +16,7 @@ from gage_eval.assets.datasets.loaders.loader_utils import (
     resolve_doc_to_callable,
 )
 from gage_eval.assets.datasets.manager import DataSource
+from gage_eval.assets.datasets.sample import Sample
 from gage_eval.registry import registry
 
 
@@ -211,9 +212,10 @@ class ForecastBenchDatasetLoader(DatasetLoader):
             "streaming": False,
         }
 
+        records_for_source = cast(Iterable[Sample], records)
         return DataSource(
             dataset_id=self.spec.dataset_id,
-            records=records,
+            records=records_for_source,
             doc_to_text=None,
             doc_to_visual=None,
             doc_to_audio=None,

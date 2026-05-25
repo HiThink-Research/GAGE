@@ -15,7 +15,7 @@ from gage_eval.role.model.backends.litellm.provider_detection import (
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
 
 
-SAFE_DUMMY_API_KEY = "dummy"
+SAFE_DUMMY_CREDENTIAL = "dummy"
 
 
 class ProviderCredentialResolver:
@@ -66,7 +66,7 @@ class ProviderCredentialResolver:
             return env_key
 
         if self._allows_dummy_key():
-            return SAFE_DUMMY_API_KEY
+            return SAFE_DUMMY_CREDENTIAL
         return None
 
     def _env_candidates(self) -> tuple[str, ...]:

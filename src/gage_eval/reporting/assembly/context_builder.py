@@ -14,7 +14,9 @@ from gage_eval.reporting.assembly.failure_clusterer import FailureClusterer
 from gage_eval.reporting.assembly.headline_builder import HeadlineBuilder
 from gage_eval.reporting.assembly.methodology_builder import MethodologyBuilder
 from gage_eval.reporting.assembly.metric_collector import MetricSummaryCollector
-from gage_eval.reporting.assembly.runtime_health import augment_runtime_health_from_tasks
+from gage_eval.reporting.assembly.runtime_health import (
+    augment_runtime_health_from_tasks,
+)
 from gage_eval.reporting.contracts import (
     AttentionCase,
     CaseDetails,
@@ -39,7 +41,7 @@ class ReportContextBuilder:
         samples: list[dict[str, Any]] | None = None,
         generator_result: Any = None,
     ) -> ReportContext:
-        diagnostics = {
+        diagnostics: dict[str, Any] = {
             "warnings": [],
             "errors": [],
             "report_pack_status": "completed",
@@ -47,8 +49,12 @@ class ReportContextBuilder:
         }
         index_diagnostics = getattr(index, "diagnostics", None)
         if index_diagnostics is not None:
-            diagnostics["warnings"].extend(list(getattr(index_diagnostics, "warnings", []) or []))
-            diagnostics["errors"].extend(list(getattr(index_diagnostics, "errors", []) or []))
+            diagnostics["warnings"].extend(
+                list(getattr(index_diagnostics, "warnings", []) or [])
+            )
+            diagnostics["errors"].extend(
+                list(getattr(index_diagnostics, "errors", []) or [])
+            )
             diagnostics["profile_ref_resolution_miss_count"] = int(
                 getattr(index_diagnostics, "profile_ref_resolution_miss_count", 0) or 0
             )
@@ -72,20 +78,29 @@ class ReportContextBuilder:
         cluster_result = FailureClusterer().cluster(attention_cases)
         failure_clusters = [
             FailureCluster.from_dict(item) if isinstance(item, dict) else item
-            for item in (getattr(generator_result, "failure_clusters", []) or cluster_result.failure_clusters)
+            for item in (
+                getattr(generator_result, "failure_clusters", [])
+                or cluster_result.failure_clusters
+            )
         ]
         sample_records = samples or _list_from_summary(summary_payload.get("samples"))
         runtime_health = augment_runtime_health_from_tasks(runtime_health, tasks or [])
-        external_metrics = MetricSummaryCollector().collect(external_harness_metric_entries(sample_records))
+        external_metrics = MetricSummaryCollector().collect(
+            external_harness_metric_entries(sample_records)
+        )
         run_metric_entries = merge_metric_entries(list(metrics or []), external_metrics)
         run_metric_entries = merge_metric_entries(
             run_metric_entries,
-            MetricSummaryCollector().collect(_runtime_health_metric_entries(run_metric_entries, runtime_health)),
+            MetricSummaryCollector().collect(
+                _runtime_health_metric_entries(run_metric_entries, runtime_health)
+            ),
         )
         normalized_metrics = _normalize_metrics(run_metric_entries, scope="run")
         external_task_metrics = {
             task_id: MetricSummaryCollector().collect(task_metrics)
-            for task_id, task_metrics in external_harness_task_metric_entries(sample_records).items()
+            for task_id, task_metrics in external_harness_task_metric_entries(
+                sample_records
+            ).items()
         }
         normalized_tasks = _normalize_tasks(
             tasks,
@@ -151,14 +166,20 @@ class ReportContextBuilder:
 
 
 def _normalize_evidence_refs(raw_evidence_refs: Any) -> list[EvidenceRef]:
-    values = raw_evidence_refs.values() if isinstance(raw_evidence_refs, dict) else raw_evidence_refs
+    values = (
+        raw_evidence_refs.values()
+        if isinstance(raw_evidence_refs, dict)
+        else raw_evidence_refs
+    )
     refs: list[EvidenceRef] = []
     for item in values or []:
         refs.append(EvidenceRef.from_dict(item) if isinstance(item, dict) else item)
     return refs
 
 
-def _backfill_attention_case_evidence(attention_cases: list[AttentionCase], evidence_refs: list[EvidenceRef]) -> None:
+def _backfill_attention_case_evidence(
+    attention_cases: list[AttentionCase], evidence_refs: list[EvidenceRef]
+) -> None:
     for case in attention_cases:
         if case.evidence_ref_ids:
             continue
@@ -183,7 +204,11 @@ def _assemble_case_details(
             continue
         generated = _minimal_case_detail(case, refs_by_id, builder)
         existing = case_details.get(case_id)
-        case_details[case_id] = generated if existing is None else _fill_missing_case_detail(existing, generated)
+        case_details[case_id] = (
+            generated
+            if existing is None
+            else _fill_missing_case_detail(existing, generated)
+        )
     return case_details
 
 
@@ -208,7 +233,9 @@ def _minimal_case_detail(
             "evidence_ref_ids": evidence_ref_ids,
             "artifact_preview_ref_ids": evidence_ref_ids[:3],
             "scoring_breakdown": _attention_case_scoring(case),
-            "full_trace_ref_id": _select_full_trace_ref_id(evidence_ref_ids, refs_by_id),
+            "full_trace_ref_id": _select_full_trace_ref_id(
+                evidence_ref_ids, refs_by_id
+            ),
         }
     )
 
@@ -224,7 +251,9 @@ def _attention_case_scoring(case: AttentionCase) -> dict[str, Any]:
     return {}
 
 
-def _select_full_trace_ref_id(evidence_ref_ids: list[str], refs_by_id: dict[str, EvidenceRef]) -> str | None:
+def _select_full_trace_ref_id(
+    evidence_ref_ids: list[str], refs_by_id: dict[str, EvidenceRef]
+) -> str | None:
     fallback: str | None = None
     for ref_id in evidence_ref_ids:
         ref = refs_by_id.get(ref_id)
@@ -252,7 +281,9 @@ def _is_trace_adjacent_ref(path: str) -> bool:
     )
 
 
-def _fill_missing_case_detail(existing: CaseDetails, generated: CaseDetails) -> CaseDetails:
+def _fill_missing_case_detail(
+    existing: CaseDetails, generated: CaseDetails
+) -> CaseDetails:
     if not existing.evidence_ref_ids:
         existing.evidence_ref_ids = list(generated.evidence_ref_ids)
     if not existing.artifact_preview_ref_ids:
@@ -264,7 +295,9 @@ def _fill_missing_case_detail(existing: CaseDetails, generated: CaseDetails) -> 
     return existing
 
 
-def _evidence_ref_ids_for_case(case: AttentionCase, evidence_refs: list[EvidenceRef], *, limit: int = 5) -> list[str]:
+def _evidence_ref_ids_for_case(
+    case: AttentionCase, evidence_refs: list[EvidenceRef], *, limit: int = 5
+) -> list[str]:
     sample_id = str(case.sample_id or "").strip()
     if not sample_id:
         return []
@@ -278,7 +311,11 @@ def _evidence_ref_ids_for_case(case: AttentionCase, evidence_refs: list[Evidence
             continue
         if task_id and getattr(ref, "task_id", None) and str(ref.task_id) != task_id:
             continue
-        if trial_id and getattr(ref, "trial_id", None) and str(ref.trial_id) != trial_id:
+        if (
+            trial_id
+            and getattr(ref, "trial_id", None)
+            and str(ref.trial_id) != trial_id
+        ):
             continue
         if not _evidence_ref_matches_sample(ref, sample_id):
             continue
@@ -384,8 +421,13 @@ def _has_non_operational_metric(metrics: list[dict[str, Any]]) -> bool:
     for metric in metrics or []:
         if not isinstance(metric, dict) or not _metric_has_value(metric):
             continue
-        metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name") or "").lower()
-        if any(keyword in metric_id for keyword in ("latency", "cost", "token", "duration", "reason")):
+        metric_id = str(
+            metric.get("metric_id") or metric.get("id") or metric.get("name") or ""
+        ).lower()
+        if any(
+            keyword in metric_id
+            for keyword in ("latency", "cost", "token", "duration", "reason")
+        ):
             continue
         return True
     return False
@@ -394,13 +436,19 @@ def _has_non_operational_metric(metrics: list[dict[str, Any]]) -> bool:
 def _metric_has_value(metric: dict[str, Any]) -> bool:
     if "value" in metric:
         return metric.get("value") not in (None, "")
-    values = metric.get("raw_values") if isinstance(metric.get("raw_values"), dict) else metric.get("values")
+    values = (
+        metric.get("raw_values")
+        if isinstance(metric.get("raw_values"), dict)
+        else metric.get("values")
+    )
     if not isinstance(values, dict) or not values:
         return False
     return any(value not in (None, "") for value in values.values())
 
 
-def _normalize_run_metrics(metrics: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+def _normalize_run_metrics(
+    metrics: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     task_groups: dict[str, dict[str, Any]] = {}
     for metric in metrics or []:
@@ -417,8 +465,12 @@ def _normalize_run_metrics(metrics: list[dict[str, Any]] | None) -> list[dict[st
     return normalized
 
 
-def _collect_task_metric_for_run(groups: dict[str, dict[str, Any]], metric: dict[str, Any]) -> None:
-    metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name") or "").strip()
+def _collect_task_metric_for_run(
+    groups: dict[str, dict[str, Any]], metric: dict[str, Any]
+) -> None:
+    metric_id = str(
+        metric.get("metric_id") or metric.get("id") or metric.get("name") or ""
+    ).strip()
     if not metric_id:
         return
     group = groups.setdefault(
@@ -432,7 +484,11 @@ def _collect_task_metric_for_run(groups: dict[str, dict[str, Any]], metric: dict
             "count": 0,
         },
     )
-    values = metric.get("raw_values") if isinstance(metric.get("raw_values"), dict) else metric.get("values")
+    values = (
+        metric.get("raw_values")
+        if isinstance(metric.get("raw_values"), dict)
+        else metric.get("values")
+    )
     if not isinstance(values, dict):
         return
     collected = False
@@ -449,7 +505,9 @@ def _collect_task_metric_for_run(groups: dict[str, dict[str, Any]], metric: dict
 def _aggregated_run_metrics(groups: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     aggregated: list[dict[str, Any]] = []
     for group in groups.values():
-        value_lists = group.get("values") if isinstance(group.get("values"), dict) else {}
+        value_lists = (
+            group.get("values") if isinstance(group.get("values"), dict) else {}
+        )
         if not value_lists:
             continue
         raw_values = {
@@ -466,7 +524,8 @@ def _aggregated_run_metrics(groups: dict[str, dict[str, Any]]) -> list[dict[str,
             "scope": "run",
             "source": group.get("source") or "summary",
             "aggregation": "mean",
-            "count": group.get("count") or max((len(values) for values in value_lists.values()), default=0),
+            "count": group.get("count")
+            or max((len(values) for values in value_lists.values()), default=0),
         }
         if group.get("name"):
             item["name"] = group["name"]
@@ -500,7 +559,10 @@ def _normalize_tasks(
             continue
         item = dict(task)
         task_id = item.get("task_id")
-        execution = item.get("execution") if isinstance(item.get("execution"), dict) else {}
+        raw_execution = item.get("execution")
+        execution: dict[str, Any] = (
+            raw_execution if isinstance(raw_execution, dict) else {}
+        )
         status = item.get("status") or execution.get("status")
         if not status:
             failed = int(runtime_health.get("failed_count") or 0)
@@ -508,8 +570,12 @@ def _normalize_tasks(
             status = "failed" if failed and not completed else "completed"
         item["status"] = str(status)
         item.setdefault("runtime_health", _task_runtime_health(item, runtime_health))
-        item.setdefault("attention_case_count", _count_for_task(attention_cases, task_id))
-        item.setdefault("failure_cluster_count", _count_for_task(failure_clusters, task_id))
+        item.setdefault(
+            "attention_case_count", _count_for_task(attention_cases, task_id)
+        )
+        item.setdefault(
+            "failure_cluster_count", _count_for_task(failure_clusters, task_id)
+        )
         item["metrics"] = _normalize_metrics(
             merge_metric_entries(
                 list(item.get("metrics") or []),
@@ -522,18 +588,31 @@ def _normalize_tasks(
     return normalized
 
 
-def _task_runtime_health(task: dict[str, Any], runtime_health: dict[str, Any]) -> dict[str, Any]:
-    sample_count = int(task.get("sample_count") or runtime_health.get("sample_count") or 0)
-    execution = task.get("execution") if isinstance(task.get("execution"), dict) else {}
-    completed = sample_count if execution.get("status") == "completed" else int(runtime_health.get("completed_count") or 0)
+def _task_runtime_health(
+    task: dict[str, Any], runtime_health: dict[str, Any]
+) -> dict[str, Any]:
+    sample_count = int(
+        task.get("sample_count") or runtime_health.get("sample_count") or 0
+    )
+    raw_execution = task.get("execution")
+    execution: dict[str, Any] = raw_execution if isinstance(raw_execution, dict) else {}
+    completed = (
+        sample_count
+        if execution.get("status") == "completed"
+        else int(runtime_health.get("completed_count") or 0)
+    )
     failed = int(runtime_health.get("failed_count") or 0)
     return {
         "sample_count": sample_count,
         "completed_count": completed,
         "failed_count": failed,
         "aborted_count": int(runtime_health.get("aborted_count") or 0),
-        "verifier_skipped_count": int(runtime_health.get("verifier_skipped_count") or 0),
-        "scheduler_failed_count": int(runtime_health.get("scheduler_failed_count") or 0),
+        "verifier_skipped_count": int(
+            runtime_health.get("verifier_skipped_count") or 0
+        ),
+        "scheduler_failed_count": int(
+            runtime_health.get("scheduler_failed_count") or 0
+        ),
     }
 
 
@@ -551,4 +630,8 @@ def _count_for_task(items: list[Any], task_id: Any) -> int:
 
 
 def _list_from_summary(value: Any) -> list[dict[str, Any]]:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    return (
+        [item for item in value if isinstance(item, dict)]
+        if isinstance(value, list)
+        else []
+    )

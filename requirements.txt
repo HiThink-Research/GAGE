@@ -3,8 +3,9 @@ loguru>=0.7.2
 numpy>=1.24.0
 requests>=2.31.0
 PyYAML>=6.0
+types-PyYAML>=6.0.12.20260518
 jinja2>=3.1.0
-pydantic>=2.0.0
+pydantic>=2.12.0
 jsonschema>=4.22.0
 typer>=0.12.3
 
@@ -14,17 +15,16 @@ huggingface_hub>=0.23.0
 modelscope>=1.13.0
 
 # Remote model backends
-openai>=1.6.0
-litellm>=1.63.8
+openai>=2.20.0
+litellm>=1.85.1
 anthropic>=0.26.0
-google-generativeai>=0.5.0
 mcp>=1.19.0
 
 # Local model and multimodal backends
 torch>=2.0.0
 transformers>=4.36.0
 accelerate>=0.29.0
-vllm>=0.20.1
+vllm>=0.21.0
 FlagEmbedding>=1.2.7
 faiss-cpu>=1.7.4
 faster-whisper>=0.10.0

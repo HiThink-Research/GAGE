@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from gage_eval.reporting.contracts import AttentionCase, AttentionCaseScoring, ReasonCodeRegistry, Severity
+from gage_eval.reporting.contracts import (
+    AttentionCase,
+    AttentionCaseScoring,
+    ReasonCodeRegistry,
+    Severity,
+)
 
 
 SCORING_CONFIG = {
@@ -33,25 +38,35 @@ class AttentionCaseDetector:
         self.top_k = top_k
         self.registry = ReasonCodeRegistry.load_builtin()
 
-    def detect(self, candidates: list[dict[str, Any]], *, total_samples: int) -> list[AttentionCase]:
-        cases = [self._case(candidate, total_samples=max(total_samples, 1)) for candidate in candidates]
-        cases.sort(key=lambda item: (-(item.scoring.priority_score or 0), item.case_id or ""))
+    def detect(
+        self, candidates: list[dict[str, Any]], *, total_samples: int
+    ) -> list[AttentionCase]:
+        cases = [
+            self._case(candidate, total_samples=max(total_samples, 1))
+            for candidate in candidates
+        ]
+        cases.sort(key=lambda item: (-_priority_score(item), item.case_id or ""))
         return cases[: self.top_k]
 
     def _case(self, candidate: dict[str, Any], *, total_samples: int) -> AttentionCase:
         codes = list(candidate.get("reason_codes") or ["runtime.error"])
-        impact = _max_level([self._impact(code) for code in codes], SCORING_CONFIG["impact_weights"])
+        weights = cast(dict[str, float], SCORING_CONFIG["weights"])
+        impact_weights = cast(dict[str, float], SCORING_CONFIG["impact_weights"])
+        actionability_weights = cast(
+            dict[str, float], SCORING_CONFIG["actionability_weights"]
+        )
+        impact = _max_level([self._impact(code) for code in codes], impact_weights)
         actionability = _max_level(
             [self._actionability(code) for code in codes],
-            SCORING_CONFIG["actionability_weights"],
+            actionability_weights,
         )
         frequency = _frequency(candidate, total_samples=total_samples)
         score = min(
             1.0,
-            frequency * SCORING_CONFIG["weights"]["frequency"]
-            + _level_score(impact, SCORING_CONFIG["impact_weights"]) * SCORING_CONFIG["weights"]["impact"]
-            + _level_score(actionability, SCORING_CONFIG["actionability_weights"])
-            * SCORING_CONFIG["weights"]["actionability"],
+            frequency * weights["frequency"]
+            + _level_score(impact, impact_weights) * weights["impact"]
+            + _level_score(actionability, actionability_weights)
+            * weights["actionability"],
         )
         return AttentionCase(
             case_id=candidate.get("case_id") or _join_case_id(candidate),
@@ -83,7 +98,14 @@ class _Default:
 
 
 def _join_case_id(candidate: dict[str, Any]) -> str:
-    return "/".join(str(candidate.get(key, "")) for key in ("task_id", "sample_id") if candidate.get(key)) or "case"
+    return (
+        "/".join(
+            str(candidate.get(key, ""))
+            for key in ("task_id", "sample_id")
+            if candidate.get(key)
+        )
+        or "case"
+    )
 
 
 def _frequency(candidate: dict[str, Any], *, total_samples: int) -> float:
@@ -98,7 +120,17 @@ def _level_score(level: str, weights: dict[str, float]) -> float:
 
 
 def _max_level(levels: list[str], weights: dict[str, float]) -> str:
-    return max(levels, key=lambda level: _level_score(level, weights)) if levels else "unknown"
+    return (
+        max(levels, key=lambda level: _level_score(level, weights))
+        if levels
+        else "unknown"
+    )
+
+
+def _priority_score(case: AttentionCase) -> float:
+    if case.scoring is None or case.scoring.priority_score is None:
+        return 0.0
+    return case.scoring.priority_score
 
 
 def _severity(score: float, *, reason_codes: list[str]) -> str:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, cast
 
 from pydantic import Field, field_validator
 
@@ -11,8 +11,8 @@ from gage_eval.role.model.config.base import BackendConfigBase
 from gage_eval.role.model.config.generations import GenerationParameters
 
 
-MIN_LITELLM_VERSION = "1.63.8"
-MIN_VLLM_VERSION = "0.20.1"
+MIN_LITELLM_VERSION = "1.85.1"
+MIN_VLLM_VERSION = "0.21.0"
 
 
 def assert_litellm_capabilities(
@@ -221,4 +221,4 @@ class LiteLLMBackendConfig(BackendConfigBase):
         fields_set = getattr(self, "model_fields_set", None)
         if fields_set is None:
             fields_set = getattr(self, "__fields_set__", set())
-        return field_name in fields_set
+        return field_name in cast(set[str], fields_set)

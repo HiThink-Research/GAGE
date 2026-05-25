@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, NoReturn, Sequence
 
 from gage_eval.role.model.backends.litellm.errors import (
     INVALID_MEDIA_PAYLOAD,
@@ -236,16 +236,17 @@ class MultimodalMessageNormalizer:
     ) -> Dict[str, Any]:
         source = item.get("source")
         if isinstance(source, Mapping):
-            payload: Any = dict(source)
-            self._validate_document_payload(payload, policy)
-            return {"type": "document", "source": payload}
+            source_payload = dict(source)
+            self._validate_document_payload(source_payload, policy)
+            return {"type": "document", "source": source_payload}
         if isinstance(source, str):
             self._validate_document_payload(source, policy)
             return {"type": "document", "source": source}
 
         raw = item.get("document")
+        payload: Any
         if isinstance(raw, Mapping):
-            payload: Any = dict(raw)
+            payload = dict(raw)
         elif isinstance(raw, str):
             payload = raw
         else:
@@ -593,7 +594,7 @@ class MultimodalMessageNormalizer:
         return LiteLLMMultimodalPolicyConfig(**data)
 
     @staticmethod
-    def _raise_invalid(block_type: str, reason: str, *, mime_type: str | None = None) -> None:
+    def _raise_invalid(block_type: str, reason: str, *, mime_type: str | None = None) -> NoReturn:
         mime = f" mime={_safe_diag_value(mime_type)}" if mime_type else ""
         raise ValueError(
             f"{INVALID_MEDIA_PAYLOAD}: type={block_type} reason={reason}{mime} "

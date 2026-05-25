@@ -13,7 +13,10 @@ class SummaryGenerator:
     name = "base"
     contract_version = "gage.summary_generator.v2"
 
-    def generate(self, context: Mapping[str, Any]) -> SummaryGeneratorResult | None:  # pragma: no cover - abstract
+    def generate(
+        self,
+        context: Mapping[str, Any],
+    ) -> SummaryGeneratorResult | dict[str, Any] | None:  # pragma: no cover - abstract
         raise NotImplementedError
 
 

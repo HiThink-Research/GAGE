@@ -13,7 +13,7 @@ class FailureClusterResult:
 
 class FailureClusterer:
     def cluster(self, attention_cases: list[AttentionCase]) -> FailureClusterResult:
-        counts = {"runtime": {}, "system": {}}
+        counts: dict[str, dict[str, int]] = {"runtime": {}, "system": {}}
         grouped: dict[tuple[str, ...], list[AttentionCase]] = {}
         for case in attention_cases:
             runtime_codes = [code for code in case.reason_codes if not code.startswith("system.")]

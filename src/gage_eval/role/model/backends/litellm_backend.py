@@ -68,16 +68,16 @@ class LiteLLMBackend(EngineBackend):
     def __init__(self, config: Dict[str, Any]) -> None:
         self.http_retry_mode = "native"
         self.transport = "http"
-        self._litellm = None
-        self._router = None
-        self._service_profile = None
-        self._thinking_policy = None
-        self._tool_call_policy = None
-        self._response_normalizer = None
-        self._message_normalizer = None
-        self._supports_reasoning_fn = None
-        self._supports_function_calling_fn = None
-        self._custom_llm_provider = None
+        self._litellm: Any | None = None
+        self._router: Any | None = None
+        self._service_profile: VLLMServiceProfile | None = None
+        self._thinking_policy: ThinkingControlPolicy | None = None
+        self._tool_call_policy: ToolCallPolicy | None = None
+        self._response_normalizer: LiteLLMResponseNormalizer | None = None
+        self._message_normalizer: MultimodalMessageNormalizer | None = None
+        self._supports_reasoning_fn: Any | None = None
+        self._supports_function_calling_fn: Any | None = None
+        self._custom_llm_provider: str | None = None
         self._model_server_lifecycle = config.get("_model_server_lifecycle") or ModelServerLifecycle()
         super().__init__(config)
 
@@ -95,7 +95,7 @@ class LiteLLMBackend(EngineBackend):
         self.provider = self._cfg.provider or infer_provider_from_model(self.model_name)
         self.api_base = self._cfg.api_base
         self._is_deepseek_target = looks_like_deepseek(self.provider, self.model_name, self.api_base)
-        self.api_key = None
+        self.api_key: str | None = None
         self.headers = dict(self._cfg.extra_headers or {})
         self._timeout = self._cfg.timeout
         self._max_retries = self._resolve_backend_retry_budget()
@@ -159,16 +159,17 @@ class LiteLLMBackend(EngineBackend):
         self._litellm = litellm
         self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
         self._supports_function_calling_fn = getattr(litellm, "supports_function_calling", None)
-        self._service_profile = VLLMServiceProfile.from_config(self._cfg)
-        for warning in self._service_profile.validate_deployment_consistency():
+        service_profile = VLLMServiceProfile.from_config(self._cfg)
+        self._service_profile = service_profile
+        for warning in service_profile.validate_deployment_consistency():
             logger.warning("LiteLLM service profile: {}", warning)
         self._message_normalizer = MultimodalMessageNormalizer(
             self._cfg.multimodal,
-            service_profile=self._service_profile,
+            service_profile=service_profile,
         )
         self._thinking_policy = ThinkingControlPolicy.from_config(
             self._cfg.thinking_policy,
-            service_profile=self._service_profile,
+            service_profile=service_profile,
         )
         self._tool_call_policy = ToolCallPolicy.from_config(self._cfg.tool_calling)
         self._response_normalizer = LiteLLMResponseNormalizer()
@@ -552,7 +553,8 @@ class LiteLLMBackend(EngineBackend):
                 wait = min(64, self._retry_sleep * (self._retry_multiplier**attempt))
                 logger.warning("LiteLLM 调用失败，重试 {}/{}，等待 {:.1f}s: {}", attempt + 1, self._max_retries, wait, exc)
                 time.sleep(wait)
-        assert last_exc is not None
+        if last_exc is None:
+            raise LiteLLMBackendError("LiteLLM retry loop exited without capturing an exception", DEPENDENCY_UNAVAILABLE)
         self._raise_classified_retry_failure(last_exc)
         raise last_exc
 
@@ -577,7 +579,8 @@ class LiteLLMBackend(EngineBackend):
                     exc,
                 )
                 await asyncio.sleep(wait)
-        assert last_exc is not None
+        if last_exc is None:
+            raise LiteLLMBackendError("LiteLLM retry loop exited without capturing an exception", DEPENDENCY_UNAVAILABLE)
         self._raise_classified_retry_failure(last_exc)
         raise last_exc
 

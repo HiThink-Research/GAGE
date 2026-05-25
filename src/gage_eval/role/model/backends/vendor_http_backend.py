@@ -1,4 +1,4 @@
-"""Vendor-specific HTTP backends (Claude / Gemini / OpenAI Batch)."""
+"""Vendor-specific HTTP backends (Claude / OpenAI Batch)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from gage_eval.registry import registry
 from gage_eval.role.model.backends.base_backend import EngineBackend
 from gage_eval.role.model.config.vendor_http import (
     ClaudeBackendConfig,
-    GeminiBackendConfig,
     OpenAIBatchBackendConfig,
 )
 
@@ -84,67 +83,6 @@ class ClaudeHTTPBackend(EngineBackend):
                 }
             )
         return content or [{"type": "text", "text": ""}]
-
-
-# ---------------------------------------------------------------------------
-# Gemini HTTP Backend
-# ---------------------------------------------------------------------------
-@registry.asset(
-    "backends",
-    "gemini_http",
-    desc="Google Gemini multimodal HTTP backend",
-    tags=("llm", "remote", "gemini"),
-    modalities=("text", "vision", "audio"),
-    config_schema_ref="gage_eval.role.model.config.vendor_http:GeminiBackendConfig",
-)
-class GeminiHTTPBackend(EngineBackend):
-    def load_model(self, config: Dict[str, Any]):
-        try:  # pragma: no cover
-            import google.generativeai as genai
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("gemini_http backend requires google-generativeai") from exc
-
-        self._cfg = GeminiBackendConfig(**config)
-        api_key = self._cfg.api_key or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GeminiHTTPBackend requires api_key or GOOGLE_API_KEY env")
-        genai.configure(api_key=api_key)
-        self._genai = genai
-        self._model = genai.GenerativeModel(self._cfg.model)
-        return self._model
-
-    def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        contents = self._build_contents(inputs)
-        sampling = inputs.get("sampling_params") or {}
-        params = self._cfg.generation_parameters.to_dict()
-        if sampling:
-            params.update({k: v for k, v in sampling.items() if v is not None})
-        generation_config = {"max_output_tokens": params.get("max_new_tokens", 512)}
-        if params.get("temperature") is not None:
-            generation_config["temperature"] = params["temperature"]
-        if params.get("top_p") is not None:
-            generation_config["top_p"] = params["top_p"]
-        if params.get("top_k") is not None:
-            generation_config["top_k"] = params["top_k"]
-        try:
-            response = self._model.generate_content(
-                contents,
-                generation_config=generation_config,
-                safety_settings=self._cfg.safety_settings or None,
-            )
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(f"Gemini request failed: {exc}") from exc
-        text = response.text if hasattr(response, "text") else str(response)
-        return {"answer": text, "raw_response": getattr(response, "_result", None)}
-
-    def _build_contents(self, inputs: Dict[str, Any]) -> List[Any]:
-        contents: List[Any] = []
-        prompt = inputs.get("prompt") or ""
-        if prompt:
-            contents.append(prompt)
-        images = _extract_image_objects(inputs)
-        contents.extend(images)
-        return contents or [""]
 
 
 # ---------------------------------------------------------------------------
@@ -289,17 +227,6 @@ def _extract_image_b64(inputs: Dict[str, Any]) -> List[str]:
         except Exception as exc:
             logger.warning("Failed to load image {}: {}", path, exc)
     return results
-
-
-def _extract_image_objects(inputs: Dict[str, Any]) -> List[Any]:
-    paths = _extract_image_paths(inputs)
-    images = []
-    for path in paths:
-        try:
-            images.append(Image.open(path).convert("RGB"))
-        except Exception as exc:
-            logger.warning("Failed to load image {}: {}", path, exc)
-    return images
 
 
 def _compose_openai_messages(inputs: Dict[str, Any]) -> List[Dict[str, Any]]:

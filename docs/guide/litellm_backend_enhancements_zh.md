@@ -645,8 +645,8 @@ PY
 最低依赖基线：
 
 ```text
-litellm >= 1.63.8
-vllm >= 0.20.1
+litellm >= 1.85.1
+vllm >= 0.21.0
 ```
 
 Mac 本地环境可以用 `vllm 0.21.0+cpu` 做 import 和配置校验；真实 server 行为仍应以 Linux+GPU 环境为准。

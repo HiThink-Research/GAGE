@@ -33,13 +33,17 @@ class AppWorldSummaryGenerator(SummaryGenerator):
         attention_cases = _build_appworld_attention_cases(records)
         return SummaryGeneratorResult(
             generator_id="appworld_summary",
-            summary_sections=[section("overview", "AppWorld Summary", generator_id="appworld_summary")],
+            summary_sections=[
+                section("overview", "AppWorld Summary", generator_id="appworld_summary")
+            ],
             attention_cases=attention_cases,
             legacy_payload={"appworld_summary": summary},
         )
 
 
-def _build_appworld_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _build_appworld_summary(
+    records: Iterable[dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     overall_total = 0
     overall_tgc_sum = 0.0
     overall_tgc_count = 0
@@ -50,13 +54,15 @@ def _build_appworld_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[
     for record in records:
         if not isinstance(record, dict):
             continue
-        sample = record.get("sample") if isinstance(record.get("sample"), dict) else None
+        sample = (
+            record.get("sample") if isinstance(record.get("sample"), dict) else None
+        )
         if not sample:
             continue
-        metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
-        appworld_meta = metadata.get("appworld") if isinstance(metadata.get("appworld"), dict) else {}
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
-        appworld_output = judge_output.get("appworld") if isinstance(judge_output.get("appworld"), dict) else {}
+        metadata = _as_mapping(sample.get("metadata"))
+        appworld_meta = _as_mapping(metadata.get("appworld"))
+        judge_output = _as_mapping(record.get("judge_output"))
+        appworld_output = _as_mapping(judge_output.get("appworld"))
         if not appworld_meta and not appworld_output:
             continue
         subset = str(appworld_meta.get("subset") or "unknown")
@@ -95,8 +101,12 @@ def _build_appworld_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[
     summary: Dict[str, Any] = {
         "overall": {
             "total": overall_total,
-            "tgc_mean": (overall_tgc_sum / overall_tgc_count) if overall_tgc_count else 0.0,
-            "sgc_mean": (overall_sgc_sum / overall_sgc_count) if overall_sgc_count else 0.0,
+            "tgc_mean": (overall_tgc_sum / overall_tgc_count)
+            if overall_tgc_count
+            else 0.0,
+            "sgc_mean": (overall_sgc_sum / overall_sgc_count)
+            if overall_sgc_count
+            else 0.0,
         },
         "by_subset": {},
     }
@@ -142,17 +152,19 @@ def _build_appworld_attention_cases(records: list[dict[str, Any]]) -> list[Any]:
             )
 
     for candidate in candidates:
-        frequency = len(reason_samples[candidate.pop("_primary_reason")]) / total_samples
+        frequency = (
+            len(reason_samples[candidate.pop("_primary_reason")]) / total_samples
+        )
         candidate["frequency"] = frequency
     return AttentionCaseDetector().detect(candidates, total_samples=total_samples)
 
 
 def _is_appworld_record(record: Mapping[str, Any]) -> bool:
-    sample = record.get("sample") if isinstance(record.get("sample"), Mapping) else None
-    metadata = sample.get("metadata") if isinstance(sample, Mapping) and isinstance(sample.get("metadata"), Mapping) else {}
+    sample = _as_mapping(record.get("sample"))
+    metadata = _as_mapping(sample.get("metadata"))
     if isinstance(metadata.get("appworld"), Mapping):
         return True
-    judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), Mapping) else {}
+    judge_output = _as_mapping(record.get("judge_output"))
     return isinstance(judge_output.get("appworld"), Mapping)
 
 
@@ -169,24 +181,26 @@ def _attention_trials(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return _dedupe_trials(trials) or [{}]
 
 
-def _trial_or_verifier_failed(record: Mapping[str, Any], trial: Mapping[str, Any]) -> bool:
+def _trial_or_verifier_failed(
+    record: Mapping[str, Any], trial: Mapping[str, Any]
+) -> bool:
     if _status_failed(trial.get("status")):
         return True
-    scheduler_result = trial.get("scheduler_result") if isinstance(trial.get("scheduler_result"), Mapping) else {}
+    scheduler_result = _as_mapping(trial.get("scheduler_result"))
     if _status_failed(scheduler_result.get("status")):
         return True
-    verifier_result = trial.get("verifier_result") if isinstance(trial.get("verifier_result"), Mapping) else {}
+    verifier_result = _as_mapping(trial.get("verifier_result"))
     if _status_failed(verifier_result.get("status")):
         return True
-    record_scheduler_result = record.get("scheduler_result") if isinstance(record.get("scheduler_result"), Mapping) else {}
+    record_scheduler_result = _as_mapping(record.get("scheduler_result"))
     if _status_failed(record_scheduler_result.get("status")):
         return True
-    judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), Mapping) else {}
+    judge_output = _as_mapping(record.get("judge_output"))
     if _status_failed(judge_output.get("status")):
         return True
     return bool(
         _appworld_failure_reason(record)
-        or (isinstance(judge_output.get("verifier_failure"), Mapping) and judge_output["verifier_failure"].get("failure_code"))
+        or _as_mapping(judge_output.get("verifier_failure")).get("failure_code")
         or judge_output.get("failure_code")
         or verifier_result.get("failure_code")
     )
@@ -197,15 +211,15 @@ def _record_with_appworld_failure_code(record: Mapping[str, Any]) -> Mapping[str
     if not failure_reason:
         return record
     payload = dict(record)
-    verifier_result = dict(payload.get("verifier_result") or {})
+    verifier_result = dict(_as_mapping(payload.get("verifier_result")))
     verifier_result.setdefault("failure_code", failure_reason)
     payload["verifier_result"] = verifier_result
     return payload
 
 
 def _appworld_failure_reason(record: Mapping[str, Any]) -> str | None:
-    judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), Mapping) else {}
-    appworld_output = judge_output.get("appworld") if isinstance(judge_output.get("appworld"), Mapping) else {}
+    judge_output = _as_mapping(record.get("judge_output"))
+    appworld_output = _as_mapping(judge_output.get("appworld"))
     for value in (
         judge_output.get("failure_code"),
         appworld_output.get("failure_code"),
@@ -218,8 +232,12 @@ def _appworld_failure_reason(record: Mapping[str, Any]) -> str | None:
 
 
 def _sample_id(record: Mapping[str, Any]) -> str:
-    sample = record.get("sample") if isinstance(record.get("sample"), Mapping) else {}
+    sample = _as_mapping(record.get("sample"))
     return str(sample.get("id") or record.get("sample_id") or "sample")
+
+
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _trial_id(record: Mapping[str, Any], trial: Mapping[str, Any]) -> str:
@@ -250,7 +268,13 @@ def _status_failed(value: Any) -> bool:
         value = value.get("value")
     # AppWorld live outputs use skipped verifier states as failure evidence when
     # the scheduler/trial already failed; do not reuse this helper for generic skips.
-    return str(value or "").lower() in {"failed", "error", "errored", "aborted", "skipped"}
+    return str(value or "").lower() in {
+        "failed",
+        "error",
+        "errored",
+        "aborted",
+        "skipped",
+    }
 
 
 def _humanize_reason_codes(reason_codes: list[str]) -> str:

@@ -13,7 +13,8 @@ def augment_runtime_health_from_tasks(
     for task in tasks:
         if not isinstance(task, dict):
             continue
-        execution = task.get("execution") if isinstance(task.get("execution"), dict) else {}
+        raw_execution = task.get("execution")
+        execution: dict[str, Any] = raw_execution if isinstance(raw_execution, dict) else {}
         status = str(task.get("status") or execution.get("status") or "").lower()
         if status in {"failed", "error", "errored"}:
             task_failed_count += 1

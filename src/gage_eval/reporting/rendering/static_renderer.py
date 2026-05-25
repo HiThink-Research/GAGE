@@ -780,7 +780,7 @@ def _methodology_summary(methodology: dict[str, Any]) -> str:
             rows.append(("Run Metadata", f"{len(value)} fields; see report_context.json"))
             continue
         if isinstance(value, (str, int, float, bool)) or value is None:
-            rows.append((key.replace("_", " ").title(), value))
+            rows.append((key.replace("_", " ").title(), _text(value, "")))
         elif isinstance(value, list):
             list_value = _unique_list(value) if key == "metric_ids" else value
             rows.append((key.replace("_", " ").title(), ", ".join(_text(item, "") for item in list_value[:6])))

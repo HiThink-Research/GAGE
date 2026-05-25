@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import yaml
 
@@ -112,14 +112,15 @@ def _validate_builtin_template(payload: dict, *, materialize_runtime: bool = Fal
         build_runtime(config, registry, profile, trace=trace)
 
 
-def lint_pipeline_config_payload(payload: dict) -> list[str]:
+def lint_pipeline_config_payload(payload: dict[str, Any]) -> list[str]:
     """Return static config lint issues that schema validation cannot catch."""
 
     issues: list[str] = []
     for index, dataset in enumerate(payload.get("datasets") or []):
         if not isinstance(dataset, dict):
             continue
-        params = dataset.get("params") if isinstance(dataset.get("params"), dict) else {}
+        raw_params = dataset.get("params")
+        params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
         preprocessor = params.get("preprocess")
         if isinstance(preprocessor, str) and preprocessor in _DEPRECATED_DATASET_PREPROCESSORS:
             replacement, replacement_config = _DEPRECATED_DATASET_PREPROCESSORS[preprocessor]
@@ -138,7 +139,8 @@ def lint_pipeline_config_payload(payload: dict) -> list[str]:
     for index, backend in enumerate(payload.get("backends") or []):
         if not isinstance(backend, dict) or backend.get("type") != "litellm":
             continue
-        config = backend.get("config") if isinstance(backend.get("config"), dict) else {}
+        raw_config = backend.get("config")
+        config: dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
         backend_id = backend.get("backend_id") or f"#{index}"
         provider = _string_value(config.get("provider"))
         custom_provider = _string_value(config.get("custom_llm_provider"))

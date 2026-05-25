@@ -323,7 +323,7 @@ def _sample_record_path(root: Path, sample: dict[str, Any]) -> str | None:
 def _sanitize_path_component(value: str) -> str:
     sanitized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(value))
     if len(sanitized.encode("utf-8")) > 245:
-        digest = hashlib.md5(sanitized.encode("utf-8")).hexdigest()[:8]
+        digest = hashlib.md5(sanitized.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
         while len(sanitized.encode("utf-8")) > 237:
             sanitized = sanitized[:-1]
         sanitized = sanitized + "_" + digest
@@ -469,12 +469,15 @@ def _path_is_under_root(path: Path, root: Path) -> bool:
 
 
 def _ref_id(kind: str, path: str) -> str:
-    digest = hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha1(path.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
     return f"evidence://{kind}/{digest}"
 
 
 def _media_ref_id(url_digest: str, *, task_id: str | None, sample_id: str | None) -> str:
-    identity = hashlib.sha1(f"{task_id or ''}\0{sample_id or ''}\0{url_digest}".encode("utf-8")).hexdigest()
+    identity = hashlib.sha1(
+        f"{task_id or ''}\0{sample_id or ''}\0{url_digest}".encode("utf-8"),
+        usedforsecurity=False,
+    ).hexdigest()
     return f"evidence://media/{url_digest[:12]}-{identity[:12]}"
 
 

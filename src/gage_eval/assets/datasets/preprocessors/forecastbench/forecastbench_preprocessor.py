@@ -60,7 +60,7 @@ def _stable_sample_id(*, question_set: str, source: str, question_id: str) -> st
     date_code = _short_date_prefix(question_set)
     source_code = _short_source_code(source)
     qid = _norm_token(question_id)
-    digest = hashlib.sha1(qid.encode("utf-8")).hexdigest()[:8]
+    digest = hashlib.sha1(qid.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     prefix = qid[:10].rstrip("_") if qid else ""
     suffix = f"{prefix}_{digest}" if prefix else digest
     return f"fb:{date_code}:{source_code}:{suffix}"
@@ -113,7 +113,6 @@ class ForecastBenchPreprocessor(BasePreprocessor):
     def to_sample(
         self,
         record: Dict[str, Any],
-        *,
         schema_version: str = SCHEMA_VERSION,
         **kwargs: Any,
     ) -> Sample:

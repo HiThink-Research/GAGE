@@ -19,7 +19,6 @@ from gage_eval.role.model.config.inference_providers import InferenceProvidersBa
 from gage_eval.role.model.config.dummy import DummyBackendConfig
 from gage_eval.role.model.config.vendor_http import (
     ClaudeBackendConfig,
-    GeminiBackendConfig,
     OpenAIBatchBackendConfig,
 )
 
@@ -44,6 +43,5 @@ __all__ = [
     "InferenceProvidersBackendConfig",
     "DummyBackendConfig",
     "ClaudeBackendConfig",
-    "GeminiBackendConfig",
     "OpenAIBatchBackendConfig",
 ]

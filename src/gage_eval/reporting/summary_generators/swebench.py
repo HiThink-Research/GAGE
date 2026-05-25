@@ -32,13 +32,19 @@ class SwebenchSummaryGenerator(SummaryGenerator):
         attention_cases = _build_swebench_attention_cases(records)
         return SummaryGeneratorResult(
             generator_id="swebench_summary",
-            summary_sections=[section("overview", "SWE-bench Summary", generator_id="swebench_summary")],
+            summary_sections=[
+                section(
+                    "overview", "SWE-bench Summary", generator_id="swebench_summary"
+                )
+            ],
             attention_cases=attention_cases,
             legacy_payload={"swebench_summary": summary},
         )
 
 
-def _build_swebench_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _build_swebench_summary(
+    records: Iterable[dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     total = 0
     resolved_total = 0
     by_repo: Dict[str, Dict[str, int]] = {}
@@ -48,15 +54,15 @@ def _build_swebench_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[
     for record in records:
         if not isinstance(record, dict):
             continue
-        sample = record.get("sample") if isinstance(record.get("sample"), dict) else None
+        sample = _as_mapping(record.get("sample"))
         if not sample:
             continue
-        metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+        metadata = _as_mapping(sample.get("metadata"))
         if not _is_swebench_sample(sample, metadata):
             continue
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
-        resolved = bool((judge_output or {}).get("resolved"))
-        failure_reason = (judge_output or {}).get("failure_reason")
+        judge_output = _as_mapping(record.get("judge_output"))
+        resolved = bool(judge_output.get("resolved"))
+        failure_reason = judge_output.get("failure_reason")
         repo = metadata.get("repo") or sample.get("repo")
         language = metadata.get("repo_language") or sample.get("repo_language")
 
@@ -92,7 +98,7 @@ def _build_swebench_attention_cases(records: list[dict[str, Any]]) -> list[Any]:
     reason_samples: dict[str, set[str]] = defaultdict(set)
 
     for record in swebench_records:
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), Mapping) else {}
+        judge_output = _as_mapping(record.get("judge_output"))
         if bool(judge_output.get("resolved")):
             continue
         sample_id = _sample_id(record)
@@ -113,14 +119,16 @@ def _build_swebench_attention_cases(records: list[dict[str, Any]]) -> list[Any]:
         )
 
     for candidate in candidates:
-        frequency = len(reason_samples[candidate.pop("_primary_reason")]) / total_samples
+        frequency = (
+            len(reason_samples[candidate.pop("_primary_reason")]) / total_samples
+        )
         candidate["frequency"] = frequency
     return AttentionCaseDetector().detect(candidates, total_samples=total_samples)
 
 
 def _record_is_swebench(record: Mapping[str, Any]) -> bool:
-    sample = record.get("sample") if isinstance(record.get("sample"), Mapping) else {}
-    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), Mapping) else {}
+    sample = _as_mapping(record.get("sample"))
+    metadata = _as_mapping(sample.get("metadata"))
     return _is_swebench_sample(dict(sample), dict(metadata))
 
 
@@ -134,11 +142,12 @@ def _trial_payload(record: Mapping[str, Any]) -> Mapping[str, Any]:
         for trial in trial_results:
             if isinstance(trial, Mapping):
                 return trial
-    return first_agentkit_trial_result(record) or {}
+    trial = first_agentkit_trial_result(record)
+    return trial if isinstance(trial, Mapping) else {}
 
 
 def _sample_id(record: Mapping[str, Any]) -> str:
-    sample = record.get("sample") if isinstance(record.get("sample"), Mapping) else {}
+    sample = _as_mapping(record.get("sample"))
     return str(sample.get("id") or record.get("sample_id") or "sample")
 
 
@@ -157,17 +166,25 @@ def _humanize_reason_code(code: str) -> str:
     return code.replace("_", " ").replace(".", " ")
 
 
-def _is_swebench_sample(sample: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
+def _is_swebench_sample(sample: Mapping[str, Any], metadata: Mapping[str, Any]) -> bool:
     dataset_id = sample.get("_dataset_id")
     if isinstance(dataset_id, str) and "swebench" in dataset_id.lower():
         return True
-    for key in ("instance_id", "base_commit", "test_patch", "fail_to_pass", "pass_to_pass"):
+    for key in (
+        "instance_id",
+        "base_commit",
+        "test_patch",
+        "fail_to_pass",
+        "pass_to_pass",
+    ):
         if metadata.get(key) or sample.get(key):
             return True
     return False
 
 
-def _accumulate_stats(bucket: Dict[str, Dict[str, int]], key: str, resolved: bool) -> None:
+def _accumulate_stats(
+    bucket: Dict[str, Dict[str, int]], key: str, resolved: bool
+) -> None:
     stats = bucket.setdefault(key, {"total": 0, "resolved": 0})
     stats["total"] += 1
     if resolved:
@@ -185,6 +202,10 @@ def _finalize_stats(bucket: Dict[str, Dict[str, int]]) -> Dict[str, Dict[str, fl
             "resolve_rate": (resolved / total) if total else 0.0,
         }
     return finalized
+
+
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 __all__ = ["SwebenchSummaryGenerator"]

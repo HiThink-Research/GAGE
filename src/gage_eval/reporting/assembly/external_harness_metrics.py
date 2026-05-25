@@ -14,7 +14,9 @@ def merge_metric_entries(
         if isinstance(metric, dict)
     }
     for metric in additional:
-        metric_id = str(metric.get("metric_id") or metric.get("id") or metric.get("name"))
+        metric_id = str(
+            metric.get("metric_id") or metric.get("id") or metric.get("name")
+        )
         if metric_id in seen:
             continue
         merged.append(metric)
@@ -22,7 +24,9 @@ def merge_metric_entries(
     return merged
 
 
-def external_harness_metric_entries(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def external_harness_metric_entries(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     harbor_scores: list[float] = []
     harbor_resolves: list[float] = []
     for record in records:
@@ -45,7 +49,9 @@ def external_harness_metric_entries(records: list[dict[str, Any]]) -> list[dict[
             eval_result.get("pass_rate"),
         )
         if resolve_rate is None:
-            resolved = first_bool(eval_result.get("resolved"), eval_result.get("passed"))
+            resolved = first_bool(
+                eval_result.get("resolved"), eval_result.get("passed")
+            )
             if resolved is not None:
                 resolve_rate = 1.0 if resolved else 0.0
         if resolve_rate is None:
@@ -80,7 +86,9 @@ def external_harness_metric_entries(records: list[dict[str, Any]]) -> list[dict[
     return entries
 
 
-def external_harness_task_metric_entries(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def external_harness_task_metric_entries(
+    records: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     by_task: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         if not isinstance(record, dict) or not is_harbor_record(record):
@@ -104,24 +112,41 @@ def external_harness_task_metric_entries(records: list[dict[str, Any]]) -> dict[
 
 
 def is_harbor_record(record: dict[str, Any]) -> bool:
-    sample = record.get("sample") if isinstance(record.get("sample"), dict) else {}
-    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
-    harness = metadata.get("_harness") if isinstance(metadata.get("_harness"), dict) else {}
+    raw_sample = record.get("sample")
+    sample: dict[str, Any] = raw_sample if isinstance(raw_sample, dict) else {}
+    raw_metadata = sample.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_harness = metadata.get("_harness")
+    harness: dict[str, Any] = raw_harness if isinstance(raw_harness, dict) else {}
     task_type = str(sample.get("task_type") or record.get("task_type") or "")
     eval_result = harbor_eval_result(record)
     return (
         task_type == "external_harness.harbor"
         or harness.get("kit_id") == "harbor"
-        or any(key in eval_result for key in ("harbor_score_mean", "harbor_resolve_rate", "external_trial_pass_values"))
+        or any(
+            key in eval_result
+            for key in (
+                "harbor_score_mean",
+                "harbor_resolve_rate",
+                "external_trial_pass_values",
+            )
+        )
     )
 
 
 def harbor_eval_result(record: dict[str, Any]) -> dict[str, Any]:
-    sample = record.get("sample") if isinstance(record.get("sample"), dict) else {}
-    eval_result = sample.get("eval_result") if isinstance(sample.get("eval_result"), dict) else {}
+    raw_sample = record.get("sample")
+    sample: dict[str, Any] = raw_sample if isinstance(raw_sample, dict) else {}
+    raw_eval_result = sample.get("eval_result")
+    eval_result: dict[str, Any] = (
+        raw_eval_result if isinstance(raw_eval_result, dict) else {}
+    )
     if eval_result:
         return dict(eval_result)
-    judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
+    raw_judge_output = record.get("judge_output")
+    judge_output: dict[str, Any] = (
+        raw_judge_output if isinstance(raw_judge_output, dict) else {}
+    )
     return dict(judge_output)
 
 
@@ -133,8 +158,10 @@ def record_task_id(record: dict[str, Any]) -> str | None:
         return namespace.removeprefix("task/")
     if namespace.startswith("task_"):
         return namespace.removeprefix("task_")
-    sample = record.get("sample") if isinstance(record.get("sample"), dict) else {}
-    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+    raw_sample = record.get("sample")
+    sample: dict[str, Any] = raw_sample if isinstance(raw_sample, dict) else {}
+    raw_metadata = sample.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     value = record.get("task_id") or metadata.get("task_id")
     return str(value) if value else None
 
@@ -144,7 +171,10 @@ def trial_score_mean(record: dict[str, Any]) -> float | None:
     for trial in record.get("trial_results") or []:
         if not isinstance(trial, dict):
             continue
-        verifier = trial.get("verifier_result") if isinstance(trial.get("verifier_result"), dict) else {}
+        raw_verifier = trial.get("verifier_result")
+        verifier: dict[str, Any] = (
+            raw_verifier if isinstance(raw_verifier, dict) else {}
+        )
         score = float_or_none(verifier.get("score"))
         if score is None:
             score = float_or_none(verifier.get("reward"))
@@ -162,7 +192,10 @@ def trial_resolve_rate(record: dict[str, Any]) -> float | None:
     for trial in record.get("trial_results") or []:
         if not isinstance(trial, dict):
             continue
-        verifier = trial.get("verifier_result") if isinstance(trial.get("verifier_result"), dict) else {}
+        raw_verifier = trial.get("verifier_result")
+        verifier: dict[str, Any] = (
+            raw_verifier if isinstance(raw_verifier, dict) else {}
+        )
         value = verifier.get("resolved")
         if not isinstance(value, bool):
             value = verifier.get("passed")

@@ -135,7 +135,7 @@ class ThinkingControlPolicy:
         if capability is False:
             return "unsupported"
         normalized = str(capability).strip().lower().replace("-", "_")
-        aliases = {
+        aliases: dict[str, ThinkingCapability] = {
             "": "auto",
             "auto": "auto",
             "automatic": "auto",

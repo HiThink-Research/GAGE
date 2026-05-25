@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -56,13 +56,13 @@ class ForecastBenchProbabilitySummaryAggregator(MetricAggregator):
                 "avg_abs_error": 0.0,
                 "clamp_rate": 0.0,
             }
-            meta = {"samples": 0}
+            empty_meta: dict[str, Any] = {"samples": 0}
             return AggregatedMetric(
                 metric_id=self.spec.metric_id,
                 aggregation=self.spec.aggregation or "forecastbench_probability_summary",
                 values=values_out,
                 count=0,
-                metadata=meta,
+                metadata=empty_meta,
             )
 
         average_brier = self._sum_brier / count
@@ -77,7 +77,7 @@ class ForecastBenchProbabilitySummaryAggregator(MetricAggregator):
             "clamp_rate": float(self._sum_clamp / count),
         }
 
-        meta: dict = {"samples": count}
+        meta: dict[str, Any] = {"samples": count}
         if self._count_market_baseline > 0:
             avg_mb = self._sum_market_baseline / self._count_market_baseline
             values_out["average_market_baseline_brier"] = float(avg_mb)

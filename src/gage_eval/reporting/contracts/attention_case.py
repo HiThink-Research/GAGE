@@ -83,7 +83,8 @@ class AttentionCase:
 
     def to_dict(self) -> dict[str, Any]:
         """Serializes the attention case."""
-        severity = self.severity.value if hasattr(self.severity, "value") else self.severity
+        raw_severity: Any = self.severity
+        severity = raw_severity.value if hasattr(raw_severity, "value") else raw_severity
         data: dict[str, Any] = {
             "case_id": self.case_id,
             "severity": severity,

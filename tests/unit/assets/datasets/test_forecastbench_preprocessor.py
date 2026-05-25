@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
+from gage_eval.assets.datasets.preprocessors.forecastbench import forecastbench_preprocessor
 from gage_eval.assets.datasets.preprocessors.forecastbench.forecastbench_preprocessor import (
     ForecastBenchPreprocessor,
 )
@@ -43,6 +46,23 @@ def test_forecastbench_preprocessor_stable_id_and_schema() -> None:
     assert sample.metadata["source"] == "polymarket"
     assert sample.data_tag["source"] == "polymarket"
     assert sample.data_tag["question_type"] == "market"
+
+
+def test_forecastbench_sample_id_digest_is_marked_non_security(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_sha1 = forecastbench_preprocessor.hashlib.sha1
+    calls: list[bool] = []
+
+    def sha1_probe(data: bytes, *, usedforsecurity: bool) -> object:
+        calls.append(usedforsecurity)
+        return original_sha1(data, usedforsecurity=usedforsecurity)
+
+    monkeypatch.setattr(forecastbench_preprocessor.hashlib, "sha1", sha1_probe)
+
+    pre = ForecastBenchPreprocessor()
+    sample = pre.transform(_minimal_record())
+
+    assert sample is not None
+    assert calls == [False]
 
 
 def test_forecastbench_preprocessor_short_sample_id_fits_filename_budget() -> None:

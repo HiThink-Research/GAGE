@@ -218,16 +218,16 @@ class ReportContext:
             if isinstance(metrics, dict):
                 diagnostics.extend(MetricScope.validate(metrics, f"{section_path}.metrics"))
 
-        for item in self.attention_cases:
-            diagnostics.extend(item.validate())
-        for item in self.outliers:
-            diagnostics.extend(item.validate())
+        for attention_case in self.attention_cases:
+            diagnostics.extend(attention_case.validate())
+        for outlier in self.outliers:
+            diagnostics.extend(outlier.validate())
         for case_id, detail in self.case_details.items():
             diagnostics.extend(detail.validate(f"case_details.{case_id}"))
-        for item in self.failure_clusters:
-            diagnostics.extend(item.validate())
-        for item in self.evidence_refs:
-            diagnostics.extend(item.validate())
+        for failure_cluster in self.failure_clusters:
+            diagnostics.extend(failure_cluster.validate())
+        for evidence_ref in self.evidence_refs:
+            diagnostics.extend(evidence_ref.validate())
         diagnostics.extend(_cross_section_diagnostics(self))
         return diagnostics
 

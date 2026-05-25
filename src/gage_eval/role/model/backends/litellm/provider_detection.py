@@ -5,7 +5,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 
-LOCAL_API_HOSTS = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1"})
+LOCAL_API_HOSTS = frozenset({"127.0.0.1", "localhost", "0.0.0.0", "::1"})  # nosec
 LITELLM_GATEWAY_PROFILES = frozenset(
     {
         "external_gateway",

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
-from gage_eval.assets.datasets.preprocessors.default_preprocessor import DefaultPreprocessor
-from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import MultiChoicePreprocessor as NewMultiChoice
 import warnings
+
+from gage_eval.assets.datasets.preprocessors.multi_choice_preprocessor import MultiChoicePreprocessor as NewMultiChoice
 
 from gage_eval.assets.datasets.preprocessors.docvqa_preprocessor import DocVQAPreprocessor as NewDocVQA
 from gage_eval.assets.datasets.preprocessors.grid_game_preprocessor import (
@@ -111,6 +110,27 @@ from gage_eval.assets.datasets.preprocessors.mmsu.mmsu_converter import MMSUConv
 # benchmark inverse_ifeval
 from gage_eval.assets.datasets.preprocessors.inverse_ifeval.inverse_ifeval_preprocessor import InverseIFEvalPreprocessor
 
+# benchmark HMMT Feb 2025
+from gage_eval.assets.datasets.preprocessors.hmmt.hmmt_converter import HMMTFeb2025Preprocessor
+
+# benchmark BeyondAIME
+from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import BeyondAIMEPreprocessor
+
+# benchmark AMO-Bench
+from gage_eval.assets.datasets.preprocessors.amo_bench.converter import AMOBenchPreprocessor
+
+# benchmark GSM8K
+from gage_eval.assets.datasets.preprocessors.gsm8k.converter import GSM8KPreprocessor
+
+# benchmark Video-MME
+from gage_eval.assets.datasets.preprocessors.video_mme import VideoMMEChatPreprocessor
+
+# benchmark ForecastBench (static)
+from gage_eval.assets.datasets.preprocessors.forecastbench.forecastbench_preprocessor import (
+    ForecastBenchPreprocessor as NewForecastBenchPreprocessor,
+)
+
+
 def _warn_deprecated_dataset_preprocessor(
     asset_name: str,
     *,
@@ -140,25 +160,6 @@ class _DeprecatedDatasetPreprocessorMixin:
         )
         super().__init__(*args, **kwargs)
 
-# benchmark HMMT Feb 2025
-from gage_eval.assets.datasets.preprocessors.hmmt.hmmt_converter import HMMTFeb2025Preprocessor
-
-# benchmark BeyondAIME
-from gage_eval.assets.datasets.preprocessors.beyond_aime.converter import BeyondAIMEPreprocessor
-
-# benchmark AMO-Bench
-from gage_eval.assets.datasets.preprocessors.amo_bench.converter import AMOBenchPreprocessor
-
-# benchmark GSM8K
-from gage_eval.assets.datasets.preprocessors.gsm8k.converter import GSM8KPreprocessor
-
-# benchmark Video-MME
-from gage_eval.assets.datasets.preprocessors.video_mme import VideoMMEChatPreprocessor
-
-# benchmark ForecastBench (static)
-from gage_eval.assets.datasets.preprocessors.forecastbench.forecastbench_preprocessor import (
-    ForecastBenchPreprocessor as NewForecastBenchPreprocessor,
-)
 
 @registry.asset(
     "dataset_preprocessors",
@@ -648,4 +649,3 @@ class ForecastBenchStaticPreprocessor(NewForecastBenchPreprocessor):
     """Joined ForecastBench records -> standardized Sample schema."""
 
     pass
-

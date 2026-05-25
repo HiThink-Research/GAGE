@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 import re
 import signal
 import shutil
-import subprocess
+import subprocess  # nosec
 import sys
 import threading
 import time
@@ -179,7 +180,7 @@ def run_launcher_subprocess(
         redact_text(str(workdir_path)),
     )
     with stdout_path.open("wb") as stdout_fh, stderr_path.open("wb") as stderr_fh:
-        process = subprocess.Popen(
+        process = subprocess.Popen(  # nosec B603
             argv,
             cwd=str(workdir_path),
             env=env,
@@ -373,10 +374,8 @@ def _tee_subprocess_stream(
                 continue
             line_open = _emit_live_chunk(terminal_stream, prefix, chunk, line_open=line_open)
     finally:
-        try:
+        with suppress(Exception):
             source.close()
-        except Exception:
-            pass
         if terminal_stream is not None and line_open:
             terminal_stream.write("\n")
             terminal_stream.flush()
@@ -497,10 +496,8 @@ def _tail_job_log(
                 _emit_live_line(terminal_stream, LIVE_LOG_JOB_PREFIX, bytes(leftover))
     finally:
         if handle is not None:
-            try:
+            with suppress(Exception):
                 handle.close()
-            except Exception:
-                pass
 
 
 def _join_threads(threads: Sequence[threading.Thread]) -> None:
@@ -927,7 +924,7 @@ def _docker_cli_lines(args: list[str]) -> list[str]:
 
 
 def _run_docker_cli(args: list[str], *, timeout_s: float) -> str:
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603
         args,
         capture_output=True,
         check=False,

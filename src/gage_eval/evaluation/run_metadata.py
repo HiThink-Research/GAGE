@@ -76,7 +76,7 @@ class RuntimeStats:
         )
 
     def to_summary_payload(self) -> dict[str, Any]:
-        runtime_health = {
+        runtime_health: dict[str, Any] = {
             "sample_count": self.sample_count,
             "completed_count": self.completed_count,
             "failed_count": self.failed_count,

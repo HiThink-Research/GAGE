@@ -36,8 +36,7 @@ def install_report_context_minimal() -> None:
     if hasattr(ReportContext, "minimal"):
         return
 
-    @classmethod
-    def minimal(cls, run_id: str = "run") -> ReportContext:
+    def minimal(cls: type[ReportContext], run_id: str = "run") -> ReportContext:
         return cls.from_dict(
             {
                 "schema": {
@@ -83,7 +82,9 @@ def install_report_context_minimal() -> None:
                 "scenario_profiles": {},
                 "methodology": {
                     "generated_from": ["summary.json", "samples.jsonl"],
-                    "notes": ["Evidence is referenced by redacted EvidenceRef entries."],
+                    "notes": [
+                        "Evidence is referenced by redacted EvidenceRef entries."
+                    ],
                 },
                 "locale": {
                     "language": "en-US",
@@ -101,12 +102,14 @@ def install_report_context_minimal() -> None:
             }
         )
 
-    setattr(ReportContext, "minimal", minimal)
+    setattr(ReportContext, "minimal", classmethod(minimal))
 
 
 def summarize_mapping(value: Any) -> str:
     if isinstance(value, dict):
-        return ", ".join(f"{key}={_scalar_text(child)}" for key, child in sorted(value.items()))
+        return ", ".join(
+            f"{key}={_scalar_text(child)}" for key, child in sorted(value.items())
+        )
     return _scalar_text(value)
 
 
@@ -120,7 +123,7 @@ def atomic_write_text(path: Path, text: str) -> Path:
 
 def _jsonable(value: Any) -> Any:
     if is_dataclass(value):
-        return _jsonable(asdict(value))
+        return _jsonable(asdict(value))  # type: ignore[arg-type]
     if isinstance(value, dict):
         return {str(key): _jsonable(child) for key, child in value.items()}
     if isinstance(value, (list, tuple, set)):

@@ -42,7 +42,7 @@ class Severity:
     @classmethod
     def rank(cls, value: str) -> int:
         """Returns a sortable severity rank."""
-        return cls._RANK.get(value, -1)
+        return cls._RANK.get(SeverityValue(value), -1)
 
     @classmethod
     def parse(cls, value: object) -> SeverityValue:

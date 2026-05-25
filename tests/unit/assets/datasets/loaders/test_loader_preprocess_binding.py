@@ -1,16 +1,9 @@
-import sys
-from pathlib import Path
 import unittest
-
-ROOT = Path(__file__).resolve().parents[5] / "src"
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))
 
 from gage_eval.assets.datasets.preprocessors.base import BasePreprocessor
 from gage_eval.assets.datasets.loaders.loader_utils import (
     apply_preprocess,
     build_preprocess_context,
-    resolve_doc_to_callable,
 )
 from gage_eval.config.pipeline_config import DatasetSpec
 from gage_eval.registry import registry
@@ -40,6 +33,7 @@ class LoaderPreprocessBindingTests(unittest.TestCase):
         processed = list(apply_preprocess(records, spec, data_path="/tmp/data.jsonl", doc_to_visual=_doc_to_visual))
 
         self.assertEqual(len(processed), 1)
+        self.assertTrue(calls.get("called"))
 
     def test_registered_deprecated_preprocessor_warns_during_context_build(self):
         name = "binding_pre_deprecated_dummy"

@@ -30,11 +30,14 @@ class ExternalHarnessScenarioProfile:
 
 
 def _harness_id(sample: dict[str, Any]) -> str | None:
-    sample_payload = sample.get("sample") if isinstance(sample.get("sample"), dict) else {}
+    raw_sample = sample.get("sample")
+    sample_payload: dict[str, Any] = raw_sample if isinstance(raw_sample, dict) else {}
     task_type = str(sample_payload.get("task_type") or sample.get("task_type") or "")
     if task_type.startswith("external_harness."):
         return task_type.split(".", 1)[1]
-    metadata = sample_payload.get("metadata") if isinstance(sample_payload.get("metadata"), dict) else {}
-    harness = metadata.get("_harness") if isinstance(metadata.get("_harness"), dict) else {}
+    raw_metadata = sample_payload.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_harness = metadata.get("_harness")
+    harness: dict[str, Any] = raw_harness if isinstance(raw_harness, dict) else {}
     kit_id = harness.get("kit_id")
     return str(kit_id) if kit_id else None

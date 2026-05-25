@@ -12,7 +12,9 @@ class MetricSummaryCollector:
             return []
         if isinstance(metrics, dict):
             metrics = metrics.get("metrics", [])
-        return [self._collect_one(metric) for metric in metrics]
+        if not isinstance(metrics, list):
+            return []
+        return [self._collect_one(metric) for metric in metrics if isinstance(metric, dict)]
 
     def _collect_one(self, metric: dict[str, Any]) -> dict[str, Any]:
         item = dict(metric)
