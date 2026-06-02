@@ -229,6 +229,10 @@ flowchart LR
 - Linux + CUDA recommended for local vLLM
 - CPU is fine for HTTP backends or dummy demos
 
+> `requirements.txt` currently pins the real-machine Linux GPU baseline used for
+> vLLM validation. CPU-only environments that only run HTTP backends or dummy
+> demos may need a split or adjusted dependency file.
+
 ### 2.2 Install
 
 From the mono-repo root:

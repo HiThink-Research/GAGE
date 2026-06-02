@@ -47,7 +47,7 @@ unified adapter for vLLM OpenAI-compatible servers.
 | Async calls | Yes | Backend `ainvoke` through LiteLLM `acompletion` |
 | Request pass-through | Yes | `litellm_request.*` |
 | Retry ownership | Yes | Router/Gateway profiles collapse the outer retry budget |
-| Experimental server lifecycle | Command mode | `model_server.enabled`, `startup_command`, `health.urls` |
+| Experimental server lifecycle | Command mode | `model_server.enabled`, `startup_command`, `shutdown_policy`, `health.urls` |
 
 ## 2. Recommended Deployment Profiles
 
@@ -214,6 +214,13 @@ extra_body:
     enable_thinking: false
 ```
 
+When `thinking_mode` is left as `auto`, GAGE does not override the server chat
+template. For vLLM deployments with a declared `reasoning_parser`, the
+observability summary records
+`thinking_inherited_from_server_default: true` so that a server-side
+`--default-chat-template-kwargs '{"enable_thinking": true}'` default is easier
+to diagnose.
+
 The response normalizer extracts reasoning from `message.reasoning_content`,
 `message.reasoning_details`, `<think>...</think>` tags, and usage or raw-response
 signals such as `reasoning_tokens`. If the observed response conflicts with the
@@ -367,6 +374,10 @@ GAGE avoids stacked retry loops:
 | Internal Router | LiteLLM Router | Outer retry budget is collapsed to 1 |
 | External LiteLLM Gateway | Gateway | Outer retry budget is collapsed to 1 |
 
+For Router/Gateway profiles, result metadata records `outer_retry_attempts` and,
+when available, `router_num_retries`. These fields are request-local and can be
+used to verify that GAGE did not multiply retries outside the routing layer.
+
 Common normalized error types include:
 
 | Error type | Common source |
@@ -380,8 +391,10 @@ Common normalized error types include:
 
 The response normalizer also records a redacted observability summary, including
 provider, model, hashed API base, route mode, topology, modality counts, tool
-counts, retry owner, finish reason, usage, and latency. Full API keys and full
-base64 media payloads are not emitted.
+counts, retry owner, response model, finish reason, usage, and latency. It also
+records `answer_empty_reason` when reasoning output consumes the completion
+budget and leaves an empty assistant answer. Full API keys and full base64 media
+payloads are not emitted.
 
 ## 9. Experimental ModelServerLifecycle
 
@@ -391,6 +404,8 @@ for configured health URLs before sending requests.
 ```yaml
 model_server:
   enabled: true
+  experimental: true
+  shutdown_policy: keep_running
   startup_command: |
     mkdir -p ${GAGE_VLLM_LOG_DIR:-/tmp/gage-vllm}
     nohup vllm serve ${GAGE_MODEL_PATH:-/mnt/model/Qwen3.6-35B-A3B} \
@@ -409,11 +424,21 @@ model_server:
     interval_seconds: 5
 ```
 
+Shutdown policy:
+
+| `shutdown_policy` | Behavior |
+| --- | --- |
+| `keep_running` | Default. GAGE starts and health-gates the command but leaves the server running after the evaluation. Use this with `nohup ... &`, externally managed servers, or long-lived shared endpoints. |
+| `terminate_on_exit` | GAGE starts the command in a new process group and sends `SIGTERM` to that process group when the backend shuts down. This is best for foreground commands such as `vllm serve ...` and commands that do not detach themselves. |
+
 Limitations:
 
 - Commands run through `bash -lc`.
-- GAGE handles startup and health-gating only; it does not manage log rotation,
-  resource cleanup, port governance, or process orchestration.
+- GAGE handles startup and health-gating. With `terminate_on_exit`, it also does
+  best-effort process-group shutdown. It does not manage log rotation, port
+  governance, or production process orchestration.
+- If the startup command uses `nohup`, `&`, `setsid`, or another detach pattern,
+  use `keep_running` and clean up the server with an external stop command.
 - Basic dangerous command patterns such as `curl | bash`, `wget | sh`,
   `rm -rf /`, and `mkfs` are blocked.
 - Health timeout is classified as `dependency_unavailable`.
@@ -472,7 +497,10 @@ backends:
         expected_tool_parser: null
       model_server:
         enabled: false
+        experimental: false
         startup_command: null
+        shutdown_policy: keep_running
+        pid_file: null
         health:
           urls: []
 ```
@@ -490,11 +518,13 @@ for pkg in ("litellm", "vllm"):
 PY
 ```
 
-Minimum dependency baseline:
+Dependency baseline:
 
 ```text
-litellm >= 1.85.1
-vllm >= 0.21.0
+LiteLLM guard minimum: litellm >= 1.83.14
+vLLM guard minimum: vllm >= 0.20.2
+Tested Linux GPU baseline: torch 2.11.0+cu129, vllm 0.20.2+cu129,
+flashinfer 0.6.8.post1 on A800 with NVIDIA driver 550.54.15 / CUDA 12.9
 ```
 
 Recommended smoke coverage:
@@ -512,6 +542,6 @@ Recommended smoke coverage:
 | Concurrency | Validate parallel behavior after removing the global call lock |
 | ModelServerLifecycle | Validate startup command and health-gate behavior |
 
-macOS local environments can use `vllm 0.21.0+cpu` for imports and config
-validation. Real server behavior should still be validated in a Linux + GPU
-environment.
+macOS local environments can use CPU-compatible imports and config validation,
+but the pinned `requirements.txt` targets the tested Linux GPU baseline. Real
+server behavior should still be validated in a Linux + GPU environment.

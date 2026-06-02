@@ -42,7 +42,7 @@ PYTHONPATH=src python -m gage_eval.tools.config_checker \
 | async 调用 | 支持 backend `ainvoke` | 由 RoleAdapter 或直接探针调用 |
 | 请求级透传 | 支持 | `litellm_request.*` |
 | retry ownership | 支持 | Router/Gateway 场景自动收敛外层 retry |
-| 实验性 server 生命周期 | 支持命令模式 | `model_server.enabled`, `startup_command`, `health.urls` |
+| 实验性 server 生命周期 | 支持命令模式 | `model_server.enabled`, `startup_command`, `shutdown_policy`, `health.urls` |
 
 整体调用链：
 
@@ -240,6 +240,11 @@ extra_body:
   chat_template_kwargs:
     enable_thinking: false
 ```
+
+当 `thinking_mode` 保持 `auto` 时，GAGE 不覆盖 server 的 chat template 默认值。对于声明了
+`vllm.reasoning_parser` 的 vLLM 部署，观测摘要会记录
+`thinking_inherited_from_server_default: true`，便于排查 server 侧
+`--default-chat-template-kwargs '{"enable_thinking": true}'` 导致的默认 thinking。
 
 ### 3.2 鲁棒性策略
 
@@ -482,6 +487,9 @@ GAGE 避免多层 retry 叠加：
 | internal Router | LiteLLM Router | 外层 retry budget 收敛到 1 |
 | external LiteLLM Gateway | Gateway | 外层 retry budget 收敛到 1 |
 
+Router/Gateway 场景会在结果 metadata 中记录 `outer_retry_attempts`，并在可用时记录
+`router_num_retries`。这些字段是请求级观测值，可用于确认 GAGE 没有在路由层外放大 retry。
+
 Router retry 配在：
 
 ```yaml
@@ -515,7 +523,9 @@ backend 会把常见失败归一化为结构化错误：
 - modality counts
 - tool count / tool call count
 - retry owner
+- response model
 - finish reason, usage, latency
+- `answer_empty_reason`，例如 reasoning 输出耗尽 completion budget 后 assistant answer 为空
 
 摘要中不会输出完整 API key 或完整 base64 媒体。
 
@@ -526,6 +536,8 @@ backend 会把常见失败归一化为结构化错误：
 ```yaml
 model_server:
   enabled: true
+  experimental: true
+  shutdown_policy: keep_running
   startup_command: |
     mkdir -p ${GAGE_VLLM_LOG_DIR:-/tmp/gage-vllm}
     nohup vllm serve ${GAGE_MODEL_PATH:-/mnt/model/Qwen3.6-35B-A3B} \
@@ -544,10 +556,18 @@ model_server:
     interval_seconds: 5
 ```
 
+shutdown policy：
+
+| `shutdown_policy` | 行为 |
+| --- | --- |
+| `keep_running` | 默认值。GAGE 负责启动和 health-gate，评测结束后保留 server 继续运行。适合 `nohup ... &`、外部托管服务或长生命周期共享 endpoint。 |
+| `terminate_on_exit` | GAGE 使用新进程组启动命令，并在 backend shutdown 时向该进程组发送 `SIGTERM`。适合前台命令，例如 `vllm serve ...`，以及不会自行 detach 的启动命令。 |
+
 限制：
 
 - 命令通过 `bash -lc` 执行。
-- 框架只负责启动和 health-gate，不负责日志轮转、资源回收、端口治理或进程编排。
+- 框架负责启动和 health-gate；当 `shutdown_policy: terminate_on_exit` 时，会额外做 best-effort 进程组关闭。不负责日志轮转、端口治理或生产级进程编排。
+- 如果 `startup_command` 使用 `nohup`、`&`、`setsid` 或其他 detach 模式，应使用 `keep_running`，并用外部 stop 命令清理 server。
 - `startup_command` 会做基础危险命令拦截，例如 `curl | bash`、`wget | sh`、`rm -rf /`、`mkfs`。
 - health 超时会归类为 `dependency_unavailable`。
 
@@ -610,7 +630,10 @@ backends:
         expected_tool_parser: null
       model_server:
         enabled: false
+        experimental: false
         startup_command: null
+        shutdown_policy: keep_running
+        pid_file: null
         health:
           urls: []
 ```
@@ -642,11 +665,13 @@ for pkg in ("litellm", "vllm"):
 PY
 ```
 
-最低依赖基线：
+依赖基线：
 
 ```text
-litellm >= 1.85.1
-vllm >= 0.21.0
+LiteLLM guard 最低版本：litellm >= 1.83.14
+vLLM guard 最低版本：vllm >= 0.20.2
+已实测 Linux GPU 基线：torch 2.11.0+cu129, vllm 0.20.2+cu129,
+flashinfer 0.6.8.post1，A800，NVIDIA driver 550.54.15 / CUDA 12.9
 ```
 
-Mac 本地环境可以用 `vllm 0.21.0+cpu` 做 import 和配置校验；真实 server 行为仍应以 Linux+GPU 环境为准。
+Mac 本地环境可以使用 CPU-compatible import 和配置校验，但当前 `requirements.txt` 固化的是已实测 Linux GPU 基线。真实 server 行为仍应以 Linux+GPU 环境为准。
