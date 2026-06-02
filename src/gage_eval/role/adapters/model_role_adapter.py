@@ -55,6 +55,13 @@ class ModelRoleAdapter(RoleAdapter):
 
     def handle_backend_response(self, payload: Dict[str, Any], response: Dict[str, Any]) -> Dict[str, Any]:
         return response
+
+    def shutdown(self) -> None:
+        for method_name in ("shutdown", "close"):
+            cleanup = getattr(self.backend, method_name, None)
+            if callable(cleanup):
+                cleanup()
+                return
     # ------------------------------------------------------------------
     # Sampling helpers
     # ------------------------------------------------------------------
@@ -179,4 +186,13 @@ class ModelRoleAdapter(RoleAdapter):
             response = await backend_call(request)
         else:
             response = await ensure_async(self.backend)(request)
+        return self.handle_backend_response(payload, response)
+
+    def invoke(self, payload: Dict[str, Any], state: RoleAdapterState) -> Dict[str, Any]:
+        request = self.prepare_backend_request(payload)
+        backend_call = getattr(self.backend, "invoke", None)
+        if backend_call:
+            response = backend_call(request)
+        else:
+            response = run_sync(ensure_async(self.backend)(request))
         return self.handle_backend_response(payload, response)

@@ -22,6 +22,7 @@ AggregatorFactory = Callable[..., "MetricAggregator"]
 _OPTIONAL_BUILTIN_AGGREGATORS: tuple[tuple[str, str, str], ...] = (
     ("mme_acc_plus", "gage_eval.metrics.builtin.mme_aggregator", "MMEAccPlusAggregator"),
     ("tau2_pass_hat", "gage_eval.metrics.builtin.tau2_aggregator", "Tau2PassHatAggregator"),
+    ("forecastbench_probability_summary", "gage_eval.metrics.builtin.forecastbench_aggregator", "ForecastBenchProbabilitySummaryAggregator"),
 )
 _OPTIONAL_BUILTIN_AGGREGATORS_BY_ID: dict[str, tuple[str, str]] = {
     aggregation_id: (module_name, class_name)

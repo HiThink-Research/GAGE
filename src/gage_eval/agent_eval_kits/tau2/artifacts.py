@@ -6,6 +6,7 @@ from typing import Any, Mapping
 from gage_eval.agent_eval_kits.common import resolve_sample_artifact_target
 from gage_eval.agent_eval_kits.tau2._helpers import resolve_tau2_termination_reason
 from gage_eval.agent_runtime.serialization import to_json_compatible
+from gage_eval.reporting.privacy import SecretFilter
 
 
 def persist_tau2_artifacts(
@@ -177,6 +178,7 @@ def _coerce_optional_float(value: Any) -> float | None:
 
 
 def _write_json_artifact(session: Any, filename: str, payload: Any) -> str:
+    safe_payload = _report_safe_value(payload)
     sink = _resolve_artifact_sink(session)
     if sink is not None:
         writer = getattr(sink, "write_artifact", None)
@@ -188,7 +190,7 @@ def _write_json_artifact(session: Any, filename: str, payload: Any) -> str:
                 trial_id=_resolve_trial_id(session),
                 owner="agent",
                 name=filename,
-                content=to_json_compatible(payload),
+                content=to_json_compatible(safe_payload),
                 mime_type="application/json",
             )
             path = getattr(ref, "path", None)
@@ -197,7 +199,7 @@ def _write_json_artifact(session: Any, filename: str, payload: Any) -> str:
 
     target, relative_path = resolve_sample_artifact_target(session, filename)
     target.write_text(
-        json.dumps(to_json_compatible(payload), ensure_ascii=False, indent=2),
+        json.dumps(to_json_compatible(safe_payload), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return relative_path
@@ -225,3 +227,7 @@ def _resolve_trial_id(session: Any) -> str:
     if isinstance(scheduler_state, dict) and scheduler_state.get("trial_id"):
         return str(scheduler_state["trial_id"])
     return "trial_0001"
+
+
+def _report_safe_value(value: Any) -> Any:
+    return SecretFilter().redact(value).value

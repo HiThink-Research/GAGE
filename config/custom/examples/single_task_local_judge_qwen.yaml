@@ -78,7 +78,7 @@ datasets:
       trust_remote_code: true
     loader: hf_hub
     params:
-      preprocess: piqa_struct_only
+      preprocess: piqa_multi_choice
       streaming: false
 
 backends:

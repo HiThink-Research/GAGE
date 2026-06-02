@@ -8,7 +8,7 @@
 
 📧 **负责人邮箱:** [zhangrongjunchen@myhexin.com](mailto:zhangrongjunchen@myhexin.com)
 
-[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [智能配置简化](docs/guide/smart_defaults_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Arena Visual 控制面](docs/guide/game_arena_topics/game_arena_visual_control_zh.md) · [AgentKitV2](docs/guide/agent_evaluation_zh.md) · [External Harness](docs/guide/external_harness_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
+[框架总览](docs/guide/framework_overview_zh.md) · [Sample 契约](docs/guide/sample_zh.md) · [智能配置简化](docs/guide/smart_defaults_zh.md) · [执行感知报告](docs/guide/run_report_perception_zh.md) · [Game Arena](docs/guide/game_arena_zh.md) · [Arena Visual 控制面](docs/guide/game_arena_topics/game_arena_visual_control_zh.md) · [AgentKitV2](docs/guide/agent_evaluation_zh.md) · [External Harness](docs/guide/external_harness_zh.md) · [Benchmark](docs/guide/benchmark_zh.md) · [贡献指南](CONTRIBUTING.md) · [编码规范](AGENTS.md)
 
 </div>
 
@@ -35,7 +35,7 @@
 - **Game 与 Agent 沙箱**：Game Arena、AgentKitV2、AppWorld、SWE-bench 风格任务、GUI 交互和工具增强任务共享同一套运行与产物模型。
 - **外部 Harness 集成**：可将 task-batch benchmark 委托给 Harbor，再把 trial evidence 导入为标准 GAGE samples、metrics、reports 和 raw artifacts。
 - **可回放 GameKit 运行时**：五子棋、井字棋、斗地主、麻将、PettingZoo Space Invaders、Retro Mario、ViZDoom 都会写出结构化 arena trace 和 `arena_visual` session。
-- **运行可观测性**：运行产物包含 `summary.json`、样本输出、日志与视觉产物，便于事后排查。
+- **运行可观测性**：运行产物包含 `summary.json`、样本输出、日志、视觉产物和静态 [report pack](docs/guide/run_report_perception_zh.md)，便于事后排查。
 
 ## 设计概览
 
@@ -96,9 +96,18 @@ runs/<run_id>/
   samples.jsonl
   summary.json
   samples/
-    <task_id>/
+    <namespace>/
       <sample_id>.json
+  report_pack/
+    report.html
+    report_context.json
+    report_context.md
+    prompt.txt
+    diagnostics.json
+    assets_manifest.json
 ```
+
+打开 `runs/<run_id>/report_pack/report.html` 可以查看执行感知报告：primary metrics、key findings、scenario profiles、evidence 跳转、media 预览、diagnostics 与 reason-code 解释。详见 [执行感知链路报告](docs/guide/run_report_perception_zh.md)。
 
 ## 进阶配置
 

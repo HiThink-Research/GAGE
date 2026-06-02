@@ -607,6 +607,7 @@ def _normalize_tau2_user_model_args(
     *,
     model: Optional[str],
     model_args: Optional[dict],
+    backend_config: Optional[dict] = None,
 ) -> Optional[dict]:
     """Normalize LiteLLM user-simulator args for provider-specific routing."""
 
@@ -617,6 +618,10 @@ def _normalize_tau2_user_model_args(
         api_base = normalized.get("api_base")
         if isinstance(api_base, str) and api_base.endswith("/v1"):
             normalized["api_base"] = api_base[:-3]
+    if "custom_llm_provider" not in normalized and _needs_litellm_provider(model):
+        provider = _litellm_provider_from_backend_config(backend_config)
+        if provider:
+            normalized["custom_llm_provider"] = provider
     return normalized
 
 
@@ -630,13 +635,51 @@ def _resolve_tau2_user_simulator_runtime_config(
         config.update(override)
     model = config.get("model")
     model_args = config.get("model_args") or {}
+    backend_config = runtime_settings.get("_backend_config")
     return {
         "model": model,
         "model_args": _normalize_tau2_user_model_args(
             model=model,
             model_args=model_args,
+            backend_config=backend_config if isinstance(backend_config, dict) else None,
         ),
     }
+
+
+def _needs_litellm_provider(model: Optional[str]) -> bool:
+    if not isinstance(model, str) or not model.strip():
+        return False
+    prefix = model.split("/", 1)[0].strip().lower()
+    known_provider_prefixes = {
+        "anthropic",
+        "azure",
+        "bedrock",
+        "cohere",
+        "deepseek",
+        "gemini",
+        "groq",
+        "hosted_vllm",
+        "lm_studio",
+        "mistral",
+        "ollama",
+        "ollama_chat",
+        "openai",
+        "openrouter",
+        "together_ai",
+        "vertex_ai",
+        "xai",
+    }
+    return "/" not in model or prefix not in known_provider_prefixes
+
+
+def _litellm_provider_from_backend_config(backend_config: Optional[dict]) -> Optional[str]:
+    if not isinstance(backend_config, dict):
+        return None
+    provider = backend_config.get("custom_llm_provider") or backend_config.get("provider")
+    if not isinstance(provider, str):
+        return None
+    provider = provider.strip()
+    return provider or None
 
 
 def _filter_user_history(history: List[Any]) -> List[Any]:

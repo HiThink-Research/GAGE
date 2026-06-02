@@ -411,4 +411,4 @@ def test_describe_persistence_fields_phase1_constraints_reject_future_values(
 def test_requirements_declares_pydantic_v2_baseline() -> None:
     requirements = (Path(__file__).resolve().parents[3] / "requirements.txt").read_text(encoding="utf-8")
 
-    assert "pydantic>=2.0.0" in requirements
+    assert "pydantic>=2.12.0" in requirements

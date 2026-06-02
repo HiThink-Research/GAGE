@@ -2,24 +2,39 @@
 
 from __future__ import annotations
 
-from collections import deque
-from threading import Lock
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger as base_logger
 
 from gage_eval.observability.config import ObservabilityConfig, get_observability_config
 from gage_eval.observability.log_sink import is_log_sink_active, register_observable_trace
+from gage_eval.observability.plugins import DebugLogBuffer
 from gage_eval.observability.trace import ObservabilityTrace
 
 
 class ObservableLogger:
     """Wraps loguru so stage/sample aware logging can be sampled."""
 
-    def __init__(self, *, config: Optional[ObservabilityConfig] = None) -> None:
+    def __init__(
+        self,
+        *,
+        config: Optional[ObservabilityConfig] = None,
+        debug_buffer: DebugLogBuffer | None = None,
+    ) -> None:
         self._config_override = config
-        self._buffers: Dict[str, Deque[Dict[str, Any]]] = {}
-        self._lock = Lock()
+        self._debug_buffer = debug_buffer
+
+    @classmethod
+    def with_debug_buffer(
+        cls,
+        *,
+        config: Optional[ObservabilityConfig] = None,
+    ) -> "ObservableLogger":
+        return cls(config=config, debug_buffer=DebugLogBuffer())
+
+    @property
+    def debug_buffer(self) -> DebugLogBuffer | None:
+        return self._debug_buffer
 
     def configure(self, config: ObservabilityConfig) -> None:
         self._config_override = config
@@ -69,7 +84,8 @@ class ObservableLogger:
         }
         if extra:
             record["extra"] = extra
-        self._buffer_record(stage, record, cfg)
+        if self._debug_buffer is not None:
+            self._debug_buffer.record(stage, record, cfg)
 
         if emit_to_logger:
             bind_kwargs = {
@@ -83,30 +99,6 @@ class ObservableLogger:
                     register_observable_trace(trace)
             bound = base_logger.bind(**bind_kwargs)
             (bound or base_logger).log(level, templated, *args, **fmt_kwargs)
-        if trace and cfg.enabled and not is_log_sink_active():
-            trace.emit("log", {"stage": stage, "message": formatted, "level": level}, sample_id=sample_id)
-
-    def drain_buffer(self, stage: Optional[str] = None) -> List[Dict[str, Any]]:
-        with self._lock:
-            if stage:
-                buf = self._buffers.pop(stage, None)
-                return list(buf) if buf else []
-            records: List[Dict[str, Any]] = []
-            for buf in self._buffers.values():
-                records.extend(list(buf))
-            self._buffers.clear()
-            return records
-
-    def _buffer_record(self, stage: str, record: Dict[str, Any], cfg: ObservabilityConfig) -> None:
-        size = cfg.buffer_size_for(stage)
-        if size <= 0:
-            return
-        with self._lock:
-            buffer = self._buffers.get(stage)
-            if buffer is None or buffer.maxlen != size:
-                buffer = deque(maxlen=size)
-                self._buffers[stage] = buffer
-            buffer.append(record)
 
     def _current_config(self) -> ObservabilityConfig:
         return self._config_override or get_observability_config()

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.sample_envelope import resolve_selected_predict_result
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import AttentionCase, SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -20,23 +21,55 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
 class GomokuSummaryGenerator(SummaryGenerator):
     """Generate aggregate summary metrics for Gomoku runs."""
 
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
+    def generate(self, context: Any) -> SummaryGeneratorResult | None:
         """Build Gomoku summary statistics from cached samples.
 
         Args:
-            cache: EvalCache storing sample payloads.
+            context: Report context mapping with sample records.
 
         Returns:
-            Summary payload with Gomoku statistics or None if no Gomoku samples are found.
+            Summary result with Gomoku statistics or None if no Gomoku samples are found.
         """
 
-        summary = _build_gomoku_summary(cache)
+        records = records_from_context(context)
+        summary = _build_gomoku_summary(records)
         if not summary:
             return None
-        return {"gomoku_summary": summary}
+        attention_cases: list[AttentionCase] = []
+        if summary["overall"].get("illegal_games", 0) > 0:
+            first_sample_id = _first_matching_sample_id(records)
+            attention_cases.append(
+                AttentionCase.from_dict(
+                    {
+                        "case_id": f"gomoku/{first_sample_id or 'illegal-action'}",
+                        "severity": "medium",
+                        "reason_codes": ["game.illegal_action"],
+                        "summary": "Gomoku run contains illegal actions.",
+                        "evidence_ref_ids": [],
+                        "sample_id": first_sample_id,
+                        "scoring": {
+                            "frequency": summary["overall"]["illegal_games"]
+                            / max(1, summary["overall"]["total"]),
+                            "impact": "medium",
+                            "actionability": "high",
+                            "priority_score": 0.63,
+                        },
+                    }
+                )
+            )
+        return SummaryGeneratorResult(
+            generator_id="gomoku_summary",
+            summary_sections=[
+                section("overview", "Gomoku Summary", generator_id="gomoku_summary")
+            ],
+            attention_cases=attention_cases,
+            legacy_payload={"gomoku_summary": summary},
+        )
 
 
-def _build_gomoku_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
+def _build_gomoku_summary(
+    records: Iterable[dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     total = 0
     wins: Dict[str, int] = {}
     draws = 0
@@ -45,23 +78,34 @@ def _build_gomoku_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     total_illegal_moves = 0
     result_counts: Dict[str, int] = {}
 
-    for record in cache.iter_samples():
+    for record in records:
         if not isinstance(record, dict):
             continue
-        sample = record.get("sample") if isinstance(record.get("sample"), dict) else None
+        sample = (
+            record.get("sample") if isinstance(record.get("sample"), dict) else None
+        )
         if not sample:
             continue
-        model_output = record.get("model_output") if isinstance(record.get("model_output"), dict) else {}
-        judge_output = record.get("judge_output") if isinstance(record.get("judge_output"), dict) else {}
+        raw_model_output = record.get("model_output")
+        model_output: dict[str, Any] = (
+            raw_model_output if isinstance(raw_model_output, dict) else {}
+        )
+        raw_judge_output = record.get("judge_output")
+        judge_output: dict[str, Any] = (
+            raw_judge_output if isinstance(raw_judge_output, dict) else {}
+        )
 
         if not _is_gomoku_sample(sample, model_output, judge_output):
             continue
 
         total += 1
-        metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+        raw_metadata = sample.get("metadata")
+        metadata: dict[str, Any] = (
+            raw_metadata if isinstance(raw_metadata, dict) else {}
+        )
         for player_id in _extract_player_ids(metadata):
             wins.setdefault(player_id, 0)
-        source = judge_output or model_output
+        source = _result_source(judge_output, model_output)
         winner = source.get("winner")
         result = source.get("result")
         move_count = _to_int(source.get("move_count"))
@@ -100,18 +144,45 @@ def _build_gomoku_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     }
 
 
-def _is_gomoku_sample(sample: Dict[str, Any], model_output: Dict[str, Any], judge_output: Dict[str, Any]) -> bool:
+def _first_matching_sample_id(records: Iterable[dict[str, Any]]) -> str | None:
+    for record in records:
+        sample = record.get("sample") if isinstance(record, dict) else None
+        if isinstance(sample, dict):
+            return str(sample.get("id") or record.get("sample_id") or "sample")
+    return None
+
+
+def _result_source(
+    judge_output: Dict[str, Any], model_output: Dict[str, Any]
+) -> Dict[str, Any]:
+    for payload in (judge_output, model_output):
+        if not isinstance(payload, dict) or not payload:
+            continue
+        nested_result = payload.get("result")
+        if isinstance(nested_result, dict):
+            return nested_result
+        return payload
+    return {}
+
+
+def _is_gomoku_sample(
+    sample: Dict[str, Any], model_output: Dict[str, Any], judge_output: Dict[str, Any]
+) -> bool:
     for key in ("_dataset_id", "_gage_dataset_id"):
         dataset_id = sample.get(key)
         if isinstance(dataset_id, str) and "gomoku" in dataset_id.lower():
             return True
 
-    metadata = sample.get("metadata") if isinstance(sample.get("metadata"), dict) else {}
+    raw_metadata = sample.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
     if _is_gomoku_marker(metadata.get("game")):
         return True
     if _is_gomoku_marker(metadata.get("game_type")):
         return True
-    game_arena = metadata.get("game_arena") if isinstance(metadata.get("game_arena"), dict) else {}
+    raw_game_arena = metadata.get("game_arena")
+    game_arena: dict[str, Any] = (
+        raw_game_arena if isinstance(raw_game_arena, dict) else {}
+    )
     if _is_gomoku_marker(game_arena.get("game_kit")):
         return True
 
@@ -130,7 +201,9 @@ def _payload_marks_gomoku(payload: Dict[str, Any]) -> bool:
     if not isinstance(payload, dict):
         return False
     nested_sample = payload.get("sample")
-    if isinstance(nested_sample, dict) and _is_gomoku_marker(nested_sample.get("game_kit")):
+    if isinstance(nested_sample, dict) and _is_gomoku_marker(
+        nested_sample.get("game_kit")
+    ):
         return True
     header = payload.get("header")
     if isinstance(header, dict) and _is_gomoku_marker(header.get("game_kit")):

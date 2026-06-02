@@ -504,3 +504,63 @@ python GAGE/run.py \
   --output-dir ./gage_runs/final_test \
   --run-id inverse_ifeval
 ```
+
+### ForecastBench（静态）
+
+ForecastBench 用于评估模型对已结算市场的概率预测能力。GAGE 中的
+`forecastbench` loader 按 `id` 连接 `question_set` 和 `resolution_set` JSON，
+`forecastbench_static` 构造模型 prompt，`forecastbench_probability` 系列指标输出
+静态 Brier 风格分数。当前配置面向已结算的 Polymarket market questions，不等价于
+ForecastBench 官方 leaderboard 评分。
+
+#### Pre-Execution（预执行）
+
+使用真实数据时，先下载 ForecastBench 数据集，并指向一组匹配的 question set 和
+resolution set：
+
+```bash
+export FORECASTBENCH_QUESTION_SET_PATH=<FORECASTBENCH_DATA_DIR>/datasets/question_sets/<DATE>-llm.json
+export FORECASTBENCH_RESOLUTION_SET_PATH=<FORECASTBENCH_DATA_DIR>/datasets/resolution_sets/<DATE>_resolution_set.json
+export FORECASTBENCH_API_BASE=<OPENAI_COMPATIBLE_API_BASE>
+export FORECASTBENCH_MODEL=<LITELLM_MODEL_ID>
+export FORECASTBENCH_API_KEY=<API_KEY>
+```
+
+smoke 配置默认使用 `tests/fixtures/forecastbench/` 下的仓库内样例。
+
+#### 执行命令（smoke）
+
+```bash
+export PYTHONPATH=src
+export PYTHONIOENCODING=utf-8
+export PYTHONUTF8=1
+
+export FORECASTBENCH_API_BASE=<OPENAI_COMPATIBLE_API_BASE>
+export FORECASTBENCH_MODEL=<LITELLM_MODEL_ID>
+export FORECASTBENCH_API_KEY=<API_KEY>
+
+python run.py \
+  --config config/custom/forecastbench/polymarket_static_smoke.yaml \
+  --output-dir ./gage_runs/forecastbench_smoke \
+  --run-id forecastbench_smoke
+```
+
+真实数据全量运行使用：
+
+```bash
+python run.py \
+  --config config/custom/forecastbench/polymarket_static_full.yaml \
+  --output-dir ./gage_runs/forecastbench_<MODEL_ALIAS>_<DATE> \
+  --run-id forecastbench_<MODEL_ALIAS>_<DATE>
+```
+
+#### Detailed Configuration（详细配置）
+
+| 参数 | 描述 | 支持的取值 |
+| --- | --- | --- |
+| **`question_set_path`** | ForecastBench question set JSON。 | `FORECASTBENCH_QUESTION_SET_PATH` 或有效文件路径 |
+| **`resolution_set_path`** | 匹配的 ForecastBench resolution set JSON。 | `FORECASTBENCH_RESOLUTION_SET_PATH` 或有效文件路径 |
+| **`source_filter`** | 本次运行包含的数据来源。 | 默认 `polymarket` |
+| **`resolved_only`** | 只保留已结算样本做静态评分。 | 默认 `true` |
+| **`include_market_baseline_in_prompt`** | 是否把冻结时市场价格写入 prompt。 | 默认 `true` |
+| **模型输出** | 从 `*0.42*`、JSON 或纯数字中解析概率。 | clamp 到 `[0, 1]`；解析失败计入 `parse_error` |

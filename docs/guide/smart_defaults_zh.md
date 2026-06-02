@@ -270,6 +270,11 @@ backends:
       api_key: local
 ```
 
+LiteLLM model 命名支持两种形式：
+
+- provider 前缀写进 model，例如 `openai/gpt-4.1` 或 `lm_studio/qwen/qwen3.5-9b`，用于 LiteLLM 需要从 model 字符串解析 provider 的场景。
+- model 保持服务端真实名，例如 `qwen/qwen3.5-9b`，但必须显式设置 `provider` 或 `custom_llm_provider`。本地 OpenAI-compatible endpoint 应使用 `provider: openai`，并把地址写进 `api_base`；不要使用 `provider: openai_compatible`。
+
 Backend 智能推断保持保守，不会自动推断容量、token 预算、采样参数或模型特定生成参数。运行依赖这些字段时，需要显式声明：
 
 | 字段类型 | 不会被推断的示例 |

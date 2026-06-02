@@ -438,3 +438,65 @@ python GAGE/run.py \
   --output-dir ./gage_runs/final_test \
   --run-id inverse_ifeval
 ```
+
+### ForecastBench (static)
+
+ForecastBench evaluates probabilistic forecasting on resolved markets. In GAGE,
+the `forecastbench` loader joins `question_set` and `resolution_set` JSON files
+by `id`, `forecastbench_static` builds model prompts, and the
+`forecastbench_probability` metrics report static Brier-style scores. The
+current configs target resolved Polymarket market questions; they do not
+reproduce the official ForecastBench leaderboard scoring.
+
+#### Pre-Execution
+
+For real data, download the ForecastBench dataset and point the run at a
+matching question set and resolution set:
+
+```bash
+export FORECASTBENCH_QUESTION_SET_PATH=<FORECASTBENCH_DATA_DIR>/datasets/question_sets/<DATE>-llm.json
+export FORECASTBENCH_RESOLUTION_SET_PATH=<FORECASTBENCH_DATA_DIR>/datasets/resolution_sets/<DATE>_resolution_set.json
+export FORECASTBENCH_API_BASE=<OPENAI_COMPATIBLE_API_BASE>
+export FORECASTBENCH_MODEL=<LITELLM_MODEL_ID>
+export FORECASTBENCH_API_KEY=<API_KEY>
+```
+
+The smoke configuration uses the bundled fixtures under
+`tests/fixtures/forecastbench/`.
+
+#### Execution Command
+
+```bash
+export PYTHONPATH=src
+export PYTHONIOENCODING=utf-8
+export PYTHONUTF8=1
+
+export FORECASTBENCH_API_BASE=<OPENAI_COMPATIBLE_API_BASE>
+export FORECASTBENCH_MODEL=<LITELLM_MODEL_ID>
+export FORECASTBENCH_API_KEY=<API_KEY>
+
+python run.py \
+  --config config/custom/forecastbench/polymarket_static_smoke.yaml \
+  --output-dir ./gage_runs/forecastbench_smoke \
+  --run-id forecastbench_smoke
+```
+
+For a full run with real data, use:
+
+```bash
+python run.py \
+  --config config/custom/forecastbench/polymarket_static_full.yaml \
+  --output-dir ./gage_runs/forecastbench_<MODEL_ALIAS>_<DATE> \
+  --run-id forecastbench_<MODEL_ALIAS>_<DATE>
+```
+
+#### Detailed Configuration
+
+| Parameter | Description | Supported Values |
+| --- | --- | --- |
+| **`question_set_path`** | ForecastBench question set JSON. | `FORECASTBENCH_QUESTION_SET_PATH` or a valid file path |
+| **`resolution_set_path`** | Matching ForecastBench resolution set JSON. | `FORECASTBENCH_RESOLUTION_SET_PATH` or a valid file path |
+| **`source_filter`** | Source subset included in the run. | Default: `polymarket` |
+| **`resolved_only`** | Keep only resolved rows for static scoring. | Default: `true` |
+| **`include_market_baseline_in_prompt`** | Include the freeze-time market baseline in the prompt. | Default: `true` |
+| **model output** | Probability parsed from `*0.42*`, JSON, or a plain number. | Clamped to `[0, 1]`; parse failures count as `parse_error` |

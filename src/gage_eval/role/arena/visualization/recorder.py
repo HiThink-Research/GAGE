@@ -29,6 +29,7 @@ from gage_eval.role.arena.visualization.contracts import (
     VisualSession,
     ControlCommand,
 )
+from gage_eval.reporting.privacy import SecretFilter
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,8 +527,9 @@ class ArenaVisualSessionRecorder:
                     "anchor": True,
                     "body": snapshot.get("snapshot"),
                 }
+                safe_snapshot_payload = _report_safe_value(snapshot_payload)
                 snapshot_path.write_text(
-                    json.dumps(snapshot_payload, ensure_ascii=False, indent=2, default=str),
+                    json.dumps(safe_snapshot_payload, ensure_ascii=False, indent=2, default=str),
                     encoding="utf-8",
                 )
                 snapshot_anchors.append(
@@ -550,7 +552,7 @@ class ArenaVisualSessionRecorder:
             timeline_path = layout.timeline_path
             timeline_path.write_text(
                 "".join(
-                    json.dumps(event.to_dict(), ensure_ascii=False, default=str) + "\n"
+                    json.dumps(_report_safe_value(event.to_dict()), ensure_ascii=False, default=str) + "\n"
                     for event in self._events
                 ),
                 encoding="utf-8",
@@ -565,31 +567,31 @@ class ArenaVisualSessionRecorder:
                 marker_index={key: tuple(value) for key, value in self._marker_index.items()},
                 result=self._latest_result,
             )
+            safe_manifest_payload = _report_safe_value(manifest_payload)
+            safe_index_payload = _report_safe_value(index_payload)
             layout.manifest_path.write_text(
-                json.dumps(manifest_payload, ensure_ascii=False, indent=2, default=str),
+                json.dumps(safe_manifest_payload, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
             layout.index_path.write_text(
-                json.dumps(index_payload, ensure_ascii=False, indent=2, default=str),
+                json.dumps(safe_index_payload, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
+            seek_snapshot_payload = _report_safe_value(
+                {
+                    "schema": "arena_visual_session/v1",
+                    "version": "1.0.0",
+                    "seekSnapshots": [
+                        {
+                            **record.to_dict(),
+                            "snapshotRef": layout.relative_ref(Path(record.snapshot_ref)),
+                        }
+                        for record in seek_snapshots
+                    ],
+                }
+            )
             layout.seek_snapshots_path.write_text(
-                json.dumps(
-                    {
-                        "schema": "arena_visual_session/v1",
-                        "version": "1.0.0",
-                        "seekSnapshots": [
-                            {
-                                **record.to_dict(),
-                                "snapshotRef": layout.relative_ref(Path(record.snapshot_ref)),
-                            }
-                            for record in seek_snapshots
-                        ],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                    default=str,
-                ),
+                json.dumps(seek_snapshot_payload, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
             persisted_session = VisualSession.from_dict(manifest_payload["visualSession"])
@@ -890,6 +892,10 @@ class ArenaVisualSessionRecorder:
         else:
             manifest["snapshotAnchors"] = []
         return manifest
+
+
+def _report_safe_value(value: Any) -> Any:
+    return SecretFilter().redact(value).value
 
 
 def _now_ms() -> int:

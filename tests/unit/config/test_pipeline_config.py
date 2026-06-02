@@ -116,3 +116,17 @@ def test_pipeline_config_allows_static_configs_without_environments() -> None:
     )
 
     assert config.environments == ()
+
+
+@pytest.mark.fast
+def test_pipeline_config_exposes_root_reporting_config() -> None:
+    config = PipelineConfig.from_dict(
+        {
+            "datasets": [{"dataset_id": "d1", "loader": "dummy"}],
+            "role_adapters": [{"adapter_id": "dut", "role_type": "dut_model"}],
+            "custom": {"steps": [{"step": "inference", "adapter_id": "dut"}]},
+            "reporting": {"report_pack": {"enabled": False}},
+        }
+    )
+
+    assert config.reporting == {"report_pack": {"enabled": False}}

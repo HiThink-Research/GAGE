@@ -20,15 +20,6 @@ class ClaudeBackendConfig(BackendConfigBase):
     default_system: Optional[str] = Field(default=None, description="默认 system prompt")
 
 
-class GeminiBackendConfig(BackendConfigBase):
-    model: str = Field(default="gemini-1.5-pro", description="Gemini 模型版本")
-    api_key: Optional[str] = Field(default=None, description="Google API Key（未提供时读取 GOOGLE_API_KEY）")
-    safety_settings: Dict[str, str] = Field(default_factory=dict, description="安全策略覆盖")
-    generation_parameters: GenerationParameters = Field(
-        default_factory=GenerationParameters, description="默认采样参数"
-    )
-
-
 class OpenAIBatchBackendConfig(BackendConfigBase):
     model: str = Field(default="gpt-4o-mini", description="OpenAI 模型名")
     api_key: Optional[str] = Field(default=None, description="OpenAI API Key（或使用 OPENAI_API_KEY）")

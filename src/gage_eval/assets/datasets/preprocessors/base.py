@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import random
 import time
@@ -10,11 +11,9 @@ from typing import Any, Dict, Optional, Sequence
 
 from loguru import logger
 
-from gage_eval.assets.datasets.utils.multimodal import merge_multimodal_inputs
-from gage_eval.assets.datasets.utils.normalization import normalize_sample, ensure_chat_template_flags
 from gage_eval.assets.datasets.validation import validate_sample_schema
 from gage_eval.observability.config import get_observability_config
-from gage_eval.assets.datasets.sample import Sample, Message, MessageContent, sample_from_dict
+from gage_eval.assets.datasets.sample import Sample, sample_from_dict
 
 _DOC_TO_KEYS = ("doc_to_text", "doc_to_visual", "doc_to_audio")
 
@@ -59,7 +58,7 @@ class BasePreprocessor(DatasetPreprocessor):
         self.ensure_inputs_dict = ensure_inputs_dict
         self.roles_to_remove = tuple(roles_to_remove) if roles_to_remove else ()
 
-    def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:  # pragma: no cover - abstract
+    def to_sample(self, record: Dict[str, Any], **kwargs: Any) -> Sample | Dict[str, Any] | None:  # pragma: no cover - abstract
         raise NotImplementedError
 
     def transform(self, sample: Dict[str, Any], **kwargs: Any) -> Any:
@@ -75,8 +74,9 @@ class BasePreprocessor(DatasetPreprocessor):
         sample_id_hint = str(sample.get("id") or sample.get("_dataset_id") or "unknown")
         emit_trace = bool(trace and cfg and cfg.enabled and cfg.should_sample("preprocess", sample_id=sample_id_hint))
         start_time: Optional[float] = time.perf_counter() if emit_trace else None
-        if emit_trace:
-            trace.emit(
+        trace_obj = trace if emit_trace else None
+        if trace_obj is not None:
+            trace_obj.emit(
                 "preprocess_start",
                 {"id": sample_id_hint, "keys": list(sample.keys()), "dataset_id": sample.get("_dataset_id")},
                 sample_id=sample_id_hint,
@@ -87,6 +87,8 @@ class BasePreprocessor(DatasetPreprocessor):
             # STEP 1: Optionally strip specific message roles for clean evaluation inputs.
             if self.roles_to_remove:
                 _strip_roles(sample, roles_to_remove=self.roles_to_remove)
+            if any(doc_to_hooks.values()):
+                self._apply_doc_to(sample, **doc_to_hooks)
             # STEP 2: Let the dataset-specific preprocessor structure the record.
             structured_sample = self.to_sample(sample, **to_sample_kwargs)
 
@@ -96,18 +98,28 @@ class BasePreprocessor(DatasetPreprocessor):
 
             # Auto-convert dict to Sample if needed
             if isinstance(structured_sample, dict):
-                structured_sample = sample_from_dict(structured_sample)
+                sample_obj = sample_from_dict(structured_sample)
+            else:
+                sample_obj = structured_sample
+
+            dataset_id = sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown"
+            if not getattr(sample_obj, "id", None):
+                sample_obj.id = _fallback_sample_id(sample, dataset_id=str(dataset_id))
+                logger.warning(
+                    "Preprocessor {} generated fallback sample id {} for dataset {} because the structured sample had no id",
+                    self.__class__.__name__,
+                    sample_obj.id,
+                    dataset_id,
+                )
 
             # STEP 3: Validate the sample schema early to fail fast.
-            validate_sample_schema(structured_sample)
+            validate_sample_schema(sample_obj)
             # STEP 4: Merge multimodal inputs and de-duplicate referenced assets.
             # merge_multimodal_inputs(sample)
 
-            dataset_id = sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown"
-            dataset_meta = sample.get("_dataset_metadata") or kwargs.get("dataset_metadata") or {}
-            if emit_trace:
-                msgs = structured_sample.messages or []
-                trace.emit(
+            if trace_obj is not None:
+                msgs = sample_obj.messages or []
+                trace_obj.emit(
                     "preprocess_structured",
                     {
                         "msg_count": len(msgs) if isinstance(msgs, list) else 0,
@@ -115,7 +127,7 @@ class BasePreprocessor(DatasetPreprocessor):
                     sample_id=sample_id_hint,
                 )
                 cost_ms = (time.perf_counter() - start_time) * 1000 if start_time else 0.0
-                trace.emit(
+                trace_obj.emit(
                     "preprocess_done",
                     {"id": sample.get("id") or sample_id_hint, "cost_ms": cost_ms},
                     sample_id=sample_id_hint,
@@ -127,13 +139,13 @@ class BasePreprocessor(DatasetPreprocessor):
                         "sample_id": sample.get("id") or sample_id_hint,
                         "stage": "done",
                         "pre": pre_snapshot,
-                        "post": _snapshot(structured_sample),
+                        "post": _snapshot(sample_obj),
                     },
                 )
-            return structured_sample
+            return sample_obj
         except Exception as exc:
-            if emit_trace:
-                trace.emit(
+            if trace_obj is not None:
+                trace_obj.emit(
                     "preprocess_error",
                     {
                         "id": sample_id_hint,
@@ -155,6 +167,13 @@ class BasePreprocessor(DatasetPreprocessor):
                 )
             if is_debug or self.on_error == "raise":
                 raise
+            logger.warning(
+                "Preprocess skipped sample id={} dataset_id={} preprocessor={} error={}",
+                sample_id_hint,
+                sample.get("_dataset_id") or kwargs.get("dataset_id") or "unknown",
+                self.__class__.__name__,
+                repr(exc),
+            )
             meta = sample.get("metadata") or {}
             meta["preprocess_error"] = str(exc)
             sample["metadata"] = meta
@@ -168,7 +187,8 @@ class BasePreprocessor(DatasetPreprocessor):
         doc_to_visual: Optional[Any],
         doc_to_audio: Optional[Any],
     ) -> None:
-        inputs_val = sample.get("inputs") if isinstance(sample.get("inputs"), dict) else {}
+        raw_inputs = sample.get("inputs")
+        inputs_val: dict[str, Any] = raw_inputs if isinstance(raw_inputs, dict) else {}
         has_inputs = bool(inputs_val)
         has_messages = isinstance(sample.get("messages"), list) and bool(sample["messages"])
         has_multi_modal = bool(inputs_val.get("multi_modal_data"))
@@ -228,6 +248,18 @@ def _snapshot(obj: Dict[str, Any]) -> Dict[str, Any]:
         return json.loads(json.dumps(obj, default=str))
     except Exception:
         return {}
+
+
+def _fallback_sample_id(record: Dict[str, Any], *, dataset_id: str) -> str:
+    payload = {
+        key: value
+        for key, value in record.items()
+        if key not in {"_dataset_metadata"}
+    }
+    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+    prefix = str(dataset_id or "unknown").strip() or "unknown"
+    return f"{prefix}:{digest}"
 
 
 def _append_debug_record(path: str, payload: Dict[str, Any]) -> None:

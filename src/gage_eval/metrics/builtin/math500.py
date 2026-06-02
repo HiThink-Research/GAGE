@@ -40,6 +40,7 @@ _LATEX_MATH_PATTERN = re.compile(
     r"\\(?:\(|\[|left\s*\(|begin\{equation\})\s*([^\)\]}]+)\s*\\(?:\)|\]|right\)|end\{equation\})",
     re.DOTALL | re.IGNORECASE
 )
+_INLINE_MATH_PATTERN = re.compile(r"(?<!\\)\$(?!\$)(.+?)(?<!\\)\$(?!\$)", re.DOTALL)
 # Pattern to match "the answer is" or similar phrases
 _ANSWER_PHRASE_PATTERN = re.compile(
     r"(?:the\s+)?(?:answer|result|solution|final\s+answer|coordinates?|are|is)\s+[:\-]?\s*([^\n\.]+)",
@@ -84,7 +85,9 @@ def _extract_answer_from_text(text: str) -> Optional[str]:
     
     def _clean_candidate(c: str) -> Optional[str]:
         """Clean and validate candidate answer."""
-        c = re.sub(r'[\.\,\;\:]+$', '', c.strip())
+        c = re.sub(r'[\.\,\;\:]+$', '', c.strip()).strip()
+        if c.startswith("$") and c.endswith("$"):
+            c = c[1:-1].strip()
         return c if c and len(c) < 500 else None
     
     # Strategy 1: Extract \left(...\right) with balanced parentheses
@@ -107,14 +110,7 @@ def _extract_answer_from_text(text: str) -> Optional[str]:
                         # Return the full expression including \left( and \right)
                         return text[left_match.start():right_match.end()].strip()
     
-    # Strategy 2: Coordinate pattern
-    coord_match = _COORDINATE_PATTERN.search(text)
-    if coord_match:
-        candidate = _clean_candidate(coord_match.group(1))
-        if candidate:
-            return candidate
-    
-    # Strategy 3: Answer phrases
+    # Strategy 2: Answer phrases
     answer_matches = _ANSWER_PHRASE_PATTERN.findall(text)
     if answer_matches:
         candidate = _clean_candidate(re.sub(r"^(?:is|are|equals?|=\s*)", "", 
@@ -122,21 +118,36 @@ def _extract_answer_from_text(text: str) -> Optional[str]:
         if candidate:
             return candidate
     
-    # Strategy 4: LaTeX math expressions
+    # Strategy 3: Inline math expressions. Use the last one because worked solutions
+    # often repeat the original problem values before the final answer.
+    inline_math_matches = _INLINE_MATH_PATTERN.findall(text)
+    if inline_math_matches:
+        candidate = _clean_candidate(inline_math_matches[-1])
+        if candidate:
+            return candidate
+
+    # Strategy 4: Coordinate pattern
+    coord_matches = _COORDINATE_PATTERN.findall(text)
+    if coord_matches:
+        candidate = _clean_candidate(coord_matches[-1])
+        if candidate:
+            return candidate
+
+    # Strategy 5: LaTeX math expressions
     latex_matches = _LATEX_MATH_PATTERN.findall(text)
     if latex_matches:
         candidate = _clean_candidate(latex_matches[-1])
         if candidate:
             return candidate
     
-    # Strategy 5: Equals pattern
+    # Strategy 6: Equals pattern
     equals_matches = _EQUALS_PATTERN.findall(text)
     if equals_matches:
         candidate = _clean_candidate(equals_matches[-1])
         if candidate:
             return candidate
     
-    # Strategy 6: If text is a pure LaTeX expression (starts with \ and contains LaTeX commands)
+    # Strategy 7: If text is a pure LaTeX expression (starts with \ and contains LaTeX commands)
     text_stripped = text.strip()
     if text_stripped.startswith('\\') and any(cmd in text_stripped for cmd in ['\\left', '\\frac', '\\boxed', '\\sqrt', '\\pi', '\\alpha', '\\beta']):
         candidate = _clean_candidate(text_stripped)
@@ -595,12 +606,6 @@ class Math500AccuracyMetric(SimpleMetric):
                 "reference": references[0] if references else None,
                 "grading_method": grading_method,
             },
-        )
-
-        return MetricResult(
-            sample_id=context.sample_id,
-            values={self.value_key: score},
-            metadata=metadata,
         )
 
 

@@ -26,7 +26,6 @@ from gage_eval.role.model.config import (
     HFInferenceEndpointBackendConfig,
     DummyBackendConfig,
     ClaudeBackendConfig,
-    GeminiBackendConfig,
     OpenAIBatchBackendConfig,
 )
 
@@ -58,7 +57,6 @@ _BACKEND_CONFIG_SCHEMAS: Dict[str, Type[BackendConfigBase]] = {
     # Misc
     "dummy": DummyBackendConfig,
     "claude_http": ClaudeBackendConfig,
-    "gemini_http": GeminiBackendConfig,
     "openai_batch_http": OpenAIBatchBackendConfig,
 }
 

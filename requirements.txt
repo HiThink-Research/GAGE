@@ -3,8 +3,9 @@ loguru>=0.7.2
 numpy>=1.24.0
 requests>=2.31.0
 PyYAML>=6.0
+types-PyYAML>=6.0.12.20260518
 jinja2>=3.1.0
-pydantic>=2.0.0
+pydantic>=2.12.0
 jsonschema>=4.22.0
 typer>=0.12.3
 
@@ -14,17 +15,26 @@ huggingface_hub>=0.23.0
 modelscope>=1.13.0
 
 # Remote model backends
-openai>=1.6.0
-litellm>=1.36.0
+openai>=2.20.0
+litellm==1.83.14
 anthropic>=0.26.0
-google-generativeai>=0.5.0
 mcp>=1.19.0
 
 # Local model and multimodal backends
-torch>=2.0.0
+# Linux GPU baseline for A800 with NVIDIA driver 550.54.15 / CUDA 12.9.
+# Keep these pins aligned: generic PyPI vLLM wheels may pull CUDA 13 or a
+# non-cu129 vLLM build, which fails on this driver.
+--extra-index-url https://download.pytorch.org/whl/cu129
+--extra-index-url https://flashinfer.ai/whl/cu129
+torch==2.11.0+cu129
+torchvision==0.26.0+cu129
+torchaudio==2.11.0+cu129
+flashinfer-python==0.6.8.post1
+flashinfer-cubin==0.6.8.post1
+flashinfer-jit-cache==0.6.8.post1+cu129
 transformers>=4.36.0
 accelerate>=0.29.0
-vllm>=0.4.0
+vllm @ https://github.com/vllm-project/vllm/releases/download/v0.20.2/vllm-0.20.2%2Bcu129-cp38-abi3-manylinux_2_31_x86_64.whl
 FlagEmbedding>=1.2.7
 faiss-cpu>=1.7.4
 faster-whisper>=0.10.0

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.evaluation.sample_envelope import resolve_selected_predict_result
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import OutlierGroup, SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -20,14 +21,35 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
 class ArenaSummaryGenerator(SummaryGenerator):
     """Builds arena aggregate summaries from cached samples."""
 
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
-        summary = _build_arena_summary(cache)
+    def generate(self, context: Any) -> SummaryGeneratorResult | None:
+        summary = _build_arena_summary(records_from_context(context))
         if not summary:
             return None
-        return {"arena_summary": summary}
+        outliers: list[OutlierGroup] = []
+        avg_steps = summary.get("overall", {}).get("avg_episode_length_steps")
+        if avg_steps:
+            outliers.append(
+                OutlierGroup.from_dict(
+                    {
+                        "metric_id": "arena.avg_episode_length_steps",
+                        "scope": "section",
+                        "section_id": "overview",
+                        "ranking": "high",
+                        "top_k": [{"sample_id": "overall", "value": avg_steps}],
+                    }
+                )
+            )
+        return SummaryGeneratorResult(
+            generator_id="arena_summary",
+            summary_sections=[
+                section("overview", "Arena Summary", generator_id="arena_summary")
+            ],
+            outliers=outliers,
+            legacy_payload={"arena_summary": summary},
+        )
 
 
-def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
+def _build_arena_summary(records: Iterable[dict[str, Any]]) -> Optional[Dict[str, Any]]:
     sample_count = 0
     duration_sum = 0.0
     duration_count = 0
@@ -40,7 +62,7 @@ def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     illegal_reason_counts: Dict[str, int] = {}
     top1_counts: Dict[str, int] = {}
 
-    for record in cache.iter_samples():
+    for record in records:
         sample = record.get("sample") if isinstance(record, Mapping) else None
         if not isinstance(sample, Mapping):
             continue
@@ -72,13 +94,21 @@ def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
         termination_reason = footer.get("termination_reason")
         if termination_reason not in (None, ""):
             reason_key = str(termination_reason)
-            termination_reason_counts[reason_key] = termination_reason_counts.get(reason_key, 0) + 1
+            termination_reason_counts[reason_key] = (
+                termination_reason_counts.get(reason_key, 0) + 1
+            )
 
         for reason_key, reason_count in _illegal_reason_distribution(entry).items():
-            illegal_reason_counts[reason_key] = illegal_reason_counts.get(reason_key, 0) + reason_count
+            illegal_reason_counts[reason_key] = (
+                illegal_reason_counts.get(reason_key, 0) + reason_count
+            )
 
         ranks = footer.get("ranks")
-        if isinstance(ranks, Sequence) and not isinstance(ranks, (str, bytes)) and ranks:
+        if (
+            isinstance(ranks, Sequence)
+            and not isinstance(ranks, (str, bytes))
+            and ranks
+        ):
             top_player = ranks[0]
             if isinstance(top_player, Mapping):
                 top_player = top_player.get("player_id")
@@ -92,7 +122,9 @@ def _build_arena_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
     return {
         "overall": {
             "samples": sample_count,
-            "avg_episode_duration_ms": (duration_sum / duration_count) if duration_count else 0.0,
+            "avg_episode_duration_ms": (duration_sum / duration_count)
+            if duration_count
+            else 0.0,
             "avg_episode_length_steps": (step_sum / step_count) if step_count else 0.0,
             "draw_rate": draw_count / float(sample_count),
         },
@@ -107,7 +139,9 @@ def _arena_entry(sample: Mapping[str, Any]) -> Mapping[str, Any]:
     return resolve_selected_predict_result(sample, domain="arena")
 
 
-def _duration_ms(sample: Mapping[str, Any], footer: Mapping[str, Any]) -> Optional[float]:
+def _duration_ms(
+    sample: Mapping[str, Any], footer: Mapping[str, Any]
+) -> Optional[float]:
     metadata = sample.get("metadata")
     if not isinstance(metadata, Mapping):
         return None

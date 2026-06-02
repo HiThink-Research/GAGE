@@ -2,19 +2,57 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import asyncio
+import inspect
 import json
 import os
-import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from collections.abc import Mapping
+from typing import Any, Dict, List, Tuple
 
 from loguru import logger
 
 from gage_eval.role.model.backends.base_backend import EngineBackend
-from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
+from gage_eval.role.model.backends.litellm.credential_resolver import ProviderCredentialResolver
+from gage_eval.role.model.backends.litellm.errors import (
+    DEPENDENCY_UNAVAILABLE,
+    LiteLLMBackendError,
+    status_code_from_error,
+)
+from gage_eval.role.model.backends.litellm.message_normalizer import MultimodalMessageNormalizer
+from gage_eval.role.model.backends.litellm.model_server_lifecycle import ModelServerLifecycle
+from gage_eval.role.model.backends.litellm.policies import ThinkingControlPolicy, ToolCallPolicy
+from gage_eval.role.model.backends.litellm.provider_detection import (
+    infer_provider_from_model,
+    is_default_local_litellm_gateway,
+    is_explicit_litellm_gateway,
+    looks_like_azure,
+    looks_like_deepseek,
+    looks_like_grok,
+    looks_like_kimi,
+    normalize_custom_provider,
+)
+from gage_eval.role.model.backends.litellm.request_builder import LiteLLMRequestBuilder
+from gage_eval.role.model.backends.litellm.response_normalizer import LiteLLMResponseNormalizer
+from gage_eval.role.model.backends.litellm.router_factory import LiteLLMRouterFactory
+from gage_eval.role.model.backends.litellm.service_profile import VLLMServiceProfile
+from gage_eval.role.model.config.litellm import LiteLLMBackendConfig, assert_litellm_capabilities
 from gage_eval.registry import registry
-from gage_eval.utils.messages import normalize_messages_for_template, stringify_message_content
+from gage_eval.assets.datasets.utils.multimodal import embed_remote_image_as_data_url
+from gage_eval.utils.messages import normalize_messages_for_template
+
+
+ROUTER_COMPLETION_DIRECT_TRANSPORT_FIELDS = frozenset(
+    {
+        "api_base",
+        "base_url",
+        "api_key",
+        "custom_llm_provider",
+        "api_type",
+        "api_version",
+        "headers",
+    }
+)
 
 
 @registry.asset(
@@ -22,19 +60,25 @@ from gage_eval.utils.messages import normalize_messages_for_template, stringify_
     "litellm",
     desc="LiteLLM backend for unified provider access (Grok/Kimi base URLs + param normalization)",
     tags=("llm", "remote", "api"),
-    modalities=("text",),
+    modalities=("text", "vision", "audio"),
 )
 class LiteLLMBackend(EngineBackend):
     """LiteLLM backend with provider inference and sampling normalization."""
 
-    _litellm_module_state_lock = threading.RLock()
-
     def __init__(self, config: Dict[str, Any]) -> None:
         self.http_retry_mode = "native"
         self.transport = "http"
-        self._litellm = None
-        self._supports_reasoning_fn = None
-        self._custom_llm_provider = None
+        self._litellm: Any | None = None
+        self._router: Any | None = None
+        self._service_profile: VLLMServiceProfile | None = None
+        self._thinking_policy: ThinkingControlPolicy | None = None
+        self._tool_call_policy: ToolCallPolicy | None = None
+        self._response_normalizer: LiteLLMResponseNormalizer | None = None
+        self._message_normalizer: MultimodalMessageNormalizer | None = None
+        self._supports_reasoning_fn: Any | None = None
+        self._supports_function_calling_fn: Any | None = None
+        self._custom_llm_provider: str | None = None
+        self._model_server_lifecycle = config.get("_model_server_lifecycle") or ModelServerLifecycle()
         super().__init__(config)
 
     # ------------------------------------------------------------------ #
@@ -43,22 +87,29 @@ class LiteLLMBackend(EngineBackend):
     def load_model(self, config_dict: Dict[str, Any]):
         # STEP 1: Resolve provider-specific routing, credentials, and sampling defaults.
         self._cfg = LiteLLMBackendConfig(**config_dict)
+        self._apply_deprecated_mock_config()
+        if self._cfg.model_server.enabled:
+            self._model_server_lifecycle.ensure_ready(self._cfg.model_server)
         self._tool_choice_default = config_dict.get("tool_choice")
         self.model_name = self._cfg.model
-        self.provider = self._cfg.provider or self._infer_provider(self.model_name)
+        self.provider = self._cfg.provider or infer_provider_from_model(self.model_name)
         self.api_base = self._cfg.api_base
-        self._is_deepseek_target = self._looks_like_deepseek(self.provider, self.model_name, self.api_base)
-        self.api_key = None
+        self._is_deepseek_target = looks_like_deepseek(self.provider, self.model_name, self.api_base)
+        self.api_key: str | None = None
         self.headers = dict(self._cfg.extra_headers or {})
         self._timeout = self._cfg.timeout
-        self._max_retries = max(1, int(self._cfg.max_retries))
+        self._max_retries = self._resolve_backend_retry_budget()
         self._retry_sleep = float(self._cfg.retry_sleep)
         self._retry_multiplier = max(1.0, float(self._cfg.retry_multiplier))
         self._max_context_length = self._cfg.max_model_length
         self._base_sampling = self._cfg.generation_parameters.to_dict()
-        self._is_kimi_target = self._looks_like_kimi(self.provider, self.model_name, self.api_base)
-        self._is_grok_target = self._looks_like_grok(self.provider, self.model_name, self.api_base)
-        self._is_azure_target = self._looks_like_azure(self.provider, self.model_name, self.api_base)
+        self._embed_remote_images = bool(self._cfg.embed_remote_images)
+        self._remote_image_timeout_s = float(self._cfg.remote_image_timeout_s)
+        if self._embed_remote_images:
+            logger.info("LiteLLM remote image embedding enabled (timeout_s={})", self._remote_image_timeout_s)
+        self._is_kimi_target = looks_like_kimi(self.provider, self.model_name, self.api_base)
+        self._is_grok_target = looks_like_grok(self.provider, self.model_name, self.api_base)
+        self._is_azure_target = looks_like_azure(self.provider, self.model_name, self.api_base)
         if self._is_deepseek_target and (not self.provider or self.provider.lower() == "openai"):
             self.provider = "deepseek"
         if not self.provider and self._is_grok_target:
@@ -79,7 +130,17 @@ class LiteLLMBackend(EngineBackend):
                 if self.api_base:
                     self.api_base = self.api_base.rstrip("/")
 
-        self.api_key = self._resolve_api_key()
+        # NOTE: Normalize `custom_llm_provider`: prefer an explicit user value, then
+        # fall back to provider inference.
+        self._custom_llm_provider = normalize_custom_provider(
+            getattr(self._cfg, "custom_llm_provider", None) or self.provider
+        )
+        self.api_key = ProviderCredentialResolver(
+            self._cfg,
+            provider=self.provider,
+            custom_llm_provider=self._custom_llm_provider,
+            topology_kind=self._vllm_topology_kind(),
+        ).resolve()
         self._azure_api_version = self._cfg.azure_api_version or os.getenv("AZURE_OPENAI_API_VERSION")
         if self._is_azure_target and not self._azure_api_version:
             self._azure_api_version = "2024-02-15-preview"
@@ -87,21 +148,61 @@ class LiteLLMBackend(EngineBackend):
         if self._cfg.force_kimi_direct or self._cfg.prefer_litellm_kimi:
             logger.warning("force_kimi_direct/prefer_litellm_kimi 已废弃，LiteLLM 现统一走 litellm 调用路径")
 
-        # NOTE: Normalize `custom_llm_provider`: prefer an explicit user value, then
-        # fall back to provider inference.
-        self._custom_llm_provider = self._normalize_custom_provider(
-            getattr(self._cfg, "custom_llm_provider", None) or self.provider
-        )
-
         try:  # pragma: no cover - optional dependency
             import litellm  # type: ignore
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("liteLLM is not installed") from exc
+            raise LiteLLMBackendError("LiteLLM is not installed", DEPENDENCY_UNAVAILABLE) from exc
+        assert_litellm_capabilities(litellm_module=litellm)
 
-        # STEP 2: Capture the imported module and defer mutable flag changes to request scope.
+        # STEP 2: Capture the imported module. Request-specific options are passed
+        # through completion kwargs to avoid mutating LiteLLM module globals.
         self._litellm = litellm
         self._supports_reasoning_fn = getattr(litellm, "supports_reasoning", None)
+        self._supports_function_calling_fn = getattr(litellm, "supports_function_calling", None)
+        service_profile = VLLMServiceProfile.from_config(self._cfg)
+        self._service_profile = service_profile
+        for warning in service_profile.validate_deployment_consistency():
+            logger.warning("LiteLLM service profile: {}", warning)
+        self._message_normalizer = MultimodalMessageNormalizer(
+            self._cfg.multimodal,
+            service_profile=service_profile,
+        )
+        self._thinking_policy = ThinkingControlPolicy.from_config(
+            self._cfg.thinking_policy,
+            service_profile=service_profile,
+        )
+        self._tool_call_policy = ToolCallPolicy.from_config(self._cfg.tool_calling)
+        self._response_normalizer = LiteLLMResponseNormalizer()
+        self._router = LiteLLMRouterFactory(litellm).build(self._cfg)
         return None
+
+    def _apply_deprecated_mock_config(self) -> None:
+        deprecated_fields = []
+        if self._cfg.mock_api_base:
+            deprecated_fields.append("mock_api_base")
+            if not self._cfg.api_base:
+                self._cfg.api_base = self._cfg.mock_api_base
+        if self._cfg.mock_api_key:
+            deprecated_fields.append("mock_api_key")
+            if not self._cfg.api_key:
+                self._cfg.api_key = self._cfg.mock_api_key
+        if self._cfg.mock_model:
+            deprecated_fields.append("mock_model")
+            if not self._cfg._field_was_explicitly_set("model"):
+                self._cfg.model = self._cfg.mock_model
+        if deprecated_fields:
+            logger.warning(
+                "LiteLLM config fields "
+                + ", ".join(deprecated_fields)
+                + " are deprecated; use api_base/api_key/model instead."
+            )
+
+    def _resolve_backend_retry_budget(self) -> int:
+        if self._cfg.resolved_route_mode() == "router":
+            return 1
+        if self._looks_like_litellm_gateway_endpoint():
+            return 1
+        return max(1, int(self._cfg.max_retries))
 
     def prepare_inputs(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         sample = payload.get("sample") or {}
@@ -114,20 +215,28 @@ class LiteLLMBackend(EngineBackend):
                 messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": prompt})
 
-        messages = self._normalize_messages_for_provider(messages)
+        sample_sampling_params = sample.get("sampling_params") or {}
+        payload_sampling_params = payload.get("sampling_params") or {}
+        runtime_sampling_params = dict(sample_sampling_params)
+        runtime_sampling_params.update(payload_sampling_params)
 
         sampling_params = dict(self._base_sampling)
-        sampling_params.update(sample.get("sampling_params") or {})
-        sampling_params.update(payload.get("sampling_params") or {})
+        sampling_params.update(sample_sampling_params)
+        sampling_params.update(payload_sampling_params)
         tool_defs = payload.get("tools") or sample.get("tools")
         tool_choice = payload.get("tool_choice") or sample.get("tool_choice") or self._tool_choice_default
+        parallel_tool_calls = payload.get("parallel_tool_calls")
+        if parallel_tool_calls is None:
+            parallel_tool_calls = sample.get("parallel_tool_calls")
 
         return {
             "model": payload.get("model") or self.model_name,
             "messages": messages,
             "sampling_params": sampling_params,
+            "runtime_sampling_params": runtime_sampling_params,
             "tools": tool_defs,
             "tool_choice": tool_choice,
+            "parallel_tool_calls": parallel_tool_calls,
             "stream": bool(payload.get("stream", self._cfg.streaming)),
             "num_samples": payload.get("num_samples") or sampling_params.get("n"),
         }
@@ -135,168 +244,244 @@ class LiteLLMBackend(EngineBackend):
     def generate(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         return self._generate_litellm(inputs)
 
+    def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        inputs = self.prepare_inputs(payload)
+        start = time.time()
+        result = self.generate(inputs)
+        result.setdefault("latency_ms", (time.time() - start) * 1000)
+        self._enrich_result_with_reasoning(result)
+        logger.debug(
+            "Backend {} finished request latency={:.2f}ms",
+            self.__class__.__name__,
+            result["latency_ms"],
+        )
+        return result
+
+    async def ainvoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        inputs = self.prepare_inputs(payload)
+        start = time.time()
+        result = await self._agenerate_litellm(inputs)
+        result.setdefault("latency_ms", (time.time() - start) * 1000)
+        self._enrich_result_with_reasoning(result)
+        logger.debug(
+            "Backend {} finished request latency={:.2f}ms",
+            self.__class__.__name__,
+            result["latency_ms"],
+        )
+        return result
+
     # ------------------------------------------------------------------ #
     # LiteLLM call path                                                 #
     # ------------------------------------------------------------------ #
     def _generate_litellm(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         # STEP 1: Build isolated request kwargs and execute the LiteLLM call path.
-        kwargs, _ = self._build_litellm_kwargs(inputs)
-        stream = kwargs.pop("stream", False)
+        kwargs, request_kwargs, request_context, stream = self._prepare_completion_call(inputs)
         start = time.time()
 
         def _call():
-            with self._temporary_litellm_module_state():
-                return self._litellm.completion(stream=stream, **kwargs)
+            completion_target = self._router or self._litellm
+            return completion_target.completion(stream=stream, **kwargs)
 
-        completion = self._call_with_retries(_call)
+        completion, outer_retry_attempts = self._call_with_retries(_call)
+        request_context["outer_retry_attempts"] = outer_retry_attempts
 
         # STEP 2: Normalize the response for downstream consumers and safe diagnostics.
-        if stream:
-            answer, raw_response = self._collect_stream(completion)
+        latency_ms = (time.time() - start) * 1000
+        return self._normalize_litellm_completion(
+            completion,
+            stream=stream,
+            latency_ms=latency_ms,
+            request_kwargs=request_kwargs,
+            request_context=request_context,
+        )
+
+    async def _agenerate_litellm(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        kwargs, request_kwargs, request_context, stream = self._prepare_completion_call(inputs)
+        start = time.time()
+        if self._router is not None:
+            acompletion = getattr(self._router, "acompletion", None)
+            if not callable(acompletion):
+                raise RuntimeError(
+                    "LiteLLM Router async path requires router.acompletion; "
+                    "upgrade LiteLLM or use a Router implementation with async completion support."
+                )
         else:
-            answer = self._extract_answer(completion)
-            raw_response = completion
-        raw_response = self._to_jsonable(raw_response)
-        result: Dict[str, Any] = {"answer": answer, "raw_response": raw_response}
-        if not stream and hasattr(completion, "usage"):
-            usage = getattr(completion, "usage")
-            if hasattr(usage, "model_dump"):
-                result["usage"] = usage.model_dump()
-        result.setdefault("latency_ms", (time.time() - start) * 1000)
+            acompletion = getattr(self._litellm, "acompletion", None)
+            if not callable(acompletion):
+                raise RuntimeError(
+                    "LiteLLM async path requires litellm.acompletion; "
+                    "upgrade LiteLLM or use the synchronous generate path."
+                )
+
+        async def _call():
+            return await acompletion(stream=stream, **kwargs)
+
+        completion, outer_retry_attempts = await self._acall_with_retries(_call)
+        request_context["outer_retry_attempts"] = outer_retry_attempts
+        if stream:
+            completion = await self._collect_async_stream(completion)
+        latency_ms = (time.time() - start) * 1000
+        return self._normalize_litellm_completion(
+            completion,
+            stream=stream,
+            latency_ms=latency_ms,
+            request_kwargs=request_kwargs,
+            request_context=request_context,
+        )
+
+    def _prepare_completion_call(
+        self,
+        inputs: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], bool]:
+        if "messages" in inputs:
+            inputs = dict(inputs)
+            inputs["messages"] = self._normalize_messages_for_provider(inputs.get("messages") or [])
+        kwargs, _ = self._build_litellm_kwargs(inputs)
+        request_kwargs = dict(kwargs)
+        request_context = self._build_request_context(request_kwargs)
+        if self._router is not None:
+            kwargs = self._router_completion_kwargs(kwargs)
+        stream = kwargs.pop("stream", False)
+        request_context["stream"] = stream
+        return kwargs, request_kwargs, request_context, bool(stream)
+
+    def _normalize_litellm_completion(
+        self,
+        completion: Any,
+        *,
+        stream: bool,
+        latency_ms: float,
+        request_kwargs: Dict[str, Any],
+        request_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        request_context["latency_ms"] = latency_ms
+        normalizer = self._response_normalizer or LiteLLMResponseNormalizer()
+        if stream:
+            result = normalizer.normalize_stream(completion, request_context=request_context)
+        else:
+            result = normalizer.normalize(completion, request_context=request_context)
+        result.setdefault("latency_ms", latency_ms)
+        observation_summary = normalizer.build_observation_summary(
+            request_kwargs,
+            result,
+            request_context=request_context,
+        )
+        result.setdefault("metadata", {})
+        result["metadata"]["observation_summary"] = observation_summary
         logger.info(
             "LiteLLM response summary: {}",
-            self._format_response_json(
-                self._build_response_log_summary(
-                    raw_response,
-                    answer=answer,
-                    usage=result.get("usage"),
-                    stream=stream,
-                    request_model=kwargs.get("model"),
-                    latency_ms=result.get("latency_ms"),
-                )
-            ),
+            self._format_response_json(observation_summary),
         )
         return result
 
-    @contextmanager
-    def _temporary_litellm_module_state(self):
-        """Apply LiteLLM module flags for one request and restore previous values."""
+    @staticmethod
+    async def _collect_async_stream(stream_response: Any) -> List[Any]:
+        if not hasattr(stream_response, "__aiter__"):
+            if inspect.isawaitable(stream_response):
+                stream_response = await stream_response
+            if not hasattr(stream_response, "__aiter__"):
+                if isinstance(stream_response, Mapping):
+                    return [stream_response]
+                if isinstance(stream_response, (str, bytes, bytearray)):
+                    raise RuntimeError(
+                        "LiteLLM async streaming expected an async iterator or completion-like mapping, "
+                        f"got {type(stream_response).__name__}."
+                    )
+                try:
+                    return list(stream_response)
+                except TypeError:
+                    return [stream_response]
+        chunks: List[Any] = []
+        async for chunk in stream_response:
+            chunks.append(chunk)
+        return chunks
 
-        if self._litellm is None:
-            yield
-            return
-        with self._litellm_module_state_lock:
-            previous_drop_params = getattr(self._litellm, "drop_params", None)
-            previous_verbose = getattr(self._litellm, "verbose", None)
-            had_drop_params = hasattr(self._litellm, "drop_params")
-            had_verbose = hasattr(self._litellm, "verbose")
-            self._litellm.drop_params = bool(self._cfg.drop_params)
-            self._litellm.verbose = bool(self._cfg.verbose)
-            try:
-                yield
-            finally:
-                if had_drop_params:
-                    self._litellm.drop_params = previous_drop_params
-                else:
-                    delattr(self._litellm, "drop_params")
-                if had_verbose:
-                    self._litellm.verbose = previous_verbose
-                else:
-                    delattr(self._litellm, "verbose")
+    @staticmethod
+    def _router_completion_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            key: value
+            for key, value in kwargs.items()
+            if key not in ROUTER_COMPLETION_DIRECT_TRANSPORT_FIELDS
+        }
 
     def _build_litellm_kwargs(self, inputs: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        sampling_params = self._normalize_sampling_params(inputs.get("sampling_params") or {}, inputs.get("num_samples"))
-        stop_sequences = self._prepare_stop_sequences(sampling_params.get("stop"))
-
-        kwargs: Dict[str, Any] = {
-            "model": self._normalize_request_model(inputs.get("model") or self.model_name),
-            "messages": inputs.get("messages") or [],
-            "response_format": {"type": "text"},
-            "stream": inputs.get("stream", False),
-            "timeout": self._timeout,
-        }
-        if self.api_base:
-            kwargs["base_url"] = self.api_base
-            kwargs["api_base"] = self.api_base
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
-        if self._custom_llm_provider:
-            kwargs["custom_llm_provider"] = self._custom_llm_provider
-        if self._is_azure_target:
-            kwargs["api_type"] = "azure"
-            if self._azure_api_version:
-                kwargs["api_version"] = self._azure_api_version
-        if self.headers:
-            kwargs["headers"] = dict(self.headers)
-        tool_defs = inputs.get("tools")
-        if tool_defs:
-            formatted_tools = self._format_tools(tool_defs)
-            if formatted_tools:
-                kwargs["tools"] = formatted_tools
-                tool_choice = inputs.get("tool_choice")
-                if tool_choice is not None:
-                    kwargs["tool_choice"] = tool_choice
-        kwargs.update({k: v for k, v in sampling_params.items() if v is not None})
-        if stop_sequences:
-            kwargs["stop"] = stop_sequences
-        kwargs.setdefault("n", inputs.get("num_samples"))
-
-        # STEP: Inject thinking-related parameters from base class config
-        thinking_config = self.get_thinking_config()
-        if "enable_thinking" in thinking_config:
-            kwargs["enable_thinking"] = thinking_config["enable_thinking"]
-        # Support reasoning_effort from config or per-request sampling params
-        reasoning_effort = (
-            sampling_params.get("reasoning_effort")
-            or thinking_config.get("reasoning_effort")
+        builder = LiteLLMRequestBuilder(
+            model_name=self.model_name,
+            provider=self.provider,
+            api_base=self.api_base,
+            api_key=self.api_key,
+            timeout=self._timeout,
+            headers=self.headers,
+            custom_llm_provider=self._custom_llm_provider,
+            base_sampling=self._base_sampling,
+            litellm_request=self._cfg.litellm_request,
+            drop_params=self._cfg.drop_params,
+            is_azure_target=self._is_azure_target,
+            azure_api_version=self._azure_api_version,
+            max_context_length=self._max_context_length,
+            supports_reasoning=self._supports_reasoning_model(),
+            supports_function_calling=self._supports_function_calling_model(inputs.get("model") or self.model_name),
+            thinking_policy=self._thinking_policy,
+            tool_call_policy=self._tool_call_policy,
         )
-        if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
+        return builder.build(inputs, thinking_config=self.get_thinking_config())
 
-        return kwargs, sampling_params
+    def _build_request_context(self, request_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Builds non-sensitive request metadata for response normalization."""
 
-    def _extract_answer(self, completion: Any) -> str:
-        if completion is None:
-            return ""
-        choices = getattr(completion, "choices", None)
-        if choices:
-            choice = choices[0]
-            message = getattr(choice, "message", None) or getattr(choice, "delta", None)
-            content = getattr(message, "content", None) if message else None
-            if isinstance(content, list):
-                return "".join([self._content_piece(part) for part in content])
-            return content or ""
-        if isinstance(completion, dict):
-            choices = completion.get("choices") or []
-            if choices:
-                message = choices[0].get("message") or choices[0].get("delta") or {}
-                content = message.get("content")
-                if isinstance(content, list):
-                    return "".join([self._content_piece(part) for part in content])
-                return content or ""
-        return str(completion)
+        route_mode = self._cfg.resolved_route_mode()
+        resolved_thinking_mode = self._resolved_thinking_mode_from_kwargs(request_kwargs)
+        retry_owner = self._retry_owner(route_mode)
+        context = {
+            "provider": self.provider or self._custom_llm_provider,
+            "model": request_kwargs.get("model") or self.model_name,
+            "api_base": request_kwargs.get("api_base") or request_kwargs.get("base_url") or self.api_base,
+            "route_mode": route_mode,
+            "topology": dict(self._service_profile.topology) if self._service_profile else {},
+            "thinking_mode": resolved_thinking_mode,
+            "resolved_thinking_mode": resolved_thinking_mode,
+            "thinking_policy": self._cfg.thinking_policy,
+            "retry_owner": retry_owner,
+        }
+        if route_mode == "router":
+            context["router_num_retries"] = self._cfg.router_settings.num_retries
+        if self._thinking_inherited_from_server_default(resolved_thinking_mode):
+            context["thinking_inherited_from_server_default"] = True
+        return context
 
-    def _collect_stream(self, stream_response: Any) -> Tuple[str, List[Any]]:
-        """Collect streaming chunks into a single text answer."""
+    def _resolved_thinking_mode_from_kwargs(self, request_kwargs: Dict[str, Any]) -> str:
+        extra_body = request_kwargs.get("extra_body")
+        if isinstance(extra_body, dict):
+            chat_template_kwargs = extra_body.get("chat_template_kwargs")
+            if isinstance(chat_template_kwargs, dict):
+                enable_thinking = chat_template_kwargs.get("enable_thinking")
+                if enable_thinking is True:
+                    return "enabled"
+                if enable_thinking is False:
+                    return "disabled"
+        if self._thinking_mode:
+            return str(self._thinking_mode)
+        mode = self._base_sampling.get("thinking_mode")
+        return str(mode) if mode else "auto"
 
-        chunks: List[Any] = []
-        parts: List[str] = []
-        for chunk in stream_response:
-            chunks.append(chunk)
-            choices = getattr(chunk, "choices", None)
-            if not choices and isinstance(chunk, dict):
-                choices = chunk.get("choices")
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None) or getattr(choices[0], "message", None)
-            if delta is None and isinstance(choices[0], dict):
-                delta = choices[0].get("delta") or choices[0].get("message")
-            content = getattr(delta, "content", None) if delta else None
-            if isinstance(content, list):
-                parts.append("".join([self._content_piece(part) for part in content]))
-            elif content:
-                parts.append(str(content))
-        return "".join(parts), chunks
+    def _supports_reasoning_model(self) -> bool:
+        if not self._supports_reasoning_fn:
+            return False
+        try:
+            return bool(self._supports_reasoning_fn(self.model_name))
+        except Exception:  # pragma: no cover - defensive around third-party helpers
+            return False
+
+    def _supports_function_calling_model(self, model_name: str | None = None) -> bool | None:
+        if not callable(self._supports_function_calling_fn):
+            return None
+        try:
+            result = self._supports_function_calling_fn(model_name or self.model_name)
+        except Exception:  # pragma: no cover - defensive around third-party helpers
+            return None
+        if result is None:
+            return None
+        return bool(result)
 
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
@@ -306,150 +491,65 @@ class LiteLLMBackend(EngineBackend):
 
         if self._should_flatten_multimodal_messages():
             return normalize_messages_for_template(messages, image_placeholder="<image>")
-        if self._should_sanitize_openai_messages():
-            return self._sanitize_openai_messages(messages)
-        return messages
+        normalizer = self._message_normalizer or MultimodalMessageNormalizer(self._cfg.multimodal)
+        normalized = normalizer.normalize(messages, service_profile=self._service_profile)
+        if self._embed_remote_images:
+            return self._embed_remote_image_urls_in_messages(normalized)
+        return normalized
+
+    def _embed_remote_image_urls_in_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        embedded_messages: List[Dict[str, Any]] = []
+        for message in messages or []:
+            new_message = dict(message)
+            content = message.get("content")
+            if isinstance(content, list):
+                new_message["content"] = [self._embed_remote_image_url_in_block(block) for block in content]
+            embedded_messages.append(new_message)
+        return embedded_messages
+
+    def _embed_remote_image_url_in_block(self, block: Any) -> Any:
+        if not isinstance(block, Mapping):
+            return block
+        if block.get("type") != "image_url":
+            return dict(block)
+
+        new_block = dict(block)
+        image_url = block.get("image_url")
+        if isinstance(image_url, Mapping):
+            payload = dict(image_url)
+            url = payload.get("url")
+            if isinstance(url, str):
+                payload["url"] = self._maybe_embed_remote_image_url(url)
+            new_block["image_url"] = payload
+            return new_block
+        if isinstance(image_url, str):
+            new_block["image_url"] = {"url": self._maybe_embed_remote_image_url(image_url)}
+            return new_block
+        return new_block
+
+    def _maybe_embed_remote_image_url(self, url: str) -> str:
+        if not self._embed_remote_images:
+            return url
+        if not url.startswith(("http://", "https://")):
+            return url
+        embedded = embed_remote_image_as_data_url(
+            url,
+            strict=False,
+            timeout_s=self._remote_image_timeout_s,
+        )
+        if embedded is None:
+            logger.debug("Remote image embedding failed or was skipped for an http(s) image URL")
+        return embedded or url
 
     def _should_flatten_multimodal_messages(self) -> bool:
         provider = (self._custom_llm_provider or self.provider or "").lower()
-        return provider == "deepseek" or self._looks_like_deepseek(self.provider, self.model_name, self.api_base)
-
-    def _should_sanitize_openai_messages(self) -> bool:
-        provider = (self._custom_llm_provider or self.provider or "").lower()
-        return provider in {"openai", "azure"}
-
-    def _sanitize_openai_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        sanitized: List[Dict[str, Any]] = []
-        for msg in messages or []:
-            new_msg = dict(msg)
-            content = msg.get("content")
-            if isinstance(content, list):
-                new_content: List[Dict[str, Any]] = []
-                for item in content:
-                    if isinstance(item, dict):
-                        itype = item.get("type")
-                        if itype == "text":
-                            text = item.get("text")
-                            if text is not None:
-                                new_content.append({"type": "text", "text": str(text)})
-                        elif itype == "image_url":
-                            url = None
-                            val = item.get("image_url")
-                            if isinstance(val, dict):
-                                url = val.get("url")
-                            elif isinstance(val, str):
-                                url = val
-                            if not url:
-                                url = item.get("url") or item.get("image")
-                            if url:
-                                new_content.append({"type": "image_url", "image_url": {"url": url}})
-                        else:
-                            text = item.get("text")
-                            if text is not None:
-                                new_content.append({"type": "text", "text": str(text)})
-                    elif item is not None:
-                        new_content.append({"type": "text", "text": str(item)})
-                if not new_content:
-                    fallback_text = stringify_message_content(content, image_placeholder=None)
-                    new_msg["content"] = fallback_text
-                else:
-                    new_msg["content"] = new_content
-            sanitized.append(new_msg)
-        return sanitized
-
-    def _format_tools(self, tools: Any) -> List[Dict[str, Any]]:
-        if not tools:
-            return []
-        if isinstance(tools, dict):
-            tools = [tools]
-        if not isinstance(tools, list):
-            return []
-        formatted = []
-        for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            if tool.get("type") == "function":
-                formatted.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool["function"]["name"],
-                            "description": tool["function"].get("description", ""),
-                            "parameters": tool["function"].get("parameters", {"type": "object", "properties": {}}),
-                        },
-                    }
-                )
-            elif "name" in tool and "parameters" in tool:
-                formatted.append(
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": tool.get("name"),
-                            "description": tool.get("description", ""),
-                            "parameters": tool.get("parameters") or {"type": "object", "properties": {}},
-                        },
-                    }
-                )
-            else:
-                formatted.append(tool)
-        return formatted
-
-    def _normalize_sampling_params(self, params: Dict[str, Any], num_samples: Optional[int]) -> Dict[str, Any]:
-        sampling = {k: v for k, v in params.items() if v is not None}
-        normalized: Dict[str, Any] = {}
-
-        max_tokens = sampling.get("max_tokens") or sampling.get("max_new_tokens") or self._base_sampling.get("max_new_tokens")
-        normalized["max_tokens"] = self._prepare_max_tokens(max_tokens)
-        stop_sequences = sampling.get("stop_sequences") or sampling.get("stop") or self._base_sampling.get("stop")
-        if stop_sequences:
-            normalized["stop"] = stop_sequences
-
-        for key in ("temperature", "top_p", "presence_penalty", "frequency_penalty", "repetition_penalty", "logprobs", "top_k", "min_p", "seed"):
-            if sampling.get(key) is not None:
-                normalized[key] = sampling[key]
-            elif key in self._base_sampling and self._base_sampling[key] is not None:
-                normalized.setdefault(key, self._base_sampling[key])
-
-        normalized["n"] = sampling.get("n") or sampling.get("num_samples") or num_samples
-        return {k: v for k, v in normalized.items() if v is not None}
-
-    def _prepare_stop_sequences(self, stop: Any) -> List[str]:
-        if not stop:
-            return []
-        if isinstance(stop, str):
-            sequences = [stop]
-        elif isinstance(stop, list):
-            sequences = [s for s in stop if isinstance(s, str)]
-        else:
-            return []
-        if (self.provider or "").lower() == "anthropic":
-            sequences = [s for s in sequences if s and s.strip()]
-        return sequences
-
-    def _prepare_max_tokens(self, max_tokens: Any) -> Optional[int]:
-        if max_tokens is None:
-            return None
-        try:
-            max_tokens = int(max_tokens)
-        except (TypeError, ValueError):
-            return None
-        if max_tokens <= 0:
-            return None
-        if self._supports_reasoning_fn and self._supports_reasoning_fn(self.model_name):
-            target = max_tokens * 10
-            if self._max_context_length:
-                target = min(target, self._max_context_length)
-            logger.warning("Reasoning 模型 {} 调整 max_tokens 至 {}", self.model_name, target)
-            return target
-        if self._max_context_length:
-            return min(max_tokens, self._max_context_length)
-        return max_tokens
+        return provider == "deepseek" or looks_like_deepseek(self.provider, self.model_name, self.api_base)
 
     def _call_with_retries(self, func):
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                return func()
+                return func(), attempt + 1
             except Exception as exc:  # pragma: no cover - network/third-party errors
                 last_exc = exc
                 if self._is_non_retryable_error(exc):
@@ -460,13 +560,44 @@ class LiteLLMBackend(EngineBackend):
                 wait = min(64, self._retry_sleep * (self._retry_multiplier**attempt))
                 logger.warning("LiteLLM 调用失败，重试 {}/{}，等待 {:.1f}s: {}", attempt + 1, self._max_retries, wait, exc)
                 time.sleep(wait)
-        assert last_exc is not None
+        if last_exc is None:
+            raise LiteLLMBackendError("LiteLLM retry loop exited without capturing an exception", DEPENDENCY_UNAVAILABLE)
+        self._raise_classified_retry_failure(last_exc)
+        raise last_exc
+
+    async def _acall_with_retries(self, func):
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                return await func(), attempt + 1
+            except Exception as exc:  # pragma: no cover - network/third-party errors
+                last_exc = exc
+                if self._is_non_retryable_error(exc):
+                    logger.debug("LiteLLM async call aborted without retry due to non-retryable error: {}", exc)
+                    break
+                if attempt == self._max_retries - 1:
+                    break
+                wait = min(64, self._retry_sleep * (self._retry_multiplier**attempt))
+                logger.warning(
+                    "LiteLLM async 调用失败，重试 {}/{}，等待 {:.1f}s: {}",
+                    attempt + 1,
+                    self._max_retries,
+                    wait,
+                    exc,
+                )
+                await asyncio.sleep(wait)
+        if last_exc is None:
+            raise LiteLLMBackendError("LiteLLM retry loop exited without capturing an exception", DEPENDENCY_UNAVAILABLE)
+        self._raise_classified_retry_failure(last_exc)
         raise last_exc
 
     @staticmethod
     def _is_non_retryable_error(exc: Exception) -> bool:
         """Return True when an error should bypass retry loops."""
 
+        status_code = status_code_from_error(exc)
+        if status_code in {400, 401, 403, 404, 422}:
+            return True
         message = str(exc).strip().lower()
         if not message:
             return False
@@ -475,224 +606,84 @@ class LiteLLMBackend(EngineBackend):
             "rolepool",
             "is shut down",
         )
-        return any(marker in message for marker in non_retryable_markers)
+        if any(marker in message for marker in non_retryable_markers):
+            return True
+        return False
 
-    @staticmethod
-    def _infer_provider(model_name: str | None) -> Optional[str]:
-        if not model_name:
-            return None
-        if model_name.startswith("deepseek/"):
-            return "deepseek"
-        if "/" in model_name:
-            return model_name.split("/")[0]
-        lower = model_name.lower()
-        if lower.startswith("deepseek"):
-            return "deepseek"
-        if lower.startswith("grok"):
-            return "grok"
-        if lower.startswith("moonshot"):
-            return "kimi"
-        if lower.startswith("azure:"):
-            return "azure"
-        return None
+    def _retry_owner(self, route_mode: str) -> str:
+        if route_mode == "router":
+            return "litellm_router"
+        if self._looks_like_litellm_gateway_endpoint():
+            return "litellm_gateway"
+        return "gage"
 
-    @staticmethod
-    def _looks_like_deepseek(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
-        target = (provider or "").lower()
-        model_lower = (model or "").lower()
-        base = (api_base or "").lower()
-        return target == "deepseek" or model_lower.startswith("deepseek") or "deepseek.com" in base
-
-    @staticmethod
-    def _looks_like_kimi(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
-        target = (provider or "").lower()
-        model_lower = (model or "").lower()
-        base = (api_base or "").lower()
-        return target in {"kimi", "moonshot"} or model_lower.startswith("moonshot") or "moonshot" in base or "kimi" in base
-
-    @staticmethod
-    def _looks_like_grok(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
-        target = (provider or "").lower()
-        model_lower = (model or "").lower()
-        base = (api_base or "").lower()
-        return target in {"grok", "xai"} or model_lower.startswith("grok") or "api.x.ai" in base or base.endswith("x.ai")
-
-    @staticmethod
-    def _looks_like_azure(provider: Optional[str], model: str, api_base: Optional[str] = None) -> bool:
-        target = (provider or "").lower()
-        model_lower = (model or "").lower()
-        base = (api_base or "").lower()
-        return target in {"azure", "azure_openai"} or "openai.azure.com" in base or "azure" in base or model_lower.startswith("azure:")
-
-    @staticmethod
-    def _normalize_custom_provider(provider: Optional[str]) -> Optional[str]:
-        if not provider:
-            return None
-        lower = provider.lower()
-        alias_map = {
-            "deepseek": "deepseek",
-            "kimi": "moonshot",
-            "moonshot": "moonshot",
-            "grok": "xai",
-            "xai": "xai",
-            "google": "gemini",
-            "gemini": "gemini",
-            "azure_openai": "azure",
-            "google_genai": "google",
-        }
-        return alias_map.get(lower, lower)
-
-    @staticmethod
-    def _content_piece(part: Any) -> str:
-        if isinstance(part, dict) and "text" in part:
-            return str(part["text"])
-        return str(part)
-
-    def _normalize_request_model(self, model_name: str) -> str:
-        """Return the provider-qualified model name when LiteLLM expects one."""
-
-        if self._looks_like_deepseek(self.provider, model_name, self.api_base) and "/" not in model_name:
-            return f"deepseek/{model_name}"
-        return model_name
-
-    def _resolve_api_key(self) -> Optional[str]:
-        """Resolve API credentials without leaking DeepSeek keys to other providers."""
-
-        candidates: List[Optional[str]] = [self._cfg.api_key]
-        if self._is_deepseek_target:
-            candidates.append(os.getenv("DEEPSEEK_API_KEY"))
-        candidates.extend(
-            [
-                os.getenv("LITELLM_API_KEY"),
-                os.getenv("OPENAI_API_KEY"),
-                os.getenv("XAI_API_KEY"),
-                os.getenv("GROK_API_KEY"),
-                os.getenv("AZURE_API_KEY"),
-                os.getenv("AZURE_OPENAI_API_KEY"),
-                os.getenv("KIMI_API_KEY"),
-                os.getenv("MOONSHOT_API_KEY"),
-            ]
+    def _thinking_inherited_from_server_default(self, resolved_thinking_mode: str) -> bool:
+        if resolved_thinking_mode != "auto":
+            return False
+        if not self._service_profile or not self._service_profile.reasoning_parser:
+            return False
+        model = (self.model_name or "").lower()
+        provider = (self.provider or "").lower().replace("-", "_")
+        custom_provider = (self._custom_llm_provider or "").lower().replace("-", "_")
+        return model.startswith("hosted_vllm/") or bool(
+            {provider, custom_provider} & {"hosted_vllm", "vllm", "openai_compatible"}
         )
-        return next((candidate for candidate in candidates if candidate), None)
+
+    def close(self) -> None:
+        close = getattr(self._model_server_lifecycle, "close", None)
+        if callable(close):
+            close()
+
+    def shutdown(self) -> None:
+        self.close()
+
+    def _looks_like_litellm_gateway_endpoint(self) -> bool:
+        if is_default_local_litellm_gateway(self.api_base or getattr(self._cfg, "api_base", None)):
+            return True
+        return is_explicit_litellm_gateway(
+            self.provider or getattr(self._cfg, "provider", None),
+            custom_llm_provider=self._custom_llm_provider or getattr(self._cfg, "custom_llm_provider", None),
+            topology_kind=self._vllm_topology_kind(),
+        )
+
+    def _vllm_topology_kind(self) -> str | None:
+        topology = getattr(getattr(self._cfg, "vllm", None), "topology", None)
+        if topology is None:
+            return None
+        return getattr(topology, "kind", None)
+
+    @classmethod
+    def _raise_classified_retry_failure(cls, exc: Exception) -> None:
+        if cls._is_dependency_unavailable_error(exc):
+            raise LiteLLMBackendError(str(exc), DEPENDENCY_UNAVAILABLE) from exc
 
     @staticmethod
-    def _to_jsonable(obj: Any) -> Any:
-        """Best-effort convert litellm ModelResponse / stream chunks to JSON-safe objects."""
-        try:
-            if obj is None:
-                return None
-            if isinstance(obj, (str, int, float, bool)):
-                return obj
-            if isinstance(obj, dict):
-                return {k: LiteLLMBackend._to_jsonable(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [LiteLLMBackend._to_jsonable(v) for v in obj]
-            if hasattr(obj, "model_dump"):
-                return obj.model_dump()
-            if hasattr(obj, "__dict__"):
-                return {k: LiteLLMBackend._to_jsonable(v) for k, v in obj.__dict__.items()}
-            return str(obj)
-        except Exception:  # pragma: no cover - defensive
-            return str(obj)
-
-    @staticmethod
-    def _build_response_log_summary(
-        raw_response: Any,
-        *,
-        answer: str,
-        usage: Optional[Dict[str, Any]],
-        stream: bool,
-        request_model: Optional[str],
-        latency_ms: Optional[float],
-    ) -> Dict[str, Any]:
-        """Builds a non-sensitive response summary for logs.
-
-        Args:
-            raw_response: JSON-safe LiteLLM response payload.
-            answer: Extracted answer text returned to callers.
-            usage: Usage payload captured from the completion object.
-            stream: Whether the request used streaming mode.
-            request_model: Model name sent to LiteLLM for this request.
-            latency_ms: End-to-end request latency in milliseconds.
-
-        Returns:
-            A compact summary that excludes response content and tool payloads.
-        """
-
-        summary: Dict[str, Any] = {
-            "stream": stream,
-            "request_model": request_model,
-            "latency_ms": round(float(latency_ms), 3) if latency_ms is not None else None,
-            "answer_chars": len(answer or ""),
-            "response_type": type(raw_response).__name__,
-        }
-
-        if isinstance(raw_response, dict):
-            choices = raw_response.get("choices") or []
-            first_choice = choices[0] if choices else {}
-            summary.update(
-                {
-                    "response_model": raw_response.get("model"),
-                    "response_object": raw_response.get("object"),
-                    "choice_count": len(choices),
-                    "finish_reason": LiteLLMBackend._extract_finish_reason(first_choice),
-                    "has_tool_calls": LiteLLMBackend._choice_has_tool_calls(first_choice),
-                }
-            )
-        elif isinstance(raw_response, list):
-            first_chunk = next((chunk for chunk in raw_response if isinstance(chunk, dict)), {})
-            finish_choice = LiteLLMBackend._find_stream_finish_choice(raw_response)
-            summary.update(
-                {
-                    "response_object": first_chunk.get("object"),
-                    "response_model": first_chunk.get("model") or request_model,
-                    "chunk_count": len(raw_response),
-                    "finish_reason": LiteLLMBackend._extract_finish_reason(finish_choice),
-                    "has_tool_calls": LiteLLMBackend._choice_has_tool_calls(finish_choice),
-                }
-            )
-
-        resolved_usage = usage
-        if resolved_usage is None and isinstance(raw_response, dict):
-            resolved_usage = raw_response.get("usage")
-        if resolved_usage:
-            summary["usage"] = LiteLLMBackend._to_jsonable(resolved_usage)
-
-        return {key: value for key, value in summary.items() if value is not None}
-
-    @staticmethod
-    def _find_stream_finish_choice(raw_response: List[Any]) -> Dict[str, Any]:
-        """Returns the most informative stream choice for logging metadata."""
-
-        for chunk in reversed(raw_response):
-            if not isinstance(chunk, dict):
-                continue
-            choices = chunk.get("choices") or []
-            if choices:
-                return choices[0]
-        return {}
-
-    @staticmethod
-    def _extract_finish_reason(choice: Any) -> Optional[str]:
-        """Extracts finish_reason from a choice payload without touching content."""
-
-        if isinstance(choice, dict):
-            finish_reason = choice.get("finish_reason")
-            if finish_reason is not None:
-                return str(finish_reason)
-        return None
-
-    @staticmethod
-    def _choice_has_tool_calls(choice: Any) -> bool:
-        """Returns whether the choice contains tool-call metadata."""
-
-        if not isinstance(choice, dict):
+    def _is_dependency_unavailable_error(exc: Exception) -> bool:
+        status_code = status_code_from_error(exc)
+        if status_code in {408, 429, 500, 502, 503, 504}:
+            return True
+        message = str(exc).strip().lower()
+        if not message:
             return False
-        message = choice.get("message") or choice.get("delta") or {}
-        if not isinstance(message, dict):
-            return False
-        tool_calls = message.get("tool_calls")
-        return bool(tool_calls)
+        dependency_markers = (
+            "connection refused",
+            "connection error",
+            "failed to connect",
+            "failed to establish",
+            "max retries exceeded",
+            "name resolution",
+            "temporary failure in name resolution",
+            "timed out",
+            "timeout",
+            "connect timeout",
+            "read timeout",
+            "endpoint unavailable",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+            "network is unreachable",
+        )
+        return any(marker in message for marker in dependency_markers)
 
     @staticmethod
     def _format_response_json(raw_response: Any) -> str:

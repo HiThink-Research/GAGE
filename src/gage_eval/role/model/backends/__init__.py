@@ -41,6 +41,12 @@ class _AsyncBackendProxy(Backend):
 
         return await ensure_async(self._backend)(payload)
 
+    def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        backend_call = getattr(self._backend, "invoke", None)
+        if backend_call:
+            return backend_call(payload)
+        return super().invoke(payload)
+
 
 class _HttpRetryBackendProxy(Backend, HttpRetryMixin):
     def __init__(self, backend: Backend, *, attempts: int, interval: float) -> None:
@@ -77,6 +83,22 @@ class _ErrorNormalizingBackendProxy(Backend):
                 return await backend_call(payload)
 
             return await ensure_async(self._backend)(payload)
+        except Exception as exc:
+            backend_name = _resolve_backend_name(self._backend)
+            logger.error(
+                "Backend {} invocation failed error_type={} error={}",
+                backend_name,
+                type(exc).__name__,
+                exc,
+            )
+            return build_backend_error_result(exc, backend_name=backend_name)
+
+    def invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            backend_call = getattr(self._backend, "invoke", None)
+            if backend_call:
+                return backend_call(payload)
+            return super().invoke(payload)
         except Exception as exc:
             backend_name = _resolve_backend_name(self._backend)
             logger.error(

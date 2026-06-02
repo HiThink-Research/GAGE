@@ -220,7 +220,7 @@ def test_swebench_pro_config_translates_with_builtin_installed_swe_agent(tmp_pat
     assert Path(dataset["registry_path"]) == expected_registry_path
     assert Path(dataset["registry_path"]).is_absolute()
     assert agent["name"] == "swe-agent"
-    assert agent["model_name"].startswith("openai/")
+    assert agent["model_name"] == "qwen/qwen3.5-9b"
     assert agent["kwargs"]["per_instance_call_limit"] == 200
     assert agent["env"]["OPENAI_BASE_URL"] == "http://host.docker.internal:1234/v1"
     assert agent["env"]["CONDA_DEFAULT_ENV"] == ""

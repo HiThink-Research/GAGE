@@ -5,9 +5,10 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-from gage_eval.evaluation.cache import EvalCache
 from gage_eval.registry import registry
+from gage_eval.reporting.contracts import SummaryGeneratorResult
 from gage_eval.reporting.summary_generators import SummaryGenerator
+from gage_eval.reporting.summary_generators.base import records_from_context, section
 
 
 @registry.asset(
@@ -18,15 +19,28 @@ from gage_eval.reporting.summary_generators import SummaryGenerator
     default_enabled=True,
 )
 class HarborSummaryGenerator(SummaryGenerator):
-    def generate(self, cache: EvalCache) -> Optional[Dict[str, Any]]:
-        summary = _build_harbor_summary(cache)
+    def generate(self, context: Any) -> SummaryGeneratorResult | Dict[str, Any] | None:
+        summary = _build_harbor_summary(records_from_context(context))
         if not summary:
             return None
-        return {"external_harness": {"harbor": summary}}
+        legacy_payload = {"external_harness": {"harbor": summary}}
+        if hasattr(context, "iter_samples"):
+            return legacy_payload
+        return SummaryGeneratorResult(
+            generator_id="harbor_summary",
+            summary_sections=[
+                section(
+                    "overview",
+                    "Harbor External Harness Summary",
+                    generator_id="harbor_summary",
+                )
+            ],
+            legacy_payload=legacy_payload,
+        )
 
 
-def _build_harbor_summary(cache: EvalCache) -> Optional[Dict[str, Any]]:
-    records = [_normalize_record(record) for record in cache.iter_samples()]
+def _build_harbor_summary(records: Iterable[Mapping[str, Any]] | Any) -> Optional[Dict[str, Any]]:
+    records = [_normalize_record(record) for record in records]
     records = [record for record in records if _is_harbor_record(record)]
     if not records:
         return None
