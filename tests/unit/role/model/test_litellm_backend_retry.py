@@ -135,6 +135,41 @@ def test_router_mode_uses_router_retry_owner_without_backend_retry(monkeypatch) 
 
     assert backend._max_retries == 1
     assert result["metadata"]["observation_summary"]["retry_owner"] == "litellm_router"
+    assert result["metadata"]["observation_summary"]["outer_retry_attempts"] == 1
+    assert result["metadata"]["observation_summary"]["router_num_retries"] == 2
+
+
+@pytest.mark.fast
+def test_successful_retry_records_outer_retry_attempt_count(monkeypatch) -> None:
+    from tests.unit.role.model.test_litellm_router_factory import FakeLiteLLM
+
+    class FlakyLiteLLM(FakeLiteLLM):
+        def completion(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if len(self.calls) == 1:
+                raise RuntimeError("temporary upstream error")
+            return {"choices": [{"message": {"content": "recovered"}}]}
+
+    fake_litellm = FlakyLiteLLM()
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+
+    backend = LiteLLMBackend(
+        {
+            "model": "hosted_vllm/qwen3",
+            "api_base": "http://127.0.0.1:8000/v1",
+            "api_key": "dummy",
+            "max_retries": 2,
+            "retry_sleep": 0,
+            "generation_parameters": {"max_new_tokens": 16},
+        }
+    )
+
+    result = backend.generate({"messages": [{"role": "user", "content": "hello"}]})
+
+    assert result["answer"] == "recovered"
+    assert len(fake_litellm.calls) == 2
+    assert result["metadata"]["observation_summary"]["outer_retry_attempts"] == 2
+    assert not hasattr(backend, "_last_outer_retry_attempts")
 
 
 @pytest.mark.fast

@@ -72,6 +72,12 @@ class LiteLLMResponseNormalizer:
             tool_calls=tool_calls,
             request_context=context,
         )
+        self._apply_answer_empty_diagnosis(
+            metadata,
+            answer=answer,
+            reasoning=reasoning,
+            finish_reason=finish_reason,
+        )
 
         return {
             "answer": answer,
@@ -159,6 +165,12 @@ class LiteLLMResponseNormalizer:
             tool_calls=tool_calls,
             request_context=context,
         )
+        self._apply_answer_empty_diagnosis(
+            metadata,
+            answer=answer,
+            reasoning=reasoning,
+            finish_reason=finish_reason,
+        )
 
         return {
             "answer": answer,
@@ -189,10 +201,12 @@ class LiteLLMResponseNormalizer:
         tool_calls_raw = result.get("tool_calls")
         tool_calls = tool_calls_raw if isinstance(tool_calls_raw, list) else []
         answer = result.get("answer") or ""
+        response_model = self._response_model(result.get("raw_response"))
 
         summary: Dict[str, Any] = {
             "provider": context.get("provider") or request_kwargs.get("custom_llm_provider"),
             "model": context.get("model") or request_kwargs.get("model"),
+            "response_model": response_model,
             "api_base_hash": self._hash_text(api_base),
             "route_mode": context.get("route_mode"),
             "topology": self._summarize_topology(context.get("topology")),
@@ -205,8 +219,13 @@ class LiteLLMResponseNormalizer:
             "tool_call_count": len(tool_calls),
             "has_tool_calls": bool(tool_calls),
             "parallel_tool_calls": request_kwargs.get("parallel_tool_calls"),
+            "reasoning_effort": request_kwargs.get("reasoning_effort") or context.get("reasoning_effort"),
             "retry_owner": context.get("retry_owner"),
+            "outer_retry_attempts": context.get("outer_retry_attempts"),
+            "router_num_retries": context.get("router_num_retries"),
+            "thinking_inherited_from_server_default": context.get("thinking_inherited_from_server_default"),
             "finish_reason": result.get("finish_reason"),
+            "answer_empty_reason": metadata.get("answer_empty_reason"),
             "usage": self.to_jsonable(usage),
             "latency_ms": round(float(latency_ms), 3) if latency_ms is not None else None,
             "answer_chars": len(str(answer)),
@@ -292,6 +311,34 @@ class LiteLLMResponseNormalizer:
             raise ValueError(message)
         if on_mismatch == "warn_and_continue":
             logger.warning(message)
+
+    @staticmethod
+    def _apply_answer_empty_diagnosis(
+        metadata: Dict[str, Any],
+        *,
+        answer: str,
+        reasoning: str | None,
+        finish_reason: Any,
+    ) -> None:
+        if str(answer or "").strip():
+            return
+        if str(finish_reason or "").lower() != "length":
+            return
+        if not str(reasoning or "").strip():
+            return
+        metadata.setdefault("answer_empty_reason", "reasoning_exhausted_completion_budget")
+
+    @classmethod
+    def _response_model(cls, raw_response: Any) -> str | None:
+        if isinstance(raw_response, dict):
+            value = raw_response.get("model")
+            return str(value) if value else None
+        if isinstance(raw_response, list):
+            for chunk in reversed(raw_response):
+                value = cls._response_model(chunk)
+                if value:
+                    return value
+        return None
 
     @staticmethod
     def _thinking_mismatch(

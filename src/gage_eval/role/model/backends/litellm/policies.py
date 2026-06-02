@@ -94,6 +94,8 @@ class ThinkingControlPolicy:
         }
         if self.service_profile and self.service_profile.reasoning_parser:
             metadata["reasoning_parser"] = self.service_profile.reasoning_parser
+        if mode == "auto" and is_vllm_target and metadata.get("reasoning_parser"):
+            metadata["thinking_inherited_from_server_default"] = True
 
         kwargs_patch: Dict[str, Any] = {}
         reasoning_effort = thinking_config.get("reasoning_effort")

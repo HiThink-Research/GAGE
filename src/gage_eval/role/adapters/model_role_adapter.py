@@ -55,6 +55,13 @@ class ModelRoleAdapter(RoleAdapter):
 
     def handle_backend_response(self, payload: Dict[str, Any], response: Dict[str, Any]) -> Dict[str, Any]:
         return response
+
+    def shutdown(self) -> None:
+        for method_name in ("shutdown", "close"):
+            cleanup = getattr(self.backend, method_name, None)
+            if callable(cleanup):
+                cleanup()
+                return
     # ------------------------------------------------------------------
     # Sampling helpers
     # ------------------------------------------------------------------

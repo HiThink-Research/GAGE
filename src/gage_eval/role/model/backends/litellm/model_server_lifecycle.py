@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess  # nosec
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.request import Request, urlopen as default_urlopen
+
+from loguru import logger
 
 from gage_eval.role.model.backends.litellm.errors import DEPENDENCY_UNAVAILABLE, LiteLLMBackendError
 
@@ -40,12 +44,17 @@ class ModelServerLifecycle:
         urlopen: Callable[..., Any] = default_urlopen,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        getpgid: Callable[[int], int] = os.getpgid,
+        killpg: Callable[[int, int], None] = os.killpg,
     ) -> None:
         self._popen = popen
         self._urlopen = urlopen
         self._sleep = sleep
         self._monotonic = monotonic
+        self._getpgid = getpgid
+        self._killpg = killpg
         self._started_processes: dict[tuple[str, tuple[str, ...]], Any] = {}
+        self._started_shutdown_policies: dict[tuple[str, tuple[str, ...]], str] = {}
 
     def ensure_ready(self, config: Any) -> ModelServerState:
         """Ensure the configured experimental model server is ready."""
@@ -55,6 +64,7 @@ class ModelServerLifecycle:
 
         startup_command = self._validate_trusted_command(self._get(config, "startup_command"))
         urls = self._health_urls(config)
+        shutdown_policy = self._shutdown_policy(config)
         if not urls:
             raise ValueError("model_server.health.urls must contain at least one health URL when enabled.")
 
@@ -65,8 +75,9 @@ class ModelServerLifecycle:
         process = self._started_processes.get(key)
         started = False
         if process is None:
-            process = self._start_command(startup_command)
+            process = self._start_command(startup_command, shutdown_policy=shutdown_policy)
             self._started_processes[key] = process
+            self._started_shutdown_policies[key] = shutdown_policy
             started = True
         timeout_seconds = self._health_timeout_seconds(config)
         interval_seconds = self._health_interval_seconds(config)
@@ -78,6 +89,22 @@ class ModelServerLifecycle:
             startup_command=startup_command,
         )
         return ModelServerState(enabled=True, ready=True, started=started, health_urls=tuple(urls))
+
+    def close(self) -> None:
+        """Best-effort shutdown for commands explicitly owned by this lifecycle."""
+
+        for key, process in list(self._started_processes.items()):
+            policy = self._started_shutdown_policies.get(key, "keep_running")
+            if policy != "terminate_on_exit":
+                continue
+            self._terminate_process_group(process)
+            self._started_processes.pop(key, None)
+            self._started_shutdown_policies.pop(key, None)
+
+    def stop(self) -> None:
+        """Alias retained for callers that use stop terminology."""
+
+        self.close()
 
     def _wait_until_healthy(
         self,
@@ -119,14 +146,31 @@ class ModelServerLifecycle:
         except Exception:
             return False
 
-    def _start_command(self, startup_command: str) -> Any:
+    def _start_command(self, startup_command: str, *, shutdown_policy: str) -> Any:
         try:
-            return self._popen(["bash", "-lc", startup_command], stdin=subprocess.DEVNULL)
+            return self._popen(
+                ["bash", "-lc", startup_command],
+                stdin=subprocess.DEVNULL,
+                start_new_session=shutdown_policy == "terminate_on_exit",
+            )
         except Exception as exc:
             raise LiteLLMBackendError(
                 f"Model server startup command failed: {exc}",
                 DEPENDENCY_UNAVAILABLE,
             ) from exc
+
+    def _terminate_process_group(self, process: Any) -> None:
+        pid = getattr(process, "pid", None)
+        if not isinstance(pid, int) or pid <= 0:
+            return
+        try:
+            pgid = self._getpgid(pid)
+            self._killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except Exception as exc:
+            logger.warning("Model server process group shutdown failed for pid={}: {}", pid, exc)
+            return
 
     def _raise_if_process_exited(self, process: Any | None, startup_command: str) -> None:
         if process is None:
@@ -190,3 +234,10 @@ class ModelServerLifecycle:
         if value is None:
             return 2.0
         return max(self._MIN_HEALTH_INTERVAL_SECONDS, float(value))
+
+    def _shutdown_policy(self, config: Any) -> str:
+        value = self._get(config, "shutdown_policy", "keep_running") or "keep_running"
+        policy = str(value).strip().lower().replace("-", "_")
+        if policy not in {"keep_running", "terminate_on_exit"}:
+            raise ValueError("model_server.shutdown_policy must be keep_running or terminate_on_exit.")
+        return policy

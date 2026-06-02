@@ -11,8 +11,8 @@ from gage_eval.role.model.config.base import BackendConfigBase
 from gage_eval.role.model.config.generations import GenerationParameters
 
 
-MIN_LITELLM_VERSION = "1.85.1"
-MIN_VLLM_VERSION = "0.21.0"
+MIN_LITELLM_VERSION = "1.83.14"
+MIN_VLLM_VERSION = "0.20.2"
 
 
 def assert_litellm_capabilities(
@@ -165,7 +165,10 @@ class ModelServerLifecycleConfig(BackendConfigBase):
     """Experimental command-mode local model server lifecycle config."""
 
     enabled: bool = False
+    experimental: bool = False
     startup_command: str | None = None
+    shutdown_policy: Literal["keep_running", "terminate_on_exit"] = "keep_running"
+    pid_file: str | None = None
     health: ModelServerHealthConfig = Field(default_factory=ModelServerHealthConfig)
 
 

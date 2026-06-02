@@ -282,7 +282,8 @@ class LiteLLMBackend(EngineBackend):
             completion_target = self._router or self._litellm
             return completion_target.completion(stream=stream, **kwargs)
 
-        completion = self._call_with_retries(_call)
+        completion, outer_retry_attempts = self._call_with_retries(_call)
+        request_context["outer_retry_attempts"] = outer_retry_attempts
 
         # STEP 2: Normalize the response for downstream consumers and safe diagnostics.
         latency_ms = (time.time() - start) * 1000
@@ -315,7 +316,8 @@ class LiteLLMBackend(EngineBackend):
         async def _call():
             return await acompletion(stream=stream, **kwargs)
 
-        completion = await self._acall_with_retries(_call)
+        completion, outer_retry_attempts = await self._acall_with_retries(_call)
+        request_context["outer_retry_attempts"] = outer_retry_attempts
         if stream:
             completion = await self._collect_async_stream(completion)
         latency_ms = (time.time() - start) * 1000
@@ -430,7 +432,7 @@ class LiteLLMBackend(EngineBackend):
         route_mode = self._cfg.resolved_route_mode()
         resolved_thinking_mode = self._resolved_thinking_mode_from_kwargs(request_kwargs)
         retry_owner = self._retry_owner(route_mode)
-        return {
+        context = {
             "provider": self.provider or self._custom_llm_provider,
             "model": request_kwargs.get("model") or self.model_name,
             "api_base": request_kwargs.get("api_base") or request_kwargs.get("base_url") or self.api_base,
@@ -441,6 +443,11 @@ class LiteLLMBackend(EngineBackend):
             "thinking_policy": self._cfg.thinking_policy,
             "retry_owner": retry_owner,
         }
+        if route_mode == "router":
+            context["router_num_retries"] = self._cfg.router_settings.num_retries
+        if self._thinking_inherited_from_server_default(resolved_thinking_mode):
+            context["thinking_inherited_from_server_default"] = True
+        return context
 
     def _resolved_thinking_mode_from_kwargs(self, request_kwargs: Dict[str, Any]) -> str:
         extra_body = request_kwargs.get("extra_body")
@@ -542,7 +549,7 @@ class LiteLLMBackend(EngineBackend):
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                return func()
+                return func(), attempt + 1
             except Exception as exc:  # pragma: no cover - network/third-party errors
                 last_exc = exc
                 if self._is_non_retryable_error(exc):
@@ -562,7 +569,7 @@ class LiteLLMBackend(EngineBackend):
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                return await func()
+                return await func(), attempt + 1
             except Exception as exc:  # pragma: no cover - network/third-party errors
                 last_exc = exc
                 if self._is_non_retryable_error(exc):
@@ -609,6 +616,26 @@ class LiteLLMBackend(EngineBackend):
         if self._looks_like_litellm_gateway_endpoint():
             return "litellm_gateway"
         return "gage"
+
+    def _thinking_inherited_from_server_default(self, resolved_thinking_mode: str) -> bool:
+        if resolved_thinking_mode != "auto":
+            return False
+        if not self._service_profile or not self._service_profile.reasoning_parser:
+            return False
+        model = (self.model_name or "").lower()
+        provider = (self.provider or "").lower().replace("-", "_")
+        custom_provider = (self._custom_llm_provider or "").lower().replace("-", "_")
+        return model.startswith("hosted_vllm/") or bool(
+            {provider, custom_provider} & {"hosted_vllm", "vllm", "openai_compatible"}
+        )
+
+    def close(self) -> None:
+        close = getattr(self._model_server_lifecycle, "close", None)
+        if callable(close):
+            close()
+
+    def shutdown(self) -> None:
+        self.close()
 
     def _looks_like_litellm_gateway_endpoint(self) -> bool:
         if is_default_local_litellm_gateway(self.api_base or getattr(self._cfg, "api_base", None)):

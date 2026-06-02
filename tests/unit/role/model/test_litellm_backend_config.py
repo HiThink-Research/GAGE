@@ -52,13 +52,16 @@ def test_vllm_topology_profile_fields_parse_without_affecting_route_mode() -> No
     assert config.vllm.reasoning_parser == "qwen3"
 
 
-def test_model_server_minimal_command_mode_parses_without_legacy_lifecycle_fields() -> None:
+def test_model_server_command_mode_parses_shutdown_policy_fields() -> None:
     config = LiteLLMBackendConfig.model_validate(
         {
             "model": "hosted_vllm/Qwen/Qwen3.6-35B-A3B",
             "model_server": {
                 "enabled": True,
+                "experimental": True,
                 "startup_command": "bash framework/0521/start_vllm_8gpu.sh",
+                "shutdown_policy": "terminate_on_exit",
+                "pid_file": "/tmp/gage-vllm.pid",
                 "health": {
                     "urls": [
                         "http://127.0.0.1:8000/health",
@@ -72,7 +75,10 @@ def test_model_server_minimal_command_mode_parses_without_legacy_lifecycle_field
     )
 
     assert config.model_server.enabled is True
+    assert config.model_server.experimental is True
     assert config.model_server.startup_command == "bash framework/0521/start_vllm_8gpu.sh"
+    assert config.model_server.shutdown_policy == "terminate_on_exit"
+    assert config.model_server.pid_file == "/tmp/gage-vllm.pid"
     assert config.model_server.health.urls == [
         "http://127.0.0.1:8000/health",
         "http://127.0.0.1:8001/health",
@@ -80,9 +86,7 @@ def test_model_server_minimal_command_mode_parses_without_legacy_lifecycle_field
     assert config.model_server.health.timeout_seconds == 1800
     assert config.model_server.health.interval_seconds == 5
     assert not hasattr(config.model_server, "kind")
-    assert not hasattr(config.model_server, "experimental")
     assert not hasattr(config.model_server, "cwd")
-    assert not hasattr(config.model_server, "shutdown_policy")
 
 
 def test_thinking_and_multimodal_policy_fields_parse() -> None:

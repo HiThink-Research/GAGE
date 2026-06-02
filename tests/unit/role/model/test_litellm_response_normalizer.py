@@ -119,6 +119,50 @@ def test_think_tag_fallback_extracts_reasoning_and_cleans_answer() -> None:
     assert result["metadata"]["reasoning_source"] == "think_tags"
 
 
+def test_length_finish_with_empty_answer_and_reasoning_records_budget_diagnosis() -> None:
+    normalizer = LiteLLMResponseNormalizer()
+
+    result = normalizer.normalize(
+        {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "content": None,
+                        "reasoning_content": "reasoning consumed the response budget",
+                    },
+                }
+            ],
+            "usage": {"completion_tokens": 128},
+        },
+        request_context={"thinking_mode": "auto"},
+    )
+
+    assert result["answer"] == ""
+    assert result["metadata"]["answer_empty_reason"] == "reasoning_exhausted_completion_budget"
+
+
+def test_observation_summary_records_response_model_for_router_deployments() -> None:
+    normalizer = LiteLLMResponseNormalizer()
+    result = normalizer.normalize(
+        {
+            "id": "chatcmpl-router",
+            "model": "qwen3-p2-r2",
+            "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+        },
+        request_context={"model": "qwen3-router", "route_mode": "router"},
+    )
+
+    summary = normalizer.build_observation_summary(
+        {"model": "qwen3-router"},
+        result,
+        request_context={"model": "qwen3-router", "route_mode": "router"},
+    )
+
+    assert summary["model"] == "qwen3-router"
+    assert summary["response_model"] == "qwen3-p2-r2"
+
+
 def test_invalid_tool_arguments_are_preserved_without_raising() -> None:
     normalizer = LiteLLMResponseNormalizer()
     raw = {
@@ -361,6 +405,7 @@ def test_observation_summary_redacts_sensitive_payloads_and_records_counts() -> 
             }
         ],
         "parallel_tool_calls": False,
+        "reasoning_effort": "medium",
     }
     result = {
         "finish_reason": "stop",
@@ -397,6 +442,7 @@ def test_observation_summary_redacts_sensitive_payloads_and_records_counts() -> 
     assert summary["modality_counts"]["audio"] == 1
     assert summary["tool_count"] == 1
     assert summary["tool_call_count"] == 1
+    assert summary["reasoning_effort"] == "medium"
     assert summary["resolved_thinking_mode"] == "disabled"
     assert summary["effective_thinking_mode"] == "disabled"
     assert summary["usage"] == {"total_tokens": 10}

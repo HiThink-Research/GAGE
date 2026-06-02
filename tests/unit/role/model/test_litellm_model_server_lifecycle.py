@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import sys
 import types
+import signal
 from typing import Any
 
 import pytest
 
+from gage_eval.role.adapters.dut_model import DUTModelAdapter
+from gage_eval.role.model.backends.base_backend import Backend
 from gage_eval.role.model.backends.litellm.errors import DEPENDENCY_UNAVAILABLE, LiteLLMBackendError
 from gage_eval.role.model.backends.litellm_backend import LiteLLMBackend
 from gage_eval.role.model.config.litellm import LiteLLMBackendConfig
@@ -14,8 +17,9 @@ pytestmark = pytest.mark.fast
 
 
 class FakeProcess:
-    def __init__(self, returncode: int | None = None):
+    def __init__(self, returncode: int | None = None, pid: int = 1234):
         self.returncode = returncode
+        self.pid = pid
         self.poll_count = 0
 
     def poll(self):
@@ -147,6 +151,7 @@ def test_startup_command_runs_with_bash_until_health_succeeds() -> None:
     assert state.ready is True
     assert state.started is True
     assert started[0][0] == ["bash", "-lc", "vllm serve /models/qwen --port 8000"]
+    assert started[0][1]["start_new_session"] is False
     assert "stdout" not in started[0][1]
     assert "stderr" not in started[0][1]
     assert attempts["count"] == 2
@@ -270,6 +275,64 @@ def test_repeated_ensure_ready_does_not_start_duplicate_command() -> None:
     assert started == [["bash", "-lc", "vllm serve /models/qwen --port 8000"]]
 
 
+def test_terminate_on_exit_starts_new_session_and_close_kills_process_group() -> None:
+    from gage_eval.role.model.backends.litellm.model_server_lifecycle import ModelServerLifecycle
+
+    clock = FakeClock()
+    started = []
+    killed = []
+    attempts = {"count": 0}
+
+    def urlopen(_request, timeout):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise TimeoutError("not ready")
+        return FakeResponse()
+
+    lifecycle = ModelServerLifecycle(
+        popen=lambda command, **kwargs: started.append((command, kwargs)) or FakeProcess(pid=1234),
+        urlopen=urlopen,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        getpgid=lambda pid: 9876,
+        killpg=lambda pgid, sig: killed.append((pgid, sig)),
+    )
+
+    state = lifecycle.ensure_ready(lifecycle_config(shutdown_policy="terminate_on_exit"))
+    lifecycle.close()
+
+    assert state.started is True
+    assert started[0][1]["start_new_session"] is True
+    assert killed == [(9876, signal.SIGTERM)]
+
+
+def test_keep_running_close_does_not_kill_started_process() -> None:
+    from gage_eval.role.model.backends.litellm.model_server_lifecycle import ModelServerLifecycle
+
+    clock = FakeClock()
+    killed = []
+    attempts = {"count": 0}
+
+    def urlopen(_request, timeout):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise TimeoutError("not ready")
+        return FakeResponse()
+
+    lifecycle = ModelServerLifecycle(
+        popen=lambda *_args, **_kwargs: FakeProcess(pid=1234),
+        urlopen=urlopen,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        killpg=lambda pgid, sig: killed.append((pgid, sig)),
+    )
+
+    lifecycle.ensure_ready(lifecycle_config(shutdown_policy="keep_running"))
+    lifecycle.close()
+
+    assert killed == []
+
+
 @pytest.mark.parametrize(
     "startup_command",
     [
@@ -374,6 +437,59 @@ def test_litellm_backend_calls_lifecycle_before_import(monkeypatch: pytest.Monke
     assert backend._litellm is fake_litellm
     assert calls == ["vllm serve /models/qwen --port 8000"]
     assert fake_litellm.calls == []
+
+
+def test_litellm_backend_close_delegates_to_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_litellm = FakeLiteLLM()
+    monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
+    calls = []
+
+    class FakeLifecycle:
+        def ensure_ready(self, config):
+            calls.append("ensure_ready")
+
+        def close(self):
+            calls.append("close")
+
+    backend = LiteLLMBackend(
+        {
+            "model": "hosted_vllm/qwen",
+            "api_base": "http://127.0.0.1:8000/v1",
+            "api_key": "dummy",
+            "model_server": {
+                "enabled": True,
+                "startup_command": "vllm serve /models/qwen --port 8000",
+                "health": {"urls": ["http://127.0.0.1:8000/health"]},
+            },
+            "_model_server_lifecycle": FakeLifecycle(),
+        }
+    )
+
+    backend.close()
+
+    assert calls == ["ensure_ready", "close"]
+
+
+def test_model_role_adapter_shutdown_closes_wrapped_backend() -> None:
+    calls = []
+
+    class ClosableBackend(Backend):
+        def ainvoke(self, payload):  # pragma: no cover - not used
+            raise NotImplementedError
+
+        def close(self):
+            calls.append("close")
+
+    adapter = DUTModelAdapter(
+        adapter_id="dut",
+        role_type="dut_model",
+        backend=ClosableBackend({}),
+        capabilities=["chat_completion"],
+    )
+
+    adapter.shutdown()
+
+    assert calls == ["close"]
 
 
 def test_litellm_backend_disabled_lifecycle_has_no_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -62,6 +62,22 @@ def test_thinking_mode_none_does_not_inject_enable_thinking() -> None:
     assert "extra_body" not in kwargs or "enable_thinking" not in kwargs["extra_body"].get("chat_template_kwargs", {})
 
 
+def test_auto_vllm_with_reasoning_parser_records_server_default_inheritance() -> None:
+    policy = ThinkingControlPolicy(service_profile=_profile(reasoning_parser="qwen3"))
+
+    resolution = policy.resolve(
+        model="hosted_vllm/Qwen/Qwen3-8B",
+        provider="hosted_vllm",
+        custom_llm_provider="hosted_vllm",
+        api_base="http://127.0.0.1:8000/v1",
+        thinking_config={"thinking_mode": "auto"},
+    )
+
+    assert resolution.mode == "auto"
+    assert resolution.kwargs_patch == {}
+    assert resolution.metadata["thinking_inherited_from_server_default"] is True
+
+
 def test_reasoning_effort_remains_top_level_litellm_kwarg() -> None:
     kwargs, _ = _builder().build(
         {
